@@ -107,7 +107,13 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 #   глобальной уникальности нет намеренно: один адрес может принадлежать
 #   разным людям в разных организациях. Вход выполняет свой backend,
 #   который различает пользователей по паре «организация + почта».
-SILENCED_SYSTEM_CHECKS = ["models.E034", "auth.E003"]
+# models.W045 — «CHECK с RawSQL не проверяется в full_clean()». Так и задумано:
+#   эти ограничения существуют только в базе, и проверять их дважды не нужно.
+#   Текст выражения задан явно ради точного совпадения с уже развёрнутой схемой
+#   (Django строит из Q(...) NULL-безопасную форму с другим текстом).
+#   Прикладные проверки живут в слое сервисов и дают понятные сообщения,
+#   а база остаётся последним рубежом.
+SILENCED_SYSTEM_CHECKS = ["models.E034", "auth.E003", "models.W045"]
 
 # Учётная запись CRM — своя: в схеме уже есть `users` со своими колонками,
 # и подменять её моделью django.contrib.auth нельзя.
@@ -139,6 +145,7 @@ HUMOTECH_APPS = [
     "humotech.offices",
     "humotech.departments",
     "humotech.positions",
+    "humotech.rbac",
     "humotech.accounts",
     "humotech.employees",
     "humotech.schedules",

@@ -40,7 +40,7 @@ def active_role_codes(user, at: datetime | None = None) -> set[str]:
 
 def permission_codes(user, at: datetime | None = None) -> set[str]:
     """Объединение разрешений всех действующих ролей пользователя."""
-    from humotech.accounts.models import Permission
+    from humotech.rbac.models import Permission
 
     role_ids = set(active_scopes(user, at).values_list("role_id", flat=True))
     if not role_ids:

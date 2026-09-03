@@ -16,9 +16,13 @@ from django.contrib.auth.base_user import AbstractBaseUser, BaseUserManager
 from django.db import models
 from django.db.models.functions import Lower
 
+from humotech.core.constraints import raw_check
 from humotech.core.enums import USER_STATUSES, choices, status_check
+from humotech.core.functions import TransactionNow
 from humotech.core.models import (
     ArchivableModel,
+    CreatedAtModel,
+    OrganizationScopedModel,
     TimestampedModel,
     UUIDPrimaryKeyModel,
 )
@@ -68,6 +72,16 @@ class User(UUIDPrimaryKeyModel, TimestampedModel, ArchivableModel, AbstractBaseU
         db_index=False,
         related_name="users",
     )
+    # NULL — техническая учётка без сотрудника (интеграция, суперадмин вендора)
+    employee = models.ForeignKey(
+        "employees.Employee",
+        on_delete=models.PROTECT,
+        db_column="employee_id",
+        db_index=False,
+        null=True,
+        blank=True,
+        related_name="account",
+    )
     email = models.CharField(max_length=255)
     # Только хеш (argon2/bcrypt). Открытый пароль не хранится нигде и никогда.
     # Колонка называется password_hash — имя говорит, что внутри, и не даёт
@@ -96,6 +110,12 @@ class User(UUIDPrimaryKeyModel, TimestampedModel, ArchivableModel, AbstractBaseU
             models.UniqueConstraint(
                 models.F("organization"), Lower("email"),
                 name="uq_users_org_lower_email",
+            ),
+            # Один сотрудник — не более одной учётной записи.
+            models.UniqueConstraint(
+                fields=["employee"],
+                condition=models.Q(employee__isnull=False),
+                name="uq_users_employee_id",
             ),
         ]
         indexes = [
@@ -149,3 +169,77 @@ class User(UUIDPrimaryKeyModel, TimestampedModel, ArchivableModel, AbstractBaseU
 
     def has_module_perms(self, app_label: str) -> bool:
         return self.is_active and self._has_admin_role()
+
+
+class UserRoleScope(UUIDPrimaryKeyModel, OrganizationScopedModel, CreatedAtModel):
+    """Какая роль и на какой территории действует у пользователя.
+
+        region_id IS NULL и office_id IS NULL  -> вся организация
+        указан region_id                        -> весь регион
+        указан office_id                        -> только этот офис
+    """
+
+    user = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.PROTECT,
+        db_column="user_id",
+        db_index=False,
+        related_name="role_scopes",
+    )
+    role = models.ForeignKey(
+        "rbac.Role",
+        on_delete=models.PROTECT,
+        db_column="role_id",
+        db_index=False,
+        related_name="user_scopes",
+    )
+    region = models.ForeignKey(
+        "regions.Region",
+        on_delete=models.PROTECT,
+        db_column="region_id",
+        db_index=False,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    office = models.ForeignKey(
+        "offices.Office",
+        on_delete=models.PROTECT,
+        db_column="office_id",
+        db_index=False,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    valid_from = models.DateTimeField(db_default=TransactionNow())
+    valid_to = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "user_role_scopes"
+        verbose_name = "область роли пользователя"
+        verbose_name_plural = "области ролей пользователей"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "role", "region", "office", "valid_from"],
+                name="uq_user_role_scopes_grant",
+            ),
+            # Область задаётся ЛИБО регионом, ЛИБО офисом, но не обоими сразу.
+            raw_check(
+                "region_id IS NULL OR office_id IS NULL",
+                "ck_user_role_scopes_scope_not_both",
+            ),
+            raw_check(
+                "valid_to IS NULL OR valid_to >= valid_from",
+                "ck_user_role_scopes_valid_period",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["organization"], name="ix_user_role_scopes_organization_id"
+            ),
+            models.Index(fields=["user"], name="ix_user_role_scopes_user_id"),
+            models.Index(fields=["role"], name="ix_user_role_scopes_role_id"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.user_id} / {self.role_id}"
