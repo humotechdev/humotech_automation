@@ -16,19 +16,24 @@ from __future__ import annotations
 
 import os
 import uuid
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 
+from src.core.permissions.catalog import ALL_PERMISSION_CODES
+from src.core.rbac import Actor
 from src.modules.employees.models import Employee, EmployeeAssignment
 from src.modules.offices.models import Office
 from src.modules.organizations.models import Organization
 from src.modules.qr_codes.models import OfficeQrPoint
 from src.modules.regions.models import Region
+from src.modules.roles.models import Permission, Role, RolePermission, UserRoleScope
+from src.modules.schedules.models import ScheduleDay, WorkSchedule
+from src.modules.users.models import User
 
 APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -243,3 +248,207 @@ def fresh_qr(now: datetime):
         "qr_issued_at": now,
         "qr_expires_at": now + timedelta(seconds=45),
     }
+
+
+# --- фикстуры HR CRM: пользователи, роли и области видимости ---
+#
+# Разрешения создаются по требованию, а не сидируются целиком. Так тест,
+# проверяющий отказ, отличается от теста, проверяющего разрешение, ровно одним
+# списком кодов — и «отказано» не может случиться просто потому, что таблица
+# `permissions` осталась пустой.
+
+def _make_user(db: Session, organization: Organization, email: str) -> User:
+    user = User(
+        organization_id=organization.id,
+        email=email,
+        password_hash="argon2:test-stub",
+        status="ACTIVE",
+    )
+    db.add(user)
+    db.flush()
+    return user
+
+
+def _permission_rows(db: Session, codes: tuple[str, ...]) -> list[Permission]:
+    unknown = [c for c in codes if c not in ALL_PERMISSION_CODES]
+    if unknown:
+        raise AssertionError(
+            f"В каталоге нет таких разрешений: {unknown}. "
+            "Проверьте src/core/permissions/catalog.py"
+        )
+    rows = []
+    for code in codes:
+        row = db.scalar(select(Permission).where(Permission.code == code))
+        if row is None:
+            row = Permission(code=code, name=code, description=code)
+            db.add(row)
+            db.flush()
+        rows.append(row)
+    return rows
+
+
+@pytest.fixture()
+def make_actor(db: Session):
+    """Пользователь CRM с заданным набором разрешений и областью видимости.
+
+    `region=None, office=None` означает доступ ко всей организации — ровно так
+    же, как это задано в `user_role_scopes`.
+    """
+    counter = {"n": 0}
+
+    def _make(
+        organization: Organization,
+        *,
+        permissions: tuple[str, ...] = (),
+        region=None,
+        office=None,
+        role_code: str | None = None,
+        valid_from: datetime | None = None,
+        valid_to: datetime | None = None,
+    ) -> Actor:
+        counter["n"] += 1
+        suffix = f"{counter['n']}-{uuid.uuid4().hex[:6]}"
+        user = _make_user(db, organization, f"actor-{suffix}@humotech.tj")
+        role = Role(
+            organization_id=organization.id,
+            code=role_code or f"TEST_ROLE_{suffix.upper()}",
+            name="Тестовая роль",
+        )
+        db.add(role)
+        db.flush()
+        for permission in _permission_rows(db, tuple(permissions)):
+            db.add(RolePermission(role_id=role.id, permission_id=permission.id))
+        db.add(
+            UserRoleScope(
+                organization_id=organization.id,
+                user_id=user.id,
+                role_id=role.id,
+                region_id=region.id if region is not None else None,
+                office_id=office.id if office is not None else None,
+                valid_from=valid_from
+                or datetime.now(tz=timezone.utc) - timedelta(days=1),
+                valid_to=valid_to,
+            )
+        )
+        db.flush()
+        return Actor(user_id=user.id, organization_id=organization.id)
+
+    return _make
+
+
+HR_FULL_PERMISSIONS = (
+    "regions.read", "regions.manage",
+    "offices.read", "offices.manage",
+    "departments.manage", "positions.manage",
+    "employees.read", "employees.manage", "employees.archive", "employees.access",
+    "schedules.read", "schedules.manage",
+    "audit.read",
+)
+
+HR_READONLY_PERMISSIONS = (
+    "regions.read", "offices.read", "employees.read", "schedules.read",
+)
+
+
+@pytest.fixture()
+def hr_actor(make_actor, organization: Organization) -> Actor:
+    """HR-администратор с доступом ко всей организации."""
+    return make_actor(organization, permissions=HR_FULL_PERMISSIONS)
+
+
+@pytest.fixture()
+def readonly_actor(make_actor, organization: Organization) -> Actor:
+    """Только чтение: ни одного `.manage`."""
+    return make_actor(organization, permissions=HR_READONLY_PERMISSIONS)
+
+
+@pytest.fixture()
+def nobody_actor(make_actor, organization: Organization) -> Actor:
+    """Учётная запись без единого разрешения."""
+    return make_actor(organization, permissions=())
+
+
+# --- вторая организация: соседи, данные которых видеть нельзя ---
+
+@pytest.fixture()
+def other_organization(db: Session) -> Organization:
+    org = Organization(
+        code=f"OTHER{uuid.uuid4().hex[:8]}",
+        name="Соседняя компания",
+        default_timezone="Asia/Tashkent",
+        status="ACTIVE",
+    )
+    db.add(org)
+    db.flush()
+    return org
+
+
+@pytest.fixture()
+def foreign_region(db: Session, other_organization: Organization) -> Region:
+    region = Region(
+        organization_id=other_organization.id,
+        code="TASHKENT",
+        name="Ташкент",
+        status="ACTIVE",
+    )
+    db.add(region)
+    db.flush()
+    return region
+
+
+@pytest.fixture()
+def foreign_office(
+    db: Session, other_organization: Organization, foreign_region: Region
+) -> Office:
+    return _make_office(db, other_organization, foreign_region, "FOREIGN")
+
+
+@pytest.fixture()
+def foreign_actor(make_actor, other_organization: Organization) -> Actor:
+    """Полноправный HR, но в другой организации."""
+    return make_actor(other_organization, permissions=HR_FULL_PERMISSIONS)
+
+
+# --- графики работы ---
+
+def make_work_schedule(
+    db: Session,
+    organization: Organization,
+    *,
+    name: str = "Стандартный 09:00-18:00",
+    timezone_name: str = "Asia/Dushanbe",
+    status: str = "ACTIVE",
+) -> WorkSchedule:
+    schedule = WorkSchedule(
+        organization_id=organization.id,
+        name=name,
+        timezone=timezone_name,
+        weekly_minutes=2400,
+        status=status,
+    )
+    db.add(schedule)
+    db.flush()
+    for weekday in range(1, 6):
+        db.add(
+            ScheduleDay(
+                schedule_id=schedule.id,
+                weekday=weekday,
+                is_working_day=True,
+                start_time=time(9, 0),
+                end_time=time(18, 0),
+            )
+        )
+    db.flush()
+    return schedule
+
+
+@pytest.fixture()
+def work_schedule(db: Session, organization: Organization) -> WorkSchedule:
+    return make_work_schedule(db, organization)
+
+
+@pytest.fixture()
+def foreign_schedule(db: Session, other_organization: Organization) -> WorkSchedule:
+    return make_work_schedule(
+        db, other_organization, name="Чужой график", timezone_name="Asia/Tashkent"
+    )
