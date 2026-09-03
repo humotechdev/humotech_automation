@@ -53,8 +53,18 @@ PYTHONPATH=. .venv/Scripts/python.exe -m scripts.seed \
 
 ## Тесты
 
+Разовая подготовка тестовой базы (нужен доступ суперпользователя ровно один раз —
+дальше тесты обходятся обычной ролью):
+
 ```bash
-TEST_DATABASE_URL=postgresql+psycopg://postgres:PASS@127.0.0.1:5432/humotech_test \
+psql -U postgres -c "CREATE ROLE humo_test LOGIN PASSWORD 'humo_test_pwd'; CREATE DATABASE humotech_test OWNER humo_test;"
+psql -U postgres -d humotech_test -c "CREATE EXTENSION IF NOT EXISTS btree_gist; GRANT ALL ON SCHEMA public TO humo_test;"
+```
+
+Запуск:
+
+```bash
+TEST_DATABASE_URL=postgresql+psycopg://humo_test:humo_test_pwd@127.0.0.1:5432/humotech_test \
   PYTHONPATH=. .venv/Scripts/python.exe -m pytest
 ```
 
@@ -66,9 +76,13 @@ TEST_DATABASE_URL=postgresql+psycopg://postgres:PASS@127.0.0.1:5432/humotech_tes
 и она тоже, а не только описание моделей. Каждый тест выполняется в своей
 транзакции и откатывается.
 
+Перед прогоном `conftest` сносит из базы все таблицы, но не схему: вместе со
+схемой удалилось бы расширение `btree_gist`, а его пересоздание требует прав
+суперпользователя. Поэтому расширение ставится один раз при заведении базы.
+
 Без `TEST_DATABASE_URL` тесты не падают, а пропускаются с подсказкой. Имя базы
-обязано содержать `test`: `conftest` пересоздаёт схему `public` целиком
-и отказывается работать с базой, чьё имя на тестовое не похоже.
+обязано содержать `test`: `conftest` удаляет из неё все таблицы и отказывается
+работать с базой, чьё имя на тестовое не похоже.
 
 ## Структура
 

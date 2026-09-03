@@ -55,8 +55,29 @@ def engine():
 
     eng = create_engine(url, future=True)
     with eng.begin() as conn:
-        conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
-        conn.execute(text("CREATE SCHEMA public"))
+        # Сносим только таблицы, а не схему целиком.
+        #
+        # DROP SCHEMA public CASCADE удалил бы вместе со схемой и расширение
+        # btree_gist, а его пересоздание требует прав суперпользователя — то есть
+        # тестовая роль обязана была бы быть суперпользователем на каждом прогоне.
+        # Так расширение ставится один раз при заведении базы, а дальше
+        # CREATE EXTENSION IF NOT EXISTS в миграции превращается в no-op.
+        conn.execute(
+            text(
+                """
+                DO $$
+                DECLARE r record;
+                BEGIN
+                    FOR r IN (
+                        SELECT tablename FROM pg_tables WHERE schemaname = 'public'
+                    ) LOOP
+                        EXECUTE 'DROP TABLE IF EXISTS public.'
+                                || quote_ident(r.tablename) || ' CASCADE';
+                    END LOOP;
+                END $$;
+                """
+            )
+        )
 
     cfg = Config(os.path.join(APP_DIR, "alembic.ini"))
     cfg.set_main_option("script_location", os.path.join(APP_DIR, "migrations"))
