@@ -113,11 +113,21 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 #   (Django строит из Q(...) NULL-безопасную форму с другим текстом).
 #   Прикладные проверки живут в слое сервисов и дают понятные сообщения,
 #   а база остаётся последним рубежом.
-SILENCED_SYSTEM_CHECKS = ["models.E034", "auth.E003", "models.W045"]
+#
+# auth.W004 — то же самое, что auth.E003, но в виде предупреждения:
+#   «убедитесь, что backend справляется с неуникальными именами».
+#   Справляется — ровно для этого `OrganizationEmailBackend` и написан.
+SILENCED_SYSTEM_CHECKS = [
+    "models.E034", "auth.E003", "auth.W004", "models.W045",
+]
 
 # Учётная запись CRM — своя: в схеме уже есть `users` со своими колонками,
 # и подменять её моделью django.contrib.auth нельзя.
 AUTH_USER_MODEL = "accounts.User"
+
+# Вход по паре «организация + почта»: почта уникальна внутри организации,
+# а не глобально, поэтому стандартный ModelBackend здесь не подходит.
+AUTHENTICATION_BACKENDS = ["humotech.accounts.backends.OrganizationEmailBackend"]
 
 DJANGO_APPS = [
     "django.contrib.auth",

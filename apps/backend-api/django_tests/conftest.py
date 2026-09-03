@@ -166,6 +166,49 @@ def _permission_rows(codes: tuple[str, ...]) -> list[Permission]:
     return rows
 
 
+_COUNTER = {"n": 0}
+
+
+def create_actor(organization, *, permissions=(), region=None, office=None,
+                 role_code=None, valid_from=None, valid_to=None,
+                 raw_password: str | None = None) -> tuple[User, Actor]:
+    """Учётная запись с ролью и областью видимости.
+
+    Возвращает и пользователя, и `Actor`: сервисам нужен второй, а входу
+    по HTTP — первый, и заводить их двумя разными путями значило бы
+    проверять не то, что работает в бою.
+    """
+    _COUNTER["n"] += 1
+    suffix = f"{_COUNTER['n']}-{uuid.uuid4().hex[:6]}"
+    user = User(
+        organization=organization,
+        email=f"actor-{suffix}@humotech.tj",
+        status="ACTIVE",
+    )
+    # Пароль всегда через set_password: в базе только хеш, даже в тестах.
+    user.set_password(raw_password or uuid.uuid4().hex)
+    user.save()
+
+    role = Role.objects.create(
+        organization=organization,
+        code=role_code or f"TEST_ROLE_{suffix.upper()}",
+        name="Тестовая роль",
+    )
+    for permission in _permission_rows(tuple(permissions)):
+        RolePermission.objects.create(role=role, permission=permission)
+    UserRoleScope.objects.create(
+        organization=organization,
+        user=user,
+        role=role,
+        region=region,
+        office=office,
+        valid_from=valid_from
+        or datetime.now(tz=dt_timezone.utc) - timedelta(days=1),
+        valid_to=valid_to,
+    )
+    return user, Actor(user_id=user.id, organization_id=organization.id)
+
+
 @pytest.fixture()
 def make_actor(db):
     """Пользователь CRM с заданным набором разрешений и областью видимости.
@@ -173,38 +216,28 @@ def make_actor(db):
     `region=None, office=None` означает доступ ко всей организации — ровно так
     же, как это задано в `user_role_scopes`.
     """
-    counter = {"n": 0}
 
-    def _make(organization, *, permissions=(), region=None, office=None,
-              role_code=None, valid_from=None, valid_to=None) -> Actor:
-        counter["n"] += 1
-        suffix = f"{counter['n']}-{uuid.uuid4().hex[:6]}"
-        user = User.objects.create(
-            organization=organization,
-            email=f"actor-{suffix}@humotech.tj",
-            password="argon2:test-stub",
-            status="ACTIVE",
-        )
-        role = Role.objects.create(
-            organization=organization,
-            code=role_code or f"TEST_ROLE_{suffix.upper()}",
-            name="Тестовая роль",
-        )
-        for permission in _permission_rows(tuple(permissions)):
-            RolePermission.objects.create(role=role, permission=permission)
-        UserRoleScope.objects.create(
-            organization=organization,
-            user=user,
-            role=role,
-            region=region,
-            office=office,
-            valid_from=valid_from
-            or datetime.now(tz=dt_timezone.utc) - timedelta(days=1),
-            valid_to=valid_to,
-        )
-        return Actor(user_id=user.id, organization_id=organization.id)
+    def _make(organization, **kwargs) -> Actor:
+        return create_actor(organization, **kwargs)[1]
 
     return _make
+
+
+@pytest.fixture()
+def make_user(db):
+    """То же самое, но возвращает учётную запись — для входа по HTTP."""
+
+    def _make(organization, **kwargs) -> User:
+        return create_actor(organization, **kwargs)[0]
+
+    return _make
+
+
+@pytest.fixture()
+def api_client():
+    from rest_framework.test import APIClient
+
+    return APIClient()
 
 
 HR_FULL_PERMISSIONS = (
