@@ -336,3 +336,61 @@ def foreign_schedule(db, other_organization) -> WorkSchedule:
     return make_work_schedule(
         other_organization, name="Чужой график", timezone_name="Asia/Tashkent"
     )
+
+
+# --- фикстуры AI-модуля ---
+#
+# Сеть здесь не блокируется на уровне сокетов, как раньше: провайдеры
+# подставляются дублёрами явно, а настройки ниже держат модуль включённым
+# с заведомо нерабочим ключом — настоящего обращения наружу произойти
+# не может, потому что настоящий провайдер не создаётся.
+
+from humotech.ai_assistant.config import AiSettings
+from humotech.ai_assistant.services.scoping import EmployeeScope
+
+
+@pytest.fixture()
+def ai_settings_fixture() -> AiSettings:
+    """Настройки для тестов: модуль включён, ключ фиктивный."""
+    return AiSettings(
+        ai_assistant_enabled=True,
+        ai_fallback_enabled=True,
+        openai_api_key="test-key-not-real",
+        openai_chat_model="test-chat-model",
+        openai_fallback_model="test-fallback-model",
+        openai_embedding_model="test-embedding-model",
+        ai_exact_faq_threshold=0.92,
+        ai_rag_min_score=0.72,
+        ai_conflict_score_delta=0.05,
+        ai_max_retrieved_chunks=6,
+        ai_query_max_length=1000,
+        ai_cache_ttl_seconds=300,
+        ai_prompt_version="v1",
+        ai_rate_limit_per_minute=100,
+        ai_rate_limit_per_day=1000,
+        ai_supported_languages="ru,en",
+        ai_default_language="ru",
+    )
+
+
+# Имя `settings` занято pytest-django (там это настройки Django),
+# поэтому фикстура называется иначе, а здесь заведён псевдоним для
+# перенесённых тестов.
+@pytest.fixture()
+def ai_settings(ai_settings_fixture) -> AiSettings:
+    return ai_settings_fixture
+
+
+@pytest.fixture()
+def scope() -> EmployeeScope:
+    """Область сотрудника без обращения к базе: у чисто логических тестов
+    её незачем строить настоящими записями."""
+    return EmployeeScope(
+        employee_id=uuid.uuid4(),
+        organization_id=uuid.uuid4(),
+        office_id=uuid.uuid4(),
+        region_id=uuid.uuid4(),
+        department_id=None,
+        language="ru",
+        employment_status="ACTIVE",
+    )
