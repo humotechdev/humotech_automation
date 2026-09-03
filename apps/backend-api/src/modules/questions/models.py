@@ -43,8 +43,10 @@ class EmployeeQuestion(
 
     ai_answer_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     ai_confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4), nullable=True)
-    answer_source_article_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("knowledge_articles.id", ondelete="RESTRICT"),
+    # ссылка на источник знаний, из которого взят ответ.
+    # Таблица knowledge_articles преобразована в knowledge_sources миграцией 0002.
+    answer_source_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("knowledge_sources.id", ondelete="RESTRICT"),
         nullable=True,
     )
 

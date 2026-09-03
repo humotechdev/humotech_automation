@@ -10,7 +10,7 @@ Face Recognition в системе не используется. Вход и в
 
 | Приложение | Что делает | Состояние |
 |---|---|---|
-| [`apps/backend-api`](apps/backend-api) | Единственный сервис с доступом к PostgreSQL. Вся бизнес-логика. | схема БД, модели, миграция, seed, тесты |
+| [`apps/backend-api`](apps/backend-api) | Единственный сервис с доступом к PostgreSQL. Вся бизнес-логика. | схема БД, модели, миграции, seed, AI-ассистент (выключен), тесты |
 | [`apps/employee-telegram-bot`](apps/employee-telegram-bot) | Один бот на сотрудников и HR: роль решает, что человек видит | работает на заглушках, ждёт API |
 | `apps/hr-crm` | Веб-интерфейс HR и администраторов | не начат |
 | `apps/qr-display` | Экран офиса, показывающий rotating QR | не начат |
@@ -42,14 +42,17 @@ Face Recognition в системе не используется. Вход и в
 
 ## Документация
 
-- [`docs/database/schema.md`](docs/database/schema.md) — схема БД: 38 таблиц,
+- [`docs/database/schema.md`](docs/database/schema.md) — схема БД: 44 таблицы,
   ER-диаграммы, правила QR, разница между `attendance_events` и `attendance_sessions`
+- [`docs/architecture/ai-assistant.md`](docs/architecture/ai-assistant.md) —
+  AI-ассистент: RAG на pgvector, версионирование знаний, двухфазная публикация
 - [`packages/api-contracts/telegram-bot.v1.md`](packages/api-contracts/telegram-bot.v1.md) —
   контракт API для Telegram-бота
 
 ## Стек
 
-PostgreSQL 15+ · Python 3.11 · SQLAlchemy 2.0 · Alembic · aiogram 3 · React (CRM)
+PostgreSQL 15+ / pgvector · Python 3.11 · SQLAlchemy 2.0 · Alembic ·
+aiogram 3 · OpenAI SDK (через адаптер) · React (CRM) · Docker Compose
 
 ## С чего начать
 

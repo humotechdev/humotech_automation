@@ -46,6 +46,7 @@ PERMISSIONS: tuple[tuple[str, str, str], ...] = (
     ("knowledge.read", "Чтение базы знаний", "Видеть статьи"),
     ("knowledge.write", "Редактирование статей", "Создавать и изменять статьи"),
     ("knowledge.publish", "Публикация статей", "Утверждать и публиковать статьи"),
+    ("knowledge.index", "Индексация знаний", "Запускать переиндексацию источников"),
     ("questions.read", "Просмотр вопросов", "Видеть вопросы сотрудников"),
     ("questions.answer", "Ответы на вопросы", "Отвечать на эскалированные вопросы"),
     # аналитика и администрирование
@@ -55,6 +56,7 @@ PERMISSIONS: tuple[tuple[str, str, str], ...] = (
     ("roles.manage", "Управление ролями", "Назначать роли и области видимости"),
     ("settings.manage", "Настройки организации", "Изменять organization_settings"),
     ("audit.read", "Просмотр аудита", "Читать журнал изменений"),
+    ("ai.metrics.read", "Метрики ассистента", "Журнал обращений и показатели качества"),
 )
 
 ALL_PERMISSION_CODES: tuple[str, ...] = tuple(code for code, _, _ in PERMISSIONS)
@@ -78,9 +80,9 @@ _HR_FULL = (
     "schedules.read", "schedules.manage", "calendar.manage",
     "absences.read", "absences.approve", "absences.manage_types",
     "absences.documents", "leave_balances.manage",
-    "knowledge.read", "knowledge.write", "knowledge.publish",
+    "knowledge.read", "knowledge.write", "knowledge.publish", "knowledge.index",
     "questions.read", "questions.answer",
-    "analytics.read", "reports.export",
+    "analytics.read", "reports.export", "ai.metrics.read",
 )
 
 # Роль отвечает за НАБОР действий; территорию ограничивает user_role_scopes.
@@ -117,5 +119,6 @@ ROLE_PERMISSIONS: dict[str, tuple[str, ...]] = {
     "TECH_ADMIN": (
         "users.manage", "roles.manage", "settings.manage", "audit.read",
         "offices.read", "qr_points.read", "qr_points.manage",
+        "knowledge.index", "ai.metrics.read",
     ),
 }

@@ -15,6 +15,7 @@ from src.core.database.base import Base
 
 # порядок импорта роли не играет — связи разрешаются лениво
 from src.modules.absences import models as absences_models  # noqa: F401
+from src.modules.ai_assistant import models as ai_assistant_models  # noqa: F401
 from src.modules.audit import models as audit_models  # noqa: F401
 from src.modules.departments import models as departments_models  # noqa: F401
 from src.modules.devices import models as devices_models  # noqa: F401

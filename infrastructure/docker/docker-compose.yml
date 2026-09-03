@@ -1,0 +1,35 @@
+# Локальное окружение HUMOTECH.
+#
+# Запуск из корня репозитория:
+#   docker compose -f infrastructure/docker/docker-compose.yml up -d
+#
+# Локально установленный PostgreSQL этим файлом не затрагивается: контейнер
+# слушает порт 5433, чтобы не конфликтовать с системным сервером на 5432.
+
+services:
+  postgres:
+    # Официальный образ pgvector поверх PostgreSQL 18: расширение vector уже внутри,
+    # ставить его в систему вручную не нужно.
+    image: pgvector/pgvector:pg18
+    container_name: humotech_postgres
+    environment:
+      POSTGRES_USER: humotech
+      POSTGRES_PASSWORD: humotech_local
+      POSTGRES_DB: humotech
+      # ускоряет первый старт и делает сравнение строк предсказуемым
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # без этого миграции стартуют раньше, чем сервер готов принимать соединения
+      test: ["CMD-SHELL", "pg_isready -U humotech -d humotech"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

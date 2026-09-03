@@ -62,7 +62,26 @@ ABSENCE_ACTIONS = (
 
 # --- Telegram, знания, вопросы, уведомления ---
 TELEGRAM_ACCOUNT_STATUSES = ("ACTIVE", "REVOKED", "BLOCKED")
-ARTICLE_STATUSES = ("DRAFT", "IN_REVIEW", "PUBLISHED", "ARCHIVED")
+
+# --- база знаний AI-ассистента ---
+KNOWLEDGE_SOURCE_TYPES = ("FAQ", "POLICY", "INSTRUCTION", "DOCUMENT")
+# INDEXING — версия готовится: чанки и эмбеддинги ещё считаются.
+# ERROR — индексация не удалась; предыдущая ACTIVE-версия при этом
+# продолжает отвечать сотрудникам.
+KNOWLEDGE_SOURCE_STATUSES = ("DRAFT", "INDEXING", "ACTIVE", "ARCHIVED", "ERROR")
+FAQ_ENTRY_STATUSES = ("DRAFT", "ACTIVE", "ARCHIVED")
+UNANSWERED_QUESTION_STATUSES = ("NEW", "IN_REVIEW", "ANSWERED", "IGNORED")
+LLM_QUERY_STATUSES = (
+    "EXACT_FAQ", "RAG_ANSWERED", "ESCALATED", "PERSONAL_DATA", "ERROR",
+)
+ANSWER_FEEDBACK_RATINGS = ("HELPFUL", "NOT_HELPFUL")
+INDEX_JOB_STATUSES = ("QUEUED", "RUNNING", "SUCCEEDED", "FAILED")
+
+# Уровень действия правила. Чем выше число, тем выше приоритет:
+# правило офиса перекрывает региональное, региональное — глобальное.
+SCOPE_LEVEL_GLOBAL = 1
+SCOPE_LEVEL_REGION = 2
+SCOPE_LEVEL_OFFICE = 3
 QUESTION_STATUSES = (
     "NEW", "AI_ANSWERED", "ESCALATED_TO_HR", "HR_ANSWERED", "CLOSED",
 )

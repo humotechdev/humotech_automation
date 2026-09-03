@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Index, String, text
+from sqlalchemy import Index, Integer, String, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -31,6 +31,14 @@ class Organization(UUIDPrimaryKeyMixin, TimestampMixin, ArchivableMixin, Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     default_timezone: Mapped[str] = mapped_column(String(100), nullable=False)
     status: Mapped[str] = mapped_column(String(30), nullable=False)
+
+    # Счётчик ревизии базы знаний. Растёт при каждой публикации или архивации
+    # источника и входит в ключ кэша — поэтому после публикации нового правила
+    # весь старый кэш ответов автоматически перестаёт использоваться,
+    # без обхода и удаления ключей.
+    knowledge_revision: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="1"
+    )
 
     regions: Mapped[list["Region"]] = relationship(back_populates="organization")
     offices: Mapped[list["Office"]] = relationship(back_populates="organization")

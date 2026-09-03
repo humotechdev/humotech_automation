@@ -4,5 +4,10 @@ psycopg[binary]~=3.2
 pydantic~=2.9
 pydantic-settings~=2.6
 
+# AI-модуль
+pgvector~=0.3
+openai~=1.60
+tiktoken~=0.8
+
 # тесты
 pytest~=8.3

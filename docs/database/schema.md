@@ -1,9 +1,14 @@
 # Схема базы данных HUMOTECH HR
 
-PostgreSQL 15+, SQLAlchemy 2.0, миграции Alembic. 38 таблиц.
+PostgreSQL 15+ с расширениями `btree_gist` и `pgvector`, SQLAlchemy 2.0,
+миграции Alembic. 44 таблицы.
 
 Модели: `apps/backend-api/src/modules/*/models.py`
-Миграция: `apps/backend-api/migrations/versions/0001_initial_schema.py`
+Миграции: `apps/backend-api/migrations/versions/0001_initial_schema.py`,
+`0002_ai_assistant.py`
+
+Устройство AI-ассистента, работающего поверх таблиц базы знаний, описано
+отдельно: [`docs/architecture/ai-assistant.md`](../architecture/ai-assistant.md)
 
 ---
 
@@ -282,6 +287,7 @@ production предусмотрен `ROTATING`; `STATIC` оставлен как
 | `name` | VARCHAR(255) | нет | — |
 | `default_timezone` | VARCHAR(100) | нет | — |
 | `status` | VARCHAR(30) | нет | — |
+| `knowledge_revision` | INTEGER | нет | default `1` |
 | `id` | UUID | нет | PK, default `gen_random_uuid()` |
 | `updated_at` | DATETIME | нет | default `now()` |
 | `created_at` | DATETIME | нет | default `now()` |
@@ -343,10 +349,10 @@ production предусмотрен `ROTATING`; `STATIC` оставлен как
 | `created_at` | DATETIME | нет | default `now()` |
 | `archived_at` | DATETIME | да | — |
 
-- UNIQUE `uq_offices_org_code`: (organization_id, code)
 - CHECK `ck_offices_geofence_positive`: `geofence_radius_m IS NULL OR geofence_radius_m > 0`
-- CHECK `ck_offices_status`: `status IN ('ACTIVE', 'INACTIVE', 'CLOSED', 'ARCHIVED')`
 - CHECK `ck_offices_close_after_open`: `closed_at IS NULL OR opened_at IS NULL OR closed_at >= opened_at`
+- CHECK `ck_offices_status`: `status IN ('ACTIVE', 'INACTIVE', 'CLOSED', 'ARCHIVED')`
+- UNIQUE `uq_offices_org_code`: (organization_id, code)
 - INDEX `ix_offices_organization_id`: (organization_id)
 - INDEX `ix_offices_region_id`: (region_id)
 
@@ -382,9 +388,9 @@ production предусмотрен `ROTATING`; `STATIC` оставлен как
 | `created_at` | DATETIME | нет | default `now()` |
 | `archived_at` | DATETIME | да | — |
 
-- UNIQUE `uq_departments_office_code`: (office_id, code)
-- CHECK `ck_departments_status`: `status IN ('ACTIVE', 'INACTIVE', 'ARCHIVED')`
 - CHECK `ck_departments_no_self_parent`: `parent_department_id IS NULL OR parent_department_id <> id`
+- CHECK `ck_departments_status`: `status IN ('ACTIVE', 'INACTIVE', 'ARCHIVED')`
+- UNIQUE `uq_departments_office_code`: (office_id, code)
 - INDEX `ix_departments_office_id`: (office_id)
 - INDEX `ix_departments_organization_id`: (organization_id)
 - INDEX `ix_departments_parent_department_id`: (parent_department_id)
@@ -432,8 +438,8 @@ production предусмотрен `ROTATING`; `STATIC` оставлен как
 | `created_at` | DATETIME | нет | default `now()` |
 | `archived_at` | DATETIME | да | — |
 
-- UNIQUE `uq_employees_org_number`: (organization_id, employee_number)
 - CHECK `ck_employees_employment_status`: `employment_status IN ('ACTIVE', 'PROBATION', 'SUSPENDED', 'TERMINATED', 'ARCHIVED')`
+- UNIQUE `uq_employees_org_number`: (organization_id, employee_number)
 - CHECK `ck_employees_termination_after_hire`: `termination_date IS NULL OR termination_date >= hire_date`
 - INDEX `ix_employees_org_status`: (organization_id, employment_status)
 - INDEX `ix_employees_organization_id`: (organization_id)
@@ -457,11 +463,11 @@ production предусмотрен `ROTATING`; `STATIC` оставлен как
 | `updated_at` | DATETIME | нет | default `now()` |
 | `created_at` | DATETIME | нет | default `now()` |
 
-- CHECK `ck_employee_assignments_valid_period`: `valid_to IS NULL OR valid_to >= valid_from`
-- CHECK `ck_employee_assignments_employment_type`: `employment_type IN ('FULL_TIME', 'PART_TIME', 'CONTRACT', 'INTERN')`
 - CHECK `ck_employee_assignments_no_self_manager`: `manager_employee_id IS NULL OR manager_employee_id <> employee_id`
-- CHECK `ck_employee_assignments_work_mode`: `work_mode IN ('ONSITE', 'HYBRID', 'REMOTE')`
+- CHECK `ck_employee_assignments_employment_type`: `employment_type IN ('FULL_TIME', 'PART_TIME', 'CONTRACT', 'INTERN')`
+- CHECK `ck_employee_assignments_valid_period`: `valid_to IS NULL OR valid_to >= valid_from`
 - EXCLUDE `ex_employee_assignments_primary_overlap` (gist)
+- CHECK `ck_employee_assignments_work_mode`: `work_mode IN ('ONSITE', 'HYBRID', 'REMOTE')`
 - INDEX `ix_employee_assignments_employee_id`: (employee_id)
 - INDEX `ix_employee_assignments_office_id`: (office_id)
 - INDEX `ix_employee_assignments_organization_id`: (organization_id)
@@ -482,8 +488,8 @@ production предусмотрен `ROTATING`; `STATIC` оставлен как
 | `updated_at` | DATETIME | нет | default `now()` |
 | `created_at` | DATETIME | нет | default `now()` |
 
-- UNIQUE `uq_employee_office_access_period`: (employee_id, office_id, valid_from)
 - CHECK `ck_employee_office_access_access_type`: `access_type IN ('PRIMARY', 'TEMPORARY', 'PERMANENT', 'VISITOR')`
+- UNIQUE `uq_employee_office_access_period`: (employee_id, office_id, valid_from)
 - CHECK `ck_employee_office_access_valid_period`: `valid_to IS NULL OR valid_to >= valid_from`
 - INDEX `ix_employee_office_access_employee_id`: (employee_id)
 - INDEX `ix_employee_office_access_office_id`: (office_id)
@@ -615,10 +621,10 @@ production предусмотрен `ROTATING`; `STATIC` оставлен как
 | `created_at` | DATETIME | нет | default `now()` |
 | `archived_at` | DATETIME | да | — |
 
-- CHECK `ck_work_schedules_weekly_minutes_positive`: `weekly_minutes > 0`
-- CHECK `ck_work_schedules_late_grace_non_negative`: `late_grace_minutes >= 0`
 - CHECK `ck_work_schedules_status`: `status IN ('ACTIVE', 'INACTIVE', 'ARCHIVED')`
+- CHECK `ck_work_schedules_late_grace_non_negative`: `late_grace_minutes >= 0`
 - CHECK `ck_work_schedules_early_grace_non_negative`: `early_leave_grace_minutes >= 0`
+- CHECK `ck_work_schedules_weekly_minutes_positive`: `weekly_minutes > 0`
 - INDEX `ix_work_schedules_organization_id`: (organization_id)
 
 #### `schedule_days`
@@ -635,9 +641,9 @@ production предусмотрен `ROTATING`; `STATIC` оставлен как
 | `updated_at` | DATETIME | нет | default `now()` |
 | `created_at` | DATETIME | нет | default `now()` |
 
-- UNIQUE `uq_schedule_days_weekday`: (schedule_id, weekday)
 - CHECK `ck_schedule_days_working_day_has_time`: `NOT is_working_day OR (start_time IS NOT NULL AND end_time IS NOT NULL)`
 - CHECK `ck_schedule_days_weekday_range`: `weekday BETWEEN 1 AND 7`
+- UNIQUE `uq_schedule_days_weekday`: (schedule_id, weekday)
 - INDEX `ix_schedule_days_schedule_id`: (schedule_id)
 
 #### `schedule_breaks`
@@ -719,13 +725,13 @@ production предусмотрен `ROTATING`; `STATIC` оставлен как
 | `created_at` | DATETIME | нет | default `now()` |
 | `archived_at` | DATETIME | да | — |
 
+- CHECK `ck_office_qr_points_direction_mode`: `direction_mode IN ('ENTRY', 'EXIT', 'BOTH')`
 - UNIQUE `uq_office_qr_points_office_code`: (office_id, code)
 - CHECK `ck_office_qr_points_rotation_seconds_range`: `rotation_seconds IS NULL OR rotation_seconds BETWEEN 15 AND 300`
-- CHECK `ck_office_qr_points_mode_requires_fields`: `(qr_mode = 'STATIC'   AND static_token_hash IS NOT NULL) OR (qr_mode = 'ROTATING' AND rotation_seconds IS NOT NULL)`
-- CHECK `ck_office_qr_points_direction_mode`: `direction_mode IN ('ENTRY', 'EXIT', 'BOTH')`
 - CHECK `ck_office_qr_points_token_version_positive`: `token_version > 0`
 - CHECK `ck_office_qr_points_qr_mode`: `qr_mode IN ('STATIC', 'ROTATING')`
 - CHECK `ck_office_qr_points_accuracy_positive`: `allowed_location_accuracy_m IS NULL OR allowed_location_accuracy_m > 0`
+- CHECK `ck_office_qr_points_mode_requires_fields`: `(qr_mode = 'STATIC'   AND static_token_hash IS NOT NULL) OR (qr_mode = 'ROTATING' AND rotation_seconds IS NOT NULL)`
 - INDEX `ix_office_qr_points_office_id`: (office_id)
 - INDEX `ix_office_qr_points_organization_id`: (organization_id)
 
@@ -745,8 +751,8 @@ production предусмотрен `ROTATING`; `STATIC` оставлен как
 | `organization_id` | UUID | нет | FK → `organizations.id` `RESTRICT` |
 | `created_at` | DATETIME | нет | default `now()` |
 
-- CHECK `ck_qr_display_sessions_end_after_start`: `ended_at IS NULL OR ended_at >= started_at`
 - CHECK `ck_qr_display_sessions_status`: `status IN ('ACTIVE', 'EXPIRED', 'REVOKED', 'CLOSED')`
+- CHECK `ck_qr_display_sessions_end_after_start`: `ended_at IS NULL OR ended_at >= started_at`
 - INDEX `ix_qr_display_sessions_organization_id`: (organization_id)
 - INDEX `ix_qr_display_sessions_qr_point_id`: (qr_point_id)
 
@@ -782,11 +788,11 @@ production предусмотрен `ROTATING`; `STATIC` оставлен как
 | `organization_id` | UUID | нет | FK → `organizations.id` `RESTRICT` |
 | `created_at` | DATETIME | нет | default `now()` |
 
+- CHECK `ck_attendance_events_source`: `source IN ('QR', 'MANUAL', 'IMPORT')`
 - CHECK `ck_attendance_events_verification_status`: `verification_status IN ('ACCEPTED', 'REJECTED', 'REVIEW')`
 - CHECK `ck_attendance_events_qr_requires_point`: `source <> 'QR' OR qr_point_id IS NOT NULL`
-- CHECK `ck_attendance_events_event_type`: `event_type IN ('ENTRY', 'EXIT')`
 - CHECK `ck_attendance_events_qr_expiry_after_issue`: `qr_expires_at IS NULL OR qr_issued_at IS NULL OR qr_expires_at > qr_issued_at`
-- CHECK `ck_attendance_events_source`: `source IN ('QR', 'MANUAL', 'IMPORT')`
+- CHECK `ck_attendance_events_event_type`: `event_type IN ('ENTRY', 'EXIT')`
 - INDEX `ix_attendance_events_employee_time`: (employee_id, occurred_at DESC)
 - INDEX `ix_attendance_events_office_time`: (office_id, occurred_at DESC)
 - INDEX `ix_attendance_events_organization_id`: (organization_id)
@@ -813,9 +819,9 @@ production предусмотрен `ROTATING`; `STATIC` оставлен как
 | `updated_at` | DATETIME | нет | default `now()` |
 | `created_at` | DATETIME | нет | default `now()` |
 
+- CHECK `ck_attendance_sessions_duration_non_negative`: `duration_seconds IS NULL OR duration_seconds >= 0`
 - CHECK `ck_attendance_sessions_status`: `status IN ('OPEN', 'CLOSED', 'CORRECTED', 'INVALID')`
 - CHECK `ck_attendance_sessions_end_after_start`: `ended_at IS NULL OR ended_at >= started_at`
-- CHECK `ck_attendance_sessions_duration_non_negative`: `duration_seconds IS NULL OR duration_seconds >= 0`
 - CHECK `ck_attendance_sessions_closed_has_exit`: `status <> 'CLOSED' OR (ended_at IS NOT NULL AND exit_event_id IS NOT NULL)`
 - INDEX `ix_attendance_sessions_employee_time`: (employee_id, started_at DESC)
 - INDEX `ix_attendance_sessions_office_time`: (office_id, started_at DESC)
@@ -841,9 +847,9 @@ production предусмотрен `ROTATING`; `STATIC` оставлен как
 | `updated_at` | DATETIME | нет | default `now()` |
 | `created_at` | DATETIME | нет | default `now()` |
 
-- CHECK `ck_attendance_correction_requests_something_requested`: `requested_entry_at IS NOT NULL OR requested_exit_at IS NOT NULL`
-- CHECK `ck_attendance_correction_requests_status`: `status IN ('DRAFT', 'SUBMITTED', 'IN_REVIEW', 'APPROVED', 'REJECTED', 'CANCELLED')`
 - CHECK `ck_attendance_correction_requests_exit_after_entry`: `requested_exit_at IS NULL OR requested_entry_at IS NULL OR requested_exit_at >= requested_entry_at`
+- CHECK `ck_attendance_correction_requests_status`: `status IN ('DRAFT', 'SUBMITTED', 'IN_REVIEW', 'APPROVED', 'REJECTED', 'CANCELLED')`
+- CHECK `ck_attendance_correction_requests_something_requested`: `requested_entry_at IS NOT NULL OR requested_exit_at IS NOT NULL`
 - INDEX `ix_attendance_correction_requests_employee_id`: (employee_id)
 - INDEX `ix_attendance_correction_requests_organization_id`: (organization_id)
 
@@ -866,8 +872,8 @@ production предусмотрен `ROTATING`; `STATIC` оставлен как
 | `updated_at` | DATETIME | нет | default `now()` |
 | `created_at` | DATETIME | нет | default `now()` |
 
-- UNIQUE `uq_absence_types_org_code`: (organization_id, code)
 - CHECK `ck_absence_types_document_days_non_negative`: `document_required_after_days IS NULL OR document_required_after_days >= 0`
+- UNIQUE `uq_absence_types_org_code`: (organization_id, code)
 - INDEX `ix_absence_types_organization_id`: (organization_id)
 
 #### `absence_requests`
@@ -891,11 +897,11 @@ production предусмотрен `ROTATING`; `STATIC` оставлен как
 | `updated_at` | DATETIME | нет | default `now()` |
 | `created_at` | DATETIME | нет | default `now()` |
 
-- CHECK `ck_absence_requests_request_kind`: `request_kind IN ('CREATE', 'EXTEND', 'CANCEL')`
 - CHECK `ck_absence_requests_status`: `status IN ('DRAFT', 'SUBMITTED', 'IN_REVIEW', 'APPROVED', 'REJECTED', 'CANCELLED')`
 - CHECK `ck_absence_requests_end_after_start`: `requested_end_at IS NULL OR requested_start_at IS NULL OR requested_end_at >= requested_start_at`
 - CHECK `ck_absence_requests_no_self_parent`: `parent_request_id IS NULL OR parent_request_id <> id`
 - CHECK `ck_absence_requests_derived_needs_parent`: `request_kind = 'CREATE' OR parent_request_id IS NOT NULL`
+- CHECK `ck_absence_requests_request_kind`: `request_kind IN ('CREATE', 'EXTEND', 'CANCEL')`
 - INDEX `ix_absence_requests_employee_id`: (employee_id)
 - INDEX `ix_absence_requests_organization_id`: (organization_id)
 - INDEX `ix_absence_requests_status`: (organization_id, status)
@@ -917,8 +923,8 @@ production предусмотрен `ROTATING`; `STATIC` оставлен как
 | `updated_at` | DATETIME | нет | default `now()` |
 | `created_at` | DATETIME | нет | default `now()` |
 
-- CHECK `ck_employee_absences_end_after_start`: `end_at >= start_at`
 - CHECK `ck_employee_absences_status`: `status IN ('PLANNED', 'ACTIVE', 'COMPLETED', 'CANCELLED')`
+- CHECK `ck_employee_absences_end_after_start`: `end_at >= start_at`
 - INDEX `ix_employee_absences_employee_id`: (employee_id)
 - INDEX `ix_employee_absences_organization_id`: (organization_id)
 - INDEX `ix_employee_absences_period`: (employee_id, start_at, end_at)
@@ -979,11 +985,11 @@ production предусмотрен `ROTATING`; `STATIC` оставлен как
 | `updated_at` | DATETIME | нет | default `now()` |
 | `created_at` | DATETIME | нет | default `now()` |
 
+- CHECK `ck_leave_balances_reserved_non_negative`: `reserved_minutes >= 0`
+- CHECK `ck_leave_balances_used_non_negative`: `used_minutes >= 0`
+- CHECK `ck_leave_balances_allocated_non_negative`: `allocated_minutes >= 0`
 - UNIQUE `uq_leave_balances_year`: (employee_id, absence_type_id, year)
 - CHECK `ck_leave_balances_year_range`: `year BETWEEN 2000 AND 2200`
-- CHECK `ck_leave_balances_used_non_negative`: `used_minutes >= 0`
-- CHECK `ck_leave_balances_reserved_non_negative`: `reserved_minutes >= 0`
-- CHECK `ck_leave_balances_allocated_non_negative`: `allocated_minutes >= 0`
 - INDEX `ix_leave_balances_employee_id`: (employee_id)
 - INDEX `ix_leave_balances_organization_id`: (organization_id)
 
@@ -1005,11 +1011,213 @@ production предусмотрен `ROTATING`; `STATIC` оставлен как
 | `organization_id` | UUID | нет | FK → `organizations.id` `RESTRICT` |
 | `created_at` | DATETIME | нет | default `now()` |
 
+- CHECK `ck_files_scan_status`: `scan_status IN ('PENDING', 'CLEAN', 'INFECTED', 'FAILED')`
 - CHECK `ck_files_size_non_negative`: `size_bytes >= 0`
 - CHECK `ck_files_checksum_length`: `char_length(checksum_sha256) = 64`
-- CHECK `ck_files_scan_status`: `scan_status IN ('PENDING', 'CLEAN', 'INFECTED', 'FAILED')`
 - INDEX `ix_files_organization_id`: (organization_id)
 - UNIQUE INDEX `uq_files_storage_key`: (storage_provider, storage_key)
+
+### База знаний AI-ассистента
+
+#### `knowledge_sources`
+
+| Колонка | Тип | NULL | Примечание |
+|---|---|---|---|
+| `title` | VARCHAR(255) | нет | — |
+| `source_type` | VARCHAR(20) | нет | — |
+| `language` | VARCHAR(10) | нет | — |
+| `office_id` | UUID | да | FK → `offices.id` `RESTRICT` |
+| `region_id` | UUID | да | FK → `regions.id` `RESTRICT` |
+| `department_id` | UUID | да | FK → `departments.id` `RESTRICT` |
+| `version` | INTEGER | нет | default `1` |
+| `status` | VARCHAR(20) | нет | — |
+| `content` | TEXT | нет | — |
+| `content_hash` | VARCHAR(64) | нет | — |
+| `effective_from` | DATE | да | — |
+| `effective_to` | DATE | да | — |
+| `priority` | INTEGER | нет | default `0` |
+| `created_by_user_id` | UUID | нет | FK → `users.id` `RESTRICT` |
+| `approved_by_user_id` | UUID | да | FK → `users.id` `SET NULL` |
+| `parent_source_id` | UUID | да | FK → `knowledge_sources.id` `RESTRICT` |
+| `metadata` | JSONB | да | — |
+| `published_at` | DATETIME | да | — |
+| `approved_at` | DATETIME | да | — |
+| `id` | UUID | нет | PK, default `gen_random_uuid()` |
+| `organization_id` | UUID | нет | FK → `organizations.id` `RESTRICT` |
+| `updated_at` | DATETIME | нет | default `now()` |
+| `created_at` | DATETIME | нет | default `now()` |
+| `archived_at` | DATETIME | да | — |
+
+- CHECK `ck_knowledge_sources_status`: `status IN ('DRAFT', 'INDEXING', 'ACTIVE', 'ARCHIVED', 'ERROR')`
+- CHECK `ck_knowledge_sources_no_self_parent`: `parent_source_id IS NULL OR parent_source_id <> id`
+- CHECK `ck_knowledge_sources_content_hash_length`: `char_length(content_hash) = 64`
+- CHECK `ck_knowledge_sources_source_type`: `source_type IN ('FAQ', 'POLICY', 'INSTRUCTION', 'DOCUMENT')`
+- CHECK `ck_knowledge_sources_version_positive`: `version > 0`
+- CHECK `ck_knowledge_sources_effective_period`: `effective_to IS NULL OR effective_from IS NULL OR effective_to >= effective_from`
+- CHECK `ck_knowledge_sources_scope_not_both`: `office_id IS NULL OR region_id IS NULL`
+- INDEX `ix_knowledge_sources_fts`: (to_tsvector('simple', title || ' ' || content)) USING gin
+- INDEX `ix_knowledge_sources_lookup`: (organization_id, status, language)
+- INDEX `ix_knowledge_sources_office_id`: (office_id)
+- INDEX `ix_knowledge_sources_organization_id`: (organization_id)
+- INDEX `ix_knowledge_sources_region_id`: (region_id)
+- UNIQUE INDEX `uq_knowledge_sources_active_lineage`: (organization_id, title, language) WHERE `status = 'ACTIVE'`
+
+#### `knowledge_chunks`
+
+| Колонка | Тип | NULL | Примечание |
+|---|---|---|---|
+| `source_id` | UUID | нет | FK → `knowledge_sources.id` `CASCADE` |
+| `chunk_index` | INTEGER | нет | — |
+| `chunk_text` | TEXT | нет | — |
+| `embedding` | VECTOR(1536) | да | — |
+| `token_count` | INTEGER | нет | — |
+| `content_hash` | VARCHAR(64) | нет | — |
+| `metadata` | JSONB | да | — |
+| `id` | UUID | нет | PK, default `gen_random_uuid()` |
+| `organization_id` | UUID | нет | FK → `organizations.id` `RESTRICT` |
+| `created_at` | DATETIME | нет | default `now()` |
+
+- CHECK `ck_knowledge_chunks_token_count_positive`: `token_count > 0`
+- UNIQUE `uq_knowledge_chunks_index`: (source_id, chunk_index)
+- CHECK `ck_knowledge_chunks_chunk_index_non_negative`: `chunk_index >= 0`
+- INDEX `ix_knowledge_chunks_embedding_cosine`: (embedding) USING hnsw
+- INDEX `ix_knowledge_chunks_fts`: (to_tsvector('simple', chunk_text)) USING gin
+- INDEX `ix_knowledge_chunks_organization_id`: (organization_id)
+- INDEX `ix_knowledge_chunks_source_id`: (source_id)
+
+#### `faq_entries`
+
+| Колонка | Тип | NULL | Примечание |
+|---|---|---|---|
+| `canonical_question` | TEXT | нет | — |
+| `approved_answer` | TEXT | нет | — |
+| `question_embedding` | VECTOR(1536) | да | — |
+| `source_id` | UUID | да | FK → `knowledge_sources.id` `RESTRICT` |
+| `language` | VARCHAR(10) | нет | — |
+| `office_id` | UUID | да | FK → `offices.id` `RESTRICT` |
+| `region_id` | UUID | да | FK → `regions.id` `RESTRICT` |
+| `status` | VARCHAR(20) | нет | — |
+| `priority` | INTEGER | нет | default `0` |
+| `created_by_user_id` | UUID | нет | FK → `users.id` `RESTRICT` |
+| `approved_by_user_id` | UUID | да | FK → `users.id` `SET NULL` |
+| `content_hash` | VARCHAR(64) | нет | — |
+| `id` | UUID | нет | PK, default `gen_random_uuid()` |
+| `organization_id` | UUID | нет | FK → `organizations.id` `RESTRICT` |
+| `updated_at` | DATETIME | нет | default `now()` |
+| `created_at` | DATETIME | нет | default `now()` |
+
+- CHECK `ck_faq_entries_status`: `status IN ('DRAFT', 'ACTIVE', 'ARCHIVED')`
+- CHECK `ck_faq_entries_scope_not_both`: `office_id IS NULL OR region_id IS NULL`
+- CHECK `ck_faq_entries_content_hash_length`: `char_length(content_hash) = 64`
+- INDEX `ix_faq_entries_embedding_cosine`: (question_embedding) USING hnsw
+- INDEX `ix_faq_entries_lookup`: (organization_id, status, language)
+- INDEX `ix_faq_entries_organization_id`: (organization_id)
+
+#### `knowledge_index_jobs`
+
+| Колонка | Тип | NULL | Примечание |
+|---|---|---|---|
+| `source_id` | UUID | нет | FK → `knowledge_sources.id` `CASCADE` |
+| `status` | VARCHAR(20) | нет | — |
+| `attempts` | INTEGER | нет | default `0` |
+| `error_summary` | TEXT | да | — |
+| `started_at` | DATETIME | да | — |
+| `finished_at` | DATETIME | да | — |
+| `next_attempt_at` | DATETIME | да | — |
+| `id` | UUID | нет | PK, default `gen_random_uuid()` |
+| `organization_id` | UUID | нет | FK → `organizations.id` `RESTRICT` |
+| `created_at` | DATETIME | нет | default `now()` |
+
+- CHECK `ck_knowledge_index_jobs_attempts_non_negative`: `attempts >= 0`
+- CHECK `ck_knowledge_index_jobs_status`: `status IN ('QUEUED', 'RUNNING', 'SUCCEEDED', 'FAILED')`
+- INDEX `ix_knowledge_index_jobs_organization_id`: (organization_id)
+- INDEX `ix_knowledge_index_jobs_queue`: (next_attempt_at) WHERE `status = 'QUEUED'`
+- INDEX `ix_knowledge_index_jobs_source_id`: (source_id)
+
+### Ассистент: вопросы, журнал, оценки
+
+#### `unanswered_questions`
+
+| Колонка | Тип | NULL | Примечание |
+|---|---|---|---|
+| `employee_id` | UUID | да | FK → `employees.id` `RESTRICT` |
+| `office_id` | UUID | да | FK → `offices.id` `RESTRICT` |
+| `region_id` | UUID | да | FK → `regions.id` `RESTRICT` |
+| `language` | VARCHAR(10) | нет | — |
+| `question_text` | TEXT | нет | — |
+| `normalized_hash` | VARCHAR(64) | нет | — |
+| `occurrences_count` | INTEGER | нет | default `1` |
+| `best_retrieval_score` | NUMERIC(6, 5) | да | — |
+| `status` | VARCHAR(20) | нет | — |
+| `assigned_to_user_id` | UUID | да | FK → `users.id` `SET NULL` |
+| `resolved_faq_id` | UUID | да | FK → `faq_entries.id` `SET NULL` |
+| `resolution_note` | TEXT | да | — |
+| `first_asked_at` | DATETIME | нет | default `now()` |
+| `last_asked_at` | DATETIME | нет | default `now()` |
+| `id` | UUID | нет | PK, default `gen_random_uuid()` |
+| `organization_id` | UUID | нет | FK → `organizations.id` `RESTRICT` |
+| `updated_at` | DATETIME | нет | default `now()` |
+| `created_at` | DATETIME | нет | default `now()` |
+
+- CHECK `ck_unanswered_questions_occurrences_positive`: `occurrences_count > 0`
+- CHECK `ck_unanswered_questions_status`: `status IN ('NEW', 'IN_REVIEW', 'ANSWERED', 'IGNORED')`
+- UNIQUE `uq_unanswered_questions_cluster`: (organization_id, normalized_hash, language, office_id, region_id)
+- CHECK `ck_unanswered_questions_score_range`: `best_retrieval_score IS NULL OR (best_retrieval_score >= 0 AND best_retrieval_score <= 1)`
+- INDEX `ix_unanswered_questions_organization_id`: (organization_id)
+- INDEX `ix_unanswered_questions_status`: (organization_id, status)
+- INDEX `ix_unanswered_questions_top`: (organization_id, occurrences_count DESC)
+
+#### `llm_query_logs`
+
+| Колонка | Тип | NULL | Примечание |
+|---|---|---|---|
+| `employee_id` | UUID | да | FK → `employees.id` `RESTRICT` |
+| `office_id` | UUID | да | FK → `offices.id` `RESTRICT` |
+| `region_id` | UUID | да | FK → `regions.id` `RESTRICT` |
+| `language` | VARCHAR(10) | нет | — |
+| `question_text` | TEXT | да | — |
+| `answer_text` | TEXT | да | — |
+| `status` | VARCHAR(20) | нет | — |
+| `model` | VARCHAR(100) | да | — |
+| `prompt_version` | VARCHAR(20) | да | — |
+| `input_tokens` | INTEGER | да | — |
+| `output_tokens` | INTEGER | да | — |
+| `latency_ms` | INTEGER | да | — |
+| `retrieval_score` | NUMERIC(6, 5) | да | — |
+| `retrieved_source_ids` | JSONB | да | — |
+| `cache_hit` | BOOLEAN | нет | default `false` |
+| `fallback_used` | BOOLEAN | нет | default `false` |
+| `error_code` | VARCHAR(50) | да | — |
+| `anonymized_at` | DATETIME | да | — |
+| `id` | UUID | нет | PK, default `gen_random_uuid()` |
+| `organization_id` | UUID | нет | FK → `organizations.id` `RESTRICT` |
+| `created_at` | DATETIME | нет | default `now()` |
+
+- CHECK `ck_llm_query_logs_input_tokens_valid`: `input_tokens IS NULL OR input_tokens >= 0`
+- CHECK `ck_llm_query_logs_output_tokens_valid`: `output_tokens IS NULL OR output_tokens >= 0`
+- CHECK `ck_llm_query_logs_latency_valid`: `latency_ms IS NULL OR latency_ms >= 0`
+- CHECK `ck_llm_query_logs_status`: `status IN ('EXACT_FAQ', 'RAG_ANSWERED', 'ESCALATED', 'PERSONAL_DATA', 'ERROR')`
+- INDEX `ix_llm_query_logs_org_time`: (organization_id, created_at DESC)
+- INDEX `ix_llm_query_logs_organization_id`: (organization_id)
+- INDEX `ix_llm_query_logs_retention`: (created_at) WHERE `anonymized_at IS NULL`
+- INDEX `ix_llm_query_logs_status`: (organization_id, status)
+
+#### `answer_feedback`
+
+| Колонка | Тип | NULL | Примечание |
+|---|---|---|---|
+| `query_log_id` | UUID | нет | FK → `llm_query_logs.id` `RESTRICT` |
+| `employee_id` | UUID | да | FK → `employees.id` `RESTRICT` |
+| `rating` | VARCHAR(20) | нет | — |
+| `comment` | TEXT | да | — |
+| `id` | UUID | нет | PK, default `gen_random_uuid()` |
+| `organization_id` | UUID | нет | FK → `organizations.id` `RESTRICT` |
+| `created_at` | DATETIME | нет | default `now()` |
+
+- CHECK `ck_answer_feedback_rating`: `rating IN ('HELPFUL', 'NOT_HELPFUL')`
+- UNIQUE `uq_answer_feedback_once`: (query_log_id, employee_id)
+- INDEX `ix_answer_feedback_organization_id`: (organization_id)
+- INDEX `ix_answer_feedback_query_log_id`: (query_log_id)
 
 ### Telegram, знания, уведомления
 
@@ -1036,29 +1244,6 @@ production предусмотрен `ROTATING`; `STATIC` оставлен как
 - CHECK `ck_telegram_accounts_status`: `status IN ('ACTIVE', 'REVOKED', 'BLOCKED')`
 - INDEX `ix_telegram_accounts_organization_id`: (organization_id)
 
-#### `knowledge_articles`
-
-| Колонка | Тип | NULL | Примечание |
-|---|---|---|---|
-| `title` | VARCHAR(255) | нет | — |
-| `category` | VARCHAR(100) | да | — |
-| `content` | TEXT | нет | — |
-| `version` | INTEGER | нет | default `1` |
-| `status` | VARCHAR(20) | нет | — |
-| `created_by_user_id` | UUID | нет | FK → `users.id` `RESTRICT` |
-| `approved_by_user_id` | UUID | да | FK → `users.id` `SET NULL` |
-| `approved_at` | DATETIME | да | — |
-| `id` | UUID | нет | PK, default `gen_random_uuid()` |
-| `organization_id` | UUID | нет | FK → `organizations.id` `RESTRICT` |
-| `updated_at` | DATETIME | нет | default `now()` |
-| `created_at` | DATETIME | нет | default `now()` |
-| `archived_at` | DATETIME | да | — |
-
-- CHECK `ck_knowledge_articles_status`: `status IN ('DRAFT', 'IN_REVIEW', 'PUBLISHED', 'ARCHIVED')`
-- CHECK `ck_knowledge_articles_version_positive`: `version > 0`
-- INDEX `ix_knowledge_articles_org_status`: (organization_id, status)
-- INDEX `ix_knowledge_articles_organization_id`: (organization_id)
-
 #### `employee_questions`
 
 | Колонка | Тип | NULL | Примечание |
@@ -1069,7 +1254,7 @@ production предусмотрен `ROTATING`; `STATIC` оставлен как
 | `status` | VARCHAR(30) | нет | — |
 | `ai_answer_text` | TEXT | да | — |
 | `ai_confidence` | NUMERIC(5, 4) | да | — |
-| `answer_source_article_id` | UUID | да | FK → `knowledge_articles.id` `RESTRICT` |
+| `answer_source_id` | UUID | да | FK → `knowledge_sources.id` `RESTRICT` |
 | `assigned_to_user_id` | UUID | да | FK → `users.id` `SET NULL` |
 | `hr_answer_text` | TEXT | да | — |
 | `answered_at` | DATETIME | да | — |
