@@ -1,13 +1,23 @@
-SQLAlchemy~=2.0
-alembic~=1.14
+# Боевые зависимости backend-api.
+#
+# SQLAlchemy и Alembic здесь НЕТ намеренно: активный runtime работает
+# на Django ORM и Django migrations. Прежний слой сохранён в `src/`
+# и `migrations/` только как история и перекрёстная проверка поведения;
+# зависимости для его запуска вынесены в requirements-legacy.txt.
+
+Django~=5.2
+djangorestframework~=3.16
+django-filter~=25.1
 psycopg[binary]~=3.2
+
+# AI-модуль
+pgvector~=0.4
+openai~=1.60
+tiktoken~=0.8
+# Pydantic остаётся там, где он к ORM не привязан: структурированный ответ
+# модели, проверка ответов провайдера и схемы конфигурации.
 pydantic~=2.9
 pydantic-settings~=2.6
 
-# AI-модуль
-pgvector~=0.3
-openai~=1.60
-tiktoken~=0.8
-
-# тесты
-pytest~=8.3
+# Пароли: argon2 — стойкий алгоритм по умолчанию, см. PASSWORD_HASHERS.
+argon2-cffi~=25.1

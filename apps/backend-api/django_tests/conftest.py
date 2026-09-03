@@ -394,3 +394,17 @@ def scope() -> EmployeeScope:
         language="ru",
         employment_status="ACTIVE",
     )
+
+
+@pytest.fixture()
+def fresh_qr(now: datetime) -> dict:
+    """Параметры действующего меняющегося QR: выпущен только что, живёт 45 секунд."""
+    return {
+        "qr_issued_at": now,
+        "qr_expires_at": now + timedelta(seconds=45),
+    }
+
+
+@pytest.fixture()
+def other_qr_point(db, organization, other_office) -> OfficeQrPoint:
+    return make_qr_point(organization, other_office, code="BRANCH_ENTRANCE")

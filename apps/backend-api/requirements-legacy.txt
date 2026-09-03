@@ -1,0 +1,13 @@
+# Прежний слой на SQLAlchemy и Alembic.
+#
+# В боевую поставку НЕ входит. Нужен только чтобы прогнать старый набор
+# тестов как перекрёстную проверку: он подтверждает, что после переноса
+# на Django ORM сохранилось поведение, а не только схема.
+#
+#     pip install -r requirements-legacy.txt
+#     TEST_DATABASE_URL=... pytest        # старый набор, 351 тест
+
+-r requirements-dev.txt
+
+SQLAlchemy~=2.0
+alembic~=1.14
