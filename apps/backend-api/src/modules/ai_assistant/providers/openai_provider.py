@@ -17,6 +17,7 @@ from collections.abc import Sequence
 
 from src.modules.ai_assistant.errors import (
     ConfigurationError,
+    InsufficientQuotaError,
     ModelUnavailableError,
     ProviderUnavailableError,
     RateLimitedError,
@@ -38,6 +39,27 @@ _MODEL_ERROR_MARKERS = (
     "do not have access",
     "unknown model",
 )
+
+# Признаки исчерпанного баланса. Провайдер отдаёт их тем же HTTP 429,
+# что и обычный троттлинг, поэтому различаем по тексту и коду ошибки.
+_QUOTA_ERROR_MARKERS = (
+    "insufficient_quota",
+    "credit_balance_exhausted",
+    "no credits remaining",
+    "exceeded your current quota",
+    "billing_hard_limit_reached",
+)
+
+
+def _is_quota_exhausted(exc: Exception) -> bool:
+    """Кончились деньги, а не превышена частота запросов."""
+    parts = [str(getattr(exc, "message", "") or ""), str(exc)]
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        error = body.get("error") or {}
+        parts += [str(error.get("code", "")), str(error.get("type", ""))]
+    haystack = " ".join(parts).lower()
+    return any(marker in haystack for marker in _QUOTA_ERROR_MARKERS)
 
 
 def _client(api_key: str, timeout: float, max_retries: int):
@@ -88,6 +110,16 @@ class _OpenAIBase:
             try:
                 return call()
             except RateLimitError as exc:
+                # Провайдер отдаёт HTTP 429 и на троттлинг, и на исчерпанный
+                # баланс. Различать обязательно: повторять запрос при пустом
+                # счёте бессмысленно, а сообщение «превышена частота запросов»
+                # уводит расследование в сторону.
+                if _is_quota_exhausted(exc):
+                    raise InsufficientQuotaError(
+                        "На счету OpenAI закончились средства. Пополните баланс "
+                        "в разделе Billing на platform.openai.com — повторные "
+                        "попытки не помогут."
+                    ) from exc
                 last = exc
                 if attempt >= self._max_retries:
                     raise RateLimitedError(
@@ -110,8 +142,12 @@ class _OpenAIBase:
                         "/ OPENAI_EMBEDDING_MODEL в .env"
                     ) from exc
                 if exc.status_code and exc.status_code < 500:
+                    # Текст провайдера обязателен: без него HTTP 400 не
+                    # диагностируется вообще. Именно из-за его отсутствия
+                    # ошибку в JSON-схеме пришлось искать вручную.
                     raise ProviderUnavailableError(
-                        f"Провайдер отклонил запрос: HTTP {exc.status_code}"
+                        f"Провайдер отклонил запрос: HTTP {exc.status_code}. "
+                        f"{message[:500]}"
                     ) from exc
                 last = exc
                 if attempt >= self._max_retries:

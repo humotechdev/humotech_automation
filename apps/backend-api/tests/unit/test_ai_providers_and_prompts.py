@@ -172,3 +172,128 @@ def test_similar_texts_are_closer_than_unrelated_ones():
         return sum(x * y for x, y in zip(a, b, strict=True))
 
     assert cosine(vectors[0], vectors[1]) > cosine(vectors[0], vectors[2])
+
+
+# ------------------------------------------- регрессия: 429 бывает разный
+
+def test_exhausted_balance_is_not_confused_with_throttling():
+    """Найдено живым вызовом: OpenAI отдаёт HTTP 429 и на троттлинг,
+    и на пустой счёт. Раньше и то и другое становилось RateLimitedError,
+    и запрос ещё и ретраился — впустую, потому что деньги от повторов
+    не появляются, а сообщение уводило расследование в сторону.
+    """
+    from src.modules.ai_assistant.providers.openai_provider import (
+        _is_quota_exhausted,
+    )
+
+    class FakeError(Exception):
+        def __init__(self, message, body=None):
+            super().__init__(message)
+            self.message = message
+            self.body = body
+
+    quota = FakeError(
+        "Error code: 429 - You have no credits remaining. Add credits to continue",
+        {"error": {"type": "insufficient_quota", "code": "credit_balance_exhausted"}},
+    )
+    assert _is_quota_exhausted(quota) is True
+
+    throttling = FakeError(
+        "Rate limit reached for requests",
+        {"error": {"type": "rate_limit_error", "code": "rate_limit_exceeded"}},
+    )
+    assert _is_quota_exhausted(throttling) is False
+
+
+def test_quota_error_has_its_own_code_for_the_log():
+    """В журнале должна быть настоящая причина, а не «превышена частота»."""
+    from src.modules.ai_assistant.errors import (
+        AiError,
+        InsufficientQuotaError,
+        RateLimitedError,
+    )
+
+    assert InsufficientQuotaError.code == "insufficient_quota"
+    assert RateLimitedError.code == "rate_limited"
+    assert issubclass(InsufficientQuotaError, AiError)
+
+
+def test_quota_error_gives_the_employee_a_safe_answer(
+    monkeypatch, fake_session, scope, settings
+):
+    """Пустой счёт не должен показывать сотруднику техническую ошибку."""
+    from src.modules.ai_assistant.errors import InsufficientQuotaError
+    from src.modules.ai_assistant.providers.fake import (
+        FakeEmbeddingProvider,
+        FakeLLMProvider,
+    )
+    from src.modules.ai_assistant.schemas import AnswerRequest, AnswerStatus
+    from src.modules.ai_assistant.services import answer as answer_module
+    from src.modules.ai_assistant.services.answer import AnswerService
+    from src.modules.ai_assistant.services.cache import InMemoryCacheService
+    from src.modules.ai_assistant.services.personal_data import (
+        NotImplementedPersonalDataQueryService,
+    )
+    from src.modules.ai_assistant.services.retrieval import (
+        RetrievalResult,
+        RetrievedChunk,
+    )
+    from src.modules.ai_assistant.models import LlmQueryLog
+    import uuid as _uuid
+    from datetime import datetime, timezone as _tz
+
+    monkeypatch.setattr(
+        answer_module, "resolve_employee_scope", lambda session, **kw: scope
+    )
+    monkeypatch.setattr(answer_module, "current_revision", lambda session, org: 1)
+
+    chunk = RetrievedChunk(
+        chunk_id=_uuid.uuid4(), source_id=_uuid.uuid4(), source_title="Правило",
+        source_version=1, source_updated_at=datetime.now(tz=_tz.utc),
+        published_at=datetime.now(tz=_tz.utc), chunk_index=0, text="текст",
+        score=0.9, scope_level=1, priority=0,
+    )
+
+    class Stub:
+        def find_exact_faq(self, **kw):
+            return None
+
+        def search(self, **kw):
+            return RetrievalResult(chunks=(chunk,), top_score=0.9)
+
+    service = AnswerService(
+        fake_session,
+        llm=FakeLLMProvider(fail_with=InsufficientQuotaError("баланс пуст")),
+        embeddings=FakeEmbeddingProvider(dimensions=8),
+        cache=InMemoryCacheService(),
+        personal_data_service=NotImplementedPersonalDataQueryService("—"),
+        settings=settings,
+    )
+    service.retrieval = Stub()
+
+    response = service.answer(
+        AnswerRequest(employee_id=scope.employee_id, question="Как оформить отпуск?")
+    )
+
+    assert response.status is AnswerStatus.ERROR
+    assert "баланс" not in response.answer.lower(), "техническая деталь утекла"
+    assert "HR" in response.answer
+
+    log = fake_session.added_of(LlmQueryLog)[0]
+    assert log.error_code == "insufficient_quota", "в журнале не настоящая причина"
+
+
+def test_strict_schema_lists_every_property_in_required():
+    """Найдено живым вызовом: при strict=true OpenAI требует, чтобы в required
+    были ВСЕ ключи из properties, иначе HTTP 400 на каждом структурированном
+    ответе. Без conflict_detected ассистент не ответил бы ни разу.
+    """
+    from src.modules.ai_assistant.schemas import ANSWER_JSON_SCHEMA
+
+    properties = set(ANSWER_JSON_SCHEMA["properties"])
+    required = set(ANSWER_JSON_SCHEMA["required"])
+    missing = properties - required
+    assert not missing, (
+        f"при strict=true эти свойства обязаны быть в required: {sorted(missing)}"
+    )
+    assert ANSWER_JSON_SCHEMA["additionalProperties"] is False

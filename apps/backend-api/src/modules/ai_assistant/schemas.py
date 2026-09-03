@@ -102,10 +102,17 @@ class HealthResponse(BaseModel):
 #
 # Числовой уверенности здесь намеренно нет: приложение не должно доверять
 # самооценке модели. Единственная оценка качества — retrieval_score.
+#
+# ВНИМАНИЕ: при strict=true OpenAI требует, чтобы в `required` были ПЕРЕЧИСЛЕНЫ
+# ВСЕ ключи из `properties` — иначе запрос отклоняется с HTTP 400
+# "'required' is required to be supplied and to be an array including every key
+# in properties". Это не рекомендация, а жёсткая проверка на стороне API.
+# Найдено живым вызовом: без conflict_detected в required падал бы каждый
+# структурированный ответ. Ограничение проверяется тестом.
 ANSWER_JSON_SCHEMA: dict = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["answer", "answered", "used_fragments"],
+    "required": ["answer", "answered", "used_fragments", "conflict_detected"],
     "properties": {
         "answer": {
             "type": "string",
