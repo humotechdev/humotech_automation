@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from src.core.permissions.scopes import permission_codes
+from src.core.permissions.scopes import can_see_office, permission_codes
 from src.modules.ai_assistant.errors import PublishingError
 from src.modules.ai_assistant.models import UnansweredQuestion
 from src.modules.ai_assistant.schemas import (
@@ -36,9 +36,15 @@ from src.modules.ai_assistant.schemas import (
 )
 from src.modules.ai_assistant.services.chunking import hash_text
 from src.modules.ai_assistant.services.escalation import QuestionEscalationService
+from src.modules.ai_assistant.services.personal_data_service import (
+    SqlPersonalDataQueryService,
+)
 from src.modules.ai_assistant.services.publishing import KnowledgePublishingService
 from src.modules.ai_assistant.services.retrieval import RetrievalService
-from src.modules.ai_assistant.services.scoping import EmployeeScope
+from src.modules.ai_assistant.services.scoping import (
+    EmployeeScope,
+    resolve_employee_scope,
+)
 from src.modules.audit.models import AuditLog
 from src.modules.knowledge_base.models import (
     FaqEntry,
@@ -339,6 +345,42 @@ class KnowledgeAdminUseCases:
             new_values={"from_question": str(question_id)},
         )
         return faq
+
+    # ------------------------------------------------- личные данные сотрудника
+
+    def employee_personal_data(
+        self, actor: Actor, employee_id: uuid.UUID, *, question: str,
+        language: str = "ru",
+    ):
+        """Личные данные сотрудника глазами HR.
+
+        Доступ идёт через СУЩЕСТВУЮЩУЮ модель прав: нужно `attendance.read`,
+        и офис сотрудника должен попадать в область видимости пользователя.
+        Региональный HR не увидит чужой регион — за это отвечает
+        `core/permissions/scopes.can_see_office`, а не проверка в этом методе.
+        """
+        self._require(actor, "attendance.read")
+
+        scope = resolve_employee_scope(self.session, employee_id=employee_id)
+        if scope is None:
+            raise PermissionDenied("Сотрудник не найден")
+        if scope.organization_id != actor.organization_id:
+            # чужая организация — даже не сообщаем, существует ли сотрудник
+            raise PermissionDenied("Сотрудник не найден")
+        if scope.office_id is not None and not can_see_office(
+            self.session, user_id=actor.user_id, office_id=scope.office_id
+        ):
+            raise PermissionDenied("Офис сотрудника вне вашей области видимости")
+
+        answer = SqlPersonalDataQueryService(self.session).answer(
+            employee_id=employee_id, question=question, language=language
+        )
+        self._audit(
+            actor, action="ai.personal_data.read",
+            entity_type="employees", entity_id=employee_id,
+            new_values={"intent": answer.intent.value if answer.intent else None},
+        )
+        return answer
 
     def close_question(
         self,

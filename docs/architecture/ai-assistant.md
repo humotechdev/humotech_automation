@@ -71,6 +71,7 @@ apps/backend-api/src/modules/
 │                                faq_entries, knowledge_index_jobs
 └── ai_assistant/
     ├── config.py                все настройки из .env
+    ├── container.py             сборка модуля: точка подключения транспорта
     ├── errors.py                ошибки модуля (SDK наружу не протекает)
     ├── models.py                unanswered_questions, llm_query_logs,
     │                            answer_feedback
@@ -80,8 +81,8 @@ apps/backend-api/src/modules/
     ├── providers/               base / openai_provider / fake
     ├── services/                safety, scoping, cache, chunking,
     │                            ingestion, publishing, retrieval,
-    │                            personal_data, escalation, answer,
-    │                            metrics, rate_limit
+    │                            personal_data, personal_data_service,
+    │                            escalation, answer, metrics, rate_limit
     └── use_cases/               bot.py, crm.py
 ```
 
@@ -359,6 +360,12 @@ use cases. Когда появится фреймворк, обвязка све
 | публикация, архивация | `publish` / `archive` | CRM |
 | история версий, аудит | `version_history` / `audit_trail` | CRM |
 | неизвестные вопросы | `list_unanswered` / `assign_question` / `create_faq_from_question` / `close_question` | CRM |
+| личные данные сотрудника | `employee_personal_data` (требует `attendance.read` + область видимости) | CRM |
+| метрики ассистента | `MetricsService.collect` (требует `ai.metrics.read`) | CRM |
+
+Сборка всех точек входа — `container.build_container(session)`. Транспорт
+получает готовые use case'ы и ничего не знает ни про OpenAI, ни про устройство
+поиска. Когда появится веб-фреймворк, его DI вызовет эту функцию.
 
 Формат ответа — `schemas.AnswerResponse`: `request_id`, `status`, `answer`,
 `language`, `sources[{id,title,version,updated_at}]`, `retrieval_score`,
@@ -369,35 +376,219 @@ use cases. Когда появится фреймворк, обвязка све
 
 ---
 
-## 13. Тесты
+## 13. Личные данные сотрудника
 
-```bash
-cd apps/backend-api
+Вопросы «сколько я отработал», «одобрен ли мой больничный» в RAG **не попадают
+никогда**: ответ на них лежит не в базе знаний, а в таблицах сотрудника.
 
-# модульные: без базы, без сети, без ключа
-PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -m pytest tests/unit -q
+`SqlPersonalDataQueryService` (`services/personal_data_service.py`) отвечает
+детерминированным SQL поверх **существующих** таблиц — `attendance_sessions`,
+`employee_absences`, `leave_balances`, `work_schedules`. Новых таблиц не заведено.
 
-# интеграционные: нужен контейнер с pgvector
-TEST_DATABASE_URL=postgresql+psycopg://humotech:humotech_local@127.0.0.1:5433/humotech_test \
-  PYTHONPATH=. .venv/Scripts/python.exe -m pytest -q
+### Что умеет
+
+| Намерение | Вопрос сотрудника | Источник данных |
+|---|---|---|
+| `ARRIVAL_TODAY` | когда я сегодня пришёл | `attendance_sessions.started_at` |
+| `DEPARTURE_TODAY` | когда я ушёл | `attendance_sessions.ended_at` |
+| `IN_OFFICE_NOW` | я сейчас в офисе | открытая сессия |
+| `DURATION_TODAY` | сколько времени в офисе сегодня | сумма сессий за сутки |
+| `HOURS_WEEK` | сколько часов за неделю | сессии с понедельника |
+| `HOURS_MONTH` | сколько часов за месяц | сессии с 1-го числа |
+| `ABSENCE_DAYS` | какие дни я отсутствовал | `employee_absences` за месяц |
+| `SICK_LEAVE_STATUS` / `_DATES` | статус и даты больничного | `employee_absences` + `absence_types` |
+| `VACATION_STATUS` / `_DATES` | статус и даты отпуска | то же |
+| `LEAVE_BALANCE` | остаток отпуска | `leave_balances` + `work_schedules` |
+
+Намерение не распознано — сервис честно просит уточнить, а не гадает.
+
+### Правила, которые нельзя нарушать
+
+- **Только свои данные.** Каждый запрос фильтруется по `employee_id`
+  вызывающего И по `organization_id`. Чужие сессии не видны технически.
+- **SQL пишет человек, не модель.** Запросы построены руками и
+  параметризованы; сгенерированный моделью SQL здесь невозможен.
+- **Ничего не выдумывается.** Нет данных — так и говорим. Незакрытая сессия
+  **не превращается в выдуманное время ухода**: считаем «по состоянию на
+  сейчас» и явно это помечаем.
+- **Часовой пояс офиса.** Сутки, недели и месяцы отсчитываются в поясе офиса
+  сотрудника (`offices.timezone`), а не сервера. Для Душанбе (UTC+5)
+  локальные сутки начинаются в 19:00 предыдущего дня по UTC.
+- **Дни считаются по графику.** Пересчёт остатка отпуска из минут в дни
+  делается только при назначенном `work_schedules`. Нет графика — показываем
+  часы и честно говорим почему, вместо «обычных восьми часов» с потолка.
+- **В OpenAI не уходит ничего.** Результат сервиса возвращается сотруднику
+  напрямую и в контекст модели не попадает.
+
+### Доступ HR
+
+Через существующую RBAC, без параллельных механизмов:
+
+```python
+crm.employee_personal_data(actor, employee_id, question="Когда он пришёл?")
+```
+
+Требует разрешение `attendance.read` **и** попадания офиса сотрудника
+в область видимости пользователя (`user_role_scopes` → `can_see_office`).
+Региональный HR не увидит чужой регион. Каждое обращение пишется в `audit_logs`.
+
+---
+
+## 14. Тесты: четыре разных уровня уверенности
+
+Их часто путают, а они отвечают на разные вопросы.
+
+| Уровень | Что проверяет | Нужна база | Нужна сеть | Когда запускать |
+|---|---|---|---|---|
+| **unit** | логику: пороги, приоритеты, маршрутизацию, ключи кэша, защиту от инъекций | нет | нет | на каждый коммит |
+| **integration** | что схема, запросы и блокировки действительно работают в PostgreSQL с pgvector | **да** | нет | перед мержем |
+| **live OpenAI smoke** | что ключ, имя модели и формат ответа настоящие | нет | **да** | один раз при заведении ключа |
+| **production readiness** | что HR дал разрешение, документы опубликованы, пороги откалиброваны, есть мониторинг и бэкап | — | — | перед включением |
+
+Пройденные unit-тесты **не означают**, что система работает: они не видели ни
+одной живой строки. Пройденные integration-тесты не означают, что ответы
+полезны: качество проверяется только на реальных вопросах сотрудников.
+
+### PowerShell (Windows)
+
+```powershell
+Set-Location D:\HUMO\apps\backend-api
+
+# только unit: без базы, без сети, без ключа
+$env:PYTHONIOENCODING = "utf-8"
+.venv\Scripts\python.exe -m pytest tests\unit -q
+
+# всё, включая integration (нужен контейнер, см. ниже)
+$env:TEST_DATABASE_URL = "postgresql+psycopg://humotech:humotech_local@127.0.0.1:5433/humotech_test"
+.venv\Scripts\python.exe -m pytest -q
+
+# что именно пропущено и почему
+.venv\Scripts\python.exe -m pytest -q -rs
 ```
 
 Модульные тесты запрещают сетевые соединения на уровне сокета: если провайдер
 случайно окажется настоящим, тест упадёт, а не сходит в интернет.
 
-Отдельного smoke-теста с реальным OpenAI сейчас нет — он появится, когда будет
-ключ и ваше разрешение на реальные запросы.
+---
+
+## 15. Команды PowerShell: инфраструктура
+
+### Запуск базы
+
+```powershell
+Set-Location D:\HUMO
+docker compose -f infrastructure\docker\docker-compose.yml up -d
+```
+
+### Проверка здоровья
+
+```powershell
+docker compose -f infrastructure\docker\docker-compose.yml ps
+docker inspect --format '{{.State.Health.Status}}' humotech_postgres
+
+# расширения и версия
+docker exec humotech_postgres psql -U humotech -d humotech -c "SELECT version()"
+docker exec humotech_postgres psql -U humotech -d humotech -c "SELECT extname, extversion FROM pg_extension ORDER BY extname"
+```
+
+### Миграции
+
+```powershell
+Set-Location D:\HUMO\apps\backend-api
+$env:PYTHONPATH = "."
+$env:ALEMBIC_DATABASE_URL = "postgresql+psycopg://humotech:humotech_local@127.0.0.1:5433/humotech"
+
+.venv\Scripts\python.exe -m alembic upgrade head
+.venv\Scripts\python.exe -m alembic current
+.venv\Scripts\python.exe -m alembic history --verbose
+.venv\Scripts\python.exe -m alembic upgrade head --sql    # посмотреть SQL, ничего не применяя
+```
+
+**Откат `0002` разрешён только на одноразовой тестовой базе:**
+
+```powershell
+$env:ALEMBIC_DATABASE_URL = "postgresql+psycopg://humotech:humotech_local@127.0.0.1:5433/humotech_test"
+.venv\Scripts\python.exe -m alembic downgrade 0001_initial_schema
+.venv\Scripts\python.exe -m alembic upgrade head
+```
+
+### Воркер индексации
+
+```powershell
+Set-Location D:\HUMO\apps\backend-api
+$env:PYTHONPATH = "."
+.venv\Scripts\python.exe -m src.modules.ai_assistant.worker            # один проход
+.venv\Scripts\python.exe -m src.modules.ai_assistant.worker --loop 10  # цикл
+```
+
+При `AI_ASSISTANT_ENABLED=false` воркер отказывается стартовать — это защита
+от случайного обращения к провайдеру.
+
+### Остановка без потери данных
+
+```powershell
+docker compose -f infrastructure\docker\docker-compose.yml stop
+# или с удалением контейнеров, но с сохранением тома:
+docker compose -f infrastructure\docker\docker-compose.yml down
+```
+
+### Полное удаление ЛОКАЛЬНОЙ тестовой инфраструктуры
+
+```powershell
+# -v удаляет том с данными. Затрагивает ТОЛЬКО контейнер на порту 5433.
+# Системный PostgreSQL на 5432 не участвует.
+docker compose -f infrastructure\docker\docker-compose.yml down -v
+```
+
+### Типичные ошибки
+
+| Симптом | Причина | Что делать |
+|---|---|---|
+| `could not translate host name` / `connection refused` на 5433 | контейнер не запущен | `docker compose ... up -d`, дождаться `healthy` |
+| `extension "vector" is not available` | используется системный PostgreSQL на 5432 | проверить порт в `TEST_DATABASE_URL` — должен быть 5433 |
+| тесты `skipped` вместо выполнения | не задан `TEST_DATABASE_URL` | задать переменную; `pytest -rs` покажет причину пропуска |
+| `Имя базы 'humotech' не похоже на тестовое` | указана рабочая база | тесты стирают таблицы, имя обязано содержать `test` |
+| `permission denied to create extension "vector"` | роль не суперпользователь | расширение ставится один раз в `initdb`; пересоздать том `down -v` |
+| порт 5433 занят | остался старый контейнер | `docker ps -a`, удалить конфликтующий |
+| `ConfigurationError: OPENAI_API_KEY не задан` | нет ключа в `.env` | это штатно при выключенном модуле |
+| `ModelUnavailableError` | неверное имя модели | исправить `OPENAI_*_MODEL` в `.env`, код не трогать |
 
 ---
 
-## 14. Отключение AI
+## 16. Checklist включения в production
+
+Ни один пункт не пропускается. Модуль остаётся выключенным, пока не закрыты все.
+
+- [ ] **Письменное разрешение HR** на обработку корпоративных правил внешним
+      LLM-провайдером. Единственный пункт, который нельзя вывести из кода.
+- [ ] `OPENAI_API_KEY` заполнен в `.env` (файл в git не попадает).
+- [ ] `GET /ai/health` не сообщает ни одной проблемы.
+- [ ] Есть хотя бы один источник в статусе `ACTIVE` — иначе ассистент будет
+      честно отвечать «не нашёл» на каждый вопрос.
+- [ ] Индексация прошла успешно: `knowledge_index_jobs.status = SUCCEEDED`,
+      у источника есть `knowledge_chunks` с непустыми `embedding`.
+- [ ] Все тесты зелёные: unit, integration, live smoke.
+- [ ] Пороги `AI_EXACT_FAQ_THRESHOLD`, `AI_RAG_MIN_SCORE`,
+      `AI_CONFLICT_SCORE_DELTA` проверены на реальных вопросах сотрудников.
+      **До этого называть их откалиброванными нельзя.**
+- [ ] Настроен мониторинг: `MetricsService` и журнал `llm_query_logs`
+      выведены в дашборд, задан порог тревоги по `error_rate` и `escalated_rate`.
+- [ ] Настроено резервное копирование базы, восстановление проверено.
+- [ ] Задана политика хранения `AI_LOG_RETENTION_DAYS` и запущена задача
+      анонимизации (поле `llm_query_logs.anonymized_at`).
+- [ ] `AI_ASSISTANT_ENABLED=true` — последним, а не первым.
+
+---
+
+## 17. Отключение AI
 
 ```
 AI_ASSISTANT_ENABLED=false
 ```
 
 Этого достаточно: фабрика провайдеров при выключенном рубильнике бросает
-`ConfigurationError` и настоящий провайдер не создаётся. Воркер индексации
+`ConfigurationError`, настоящий провайдер не создаётся, а `AnswerUseCase`
+возвращает сотруднику понятный текст вместо ошибки. Воркер индексации
 при `false` отказывается стартовать.
 
 Данные при этом остаются на месте: база знаний, журнал и неотвеченные вопросы
@@ -405,10 +596,9 @@ AI_ASSISTANT_ENABLED=false
 
 ---
 
-## 15. Что делать после получения данных от HR
+## 18. Что делать после получения данных от HR
 
-1. Получить письменное разрешение на передачу корпоративных правил в OpenAI —
-   это единственный вопрос, ответ на который нельзя вывести из репозитория.
+1. Получить письменное разрешение на передачу корпоративных правил в OpenAI.
 2. Завести `OPENAI_API_KEY`, проверить `GET /ai/health`.
 3. Загрузить первые документы черновиками, проиндексировать, опубликовать.
 4. **Откалибровать пороги** `AI_EXACT_FAQ_THRESHOLD`, `AI_RAG_MIN_SCORE`,
@@ -416,8 +606,8 @@ AI_ASSISTANT_ENABLED=false
    предварительные, угадать их заранее нельзя.
 5. Подобрать веса гибридного поиска `VECTOR_WEIGHT` / `FTS_WEIGHT`
    в `services/retrieval.py`.
-6. Реализовать `PersonalDataQueryService` поверх `attendance_sessions`,
-   `employee_absences` и `leave_balances`.
+6. Завести графики работы: без `work_schedules` остаток отпуска показывается
+   в часах, а не в днях — пересчёт «на глазок» сознательно не делается.
 7. Настроить правила приоритета для документов, которые пересекаются
    по смыслу, — иначе они будут уходить в `ESCALATED`.
 8. Включить `AI_ASSISTANT_ENABLED=true`.

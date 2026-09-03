@@ -51,6 +51,26 @@ PYTHONPATH=. .venv/Scripts/python.exe -m scripts.seed \
 
 Скрипт идемпотентен — повторный запуск ничего не дублирует.
 
+## Быстрый старт в PowerShell
+
+```powershell
+Set-Location D:\HUMO
+docker compose -f infrastructure\docker\docker-compose.yml up -d
+docker inspect --format '{{.State.Health.Status}}' humotech_postgres
+
+Set-Location D:\HUMO\apps\backend-api
+$env:PYTHONPATH = "."
+$env:ALEMBIC_DATABASE_URL = "postgresql+psycopg://humotech:humotech_local@127.0.0.1:5433/humotech"
+.venv\Scripts\python.exe -m alembic upgrade head
+
+$env:TEST_DATABASE_URL = "postgresql+psycopg://humotech:humotech_local@127.0.0.1:5433/humotech_test"
+$env:PYTHONIOENCODING = "utf-8"
+.venv\Scripts\python.exe -m pytest -q
+```
+
+Полный список команд, включая остановку и удаление контейнеров и разбор
+типичных ошибок — в [`docs/architecture/ai-assistant.md`](../../docs/architecture/ai-assistant.md).
+
 ## Тесты
 
 Разовая подготовка тестовой базы (нужен доступ суперпользователя ровно один раз —
@@ -105,8 +125,11 @@ src/
 │   ├── qr_codes/                 office_qr_points, qr_display_sessions
 │   ├── qr_attendance/            attendance_events, sessions, корректировки
 │   │   └── service.py            серверная обработка скана
+│   ├── ai_assistant/             RAG-ассистент: провайдеры, поиск, публикация,
+│   │                             личные данные сотрудника (выключен по умолчанию)
+│   ├── knowledge_base/           knowledge_sources, chunks, faq, очередь индексации
 │   ├── absences/  files/
-│   └── telegram/  knowledge_base/  questions/  notifications/  audit/
+│   └── telegram/  questions/  notifications/  audit/
 migrations/versions/0001_initial_schema.py
 scripts/seed.py
 tests/integration/

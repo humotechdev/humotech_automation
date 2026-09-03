@@ -12,6 +12,7 @@ HTTP-слоя в проекте пока нет (`src/api/routes` пуст), п�
 from __future__ import annotations
 
 import logging
+import uuid
 
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
@@ -35,10 +36,30 @@ logger = logging.getLogger("humotech.ai.usecases.bot")
 
 
 class AnswerUseCase:
-    def __init__(self, service: AnswerService) -> None:
+    """Точка входа бота.
+
+    `service is None` — штатное состояние выключенного модуля: провайдеры
+    не созданы. Сотрудник получает понятный ответ, а не ошибку 500.
+    """
+
+    def __init__(
+        self, service: AnswerService | None, settings: AiSettings | None = None
+    ) -> None:
         self.service = service
+        self.settings = settings or ai_settings
+
+    @property
+    def enabled(self) -> bool:
+        return self.service is not None
 
     def execute(self, request: AnswerRequest) -> AnswerResponse:
+        if self.service is None:
+            return AnswerResponse(
+                request_id=uuid.uuid4(),
+                status=AnswerStatus.ERROR,
+                answer=get_prompt(self.settings.ai_prompt_version).unavailable_text,
+                language=self.settings.ai_default_language,
+            )
         return self.service.answer(request)
 
 
