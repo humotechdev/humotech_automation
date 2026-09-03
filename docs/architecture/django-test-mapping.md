@@ -8,12 +8,12 @@
 отдельный тест, сверяющий её с эталоном на каждом прогоне.
 
 ```
-# Django (боевой набор)
-pytest -c pytest_django.ini
+# Django — набор по умолчанию
+pytest
 
-# прежний набор — перекрёстная проверка
+# прежний набор — перекрёстная проверка, отдельной конфигурацией
 pip install -r requirements-legacy.txt
-TEST_DATABASE_URL=postgresql+psycopg://... pytest
+TEST_DATABASE_URL=postgresql+psycopg://... pytest -c pytest-legacy.ini
 ```
 
 ## Итог

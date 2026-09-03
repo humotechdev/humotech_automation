@@ -27,9 +27,15 @@ from humotech.core.models import (
     UUIDPrimaryKeyModel,
 )
 
-# Роли, дающие доступ в Django Admin. Админка — закрытый технический
-# интерфейс, а не основная CRM, поэтому список намеренно короткий.
-ADMIN_ROLE_CODES = ("SUPER_ADMIN", "TECH_ADMIN")
+# Роль, дающая доступ в Django Admin. Ровно одна, и это осознанно.
+#
+# Админка спрашивает права кодами вида `<приложение>.<действие>_<модель>`
+# (`offices.change_office`), а доменный каталог оперирует другими
+# (`offices.manage`). Сопоставлять одно с другим — значит завести вторую
+# систему прав рядом с существующей, а её в проекте быть не должно.
+# Поэтому админка остаётся аварийным входом для суперпользователя,
+# а вся обычная работа идёт через CRM, где проверки настоящие.
+ADMIN_ROLE_CODES = ("SUPER_ADMIN",)
 
 
 class UserManager(BaseUserManager):
@@ -54,11 +60,27 @@ class UserManager(BaseUserManager):
         """Полные права выдаются РОЛЬЮ, а не колонкой в `users`.
 
         Отдельного признака суперпользователя в схеме нет: доступ определяют
-        роль `SUPER_ADMIN` и её область в `user_role_scopes`. Поэтому одной
-        этой команды недостаточно — область назначается отдельно.
+        роль `SUPER_ADMIN` и её область в `user_role_scopes`. Поэтому учётная
+        запись создаётся вместе с областью на всю организацию — иначе
+        получился бы пользователь, который не может ни войти в админку,
+        ни выполнить ни одной операции, и понять почему было бы нечем.
         """
+        from humotech.rbac.models import Role
+
         extra.setdefault("status", "ACTIVE")
-        return self.create_user(email, password, **extra)
+        role = Role.objects.filter(code="SUPER_ADMIN", organization__isnull=True).first()
+        if role is None:
+            raise ValueError(
+                "Роль SUPER_ADMIN не найдена. Сначала наполните справочники: "
+                "python manage.py seed"
+            )
+
+        user = self.create_user(email, password, **extra)
+        # region_id и office_id пусты — это и означает «вся организация»
+        UserRoleScope.objects.create(
+            organization_id=user.organization_id, user=user, role=role
+        )
+        return user
 
     def get_by_natural_key(self, username):
         return self.get(email__iexact=username)
@@ -133,10 +155,10 @@ class User(UUIDPrimaryKeyModel, TimestampedModel, ArchivableModel, AbstractBaseU
 
     @property
     def is_staff(self) -> bool:
-        """Django Admin — закрытый технический интерфейс.
+        """Django Admin — аварийный вход, а не рабочий интерфейс.
 
-        Пускаем только носителей `SUPER_ADMIN` или `TECH_ADMIN`: остальные
-        работают через основную CRM, где действуют обычные проверки прав.
+        Пускаем только `SUPER_ADMIN`. Остальные работают через CRM: там
+        права проверяются доменным каталогом, а не кодами моделей Django.
         """
         return self._has_admin_role()
 
@@ -155,9 +177,10 @@ class User(UUIDPrimaryKeyModel, TimestampedModel, ArchivableModel, AbstractBaseU
     def has_perm(self, perm: str, obj=None) -> bool:
         """Право проверяется по своей RBAC, а не по `auth_permission`.
 
-        Django Admin вызывает этот метод; параллельной системы прав
-        в проекте нет, поэтому ответ даёт та же таблица `role_permissions`,
-        что и остальной backend.
+        Django Admin вызывает этот метод своими кодами
+        (`offices.change_office`); их в доменном каталоге нет, поэтому
+        для админки решает признак суперпользователя, а коды каталога
+        отвечают на вопросы остального backend.
         """
         from humotech.accounts.selectors import permission_codes
 
