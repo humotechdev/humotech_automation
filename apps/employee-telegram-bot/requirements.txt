@@ -1,0 +1,4 @@
+aiogram~=3.22
+aiohttp~=3.10
+pydantic~=2.9
+pydantic-settings~=2.6

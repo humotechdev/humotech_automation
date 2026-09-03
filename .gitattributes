@@ -1,0 +1,9 @@
+# В репозитории всегда LF: сервер и Docker — Linux, разработка — Windows.
+# Без этого каждый коммит с Windows тащил бы за собой CRLF-шум.
+* text=auto eol=lf
+
+# Бинарные файлы не трогать
+*.png binary
+*.jpg binary
+*.pdf binary
+*.ico binary
