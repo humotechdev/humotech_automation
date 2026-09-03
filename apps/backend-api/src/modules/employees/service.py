@@ -21,8 +21,6 @@ import uuid
 from datetime import date, timedelta
 
 from sqlalchemy import Select, select
-from sqlalchemy.orm import aliased
-
 from src.core.errors import (
     Conflict,
     NotFound,
@@ -167,6 +165,18 @@ class EmployeeService(BaseService):
     ) -> EmployeeCard:
         """Полная карточка: назначение, график, Telegram и история переводов."""
         self.access.require(actor, "employees.read")
+        return self._card(actor, employee_id, at=at)
+
+    def _card(
+        self, actor: Actor, employee_id: uuid.UUID, *, at: date | None = None
+    ) -> EmployeeCard:
+        """Сборка карточки без проверки `employees.read`.
+
+        Операции записи возвращают карточку результата, и требовать для этого
+        отдельное право на чтение нельзя: роль с `employees.manage` без
+        `employees.read` успешно сохранила бы данные и следом получила отказ —
+        то есть исключение при уже применённых изменениях.
+        """
         at = at or date.today()
         employee = self._require_visible_employee(actor, employee_id, at=at)
 
@@ -299,7 +309,7 @@ class EmployeeService(BaseService):
                     "region_id": str(office.region_id),
                 },
             )
-        return self.get(actor, employee.id)
+        return self._card(actor, employee.id)
 
     # -------------------------------------------------------------- изменение
 
@@ -352,7 +362,7 @@ class EmployeeService(BaseService):
                 entity_id=employee.id, before=before,
                 after=snapshot(employee, CARD_FIELDS),
             )
-        return self.get(actor, employee_id)
+        return self._card(actor, employee_id)
 
     def change_assignment(
         self, actor: Actor, employee_id: uuid.UUID,
@@ -494,7 +504,7 @@ class EmployeeService(BaseService):
                 entity_id=employee.id, before=before,
                 after=snapshot(employee, CARD_FIELDS),
             )
-        return self.get(actor, employee_id)
+        return self._card(actor, employee_id)
 
     def terminate(
         self, actor: Actor, employee_id: uuid.UUID, *, termination_date: date,
@@ -552,7 +562,7 @@ class EmployeeService(BaseService):
                     {"reason": reason} if reason else {}
                 ),
             )
-        return self.get(actor, employee_id)
+        return self._card(actor, employee_id)
 
     # ------------------------------------------------------ внутренние правила
 
@@ -694,7 +704,6 @@ class EmployeeService(BaseService):
 
     def _assignment_history(self, employee_id: uuid.UUID) -> list[AssignmentView]:
         """Вся история переводов одним запросом со всеми справочниками."""
-        manager = aliased(Employee)
         rows = self.session.execute(
             select(
                 EmployeeAssignment, Office, Region, Department, Position,
@@ -703,7 +712,6 @@ class EmployeeService(BaseService):
             .join(Region, Region.id == Office.region_id)
             .outerjoin(Department, Department.id == EmployeeAssignment.department_id)
             .outerjoin(Position, Position.id == EmployeeAssignment.position_id)
-            .outerjoin(manager, manager.id == EmployeeAssignment.manager_employee_id)
             .where(EmployeeAssignment.employee_id == employee_id)
             .order_by(
                 EmployeeAssignment.valid_from.desc(),

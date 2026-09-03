@@ -88,6 +88,11 @@ class WorkScheduleService(BaseService):
 
     def get(self, actor: Actor, schedule_id: uuid.UUID) -> WorkScheduleDetail:
         self.access.require(actor, "schedules.read")
+        return self._detail(actor, schedule_id)
+
+    def _detail(self, actor: Actor, schedule_id: uuid.UUID) -> WorkScheduleDetail:
+        """Сборка карточки без проверки `schedules.read`: создание и правка
+        возвращают результат, и требовать для этого право на чтение нельзя."""
         self.access.require_schedule(actor, schedule_id)
         # дни и перерывы — двумя дополнительными запросами на весь график,
         # а не по запросу на каждый день
@@ -127,7 +132,7 @@ class WorkScheduleService(BaseService):
                 actor, action="schedule.create", entity_type="work_schedules",
                 entity_id=schedule.id, after=snapshot(schedule, AUDITED_FIELDS),
             )
-        return self.get(actor, schedule.id)
+        return self._detail(actor, schedule.id)
 
     def update(
         self, actor: Actor, schedule_id: uuid.UUID,
@@ -159,7 +164,7 @@ class WorkScheduleService(BaseService):
                 entity_id=schedule.id, before=before,
                 after=snapshot(schedule, AUDITED_FIELDS),
             )
-        return self.get(actor, schedule.id)
+        return self._detail(actor, schedule.id)
 
     def deactivate(self, actor: Actor, schedule_id: uuid.UUID) -> WorkScheduleView:
         """Выключенный график перестаёт назначаться, но уже назначенные периоды

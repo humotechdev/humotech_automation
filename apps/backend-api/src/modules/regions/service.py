@@ -163,15 +163,3 @@ class RegionService(BaseService):
                 before=before, after=snapshot(region, AUDITED_FIELDS),
             )
         return RegionView.model_validate(region)
-
-    # ------------------------------------------------------ вспомогательное
-
-    def require_active(self, actor: Actor, region_id: uuid.UUID) -> Region:
-        """Регион, в который допустимо добавлять новые офисы."""
-        region = self.access.require_region(actor, region_id)
-        if region.status != "ACTIVE":
-            raise Conflict(
-                "Регион не активен: новые офисы в него добавлять нельзя",
-                details={"region_id": str(region_id), "status": region.status},
-            )
-        return region

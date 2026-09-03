@@ -366,7 +366,7 @@ def test_position_change_creates_new_period(db, organization, employee, hr_actor
         AssignmentChangeRequest(effective_from=date(2025, 4, 1),
                                 position_id=senior.id),
     )
-    assert result.position_name == "Разработчик"
+    assert result.position_id == senior.id, "должность действительно сменилась"
     history = service.assignment_history(hr_actor, employee.id)
     assert len(history) == 2
 
@@ -674,3 +674,107 @@ def test_all_hr_actions_are_audited(
     assert terminate_entry.new_values["employment_status"] == "TERMINATED"
     assert terminate_entry.new_values["termination_date"] == "2025-08-31"
     assert terminate_entry.actor_user_id == hr_actor.user_id
+
+
+def test_manage_without_read_permission_still_returns_the_card(
+    db, organization, office, make_actor
+):
+    """Роль с правом на изменение, но без права на чтение, обязана работать.
+
+    Операции записи возвращают карточку результата. Если её сборка требует
+    `employees.read`, то роль без этого права сохранила бы данные и следом
+    получила отказ — исключение при уже применённых изменениях, то есть ровно
+    тот случай «частично сохранённых данных», который запрещён требованиями.
+    """
+    actor = make_actor(organization,
+                       permissions=("employees.manage", "employees.archive"))
+    service = EmployeeService(db)
+
+    card = service.create(actor, _new_employee(office))
+    assert card.employment_status == "ACTIVE"
+    assert service.update(actor, card.id,
+                          EmployeeUpdateRequest(first_name="Пётр")).id == card.id
+    assert service.deactivate(actor, card.id).employment_status == "SUSPENDED"
+    assert service.reactivate(actor, card.id).employment_status == "ACTIVE"
+    assert service.terminate(
+        actor, card.id, termination_date=date(2025, 9, 30)
+    ).employment_status == "TERMINATED"
+
+    # но читать чужую карточку такой роли по-прежнему нельзя
+    with pytest.raises(PermissionDenied, match="employees.read"):
+        service.get(actor, card.id)
+
+
+def test_failed_audit_rolls_back_the_whole_transfer(
+    db, employee, other_office, hr_actor, monkeypatch
+):
+    """Откат обязан снимать всю операцию, а не только нарушение ограничения.
+
+    Предыдущий тест строит точку отката вручную и проверяет поведение самой
+    базы. Здесь ломается шаг ВНУТРИ `change_assignment` — так проверяется, что
+    метод действительно выполняется целиком или никак.
+    """
+    service = EmployeeService(db)
+
+    def failing_record(*args, **kwargs):
+        raise RuntimeError("сбой при записи в журнал")
+
+    monkeypatch.setattr(service.audit, "record", failing_record)
+
+    with pytest.raises(RuntimeError):
+        service.change_assignment(
+            hr_actor, employee.id,
+            AssignmentChangeRequest(effective_from=date(2025, 3, 1),
+                                    office_id=other_office.id),
+        )
+
+    db.expire_all()
+    periods = db.scalars(
+        select(EmployeeAssignment).where(
+            EmployeeAssignment.employee_id == employee.id
+        )
+    ).all()
+    assert len(periods) == 1, "новое назначение не осталось"
+    assert periods[0].valid_to is None, "закрытие старого периода откатилось"
+
+
+def test_transferred_out_employee_stays_readable_for_former_region(
+    db, organization, region, other_region, office, other_office, make_actor,
+    hr_actor,
+):
+    """Список показывает по ТЕКУЩЕМУ офису, карточка — по всей истории.
+
+    Различие намеренное. Сузить карточку до текущего назначения нельзя:
+    увольнение закрывает все открытые периоды, и тогда HR своего же региона
+    потерял бы доступ к карточкам собственных уволенных сотрудников.
+    """
+    service = EmployeeService(db)
+    card = service.create(hr_actor, _new_employee(office, employee_number="T-1"))
+    service.change_assignment(hr_actor, card.id, AssignmentChangeRequest(
+        effective_from=date(2025, 4, 1), office_id=other_office.id))
+
+    actor = make_actor(organization, permissions=("employees.read",),
+                       region=region)
+    at = date(2025, 6, 1)
+
+    assert card.id not in {row.id for row in service.list(actor, at=at).items}, (
+        "в списке текущего состава переведённого сотрудника уже нет"
+    )
+    assert service.get(actor, card.id, at=at).id == card.id, (
+        "карточка остаётся доступной по истории назначений"
+    )
+
+
+def test_terminated_employee_stays_visible_to_regional_hr(
+    db, organization, region, office, make_actor, hr_actor
+):
+    """Увольнение закрывает периоды, но не отбирает доступ к карточке."""
+    service = EmployeeService(db)
+    card = service.create(hr_actor, _new_employee(office, employee_number="T-2"))
+    service.terminate(hr_actor, card.id, termination_date=date(2025, 5, 31))
+
+    actor = make_actor(organization, permissions=("employees.read",),
+                       region=region)
+    assert service.get(actor, card.id, at=date(2025, 9, 1)).employment_status == (
+        "TERMINATED"
+    )
