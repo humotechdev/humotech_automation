@@ -32,6 +32,41 @@ down_revision: str | None = "0001_initial_schema"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
+def _rename_not_null(old_prefix: str, new_prefix: str) -> str:
+    """SQL для переименования автоименованных NOT NULL-ограничений.
+
+    Нужен только на PostgreSQL 17+, где NOT NULL попадает в pg_constraint.
+    На более старых версиях цикл не находит ничего и завершается без действий.
+    """
+    return f"""
+    DO $$
+    DECLARE r record;
+    BEGIN
+        FOR r IN
+            SELECT con.conname AS old_name,
+                   replace(con.conname, '{old_prefix}', '{new_prefix}') AS new_name
+            FROM pg_constraint con
+            JOIN pg_class c ON c.oid = con.conrelid
+            WHERE c.relname = 'knowledge_sources'
+              AND con.contype = 'n'
+              AND con.conname LIKE '{old_prefix}%'
+        LOOP
+            EXECUTE format(
+                'ALTER TABLE knowledge_sources RENAME CONSTRAINT %I TO %I',
+                r.old_name, r.new_name
+            );
+        END LOOP;
+    END $$;
+    """
+
+
+RENAME_NOT_NULL_FORWARD = _rename_not_null(
+    "knowledge_articles_", "knowledge_sources_"
+)
+RENAME_NOT_NULL_BACK = _rename_not_null(
+    "knowledge_sources_", "knowledge_articles_"
+)
+
 RENAMED_CONSTRAINTS = (
     ("pk_knowledge_articles", "pk_knowledge_sources"),
     ("fk_knowledge_articles_organization_id",
@@ -79,6 +114,12 @@ def upgrade() -> None:
         "ALTER INDEX ix_knowledge_articles_organization_id "
         "RENAME TO ix_knowledge_sources_organization_id"
     )
+    # PostgreSQL 17+ записывает NOT NULL как именованные ограничения, и
+    # ALTER TABLE ... RENAME TO их НЕ переименовывает: в pg_constraint остаются
+    # knowledge_articles_*_not_null. Функционально безвредно, но \d показывает
+    # имя несуществующей таблицы. Цикл version-safe: на PG 15/16 таких строк
+    # просто нет и он ничего не делает.
+    op.execute(RENAME_NOT_NULL_FORWARD)
     # старый составной индекс заменяется новым, с языком
     op.drop_index("ix_knowledge_articles_org_status", table_name="knowledge_sources")
     # Набор статусов изменился: DRAFT/IN_REVIEW/PUBLISHED/ARCHIVED
@@ -442,6 +483,8 @@ def downgrade() -> None:
         "ALTER INDEX ix_knowledge_sources_organization_id "
         "RENAME TO ix_knowledge_articles_organization_id"
     )
+    # обратное переименование NOT NULL-ограничений (см. комментарий в upgrade)
+    op.execute(RENAME_NOT_NULL_BACK)
     for old, new in RENAMED_CONSTRAINTS:
         op.execute(
             "ALTER TABLE knowledge_sources RENAME CONSTRAINT %s TO %s" % (new, old)

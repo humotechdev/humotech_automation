@@ -21,7 +21,13 @@ services:
     ports:
       - "5433:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      # В образах PostgreSQL 18+ том монтируется в /var/lib/postgresql, а НЕ
+      # в /var/lib/postgresql/data: с 18-й версии данные лежат в подкаталоге
+      # с номером мажорной версии, чтобы работал pg_upgrade --link.
+      # Старый путь /data приводит к отказу старта с ошибкой
+      # "in 18+, these Docker images are configured to store database data in a
+      #  format which is compatible with pg_ctlcluster".
+      - postgres_data:/var/lib/postgresql
       - ./initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       # без этого миграции стартуют раньше, чем сервер готов принимать соединения

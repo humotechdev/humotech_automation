@@ -54,12 +54,24 @@ def test_exit_closes_session_and_counts_duration(db, employee, qr_point, now,
 
 
 def test_second_entry_is_rejected_and_does_not_open_second_session(
-    db, employee, qr_point, now, fresh_qr
+    db, organization, office, employee, now, fresh_qr
 ):
-    register_scan(db, employee_id=employee.id, qr_point=qr_point, now=now,
+    """Повторный вход отклоняется — но проверять это нужно на точке ENTRY.
+
+    У точки BOTH второе сканирование вообще не является повторным входом:
+    направление выводится из наличия открытой сессии, поэтому там это выход.
+    Ситуация «уже внутри» возможна только на точке, жёстко заданной как ENTRY.
+    """
+    from tests.conftest import make_qr_point
+
+    entry_point = make_qr_point(
+        db, organization, office, code="ENTRY_ONLY", direction_mode="ENTRY"
+    )
+
+    register_scan(db, employee_id=employee.id, qr_point=entry_point, now=now,
                   qr_nonce_hash="n1", **fresh_qr)
 
-    result = register_scan(db, employee_id=employee.id, qr_point=qr_point,
+    result = register_scan(db, employee_id=employee.id, qr_point=entry_point,
                            now=now, qr_nonce_hash="n2", **fresh_qr)
 
     assert not result.accepted
@@ -70,6 +82,36 @@ def test_second_entry_is_rejected_and_does_not_open_second_session(
         AttendanceSession.status == "OPEN",
     ).count()
     assert open_sessions == 1
+
+
+def test_both_mode_second_scan_closes_session_instead_of_opening_new(
+    db, employee, qr_point, now, fresh_qr
+):
+    """Регрессия: у точки BOTH второе сканирование закрывает сессию.
+
+    Направление определяет сервер по наличию открытой сессии, а не клиент.
+    Второй сессии при этом не появляется.
+    """
+    first = register_scan(db, employee_id=employee.id, qr_point=qr_point, now=now,
+                          qr_nonce_hash="n1", **fresh_qr)
+    assert first.event.event_type == "ENTRY"
+
+    later = now + timedelta(hours=4)
+    second = register_scan(
+        db, employee_id=employee.id, qr_point=qr_point, now=later,
+        occurred_at=later, qr_nonce_hash="n2",
+        qr_issued_at=later, qr_expires_at=later + timedelta(seconds=45),
+    )
+
+    assert second.accepted
+    assert second.event.event_type == "EXIT"
+    assert second.session.id == first.session.id, "открылась вторая сессия"
+    assert second.session.status == "CLOSED"
+
+    total = db.query(AttendanceSession).filter(
+        AttendanceSession.employee_id == employee.id
+    ).count()
+    assert total == 1
 
 
 def test_expired_qr_is_rejected(db, employee, qr_point, now):

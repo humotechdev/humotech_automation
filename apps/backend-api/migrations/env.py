@@ -24,6 +24,28 @@ if config.config_file_name is not None:
 database_url = os.getenv("ALEMBIC_DATABASE_URL") or settings.database_url
 config.set_main_option("sqlalchemy.url", database_url)
 
+# Функциональные индексы, которые Alembic сравнивать не умеет.
+#
+# PostgreSQL хранит выражение индекса в нормализованном виде с приведениями
+# типов: to_tsvector('simple'::regconfig, (((title)::text || ' '::text) || content)).
+# К исходной строке из модели оно не сводится, поэтому autogenerate на КАЖДОМ
+# прогоне предлагает удалить и создать индекс заново, хотя в базе он верный.
+# Однажды такая «правка» попадёт в миграцию, а пересоздание GIN-индекса на
+# большой таблице — это блокировка на запись.
+#
+# Индексы остаются под контролем: их выражение задано в моделях и создано
+# миграцией 0002. Менять его нужно вручную отдельной миграцией.
+UNCOMPARED_EXPRESSION_INDEXES = {
+    "ix_knowledge_sources_fts",
+    "ix_knowledge_chunks_fts",
+}
+
+
+def include_object(obj, name, type_, reflected, compare_to) -> bool:
+    if type_ == "index" and name in UNCOMPARED_EXPRESSION_INDEXES:
+        return False
+    return True
+
 
 def run_migrations_offline() -> None:
     """Режим --sql: рендерит SQL без подключения к базе."""
@@ -33,6 +55,7 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
+        include_object=include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -49,6 +72,7 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             compare_type=True,
+            include_object=include_object,
         )
         with context.begin_transaction():
             context.run_migrations()
