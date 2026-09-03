@@ -30,3 +30,7 @@ Thumbs.db
 *.log
 tmp/
 image.png
+
+# --- Django ---
+staticfiles/
+media/
