@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from django.contrib.auth import authenticate, login, logout
+from drf_spectacular.utils import OpenApiExample, OpenApiResponse, extend_schema
 from rest_framework import serializers, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -21,9 +22,84 @@ class LoginSerializer(serializers.Serializer):
     password = serializers.CharField(max_length=256, write_only=True)
 
 
+class CurrentUserSerializer(serializers.Serializer):
+    """Кто вошёл и что ему можно.
+
+    Тот же состав отдают и вход, и «кто я»: интерфейсу после входа
+    нужно ровно то же, что и при обновлении страницы, и второй формой
+    ответа они бы только разошлись.
+    """
+
+    id = serializers.UUIDField()
+    email = serializers.CharField()
+    organization_id = serializers.UUIDField()
+    organization_code = serializers.CharField()
+    employee_id = serializers.UUIDField(
+        allow_null=True,
+        help_text="null у технической учётной записи без сотрудника",
+    )
+    status = serializers.CharField()
+    roles = serializers.ListField(child=serializers.CharField())
+    permissions = serializers.ListField(
+        child=serializers.CharField(),
+        help_text=(
+            "Коды разрешений — чтобы интерфейс мог скрыть недоступные "
+            "кнопки. Скрытая кнопка не защита: решение всё равно "
+            "принимает сервер при каждом вызове."
+        ),
+    )
+
+
+class ErrorBodySerializer(serializers.Serializer):
+    """Тело ошибки, единое для всего API.
+
+    Клиент различает ситуации по `code`, а не по тексту: текст
+    переводится и переписывается, код — нет.
+    """
+
+    code = serializers.CharField()
+    message = serializers.CharField()
+    details = serializers.JSONField(allow_null=True)
+
+
+class ErrorSerializer(serializers.Serializer):
+    error = ErrorBodySerializer()
+
+
+@extend_schema(tags=["Вход"])
 class LoginView(APIView):
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        summary="Вход по организации, почте и паролю",
+        description=(
+            "Организация передаётся явно: почта уникальна внутри "
+            "организации, а не глобально, и пары «почта + пароль» для "
+            "опознания недостаточно.\n\n"
+            "В ответе устанавливается сессионная cookie. Дальнейшие "
+            "изменяющие запросы требуют заголовка CSRF."
+        ),
+        request=LoginSerializer,
+        responses={
+            200: CurrentUserSerializer,
+            401: OpenApiResponse(
+                response=ErrorSerializer,
+                description=(
+                    "Одно сообщение на все причины: иначе по разнице "
+                    "ответов можно перебором узнать, какие учётные "
+                    "записи существуют."
+                ),
+            ),
+        },
+        examples=[
+            OpenApiExample(
+                "Кадровик HUMOTECH",
+                value={"organization_code": "HUMO",
+                       "email": "hr@humotech.tj", "password": "…"},
+                request_only=True,
+            ),
+        ],
+    )
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -49,14 +125,22 @@ class LoginView(APIView):
         return Response(_describe(user))
 
 
+@extend_schema(tags=["Вход"])
 class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Выход",
+        description="Сессия удаляется на сервере, cookie перестаёт работать.",
+        request=None,
+        responses={204: None},
+    )
     def post(self, request):
         logout(request)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+@extend_schema(tags=["Вход"])
 class CurrentUserView(APIView):
     """Кто я и что мне можно.
 
@@ -67,6 +151,10 @@ class CurrentUserView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Текущий пользователь",
+        responses={200: CurrentUserSerializer},
+    )
     def get(self, request):
         return Response(_describe(request.user))
 

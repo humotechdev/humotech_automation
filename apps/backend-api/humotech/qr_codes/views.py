@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -69,6 +71,19 @@ class QrDisplayPairView(APIView):
     def get_throttles(self):
         return [ScopedRateThrottle()]
 
+    @extend_schema(
+        operation_id="qr_display_pair",
+        summary="Сопряжение экрана",
+        description=(
+            "Одноразовый код обменивается на постоянный credential "
+            "экрана. Credential существует только в этом ответе: "
+            "в базе лежит хеш, и восстановить его потом нельзя.\n\n"
+            "Частота обращений ограничена — против перебора кода."
+        ),
+        request=PairSerializer,
+        responses={201: PairedDeviceSerializer},
+        tags=["Экраны QR"],
+    )
     def post(self, request):
         data = validated(PairSerializer, request.data)
         paired = QrDisplayService().pair(data["pairing_code"])
@@ -92,6 +107,27 @@ class QrDisplayCodeView(APIView):
     def get_throttles(self):
         return [ScopedRateThrottle()]
 
+    @extend_schema(
+        operation_id="qr_display_code",
+        summary="Очередной код для показа",
+        description=(
+            "Экран предъявляет свой credential в заголовке "
+            "`Authorization: Bearer`. Ни офис, ни точка в запросе не "
+            "участвуют: и то и другое сервер берёт из устройства — "
+            "попросить код чужого офиса экрану попросту нечем."
+        ),
+        request=None,
+        responses={
+            200: IssuedQrSerializer,
+            403: OpenApiResponse(
+                description=(
+                    "Одна причина на все случаи: истёк срок, отозван "
+                    "экран, подделан credential"
+                ),
+            ),
+        },
+        tags=["Экраны QR"],
+    )
     def get(self, request):
         credential = _credential(request)
         service = QrDisplayService()
@@ -109,11 +145,20 @@ class QrDisplayCodeView(APIView):
         return Response(IssuedQrSerializer(issued).data)
 
 
+@extend_schema(tags=["Экраны QR"])
 class QrDeviceListView(APIView):
     """Список экранов и заведение нового — из CRM."""
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        operation_id="qr_devices_list",
+        summary="Экраны показа QR",
+        parameters=[
+            OpenApiParameter("qr_point_id", OpenApiTypes.UUID),
+        ],
+        responses={200: DeviceSerializer(many=True)},
+    )
     def get(self, request):
         actor = Actor.from_user(request.user)
         devices = QrDisplayService().list_devices(
@@ -121,6 +166,17 @@ class QrDeviceListView(APIView):
         )
         return Response(DeviceSerializer(devices, many=True).data)
 
+    @extend_schema(
+        operation_id="qr_devices_create",
+        summary="Завести экран",
+        description=(
+            "Код сопряжения существует только в этом ответе. "
+            "Восстановить его потом нельзя даже суперпользователю: "
+            "в базе лежит хеш."
+        ),
+        request=DeviceCreateSerializer,
+        responses={201: IssuedDeviceSerializer},
+    )
     def post(self, request):
         data = validated(DeviceCreateSerializer, request.data)
         actor = Actor.from_user(request.user)
@@ -134,11 +190,36 @@ class QrDeviceListView(APIView):
         )
 
 
+@extend_schema(tags=["Экраны QR"])
 class QrDeviceActionView(APIView):
     """Отзыв экрана и перевыпуск кода сопряжения."""
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        operation_id="qr_device_action",
+        summary="Отозвать экран или перевыпустить код сопряжения",
+        parameters=[
+            OpenApiParameter(
+                "device_id", OpenApiTypes.UUID,
+                location=OpenApiParameter.PATH,
+            ),
+            OpenApiParameter(
+                "action", str, location=OpenApiParameter.PATH,
+                enum=["revoke", "reissue"],
+            ),
+        ],
+        request=None,
+        responses={
+            200: OpenApiResponse(
+                response=IssuedDeviceSerializer,
+                description=(
+                    "При `reissue` — новый код сопряжения, видимый "
+                    "только здесь. При `revoke` — карточка экрана без кода"
+                ),
+            ),
+        },
+    )
     def post(self, request, device_id, action):
         actor = Actor.from_user(request.user)
         service = QrDisplayService()

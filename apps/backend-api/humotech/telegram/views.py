@@ -17,7 +17,9 @@
 
 from __future__ import annotations
 
-from rest_framework import status
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, extend_schema
+from rest_framework import serializers, status
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -104,6 +106,73 @@ class TelegramInvitationViewSet(ServiceViewSet):
         return self.item_response(self.service.revoke_invitation(self.actor, pk))
 
 
+class BotLinkResultSerializer(serializers.Serializer):
+    """Ответ боту. Карточки сотрудника здесь нет намеренно.
+
+    Сотрудник боту неизвестен и знать его боту незачем: он только
+    сообщает человеку, что привязка ждёт подтверждения.
+    """
+
+    status = serializers.CharField()
+    employee_known = serializers.BooleanField()
+
+
+class MiniAppEmployeeSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    full_name = serializers.CharField()
+    employee_number = serializers.CharField(allow_null=True)
+    employment_status = serializers.CharField()
+    preferred_language = serializers.CharField(allow_null=True)
+
+
+class MiniAppTelegramSerializer(serializers.Serializer):
+    status = serializers.CharField()
+    username = serializers.CharField(allow_null=True)
+
+
+class MiniAppMeSerializer(serializers.Serializer):
+    employee = MiniAppEmployeeSerializer()
+    telegram = MiniAppTelegramSerializer()
+
+
+class OutboxMessageSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    chat_id = serializers.IntegerField()
+    text = serializers.CharField()
+    type = serializers.CharField()
+    attempts = serializers.IntegerField()
+
+
+class OutboxBatchSerializer(serializers.Serializer):
+    messages = OutboxMessageSerializer(many=True)
+    reclaimed = serializers.IntegerField(
+        help_text=(
+            "Сколько строк вернулось в очередь после падения отправщика. "
+            "Без этой уборки они не ушли бы никогда"
+        ),
+    )
+
+
+class OutboxResultSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    sent = serializers.BooleanField()
+    error = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True,
+        help_text=(
+            "Только код причины. Текст ошибки Telegram может содержать "
+            "эхо запроса, то есть само уведомление"
+        ),
+    )
+
+
+class OutboxReportSerializer(serializers.Serializer):
+    results = OutboxResultSerializer(many=True)
+
+
+class OutboxAcceptedSerializer(serializers.Serializer):
+    accepted = serializers.IntegerField()
+
+
 class _EmployeeScopedView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -112,14 +181,35 @@ class _EmployeeScopedView(APIView):
         return Actor.from_user(self.request.user)
 
 
+@extend_schema(
+    tags=["Telegram"],
+    parameters=[
+        OpenApiParameter(
+            "employee_pk", OpenApiTypes.UUID, location=OpenApiParameter.PATH
+        ),
+    ],
+)
 class EmployeeTelegramView(_EmployeeScopedView):
     """Состояние привязки в карточке сотрудника."""
 
+    @extend_schema(
+        operation_id="employee_telegram_status",
+        summary="Привязка Telegram у сотрудника",
+        responses={200: LinkStatusSerializer},
+    )
     def get(self, request, employee_pk):
         link = TelegramLinkService().status(self.actor, employee_pk)
         return Response(LinkStatusSerializer(link).data)
 
 
+@extend_schema(
+    tags=["Telegram"],
+    parameters=[
+        OpenApiParameter(
+            "employee_pk", OpenApiTypes.UUID, location=OpenApiParameter.PATH
+        ),
+    ],
+)
 class EmployeeTelegramDisconnectView(_EmployeeScopedView):
     """Отключение привязки.
 
@@ -127,6 +217,16 @@ class EmployeeTelegramDisconnectView(_EmployeeScopedView):
     вернуть доступ можно только новой ссылкой и новым подтверждением.
     """
 
+    @extend_schema(
+        operation_id="employee_telegram_disconnect",
+        summary="Отключить Telegram сотруднику",
+        description=(
+            "Обратной операции нет: вернуть доступ можно только новой "
+            "ссылкой и новым подтверждением."
+        ),
+        request=None,
+        responses={200: AccountSerializer},
+    )
     def post(self, request, employee_pk):
         account = TelegramLinkService().disconnect(self.actor, employee_pk)
         return Response(AccountSerializer(account).data)
@@ -140,6 +240,17 @@ class BotLinkView(APIView):
     throttle_scope = "telegram_bot_link"
     throttle_classes = [ScopedRateThrottle]
 
+    @extend_schema(
+        operation_id="telegram_bot_link",
+        summary="Погашение ссылки привязки",
+        description=(
+            "Вызывает только бот, предъявляя общий секрет. Пользователя "
+            "за запросом нет: право на операцию даёт токен приглашения."
+        ),
+        request=BotConsumeSerializer,
+        responses={201: BotLinkResultSerializer},
+        tags=["Telegram"],
+    )
     def post(self, request):
         payload = validated(BotConsumeSerializer, request.data)
         account = TelegramLinkService().consume(
@@ -166,6 +277,18 @@ class MiniAppAuthView(APIView):
     throttle_scope = "telegram_mini_app"
     throttle_classes = [ScopedRateThrottle]
 
+    @extend_schema(
+        operation_id="telegram_mini_app_auth",
+        summary="Обмен initData на токен",
+        description=(
+            "Подпись Telegram проверяется на сервере. Состояние привязки "
+            "перечитывается на каждом последующем запросе, поэтому отзыв "
+            "действует немедленно, а не с истечением срока токена."
+        ),
+        request=MiniAppAuthSerializer,
+        responses={200: MiniAppSessionSerializer},
+        tags=["Telegram"],
+    )
     def post(self, request):
         payload = validated(MiniAppAuthSerializer, request.data)
         session = TelegramMiniAppService().authenticate(payload["init_data"])
@@ -182,6 +305,12 @@ class MiniAppMeView(APIView):
     authentication_classes = [MiniAppAuthentication]
     permission_classes = [IsLinkedEmployee]
 
+    @extend_schema(
+        operation_id="telegram_mini_app_me",
+        summary="Кто открыл Mini App",
+        responses={200: MiniAppMeSerializer},
+        tags=["Telegram"],
+    )
     def get(self, request):
         employee = request.user.employee
         parts = [employee.last_name, employee.first_name, employee.middle_name]
@@ -215,6 +344,18 @@ class BotOutboxView(APIView):
     authentication_classes = []
     permission_classes = [IsTelegramBot]
 
+    @extend_schema(
+        operation_id="telegram_bot_outbox_claim",
+        summary="Забрать пачку уведомлений",
+        description=(
+            "Захват строк — `SELECT ... FOR UPDATE SKIP LOCKED` — делает "
+            "backend: у бота нет и не будет подключения к базе. Перед "
+            "выдачей возвращаются в очередь строки, зависшие после "
+            "падения отправщика."
+        ),
+        responses={200: OutboxBatchSerializer},
+        tags=["Telegram"],
+    )
     def get(self, request):
         from django.conf import settings
 
@@ -240,6 +381,14 @@ class BotOutboxView(APIView):
             }
         )
 
+    @extend_schema(
+        operation_id="telegram_bot_outbox_report",
+        summary="Отчитаться о доставке",
+        description="За один запрос принимается не больше 200 результатов.",
+        request=OutboxReportSerializer,
+        responses={200: OutboxAcceptedSerializer},
+        tags=["Telegram"],
+    )
     def post(self, request):
         from humotech.notifications.outbox import mark_failed, mark_sent
 

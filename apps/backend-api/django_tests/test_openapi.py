@@ -95,12 +95,15 @@ def test_docs_pages_are_development_only(client, settings):
 # описывает не наш API: у половины эндпоинтов тело запроса пропадает,
 # и сгенерированный клиент получает `unknown` вместо типов.
 #
-# Поэтому диагностика измеряется числом и зафиксирована здесь. Бюджет
-# движется только вниз: новый модуль, добавивший непокрытый view,
-# роняет тест сразу, а не через месяц во фронтенде.
+# Поэтому диагностика измеряется числом и зафиксирована здесь. Ноль —
+# не идеал на будущее, а достигнутое состояние: новый модуль, добавивший
+# непокрытый view, роняет тест сразу, а не через месяц во фронтенде.
+#
+# Именно ноль, а не «почти ноль». Один разрешённый недочёт — это место,
+# куда через полгода добавят второй, и счёт снова поедет вверх.
 
-MAX_ERRORS = 26
-MAX_WARNINGS = 27
+MAX_ERRORS = 0
+MAX_WARNINGS = 0
 
 
 def _generate_schema_diagnostics() -> tuple[list[str], list[str]]:
@@ -132,10 +135,10 @@ def test_schema_generates_without_complaints():
     errors, warnings = _generate_schema_diagnostics()
 
     assert len(errors) <= MAX_ERRORS, (
-        f"Ошибок в схеме {len(errors)}, бюджет {MAX_ERRORS}. "
-        "Новые:\n" + "\n".join(errors)
+        f"Ошибок в схеме {len(errors)}, допустимо {MAX_ERRORS}:\n"
+        + "\n".join(errors)
     )
     assert len(warnings) <= MAX_WARNINGS, (
-        f"Предупреждений в схеме {len(warnings)}, бюджет {MAX_WARNINGS}. "
-        "Новые:\n" + "\n".join(warnings)
+        f"Предупреждений в схеме {len(warnings)}, допустимо "
+        f"{MAX_WARNINGS}:\n" + "\n".join(warnings)
     )

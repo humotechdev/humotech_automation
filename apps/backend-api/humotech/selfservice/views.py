@@ -12,6 +12,8 @@
 
 from __future__ import annotations
 
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -24,6 +26,13 @@ from humotech.selfservice.presentation import (
     session_json,
     status_json,
     summary_json,
+)
+from humotech.selfservice.responses import (
+    CurrentStatusSerializer,
+    HistorySerializer,
+    ProfileSerializer,
+    ScanResultSerializer,
+    StatisticsSerializer,
 )
 from humotech.selfservice.serializers import PeriodSerializer, ScanRequestSerializer
 from humotech.selfservice.throttling import EmployeeRateThrottle, ScanRateThrottle
@@ -51,6 +60,7 @@ class EmployeeSelfView(APIView):
         return self.request.user.context
 
 
+@extend_schema(tags=["Личный кабинет"])
 class ProfileView(EmployeeSelfView):
     """Кто я и где я числюсь.
 
@@ -59,6 +69,11 @@ class ProfileView(EmployeeSelfView):
     существует, чтобы человек убедился, что система видит его правильно.
     """
 
+    @extend_schema(
+        operation_id="me_profile",
+        summary="Мой профиль",
+        responses={200: ProfileSerializer},
+    )
     def get(self, request):
         context = self.context
         employee = context.employee
@@ -111,6 +126,7 @@ class ProfileView(EmployeeSelfView):
         )
 
 
+@extend_schema(tags=["Личный кабинет"])
 class ScanView(EmployeeSelfView):
     """Отметка по QR.
 
@@ -122,6 +138,18 @@ class ScanView(EmployeeSelfView):
 
     throttle_classes = [ScanRateThrottle]
 
+    @extend_schema(
+        operation_id="me_scan",
+        summary="Отметка по QR",
+        description=(
+            "Ни офиса, ни направления, ни времени в запросе нет. "
+            "Направление особенно: прислать «я выхожу» нельзя, потому "
+            "что такого параметра не существует — сервер решает сам "
+            "по последней отметке."
+        ),
+        request=ScanRequestSerializer,
+        responses={200: ScanResultSerializer},
+    )
     def post(self, request):
         data = validated(ScanRequestSerializer, request.data)
         outcome = scan(
@@ -157,13 +185,20 @@ class ScanView(EmployeeSelfView):
         )
 
 
+@extend_schema(tags=["Личный кабинет"])
 class StatusView(EmployeeSelfView):
     """Главный экран: где человек сейчас и что у него сегодня."""
 
+    @extend_schema(
+        operation_id="me_status",
+        summary="Где я сейчас",
+        responses={200: CurrentStatusSerializer},
+    )
     def get(self, request):
         return Response(status_json(statistics.current_status(self.context)))
 
 
+@extend_schema(tags=["Личный кабинет"])
 class StatisticsView(EmployeeSelfView):
     """Статистика за сегодня, неделю, месяц или произвольный период.
 
@@ -172,6 +207,12 @@ class StatisticsView(EmployeeSelfView):
     вопрос, на который отвечает сервер, а не клиент.
     """
 
+    @extend_schema(
+        operation_id="me_statistics",
+        summary="Моя статистика",
+        parameters=[PeriodSerializer],
+        responses={200: StatisticsSerializer},
+    )
     def get(self, request):
         params = validated(PeriodSerializer, request.query_params)
         report = _report(self.context, params)
@@ -186,6 +227,7 @@ class StatisticsView(EmployeeSelfView):
         )
 
 
+@extend_schema(tags=["Личный кабинет"])
 class HistoryView(EmployeeSelfView):
     """История посещений: день за днём, с каждым входом и выходом.
 
@@ -195,6 +237,24 @@ class HistoryView(EmployeeSelfView):
 
     MAX_DAYS = 62
 
+    @extend_schema(
+        operation_id="me_history",
+        summary="Моя история посещений",
+        description=(
+            "Показываются только дни, о которых есть что сказать: "
+            "пустые выходные посреди истории — это шум, через который "
+            "приходится прокручивать."
+        ),
+        parameters=[
+            PeriodSerializer,
+            OpenApiParameter("offset", OpenApiTypes.INT),
+            OpenApiParameter(
+                "limit", OpenApiTypes.INT,
+                description="не больше 62 дней за раз",
+            ),
+        ],
+        responses={200: HistorySerializer},
+    )
     def get(self, request):
         params = validated(PeriodSerializer, request.query_params)
         report = _report(self.context, params)

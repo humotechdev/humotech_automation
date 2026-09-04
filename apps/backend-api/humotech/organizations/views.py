@@ -63,6 +63,7 @@ class OrganizationSettingsView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
+        operation_id="settings_list",
         summary="Настройки организации",
         description=(
             "Значения, умолчания и пояснение к каждой настройке. Правила "

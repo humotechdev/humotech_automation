@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import serializers, status
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
@@ -36,6 +38,116 @@ class ExtendSerializer(serializers.Serializer):
     comment = serializers.CharField(
         max_length=2000, required=False, allow_blank=True
     )
+
+
+class AbsenceTypeSerializer(serializers.Serializer):
+    code = serializers.CharField()
+    name = serializers.CharField()
+    requires_document = serializers.BooleanField()
+    deducts_leave_balance = serializers.BooleanField()
+
+
+class AbsenceDocumentSerializer(serializers.Serializer):
+    """Приложенный файл. Ссылки на скачивание здесь нет намеренно:
+    справка отдаётся отдельным запросом, который спрашивает, кому можно."""
+
+    id = serializers.UUIDField()
+    file_name = serializers.CharField()
+    uploaded_at = serializers.DateTimeField()
+
+
+class AbsenceRequestSerializer(serializers.Serializer):
+    """Заявка глазами самого сотрудника."""
+
+    id = serializers.UUIDField()
+    kind = serializers.CharField()
+    absence_type = AbsenceTypeSerializer()
+    status = serializers.CharField()
+    extension_pending = serializers.BooleanField(
+        help_text=(
+            "Производное состояние, которого нет в схеме отдельным "
+            "статусом: продление — это дочерняя заявка, а не поле "
+            "у родительской"
+        ),
+    )
+    first_day = serializers.DateField(allow_null=True)
+    last_day = serializers.DateField(allow_null=True)
+    working_days = serializers.IntegerField(allow_null=True)
+    comment = serializers.CharField(allow_null=True)
+    review_comment = serializers.CharField(allow_null=True)
+    documents = serializers.ListField(child=serializers.JSONField())
+    can_cancel = serializers.BooleanField()
+    submitted_at = serializers.DateTimeField(allow_null=True)
+    reviewed_at = serializers.DateTimeField(allow_null=True)
+    absence_status = serializers.CharField(allow_null=True)
+
+
+class AbsenceRequestListSerializer(serializers.Serializer):
+    requests = AbsenceRequestSerializer(many=True)
+    total = serializers.IntegerField()
+    offset = serializers.IntegerField()
+    limit = serializers.IntegerField()
+    has_more = serializers.BooleanField()
+
+
+class AbsenceOptionTypeSerializer(serializers.Serializer):
+    code = serializers.CharField()
+    name = serializers.CharField()
+    requires_document = serializers.BooleanField()
+    document_required_after_days = serializers.IntegerField(allow_null=True)
+    deducts_leave_balance = serializers.BooleanField()
+    is_paid = serializers.BooleanField()
+
+
+class AbsencePolicySerializer(serializers.Serializer):
+    """Правила организации — подсказка интерфейсу, а не разрешение.
+
+    Решает всё равно сервер: клиент по этим полям показывает верные
+    подсказки и не предлагает того, чего организация не разрешает.
+    """
+
+    require_hr_approval = serializers.BooleanField()
+    document_required = serializers.BooleanField()
+    document_can_be_added_later = serializers.BooleanField()
+    employee_may_cancel_pending = serializers.BooleanField()
+    cancelling_approved_requires_hr = serializers.BooleanField()
+    extensions_allowed = serializers.BooleanField()
+    max_document_bytes = serializers.IntegerField()
+    allowed_document_types = serializers.ListField(
+        child=serializers.CharField()
+    )
+    allow_negative_leave_balance = serializers.BooleanField()
+    document_required_from_day = serializers.IntegerField(allow_null=True)
+    backdating_days_allowed = serializers.IntegerField(allow_null=True)
+    vacation_min_days_ahead = serializers.IntegerField(allow_null=True)
+
+
+class AbsenceOptionsSerializer(serializers.Serializer):
+    types = AbsenceOptionTypeSerializer(many=True)
+    policy = AbsencePolicySerializer()
+
+
+class LeaveBalanceRowSerializer(serializers.Serializer):
+    absence_type = serializers.JSONField()
+    year = serializers.IntegerField()
+    allocated_days = serializers.FloatField()
+    used_days = serializers.FloatField()
+    reserved_days = serializers.FloatField(
+        help_text=(
+            "Отложено под заявки, которые ещё не рассмотрены. Показано "
+            "отдельно: человек должен понимать, почему доступного меньше, "
+            "чем начисленного минус использованное"
+        ),
+    )
+    available_days = serializers.FloatField()
+
+
+class LeaveBalanceSerializer(serializers.Serializer):
+    balances = LeaveBalanceRowSerializer(many=True)
+
+
+class DocumentUploadSerializer(serializers.Serializer):
+    document = serializers.FileField()
 
 
 def request_json(view) -> dict:
@@ -77,11 +189,21 @@ def request_json(view) -> dict:
     }
 
 
+@extend_schema(tags=["Личный кабинет"])
 class AbsenceListView(EmployeeSelfView):
     """Список своих заявок и подача новой."""
 
     parser_classes = [JSONParser, MultiPartParser, FormParser]
 
+    @extend_schema(
+        operation_id="me_absences_list",
+        summary="Мои заявки на отсутствие",
+        parameters=[
+            OpenApiParameter("limit", OpenApiTypes.INT),
+            OpenApiParameter("offset", OpenApiTypes.INT),
+        ],
+        responses={200: AbsenceRequestListSerializer},
+    )
     def get(self, request):
         service = AbsenceService()
         limit = min(max(int(request.query_params.get("limit") or 20), 1), 100)
@@ -97,6 +219,18 @@ class AbsenceListView(EmployeeSelfView):
             }
         )
 
+    @extend_schema(
+        operation_id="me_absences_create",
+        summary="Подать заявку",
+        description=(
+            "`employee_id` в теле нет и быть не может: заявка всегда "
+            "подаётся за себя.\n\n"
+            "Справка прикладывается тем же запросом "
+            "(multipart, поле `document`), если организация её требует."
+        ),
+        request=AbsenceCreateSerializer,
+        responses={201: AbsenceRequestSerializer},
+    )
     def post(self, request):
         data = validated(AbsenceCreateSerializer, request.data)
         view = AbsenceService().create(
@@ -111,22 +245,59 @@ class AbsenceListView(EmployeeSelfView):
         return Response(request_json(view), status=status.HTTP_201_CREATED)
 
 
+@extend_schema(
+    tags=["Личный кабинет"],
+    parameters=[
+        OpenApiParameter(
+            "request_id", OpenApiTypes.UUID, location=OpenApiParameter.PATH
+        ),
+    ],
+)
 class AbsenceDetailView(EmployeeSelfView):
     """Одна заявка: посмотреть, отменить."""
 
+    @extend_schema(
+        operation_id="me_absences_retrieve",
+        summary="Моя заявка",
+        responses={200: AbsenceRequestSerializer},
+    )
     def get(self, request, request_id):
         return Response(request_json(AbsenceService().request(self.context,
                                                               request_id)))
 
+    @extend_schema(
+        operation_id="me_absences_cancel",
+        summary="Отменить свою заявку",
+        description=(
+            "Разрешено политикой организации и только пока заявка "
+            "не рассмотрена. Строка не удаляется: у заявки появляется "
+            "статус «отменена»."
+        ),
+        responses={200: AbsenceRequestSerializer},
+    )
     def delete(self, request, request_id):
         return Response(
             request_json(AbsenceService().cancel(self.context, request_id))
         )
 
 
+@extend_schema(
+    tags=["Личный кабинет"],
+    parameters=[
+        OpenApiParameter(
+            "request_id", OpenApiTypes.UUID, location=OpenApiParameter.PATH
+        ),
+    ],
+)
 class AbsenceExtendView(EmployeeSelfView):
     """Продление: отдельная заявка, ссылающаяся на исходную."""
 
+    @extend_schema(
+        operation_id="me_absences_extend",
+        summary="Продлить отсутствие",
+        request=ExtendSerializer,
+        responses={201: AbsenceRequestSerializer},
+    )
     def post(self, request, request_id):
         data = validated(ExtendSerializer, request.data)
         view = AbsenceService().extend(
@@ -138,11 +309,25 @@ class AbsenceExtendView(EmployeeSelfView):
         return Response(request_json(view), status=status.HTTP_201_CREATED)
 
 
+@extend_schema(
+    tags=["Личный кабинет"],
+    parameters=[
+        OpenApiParameter(
+            "request_id", OpenApiTypes.UUID, location=OpenApiParameter.PATH
+        ),
+    ],
+)
 class AbsenceDocumentView(EmployeeSelfView):
     """Донести справку позже — если организация это разрешает."""
 
     parser_classes = [MultiPartParser, FormParser]
 
+    @extend_schema(
+        operation_id="me_absences_attach_document",
+        summary="Приложить справку",
+        request=DocumentUploadSerializer,
+        responses={201: AbsenceRequestSerializer},
+    )
     def post(self, request, request_id):
         document = request.FILES.get("document")
         if document is None:
@@ -160,6 +345,7 @@ class AbsenceDocumentView(EmployeeSelfView):
         return Response(request_json(view), status=status.HTTP_201_CREATED)
 
 
+@extend_schema(tags=["Личный кабинет"])
 class AbsenceOptionsView(EmployeeSelfView):
     """Что человек вообще может оформить и по каким правилам.
 
@@ -168,6 +354,11 @@ class AbsenceOptionsView(EmployeeSelfView):
     сервер — это подсказка интерфейсу, а не разрешение.
     """
 
+    @extend_schema(
+        operation_id="me_absences_options",
+        summary="Что я могу оформить",
+        responses={200: AbsenceOptionsSerializer},
+    )
     def get(self, request):
         service = AbsenceService()
         policy = service.policy(self.context.organization_id)
@@ -191,6 +382,7 @@ class AbsenceOptionsView(EmployeeSelfView):
         )
 
 
+@extend_schema(tags=["Личный кабинет"])
 class LeaveBalanceView(EmployeeSelfView):
     """Остаток отпуска.
 
@@ -198,6 +390,12 @@ class LeaveBalanceView(EmployeeSelfView):
     приложениях — три места, где ошибиться.
     """
 
+    @extend_schema(
+        operation_id="me_leave_balance",
+        summary="Мой остаток отпуска",
+        parameters=[OpenApiParameter("year", OpenApiTypes.INT)],
+        responses={200: LeaveBalanceSerializer},
+    )
     def get(self, request):
         year = request.query_params.get("year")
         balances = AbsenceService().balances(
