@@ -1,0 +1,241 @@
+"""Экраны больничных и отпусков в личном кабинете.
+
+Больничный и отпуск — одна механика с разными видами отсутствия, поэтому
+и endpoint'ы общие: `POST /me/absences` с кодом вида. Разводить их на два
+набора значило бы иметь два места, где чинить одну ошибку.
+
+Различие только в том, что показывать: у отпуска есть остаток, у
+больничного — справка. Это решает клиент по коду вида и по политике
+организации, которую сервер отдаёт вместе со списком видов.
+"""
+
+from __future__ import annotations
+
+from rest_framework import serializers, status
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
+from rest_framework.response import Response
+
+from humotech.absences.services import MINUTES_PER_WORKING_DAY, AbsenceService
+from humotech.core.api import validated
+from humotech.selfservice.views import EmployeeSelfView
+
+
+class AbsenceCreateSerializer(serializers.Serializer):
+    """Заявка. `employee_id` здесь нет и быть не может."""
+
+    absence_type_code = serializers.CharField(max_length=50)
+    first_day = serializers.DateField()
+    last_day = serializers.DateField()
+    comment = serializers.CharField(
+        max_length=2000, required=False, allow_blank=True
+    )
+
+
+class ExtendSerializer(serializers.Serializer):
+    new_last_day = serializers.DateField()
+    comment = serializers.CharField(
+        max_length=2000, required=False, allow_blank=True
+    )
+
+
+def request_json(view) -> dict:
+    request = view.request
+    absence = view.absence
+    return {
+        "id": str(request.id),
+        "kind": request.request_kind,
+        "absence_type": {
+            "code": request.absence_type.code,
+            "name": request.absence_type.name,
+            "requires_document": request.absence_type.requires_document,
+            "deducts_leave_balance": request.absence_type.deducts_leave_balance,
+        },
+        "status": request.status,
+        # Производное состояние, которого нет в схеме отдельным статусом:
+        # продление — это дочерняя заявка, а не поле у родительской.
+        "extension_pending": view.extension_pending,
+        "first_day": (
+            request.requested_start_at.date().isoformat()
+            if request.requested_start_at else None
+        ),
+        "last_day": (
+            request.requested_end_at.date().isoformat()
+            if request.requested_end_at else None
+        ),
+        "working_days": view.working_days,
+        "comment": request.employee_comment,
+        "review_comment": request.review_comment,
+        "documents": view.documents,
+        "can_cancel": view.can_cancel,
+        "submitted_at": (
+            request.submitted_at.isoformat() if request.submitted_at else None
+        ),
+        "reviewed_at": (
+            request.reviewed_at.isoformat() if request.reviewed_at else None
+        ),
+        "absence_status": absence.status if absence else None,
+    }
+
+
+class AbsenceListView(EmployeeSelfView):
+    """Список своих заявок и подача новой."""
+
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
+
+    def get(self, request):
+        service = AbsenceService()
+        limit = min(max(int(request.query_params.get("limit") or 20), 1), 100)
+        offset = max(int(request.query_params.get("offset") or 0), 0)
+        views, total = service.requests(self.context, limit=limit, offset=offset)
+        return Response(
+            {
+                "requests": [request_json(view) for view in views],
+                "total": total,
+                "offset": offset,
+                "limit": limit,
+                "has_more": offset + limit < total,
+            }
+        )
+
+    def post(self, request):
+        data = validated(AbsenceCreateSerializer, request.data)
+        view = AbsenceService().create(
+            self.context,
+            absence_type_code=data["absence_type_code"],
+            first_day=data["first_day"],
+            last_day=data["last_day"],
+            comment=data.get("comment") or None,
+            # Справка приходит тем же запросом, если организация её требует.
+            document=request.FILES.get("document"),
+        )
+        return Response(request_json(view), status=status.HTTP_201_CREATED)
+
+
+class AbsenceDetailView(EmployeeSelfView):
+    """Одна заявка: посмотреть, отменить."""
+
+    def get(self, request, request_id):
+        return Response(request_json(AbsenceService().request(self.context,
+                                                              request_id)))
+
+    def delete(self, request, request_id):
+        return Response(
+            request_json(AbsenceService().cancel(self.context, request_id))
+        )
+
+
+class AbsenceExtendView(EmployeeSelfView):
+    """Продление: отдельная заявка, ссылающаяся на исходную."""
+
+    def post(self, request, request_id):
+        data = validated(ExtendSerializer, request.data)
+        view = AbsenceService().extend(
+            self.context,
+            request_id,
+            new_last_day=data["new_last_day"],
+            comment=data.get("comment") or None,
+        )
+        return Response(request_json(view), status=status.HTTP_201_CREATED)
+
+
+class AbsenceDocumentView(EmployeeSelfView):
+    """Донести справку позже — если организация это разрешает."""
+
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request, request_id):
+        document = request.FILES.get("document")
+        if document is None:
+            return Response(
+                {
+                    "error": {
+                        "code": "validation_failed",
+                        "message": "Файл не приложен",
+                        "details": {"field": "document"},
+                    }
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        view = AbsenceService().attach_document(self.context, request_id, document)
+        return Response(request_json(view), status=status.HTTP_201_CREATED)
+
+
+class AbsenceOptionsView(EmployeeSelfView):
+    """Что человек вообще может оформить и по каким правилам.
+
+    Правила отдаются клиенту, чтобы он показывал верные подсказки и не
+    предлагал того, чего организация не разрешает. Решает всё равно
+    сервер — это подсказка интерфейсу, а не разрешение.
+    """
+
+    def get(self, request):
+        service = AbsenceService()
+        policy = service.policy(self.context.organization_id)
+        return Response(
+            {
+                "types": [
+                    {
+                        "code": row.code,
+                        "name": row.name,
+                        "requires_document": row.requires_document,
+                        "document_required_after_days": (
+                            row.document_required_after_days
+                        ),
+                        "deducts_leave_balance": row.deducts_leave_balance,
+                        "is_paid": row.is_paid,
+                    }
+                    for row in service.types(self.context)
+                ],
+                "policy": policy.as_dict(),
+            }
+        )
+
+
+class LeaveBalanceView(EmployeeSelfView):
+    """Остаток отпуска.
+
+    Минуты переводятся в дни здесь, а не на клиенте: делить на 480 в трёх
+    приложениях — три места, где ошибиться.
+    """
+
+    def get(self, request):
+        year = request.query_params.get("year")
+        balances = AbsenceService().balances(
+            self.context, year=int(year) if year and year.isdigit() else None
+        )
+        return Response(
+            {
+                "balances": [
+                    {
+                        "absence_type": {
+                            "code": row.absence_type.code,
+                            "name": row.absence_type.name,
+                        },
+                        "year": row.year,
+                        "allocated_days": _days(row.allocated_minutes),
+                        "used_days": _days(row.used_minutes),
+                        # Отложено под заявки, которые ещё не рассмотрены.
+                        # Показывается отдельно: человек должен понимать,
+                        # почему доступного меньше, чем начисленного минус
+                        # использованное.
+                        "reserved_days": _days(row.reserved_minutes),
+                        "available_days": _days(row.available_minutes),
+                    }
+                    for row in balances
+                ]
+            }
+        )
+
+
+def _days(minutes: int) -> float:
+    return round(minutes / MINUTES_PER_WORKING_DAY, 2)
+
+
+__all__ = [
+    "AbsenceDetailView",
+    "AbsenceDocumentView",
+    "AbsenceExtendView",
+    "AbsenceListView",
+    "AbsenceOptionsView",
+    "LeaveBalanceView",
+]

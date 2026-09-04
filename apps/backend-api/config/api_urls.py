@@ -9,6 +9,10 @@ from rest_framework.routers import DefaultRouter
 
 from humotech.accounts.views import CurrentUserView, LoginView, LogoutView
 from humotech.employees.views import EmployeeViewSet
+from humotech.absences.views import (
+    AbsenceDecisionView,
+    PendingAbsenceRequestsView,
+)
 from humotech.offices.views import OfficeViewSet
 from humotech.qr_codes.views import (
     QrDeviceActionView,
@@ -85,6 +89,12 @@ urlpatterns = [
         QrDeviceActionView.as_view(),
         name="qr-device-action",
     ),
+    # Решения по заявкам на отсутствие. React-интерфейса для них пока нет —
+    # он следующим этапом, — но подтверждать больничные надо уже сейчас.
+    path("absence-requests/pending", PendingAbsenceRequestsView.as_view(),
+         name="absence-requests-pending"),
+    path("absence-requests/<uuid:request_id>/<str:decision>",
+         AbsenceDecisionView.as_view(), name="absence-request-decision"),
     # Личный кабинет сотрудника. Один набор endpoint'ов на Mini App и бота:
     # разные клиенты, но одни и те же цифры.
     path("me/", include("humotech.selfservice.urls")),

@@ -9,6 +9,14 @@
 
 from django.urls import path
 
+from humotech.selfservice.absences import (
+    AbsenceDetailView,
+    AbsenceDocumentView,
+    AbsenceExtendView,
+    AbsenceListView,
+    AbsenceOptionsView,
+    LeaveBalanceView,
+)
 from humotech.selfservice.views import (
     HistoryView,
     ProfileView,
@@ -23,4 +31,16 @@ urlpatterns = [
     path("statistics", StatisticsView.as_view(), name="self-statistics"),
     path("history", HistoryView.as_view(), name="self-history"),
     path("attendance/scan", ScanView.as_view(), name="self-scan"),
+    # Больничные и отпуска — одна механика с разными видами отсутствия.
+    # Два набора endpoint'ов означали бы два места, где чинить одну ошибку.
+    path("absences", AbsenceListView.as_view(), name="self-absences"),
+    path("absences/options", AbsenceOptionsView.as_view(),
+         name="self-absence-options"),
+    path("absences/<uuid:request_id>", AbsenceDetailView.as_view(),
+         name="self-absence"),
+    path("absences/<uuid:request_id>/extend", AbsenceExtendView.as_view(),
+         name="self-absence-extend"),
+    path("absences/<uuid:request_id>/document", AbsenceDocumentView.as_view(),
+         name="self-absence-document"),
+    path("leave-balance", LeaveBalanceView.as_view(), name="self-leave-balance"),
 ]

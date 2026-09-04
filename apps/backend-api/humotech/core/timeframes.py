@@ -102,6 +102,25 @@ def range_bounds(first: date, last: date, tz: ZoneInfo) -> tuple[datetime, datet
     return start, end
 
 
+def closed_range_bounds(
+    first: date, last: date, tz: ZoneInfo
+) -> tuple[datetime, datetime]:
+    """Границы периода, у которого конец ВКЛЮЧЁН в период.
+
+    Нужны там, где момент времени хранится как «по такое-то число»:
+    `employee_absences.end_at` — именно такое поле, и читают его через
+    `local_date(end_at)`. Полуинтервал там дал бы начало СЛЕДУЮЩИХ суток,
+    то есть лишний день в каждом больничном и в каждом отпуске.
+
+    Две разные функции вместо одной — не дублирование: у выборок событий
+    конец исключается (иначе отметка в 00:00:00 попадёт в оба дня), а у
+    периодов отсутствия включается. Свести их к одной значило бы выбрать
+    неверно в одном из двух мест.
+    """
+    start, end = range_bounds(first, last, tz)
+    return start, end - timedelta(microseconds=1)
+
+
 def week_range(day: date) -> tuple[date, date]:
     """Понедельник и воскресенье недели, в которую попал день."""
     first = day - timedelta(days=(day.weekday() - WEEK_STARTS_ON) % 7)
@@ -128,6 +147,7 @@ def days_in(first: date, last: date):
 
 __all__ = [
     "UTC",
+    "closed_range_bounds",
     "day_bounds",
     "days_in",
     "local_date",
