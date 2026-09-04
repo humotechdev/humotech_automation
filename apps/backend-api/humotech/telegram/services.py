@@ -47,6 +47,8 @@ from humotech.core.rbac import Actor, snapshot
 from humotech.core.service import BaseService
 from humotech.employees.models import Employee, EmployeeAssignment
 from humotech.employees.selectors import require_visible_employee
+from humotech.notifications import messages
+from humotech.notifications.outbox import enqueue
 from humotech.telegram.identity import (
     # Статусы сотрудника, при которых привязка невозможна, определены там же,
     # где и проверка допуска: два списка разошлись бы.
@@ -401,6 +403,17 @@ class TelegramLinkService(BaseService):
                 before=before_invitation,
                 after=snapshot(invitation, INVITATION_AUDIT_FIELDS),
             )
+            # Той же транзакцией: подтверждение и сообщение о нём либо есть
+            # оба, либо нет ни одного.
+            enqueue(
+                organization_id=account.organization_id,
+                employee_id=account.employee_id,
+                notification_type="telegram.link.confirmed",
+                body=messages.LINK_CONFIRMED,
+                idempotency_key=f"telegram-link:{invitation.id}:confirmed",
+                related_entity_type=ENTITY_ACCOUNT,
+                related_entity_id=account.id,
+            )
         return account
 
     def reject(self, actor: Actor, invitation_id: uuid.UUID) -> TelegramAccount | None:
@@ -449,6 +462,21 @@ class TelegramLinkService(BaseService):
                 before=before_invitation,
                 after=snapshot(invitation, INVITATION_AUDIT_FIELDS),
             )
+            if account is not None:
+                # Отправляется, хотя привязка уже отозвана. Это тот самый
+                # человек, который открывал ссылку, — сообщить ему об отказе
+                # и нужно, и безопасно: чат берётся из ЕГО же строки
+                # привязки, а не откуда-то ещё. Исключение объявлено
+                # в humotech/notifications/outbox.py по типу уведомления.
+                enqueue(
+                    organization_id=account.organization_id,
+                    employee_id=account.employee_id,
+                    notification_type="telegram.link.rejected",
+                    body=messages.LINK_REJECTED,
+                    idempotency_key=f"telegram-link:{invitation.id}:rejected",
+                    related_entity_type=ENTITY_ACCOUNT,
+                    related_entity_id=account.id,
+                )
         return account
 
     def disconnect(self, actor: Actor, employee_id: uuid.UUID) -> TelegramAccount:

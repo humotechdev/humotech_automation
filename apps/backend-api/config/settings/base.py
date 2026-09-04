@@ -345,6 +345,29 @@ QR = {
     ),
 }
 
+# --- Очередь уведомлений ---
+#
+# Брокера нет: очередь живёт в PostgreSQL (humotech/notifications/outbox.py).
+NOTIFICATIONS = {
+    # Как часто бот спрашивает новые сообщения.
+    "POLL_INTERVAL_SECONDS": int(
+        env("NOTIFICATIONS_POLL_INTERVAL_SECONDS", "5")
+    ),
+    "BATCH_SIZE": int(env("NOTIFICATIONS_BATCH_SIZE", "20")),
+    # После стольких неудач сообщение помечается FAILED и больше
+    # не повторяется. Молча повторять вечно — способ не заметить,
+    # что доставка сломана.
+    "MAX_ATTEMPTS": int(env("NOTIFICATIONS_MAX_ATTEMPTS", "5")),
+    # Пауза между попытками растёт по степеням двойки от базовой.
+    "RETRY_BASE_SECONDS": int(env("NOTIFICATIONS_RETRY_BASE_SECONDS", "30")),
+    "RETRY_MAX_SECONDS": int(env("NOTIFICATIONS_RETRY_MAX_SECONDS", "3600")),
+    # Через сколько строка, зависшая в RUNNING, считается брошенной.
+    # Процесс отправщика мог упасть между захватом и результатом.
+    "LOCK_TIMEOUT_SECONDS": int(
+        env("NOTIFICATIONS_LOCK_TIMEOUT_SECONDS", "300")
+    ),
+}
+
 # --- Приложенные файлы ---
 #
 # Справка о болезни — медицинский документ. Каталог намеренно вне `MEDIA_URL`:

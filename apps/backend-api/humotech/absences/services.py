@@ -49,6 +49,8 @@ from humotech.core.rbac import Actor, snapshot
 from humotech.core.service import BaseService
 from humotech.core.timeframes import closed_range_bounds, days_in, range_bounds
 from humotech.files.storage import store
+from humotech.notifications import messages
+from humotech.notifications.outbox import enqueue
 from humotech.schedules.models import CalendarException, EmployeeScheduleAssignment
 
 ENTITY_REQUEST = "absence_requests"
@@ -227,6 +229,7 @@ class AbsenceService(BaseService):
                 # подтверждается сразу и становится отсутствием.
                 self._approve(context, request, actor=None, comment=None, now=moment)
 
+            self._notify(request, "created")
             self.audit.record_by_employee(
                 organization_id=context.organization_id,
                 employee_id=context.employee.id,
@@ -297,6 +300,7 @@ class AbsenceService(BaseService):
                 submitted_at=moment,
             )
             self._act(context, child, "SUBMITTED", None, "SUBMITTED")
+            self._notify(child, "created")
             self.audit.record_by_employee(
                 organization_id=context.organization_id,
                 employee_id=context.employee.id,
@@ -339,6 +343,7 @@ class AbsenceService(BaseService):
             EmployeeAbsence.objects.filter(
                 origin_request=request, status__in=("PLANNED", "ACTIVE")
             ).update(status="CANCELLED", cancelled_at=moment)
+            self._notify(request, "cancelled")
             self.audit.record_by_employee(
                 organization_id=context.organization_id,
                 employee_id=context.employee.id,
@@ -425,6 +430,7 @@ class AbsenceService(BaseService):
                 )
                 self._release(_ContextFromRequest(request), request, moment)
 
+            self._notify(request, "approved" if approve else "rejected")
             self.audit.record(
                 actor,
                 action="absence.request.approve" if approve else
@@ -471,6 +477,7 @@ class AbsenceService(BaseService):
                 origin_request=request, status__in=("PLANNED", "ACTIVE")
             ).update(status="CANCELLED", cancelled_at=moment)
             self._release(context, request, moment)
+            self._notify(request, "cancelled")
             self.audit.record(
                 actor,
                 action="absence.request.cancel",
@@ -800,6 +807,52 @@ class AbsenceService(BaseService):
         )
         self._act(context, request, "DOCUMENT_ATTACHED", None, None)
         return record
+
+    def _notify(self, request, event: str) -> None:
+        """Уведомление о судьбе заявки — той же транзакцией, что и она сама.
+
+        Отдельная транзакция означала бы, что сообщение может уцелеть при
+        откате заявки: человек получил бы «отпуск подтверждён» про отпуск,
+        которого нет.
+
+        Ключ повтора собран из заявки и события: обработчик, сработавший
+        дважды, даёт одну строку, а не два одинаковых сообщения в чате.
+        """
+        tz = _ContextFromRequest(request).timezone
+        first = (
+            request.requested_start_at.astimezone(tz).date()
+            if request.requested_start_at else None
+        )
+        last = (
+            request.requested_end_at.astimezone(tz).date()
+            if request.requested_end_at else None
+        )
+        if event == "cancelled":
+            body = messages.REQUEST_CANCELLED.format(
+                first=messages.human_date(first), last=messages.human_date(last)
+            )
+        elif request.request_kind == "EXTEND" and event == "approved":
+            body = messages.SICK_EXTENSION_APPROVED.format(
+                last=messages.human_date(last)
+            )
+        elif request.request_kind == "EXTEND" and event == "rejected":
+            body = messages.SICK_EXTENSION_REJECTED.format(
+                last=messages.human_date(last)
+            )
+        else:
+            body = messages.for_request(
+                request.absence_type.code, event, first, last
+            )
+
+        enqueue(
+            organization_id=request.organization_id,
+            employee_id=request.employee_id,
+            notification_type=f"absence.{event}",
+            body=body,
+            idempotency_key=f"absence:{request.id}:{event}",
+            related_entity_type=ENTITY_REQUEST,
+            related_entity_id=request.id,
+        )
 
     def _act(
         self, context, request, action, previous, new, *, actor=None, comment=None

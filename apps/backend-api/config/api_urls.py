@@ -24,6 +24,7 @@ from humotech.regions.views import RegionViewSet
 from humotech.schedules.views import EmployeeScheduleViewSet, WorkScheduleViewSet
 from humotech.telegram.views import (
     BotLinkView,
+    BotOutboxView,
     EmployeeTelegramDisconnectView,
     EmployeeTelegramView,
     MiniAppAuthView,
@@ -66,6 +67,9 @@ urlpatterns = [
     # Вход бота. Пользователя за ним нет: обращается сам бот, предъявляя
     # общий секрет, а право на операцию даёт токен приглашения.
     path("telegram/bot/link", BotLinkView.as_view(), name="telegram-bot-link"),
+    # Очередь уведомлений. Бот забирает её отсюда, а не из базы: подключения
+    # к PostgreSQL у него нет и заводить его ради двух запросов не нужно.
+    path("telegram/bot/outbox", BotOutboxView.as_view(), name="telegram-bot-outbox"),
     # Mini App. Путь начинается с /api/v1/telegram/mini-app/ — ровно на этом
     # префиксе работает CORS (см. humotech/telegram/middleware.py).
     path(

@@ -200,3 +200,71 @@ class MiniAppMeView(APIView):
                 },
             }
         )
+
+
+class BotOutboxView(APIView):
+    """Очередь уведомлений для бота: забрать и отчитаться.
+
+    Бот не ходит в базу напрямую и не будет: у него есть только общий
+    секрет и HTTP. Захват строк — `SELECT ... FOR UPDATE SKIP LOCKED` —
+    делает backend, а бот получает готовый список.
+
+    GET  — захватить пачку. POST — сообщить, что с ней стало.
+    """
+
+    authentication_classes = []
+    permission_classes = [IsTelegramBot]
+
+    def get(self, request):
+        from django.conf import settings
+
+        from humotech.notifications.outbox import claim, reclaim_stale
+
+        # Уборка перед выдачей: строки, зависшие в RUNNING после падения
+        # отправщика, иначе не ушли бы никогда.
+        reclaimed = reclaim_stale()
+        batch = claim(limit=settings.NOTIFICATIONS["BATCH_SIZE"])
+        return Response(
+            {
+                "messages": [
+                    {
+                        "id": item.id,
+                        "chat_id": item.chat_id,
+                        "text": item.text,
+                        "type": item.notification_type,
+                        "attempts": item.attempts,
+                    }
+                    for item in batch
+                ],
+                "reclaimed": reclaimed,
+            }
+        )
+
+    def post(self, request):
+        from humotech.notifications.outbox import mark_failed, mark_sent
+
+        results = request.data.get("results")
+        if not isinstance(results, list):
+            return Response(
+                {
+                    "error": {
+                        "code": "validation_failed",
+                        "message": "Ожидался список результатов",
+                        "details": {"field": "results"},
+                    }
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        accepted = 0
+        for item in results[:200]:
+            if not isinstance(item, dict) or not item.get("id"):
+                continue
+            if item.get("sent"):
+                mark_sent(item["id"])
+            else:
+                # Текст ошибки от Telegram может содержать эхо запроса,
+                # то есть само уведомление. Наружу берём только код.
+                mark_failed(item["id"], error=str(item.get("error") or "unknown"))
+            accepted += 1
+        return Response({"accepted": accepted})
