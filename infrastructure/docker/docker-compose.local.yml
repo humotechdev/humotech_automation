@@ -1,0 +1,207 @@
+# Постоянно работающий локальный стенд HUMOTECH.
+#
+# Это НАДСТРОЙКА над docker-compose.yml, а не замена. Запускать всегда
+# двумя файлами:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
+#
+# Порядок важен: описание PostgreSQL берётся из базового файла целиком,
+# вместе с томом `postgres_data`. Отдельное описание здесь означало бы
+# второй том и пустую базу при первом же запуске — данные никуда не
+# делись бы, но приложение их не увидело.
+#
+# Проще запускать скриптами: scripts\local-start.ps1 и соседние.
+#
+# Наружу не публикуется ничего, кроме PostgreSQL на петлевом адресе.
+# Единственный вход снаружи — Cloudflare Tunnel, и он смотрит на
+# gateway внутри сети Docker.
+
+services:
+  # PostgreSQL описан в базовом файле. Здесь только то, что меняется
+  # для постоянной работы.
+  postgres:
+    # Порт на хосте — только петлевой адрес. Без явного 127.0.0.1
+    # Docker слушает на всех интерфейсах, и база оказывается доступна
+    # из чужого Wi-Fi вместе с ноутбуком.
+    #
+    # `!override` обязателен: списки портов из двух файлов compose по
+    # умолчанию СКЛАДЫВАЕТ, и без этого рядом с петлевой привязкой
+    # осталась бы открытая всем из базового файла — то есть настройка
+    # выглядела бы сделанной, ничего не изменив.
+    ports: !override
+      - "127.0.0.1:5433:5432"
+    networks:
+      - humotech
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Разовый сервис: схема и статика. Отдельно от backend намеренно —
+  # миграции должен выполнять ровно один процесс. Три воркера gunicorn,
+  # стартующие одновременно, попытались бы применить их втроём.
+  migrate:
+    build:
+      context: ../../apps/backend-api
+    image: humotech/backend:local
+    container_name: humotech_migrate
+    command:
+      - sh
+      - -c
+      # `set -e` обязателен: без него код возврата даёт последняя команда,
+      # и упавшая миграция скрылась бы за успешным collectstatic. Сервис
+      # вышел бы с нулём, `service_completed_successfully` пропустил бы
+      # backend, и тот пошёл бы работать на старой схеме.
+      - |
+        set -e
+        python manage.py migrate --noinput
+        python manage.py collectstatic --noinput
+    env_file:
+      - ../../apps/backend-api/.env
+    environment: &backend_env
+      DJANGO_SETTINGS_MODULE: config.settings.production
+      # Внутри сети Docker база — это имя сервиса и внутренний порт.
+      # 127.0.0.1:5433 здесь означал бы «сам контейнер», где базы нет.
+      DJANGO_DATABASE_URL: postgresql://humotech:humotech_local@postgres:5432/humotech_django
+      # Публичное имя и внутреннее. Второе обязательно: бот ходит к API
+      # внутри сети Docker, и в его запросах Host — это `gateway`, а не
+      # адрес снаружи. Без него каждый запрос бота получает 400 от
+      # проверки хостов, и очередь уведомлений стоит.
+      DJANGO_ALLOWED_HOSTS: ${PUBLIC_HOSTNAME:-hr-dev.humotech.com},gateway
+      DJANGO_CSRF_TRUSTED_ORIGINS: https://${PUBLIC_HOSTNAME:-hr-dev.humotech.com}
+      TELEGRAM_MINI_APP_URL: https://${PUBLIC_HOSTNAME:-hr-dev.humotech.com}
+      # Браузер ходит на тот же origin через gateway, поэтому CORS
+      # не участвует и зона остаётся закрытой.
+      TELEGRAM_MINI_APP_ALLOWED_ORIGINS: ""
+      # Платных обращений наружу нет. Ключ может отсутствовать вовсе.
+      AI_ASSISTANT_ENABLED: "false"
+    volumes:
+      - static_files:/app/staticfiles
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - humotech
+    # Разовый сервис не перезапускается: отработал — вышел.
+    restart: "no"
+    logging: *logging
+
+  backend:
+    build:
+      context: ../../apps/backend-api
+    image: humotech/backend:local
+    container_name: humotech_backend
+    env_file:
+      - ../../apps/backend-api/.env
+    environment: *backend_env
+    volumes:
+      - static_files:/app/staticfiles
+      # Справки и больничные. Том, а не каталог образа: пересборка
+      # приложения не должна стирать загруженные документы.
+      - private_media:/app/private-media
+    healthcheck:
+      # Host и X-Forwarded-Proto подставляются намеренно. Без Host
+      # придёт 400 от ALLOWED_HOSTS, без X-Forwarded-Proto —
+      # 301 от SECURE_SSL_REDIRECT, и контейнер никогда не станет
+      # healthy, а вместе с ним не запустятся бот и gateway.
+      test:
+        - CMD
+        - curl
+        - -fsS
+        - -o
+        - /dev/null
+        - -H
+        - "Host: ${PUBLIC_HOSTNAME:-hr-dev.humotech.com}"
+        - -H
+        - "X-Forwarded-Proto: https"
+        - http://127.0.0.1:8000/readyz
+      interval: 15s
+      timeout: 10s
+      start_period: 40s
+      retries: 5
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - humotech
+    restart: unless-stopped
+    # SIGTERM доходит до gunicorn, тот докручивает текущие запросы.
+    stop_signal: SIGTERM
+    stop_grace_period: 40s
+    logging: *logging
+
+  bot:
+    build:
+      context: ../../apps/employee-telegram-bot
+    image: humotech/bot:local
+    container_name: humotech_bot
+    env_file:
+      - ../../apps/employee-telegram-bot/.env
+    environment:
+      # Через прокси, а не напрямую в backend, и это не лишний узел.
+      #
+      # Django в боевых настройках включает SECURE_SSL_REDIRECT и верит
+      # заголовку X-Forwarded-Proto. Обращение прямо в backend приходит
+      # без него — и вместо ответа бот получает редирект на
+      # https://backend:8000, которого не существует. Заголовок ставит
+      # nginx, поэтому дорога у бота та же, что у браузера.
+      BACKEND_API_URL: http://gateway/api/v1
+      # Постоянный адрес. Бот сверяет с ним кнопку меню на старте и
+      # переписывает её, только если она смотрит не туда.
+      MINI_APP_URL: https://${PUBLIC_HOSTNAME:-hr-dev.humotech.com}
+    depends_on:
+      gateway:
+        condition: service_healthy
+    networks:
+      - humotech
+    restart: unless-stopped
+    # Long polling висит на соединении с Telegram до 30 секунд;
+    # мгновенное убийство оборвало бы обработку сообщения.
+    stop_grace_period: 40s
+    logging: *logging
+
+  # Имя `gateway` записано в Cloudflare как адрес публичного hostname
+  # (`http://gateway:80`). Переименование сервиса ломает туннель и
+  # требует правки в панели Cloudflare.
+  gateway:
+    build:
+      context: ../../apps/employee-mini-app
+    image: humotech/gateway:local
+    container_name: humotech_gateway
+    volumes:
+      - ./gateway/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./gateway/proxy-headers.inc:/etc/nginx/conf.d/proxy-headers.inc:ro
+      - static_files:/srv/static:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - humotech
+    restart: unless-stopped
+    logging: *logging
+
+  cloudflared:
+    # Версия закреплена намеренно. `latest` означает, что однажды утром
+    # туннель поднимется другой сборкой, и разбираться придётся с тем,
+    # чего вчера не было.
+    image: cloudflare/cloudflared:2026.8.3
+    container_name: humotech_cloudflared
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:?нужен CLOUDFLARE_TUNNEL_TOKEN в infrastructure/docker/.env}
+    depends_on:
+      gateway:
+        condition: service_started
+    networks:
+      - humotech
+    restart: unless-stopped
+    logging: *logging
+
+volumes:
+  static_files:
+  private_media:
+
+networks:
+  humotech:
+    driver: bridge

@@ -1,0 +1,14 @@
+# Что не должно попадать в образ бота.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Секреты. Настройки приходят окружением из compose.
+.env
+.env.*
+!.env.example
+
+.pytest_cache/
+*.log
+*.png
