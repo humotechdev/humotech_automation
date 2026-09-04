@@ -34,6 +34,7 @@ from humotech.qr_codes.views import (
     QrPointViewSet,
 )
 from humotech.regions.views import RegionViewSet
+from humotech.reports.views import ExportView
 from humotech.schedules.views import EmployeeScheduleViewSet, WorkScheduleViewSet
 from humotech.telegram.views import (
     BotLinkView,
@@ -115,6 +116,9 @@ urlpatterns = [
     # словесным определением формулы: процент без них проверить нечем.
     path("analytics", AnalyticsView.as_view(), name="analytics"),
     path("analytics/compare", ComparisonView.as_view(), name="analytics-compare"),
+    # Выгрузки. Право reports.export проверяется отдельно от прав на сами
+    # данные: выгрузка не должна быть обходным путём к закрытому экрану.
+    path("reports/<str:kind>/export", ExportView.as_view(), name="report-export"),
     # Посещаемость глазами кадровика. Сырые события отдаются только на
     # чтение: строка отметки не меняется никогда, а исправление — это
     # либо решение по заявке, либо новое событие с source = MANUAL.
