@@ -9,8 +9,9 @@
 
 from django.urls import path
 
-from humotech.selfservice.views import ProfileView
+from humotech.selfservice.views import ProfileView, ScanView
 
 urlpatterns = [
     path("profile", ProfileView.as_view(), name="self-profile"),
+    path("attendance/scan", ScanView.as_view(), name="self-scan"),
 ]

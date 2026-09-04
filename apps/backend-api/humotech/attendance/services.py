@@ -10,6 +10,12 @@
 
 Любая попытка, включая отклонённую, попадает в `attendance_events`:
 это основной материал для расследования инцидентов.
+
+Два одновременных скана одного человека выстраиваются в очередь: обработка
+идёт в транзакции под блокировкой строки сотрудника. Без неё два запроса,
+пришедшие в один момент, оба увидели бы «открытой сессии нет» и создали бы
+две. Частичный уникальный ключ `uq_attendance_sessions_one_open` — второй
+рубеж на случай, если запись пойдёт мимо этого модуля.
 """
 
 from __future__ import annotations
@@ -19,9 +25,14 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
+from django.db import transaction
 from django.db.models import Q
 
-from humotech.employees.models import EmployeeAssignment, EmployeeOfficeAccess
+from humotech.employees.models import (
+    Employee,
+    EmployeeAssignment,
+    EmployeeOfficeAccess,
+)
 from humotech.attendance.models import AttendanceEvent, AttendanceSession
 from humotech.qr_codes.models import OfficeQrPoint
 
@@ -85,13 +96,22 @@ def open_session_for(*, employee_id: uuid.UUID) -> AttendanceSession | None:
     ).first()
 
 
-def _nonce_already_used(
-    *, employee_id: uuid.UUID, nonce_hash: str, event_type: str
-) -> bool:
+def _nonce_already_used(*, employee_id: uuid.UUID, nonce_hash: str) -> bool:
+    """Использовал ли этот сотрудник этот код — в любом направлении.
+
+    Направление здесь намеренно НЕ учитывается, хотя уникальный ключ в базе
+    учитывает. У точки в режиме BOTH один и тот же код иначе засчитался бы
+    дважды: сначала как вход, потом как выход. При сроке в полминуты это
+    рабочий сценарий, а не теоретический — достаточно отсканировать код
+    второй раз, выходя из кадра.
+
+    Ключ в базе остаётся более узким: он второй рубеж, а не первый, и
+    сужать его до `(сотрудник, код)` значило бы менять схему ради того,
+    что дешевле проверить здесь.
+    """
     return AttendanceEvent.objects.filter(
         employee_id=employee_id,
         qr_nonce_hash=nonce_hash,
-        event_type=event_type,
         verification_status="ACCEPTED",
     ).exists()
 
@@ -117,6 +137,55 @@ def register_scan(
     source: str = "QR",
 ) -> ScanResult:
     """Обрабатывает одну попытку отметки и возвращает записанное событие."""
+    with transaction.atomic():
+        return _register_locked(
+            employee_id=employee_id,
+            qr_point=qr_point,
+            now=now,
+            occurred_at=occurred_at,
+            qr_nonce_hash=qr_nonce_hash,
+            qr_issued_at=qr_issued_at,
+            qr_expires_at=qr_expires_at,
+            latitude=latitude,
+            longitude=longitude,
+            location_accuracy_m=location_accuracy_m,
+            ip_address=ip_address,
+            inside_office_network=inside_office_network,
+            inside_geofence=inside_geofence,
+            employee_device_id=employee_device_id,
+            qr_display_session_id=qr_display_session_id,
+            client_event_id=client_event_id,
+            source=source,
+        )
+
+
+def _register_locked(
+    *,
+    employee_id: uuid.UUID,
+    qr_point: OfficeQrPoint,
+    now: datetime,
+    occurred_at: datetime | None,
+    qr_nonce_hash: str | None,
+    qr_issued_at: datetime | None,
+    qr_expires_at: datetime | None,
+    latitude: Decimal | None,
+    longitude: Decimal | None,
+    location_accuracy_m: Decimal | None,
+    ip_address: str | None,
+    inside_office_network: bool | None,
+    inside_geofence: bool | None,
+    employee_device_id: uuid.UUID | None,
+    qr_display_session_id: uuid.UUID | None,
+    client_event_id: str | None,
+    source: str,
+) -> ScanResult:
+    """Тело обработки. Вызывается только внутри транзакции."""
+    # Блокировка строки сотрудника выстраивает его сканы в очередь. Без неё
+    # два одновременных запроса оба увидели бы «открытой сессии нет».
+    # Блокируется именно сотрудник, а не сессия: сессии может ещё не быть,
+    # и блокировать было бы нечего.
+    Employee.objects.select_for_update().filter(id=employee_id).first()
+
     occurred_at = occurred_at or now
     office_id = qr_point.office_id  # офис берём ТОЛЬКО отсюда
 
@@ -223,9 +292,7 @@ def _reject_reason(
         return RejectionReason.CLOCK_DRIFT
 
     if qr_nonce_hash is not None and _nonce_already_used(
-        employee_id=employee_id,
-        nonce_hash=qr_nonce_hash,
-        event_type=event_type,
+        employee_id=employee_id, nonce_hash=qr_nonce_hash
     ):
         return RejectionReason.NONCE_REUSED
 

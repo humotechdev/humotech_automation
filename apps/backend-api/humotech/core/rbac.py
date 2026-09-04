@@ -270,6 +270,9 @@ class AuditTrail:
             # окажется сам токен. `init_data` — подписанная строка Telegram
             # целиком, в ней имя, фамилия и подпись.
             "token_hash", "init_data", "initdata", "bot_token",
+            # Экраны показа QR. Оба поля — хеши, но в журнале от них нет
+            # никакой пользы, а рядом с ними однажды окажется сам секрет.
+            "pairing_secret_hash", "credential_hash",
         }
     )
 
@@ -299,6 +302,36 @@ class AuditTrail:
         return AuditLog.objects.create(
             organization_id=actor.organization_id,
             actor_user_id=actor.user_id,
+            action=action,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            old_values=self.sanitize(before),
+            new_values=self.sanitize(after),
+            occurred_at=timezone.now(),
+        )
+
+    def record_system(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        action: str,
+        entity_type: str,
+        entity_id: uuid.UUID,
+        before: dict | None = None,
+        after: dict | None = None,
+    ):
+        """Действие без человека за ним.
+
+        Такое бывает: экран в офисе предъявляет код сопряжения, и рядом
+        с ним никого нет. Записать это на HR, который завёл устройство
+        неделю назад, было бы неправдой — он не нажимал ничего сегодня.
+        Обе колонки актора остаются пустыми, а «кто» читается из
+        `entity_id` и самого действия.
+        """
+        from humotech.audit.models import AuditLog
+
+        return AuditLog.objects.create(
+            organization_id=organization_id,
             action=action,
             entity_type=entity_type,
             entity_id=entity_id,

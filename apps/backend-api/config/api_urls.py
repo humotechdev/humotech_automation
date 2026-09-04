@@ -10,6 +10,12 @@ from rest_framework.routers import DefaultRouter
 from humotech.accounts.views import CurrentUserView, LoginView, LogoutView
 from humotech.employees.views import EmployeeViewSet
 from humotech.offices.views import OfficeViewSet
+from humotech.qr_codes.views import (
+    QrDeviceActionView,
+    QrDeviceListView,
+    QrDisplayCodeView,
+    QrDisplayPairView,
+)
 from humotech.regions.views import RegionViewSet
 from humotech.schedules.views import EmployeeScheduleViewSet, WorkScheduleViewSet
 from humotech.telegram.views import (
@@ -65,6 +71,19 @@ urlpatterns = [
     ),
     path(
         "telegram/mini-app/me", MiniAppMeView.as_view(), name="telegram-mini-app-me"
+    ),
+    # Экраны показа QR. Префикс отдельный: на нём своя зона CORS со своим
+    # списком origin'ов — адреса экранов не должны открывать ничего сверх
+    # выдачи кодов.
+    path("qr-display/pair", QrDisplayPairView.as_view(), name="qr-display-pair"),
+    path("qr-display/code", QrDisplayCodeView.as_view(), name="qr-display-code"),
+    # Управление экранами из CRM. Сюда экран не ходит, поэтому и адрес
+    # другой — вне зоны CORS экранов.
+    path("qr/devices", QrDeviceListView.as_view(), name="qr-devices"),
+    path(
+        "qr/devices/<uuid:device_id>/<str:action>",
+        QrDeviceActionView.as_view(),
+        name="qr-device-action",
     ),
     # Личный кабинет сотрудника. Один набор endpoint'ов на Mini App и бота:
     # разные клиенты, но одни и те же цифры.

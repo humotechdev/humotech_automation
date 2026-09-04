@@ -38,4 +38,16 @@ class EmployeeRateThrottle(SimpleRateThrottle):
         return self.cache_format % {"scope": self.scope, "ident": ident}
 
 
-__all__ = ["EmployeeRateThrottle"]
+class ScanRateThrottle(EmployeeRateThrottle):
+    """Отдельный предел на отметки.
+
+    Строже общего: человек отмечается два-четыре раза в день, а не сто.
+    Общий предел личного кабинета здесь не годится — он рассчитан на экран,
+    который сам обновляет статус, и под ним перебор кодов прошёл бы
+    незамеченным.
+    """
+
+    scope = "employee_scan"
+
+
+__all__ = ["EmployeeRateThrottle", "ScanRateThrottle"]

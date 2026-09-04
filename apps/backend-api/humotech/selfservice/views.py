@@ -15,7 +15,11 @@ from __future__ import annotations
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from humotech.selfservice.throttling import EmployeeRateThrottle
+from humotech.attendance.scanning import scan
+from humotech.core.api import validated
+from humotech.core.clientip import client_ip
+from humotech.selfservice.serializers import ScanRequestSerializer
+from humotech.selfservice.throttling import EmployeeRateThrottle, ScanRateThrottle
 from humotech.telegram.auth import (
     BotEmployeeAuthentication,
     IsLinkedEmployee,
@@ -100,9 +104,55 @@ class ProfileView(EmployeeSelfView):
         )
 
 
+class ScanView(EmployeeSelfView):
+    """Отметка по QR.
+
+    Тело запроса — один код и, необязательно, идентификатор попытки от
+    клиента. Ни офиса, ни направления, ни времени: всё это решает сервер.
+    Направление особенно — прислать «я выхожу» нельзя, потому что такого
+    параметра нет.
+    """
+
+    throttle_classes = [ScanRateThrottle]
+
+    def post(self, request):
+        data = validated(ScanRequestSerializer, request.data)
+        outcome = scan(
+            self.context,
+            token=data["token"],
+            ip_address=client_ip(request),
+            client_event_id=data.get("client_event_id"),
+        )
+        session = outcome.session
+        return Response(
+            {
+                "status": outcome.status,
+                "accepted": outcome.accepted,
+                "office_name": outcome.office_name,
+                "point_name": outcome.point_name,
+                "occurred_at": (
+                    outcome.occurred_at.isoformat() if outcome.occurred_at else None
+                ),
+                "session": (
+                    {
+                        "id": str(session.id),
+                        "started_at": session.started_at.isoformat(),
+                        "ended_at": (
+                            session.ended_at.isoformat() if session.ended_at else None
+                        ),
+                        "duration_seconds": session.duration_seconds,
+                        "status": session.status,
+                    }
+                    if session is not None
+                    else None
+                ),
+            }
+        )
+
+
 def full_name(employee) -> str:
     parts = [employee.last_name, employee.first_name, employee.middle_name]
     return " ".join(part for part in parts if part)
 
 
-__all__ = ["EmployeeSelfView", "ProfileView", "full_name"]
+__all__ = ["EmployeeSelfView", "ProfileView", "ScanView", "full_name"]
