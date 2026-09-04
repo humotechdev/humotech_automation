@@ -1,21 +1,15 @@
-from src.api.client import BackendClient, LiveBackendClient
-from src.api.stub import StubBackendClient
-from src.api.tokens import MemoryTokenStorage, TokenStorage
-from src.config.settings import settings
+"""Клиент backend. Единственная дорога бота во внешний мир.
 
+Прямых обращений к базе здесь нет и быть не может: у бота нет подключения
+к PostgreSQL, и это не ограничение среды, а решение. Всё, что ему нужно, —
+личный кабинет сотрудника и очередь уведомлений, и то и другое приходит
+по HTTP.
 
-def build_client() -> BackendClient:
-    """API_MODE=stub -> фейковые данные, API_MODE=live -> реальный backend-api."""
-    if settings.api_mode == "stub":
-        return StubBackendClient()
-    return LiveBackendClient()
+Хранилища токенов больше нет вовсе. Токенов сотрудников не существует:
+бот предъявляет общий секрет и подтверждённый Telegram ID, а кто это,
+решает backend заново на каждом запросе.
+"""
 
+from src.api.selfservice import SelfServiceClient
 
-__all__ = [
-    "BackendClient",
-    "LiveBackendClient",
-    "StubBackendClient",
-    "TokenStorage",
-    "MemoryTokenStorage",
-    "build_client",
-]
+__all__ = ["SelfServiceClient"]

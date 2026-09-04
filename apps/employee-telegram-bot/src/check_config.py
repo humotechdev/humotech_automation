@@ -54,7 +54,6 @@ def check() -> list[str]:
         print(f"{WARN} BOT_USERNAME: не задано (ссылки собирает backend)")
 
     print("== backend-api ==")
-    print(f"{OK} API_MODE: {settings.api_mode}")
     parsed = urlparse(settings.backend_api_url)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         problems.append("BACKEND_API_URL не похож на адрес")
@@ -62,26 +61,35 @@ def check() -> list[str]:
     else:
         print(f"{OK} BACKEND_API_URL: {settings.backend_api_url}")
 
-    if settings.api_mode == "live":
-        if not settings.backend_bot_secret:
-            problems.append(
-                "BACKEND_BOT_SECRET не задан: backend отклонит привязку с 403"
-            )
-            print(f"{FAIL} BACKEND_BOT_SECRET: НЕ ЗАДАНО")
-        else:
-            print(f"{OK} BACKEND_BOT_SECRET: {_mask(settings.backend_bot_secret)}")
-        if parsed.scheme != "https" and parsed.hostname not in (
-            "localhost", "127.0.0.1"
-        ):
-            problems.append(
-                "BACKEND_API_URL без https: секрет бота пойдёт открытым текстом"
-            )
-            print(f"{FAIL} BACKEND_API_URL без https на внешнем адресе")
-    else:
-        print(
-            f"{WARN} BACKEND_BOT_SECRET не проверяется: "
-            f"в режиме stub backend не вызывается"
+    if not settings.backend_bot_secret:
+        # Без секрета backend отклонит ВСЁ: и привязку, и личный кабинет.
+        # Токенов сотрудников больше нет, и этот секрет — единственное,
+        # чем бот доказывает, что он наш.
+        problems.append(
+            "BACKEND_BOT_SECRET не задан: backend отклонит все запросы бота"
         )
+        print(f"{FAIL} BACKEND_BOT_SECRET: НЕ ЗАДАНО")
+    else:
+        print(f"{OK} BACKEND_BOT_SECRET: {_mask(settings.backend_bot_secret)}")
+
+    if parsed.scheme != "https" and parsed.hostname not in (
+        "localhost", "127.0.0.1"
+    ):
+        problems.append(
+            "BACKEND_API_URL без https: секрет бота пойдёт открытым текстом"
+        )
+        print(f"{FAIL} BACKEND_API_URL без https на внешнем адресе")
+
+    print("== личный кабинет ==")
+    if not settings.mini_app_url:
+        # Не ошибка: бот работает и без кабинета, просто без кнопки.
+        print(f"{WARN} MINI_APP_URL: не задано — кнопка кабинета не появится")
+    elif not settings.mini_app_url.startswith("https://"):
+        # Telegram открывает Mini App только по https.
+        problems.append("MINI_APP_URL обязан начинаться с https://")
+        print(f"{FAIL} MINI_APP_URL: Telegram откроет только https")
+    else:
+        print(f"{OK} MINI_APP_URL: {settings.mini_app_url}")
 
     return problems
 

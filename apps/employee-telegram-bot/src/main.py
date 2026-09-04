@@ -2,8 +2,14 @@
 
 Запуск:  python -m src.main   (из apps/employee-telegram-bot)
 
-Один бот на сотрудников и HR. Что видит человек, определяет роль из
-GET /employees/me; реальные права проверяет backend-api.
+Два дела одновременно: отвечает на сообщения и разгребает очередь
+уведомлений. Второе — отдельная задача рядом с опросом Telegram, а не
+отдельный процесс: у них общая сессия к Telegram и общий клиент к backend,
+и разводить их значило бы держать вдвое больше соединений ради ничего.
+
+Токенов сотрудников здесь нет ни в каком виде. Хранилища для них тоже нет:
+кто пишет боту, спрашивается у backend на каждом обновлении. Отзыв привязки
+действует со следующего нажатия кнопки, а не по истечении чего-либо.
 """
 
 from __future__ import annotations
@@ -17,12 +23,13 @@ from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import CallbackQuery, ErrorEvent, Message
 
-from src.api import MemoryTokenStorage, build_client
 from src.api.errors import ApiError, Forbidden, Unauthorized
+from src.api.selfservice import SelfServiceClient
 from src.config.settings import settings
 from src.handlers import build_root_router
-from src.messages import ru
-from src.middlewares.auth import AuthMiddleware
+from src.messages import employee as text
+from src.middlewares.employee import EmployeeMiddleware
+from src.notifications.worker import run_worker
 from src.utils.commands import set_default_commands
 
 logger = logging.getLogger("humotech.bot")
@@ -37,23 +44,21 @@ def _target_message(event: ErrorEvent) -> Message | None:
 
 
 async def on_error(event: ErrorEvent) -> bool:
-    """Ни одна ошибка не должна оставить пользователя без ответа."""
+    """Ни одна ошибка не должна оставить человека без ответа."""
     exc = event.exception
     message = _target_message(event)
 
-    if isinstance(exc, Unauthorized):
-        text = ru.ERR_SESSION_EXPIRED
-    elif isinstance(exc, Forbidden):
-        text = ru.ERR_FORBIDDEN
+    if isinstance(exc, (Unauthorized, Forbidden)):
+        answer = text.NO_ACCESS
     elif isinstance(exc, ApiError):
-        text = exc.message
+        answer = text.BACKEND_DOWN
     else:
         logger.exception("unhandled error: %s", exc)
-        text = ru.ERR_SERVER
+        answer = text.BACKEND_DOWN
 
     if message is not None:
         try:
-            await message.answer(text)
+            await message.answer(answer)
         except Exception:
             logger.exception("failed to deliver error message")
     return True
@@ -70,23 +75,27 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     dispatcher = Dispatcher(storage=MemoryStorage())
-
-    client = build_client()
-    tokens = MemoryTokenStorage()
+    client = SelfServiceClient()
 
     # outer_middleware на update — выполняется ДО фильтров роутеров,
-    # поэтому RoleFilter уже видит роль в data
-    dispatcher.update.outer_middleware(AuthMiddleware(client, tokens))
+    # поэтому хендлеры уже видят профиль или причину отказа.
+    dispatcher.update.outer_middleware(EmployeeMiddleware(client))
     dispatcher.include_router(build_root_router())
     dispatcher.errors.register(on_error)
 
     me = await bot.get_me()
     await set_default_commands(bot)
-    logger.info("bot @%s started, api_mode=%s", me.username, settings.api_mode)
+    logger.info("bot @%s started, api=%s", me.username, settings.backend_api_url)
 
+    worker = asyncio.create_task(run_worker(bot, client))
     try:
         await dispatcher.start_polling(bot)
     finally:
+        worker.cancel()
+        try:
+            await worker
+        except asyncio.CancelledError:
+            pass
         await client.close()
         await bot.session.close()
 

@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -20,8 +19,6 @@ class Settings(BaseSettings):
     # собирает backend — он же знает, кому и на какой срок их выдал.
     bot_username: str = ""
 
-    # stub — фейковые данные вместо backend-api; live — реальные HTTP-запросы
-    api_mode: Literal["stub", "live"] = "stub"
     backend_api_url: str = "http://localhost:8000/api/v1"
     api_timeout_seconds: int = 10
 
@@ -29,6 +26,13 @@ class Settings(BaseSettings):
     # в запросе привязки пришёл от Telegram через него, а не выдуман
     # отправителем: проверить это своими силами backend не может.
     backend_bot_secret: str = ""
+
+    # Адрес Mini App. Без него кнопка личного кабинета не показывается
+    # вовсе: кнопка, которая ничего не открывает, хуже её отсутствия.
+    mini_app_url: str = ""
+
+    # Как часто спрашивать очередь уведомлений.
+    notifications_poll_seconds: int = 5
 
     bot_internal_token: str = "change-me"
     bot_internal_port: int = 8081

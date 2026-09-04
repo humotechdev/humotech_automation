@@ -17,11 +17,8 @@ from types import SimpleNamespace
 import pytest
 
 from src.api.errors import ApiError, Conflict, ServerError
-from src.handlers.start.router import (
-    cmd_start_with_payload,
-    parse_link_payload,
-)
-from src.messages import ru
+from src.handlers.start.router import parse_link_payload, start_with_link
+from src.messages import link as start_module
 
 
 # --- разбор полезной нагрузки ---------------------------------------------
@@ -86,14 +83,13 @@ class FakeClient:
 def run_start(payload: str, client: FakeClient, message=None) -> FakeMessage:
     message = message or FakeMessage()
     asyncio.run(
-        cmd_start_with_payload(
+        start_with_link(
             message,
             SimpleNamespace(command="start", args=payload, mention=None),
             FakeState(),
-            role=None,
-            employee=None,
-            bot=None,
             client=client,
+            employee=None,
+            denial="not_linked",
         )
     )
     return message
@@ -112,8 +108,11 @@ def test_successful_click_reports_pending_not_access():
     message = run_start("link_the-token", client)
 
     text, markup = message.answers[-1]
-    assert text == ru.LINK_PENDING
-    assert markup is not None and markup.__class__.__name__ == "ReplyKeyboardRemove"
+    assert text == start_module.LINK_PENDING
+    # Клавиатуры сотрудника здесь быть не должно: она означала бы,
+    # что бот уже работает. Остаётся только «Помощь».
+    assert markup is not None
+    assert [b.text for row in markup.keyboard for b in row] == ["❓ Помощь"]
 
 
 def test_bot_sends_only_what_telegram_confirmed():
@@ -143,13 +142,13 @@ def test_bot_sends_only_what_telegram_confirmed():
 @pytest.mark.parametrize(
     "reason, expected",
     [
-        ("expired", ru.LINK_EXPIRED),
-        ("revoked", ru.LINK_REVOKED),
-        ("used", ru.LINK_ALREADY_USED),
-        ("pending", ru.LINK_AWAITING_CONFIRMATION),
-        ("invalid", ru.LINK_INVALID),
-        ("telegram_taken", ru.LINK_TELEGRAM_TAKEN),
-        ("employee_inactive", ru.LINK_EMPLOYEE_INACTIVE),
+        ("expired", start_module.LINK_EXPIRED),
+        ("revoked", start_module.LINK_REVOKED),
+        ("used", start_module.LINK_USED),
+        ("pending", start_module.LINK_AWAITING),
+        ("invalid", start_module.LINK_INVALID),
+        ("telegram_taken", start_module.LINK_TAKEN),
+        ("employee_inactive", start_module.LINK_INACTIVE),
     ],
 )
 def test_every_refusal_gets_its_own_message(reason, expected):
@@ -163,14 +162,14 @@ def test_unknown_reason_falls_back_to_a_neutral_message():
     """Backend может завести новый код раньше, чем бот о нём узнает.
     Молчание в этом случае хуже общего текста."""
     message = run_start("link_x", FakeClient(raises=refusal("что-то новое")))
-    assert message.answers[-1][0] == ru.ERR_SERVER
+    assert message.answers[-1][0] == start_module.LINK_ERROR
 
 
 def test_backend_outage_does_not_leave_the_user_without_an_answer():
     message = run_start(
         "link_x", FakeClient(raises=ServerError(500, "internal_error", "упало"))
     )
-    assert message.answers[-1][0] == ru.ERR_SERVER
+    assert message.answers[-1][0] == start_module.LINK_ERROR
 
 
 def test_error_without_details_does_not_crash():
@@ -178,7 +177,7 @@ def test_error_without_details_does_not_crash():
     message = run_start(
         "link_x", FakeClient(raises=ApiError(409, "conflict", "без подробностей"))
     )
-    assert message.answers[-1][0] == ru.ERR_SERVER
+    assert message.answers[-1][0] == start_module.LINK_ERROR
 
 
 def test_refusal_never_shows_the_employee_keyboard():
@@ -187,7 +186,7 @@ def test_refusal_never_shows_the_employee_keyboard():
     for reason in ("expired", "revoked", "used", "invalid", "telegram_taken"):
         message = run_start("link_x", FakeClient(raises=refusal(reason)))
         markup = message.answers[-1][1]
-        assert markup.__class__.__name__ == "ReplyKeyboardRemove", reason
+        assert markup.__class__.__name__ == "ReplyKeyboardMarkup", reason
 
 
 # --- посторонняя нагрузка --------------------------------------------------
@@ -199,7 +198,9 @@ def test_foreign_payload_behaves_like_a_plain_start():
     message = run_start("ref_partner42", client)
 
     assert client.calls == []
-    assert message.answers[-1][0].startswith(ru.WELCOME_GUEST)
+    # Без привязки обычный /start объясняет, что делать, и не показывает
+    # меню сотрудника.
+    assert message.answers[-1][0].startswith("Этот Telegram не связан")
 
 
 # --- секреты ---------------------------------------------------------------
@@ -268,9 +269,9 @@ class RecordingSession:
 
 
 def _live_client(response: FakeResponse):
-    from src.api.client import LiveBackendClient
+    from src.api.selfservice import SelfServiceClient
 
-    client = LiveBackendClient(base_url="http://backend:8000/api/v1")
+    client = SelfServiceClient(base_url="http://backend:8000/api/v1")
     session = RecordingSession(response)
 
     async def _get_session():
@@ -342,6 +343,7 @@ def test_live_client_reads_the_reason_out_of_the_backend_error_body():
     assert exc.value.status == 409
     assert exc.value.details == {"reason": "expired"}
     # И этот же путь дальше — до текста, который увидит человек.
-    from src.handlers.start.router import LINK_MESSAGES
-
-    assert LINK_MESSAGES[exc.value.details["reason"]] == ru.LINK_EXPIRED
+    assert (
+        start_module.LINK_MESSAGES[exc.value.details["reason"]]
+        == start_module.LINK_EXPIRED
+    )
