@@ -599,6 +599,45 @@ def test_cancelling_gives_the_reservation_back(
     assert balance.reserved_minutes == 0
 
 
+def test_cancelling_an_approved_vacation_gives_the_days_back(
+    service, context, annual_leave, balance, hr
+):
+    """Отмена подтверждённого отпуска возвращает дни, а не съедает их.
+
+    После подтверждения дни лежат уже не в резерве, а в израсходованном.
+    Если отмену вычесть из резерва, он и так ноль — вычитание ничего не
+    изменит, израсходованное останется начисленным, и сотрудник насовсем
+    потеряет отпуск, в котором не был.
+    """
+    view = service.create(
+        context, absence_type_code="ANNUAL_LEAVE",
+        first_day=soon(10), last_day=soon(16),
+    )
+    service.decide(hr, view.request.id, approve=True)
+    service.cancel_approved(hr, view.request.id, comment="Перенос")
+
+    balance.refresh_from_db()
+    assert balance.reserved_minutes == 0
+    assert balance.used_minutes == 0
+
+
+def test_employee_cancelling_an_approved_vacation_gives_the_days_back(
+    service, context, annual_leave, balance, hr, organization
+):
+    """Тот же возврат на втором пути отмены — когда её разрешили сотруднику."""
+    save_policy(organization.id, {"cancelling_approved_requires_hr": False})
+    view = service.create(
+        context, absence_type_code="ANNUAL_LEAVE",
+        first_day=soon(10), last_day=soon(16),
+    )
+    service.decide(hr, view.request.id, approve=True)
+    service.cancel(context, view.request.id)
+
+    balance.refresh_from_db()
+    assert balance.reserved_minutes == 0
+    assert balance.used_minutes == 0
+
+
 def test_vacation_beyond_the_balance_is_refused(
     service, context, annual_leave, balance
 ):

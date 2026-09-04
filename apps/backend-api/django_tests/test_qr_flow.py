@@ -439,3 +439,59 @@ def test_event_stores_the_code_only_as_a_hash(context, display, qr_settings):
     assert event.qr_nonce_hash
     assert event.qr_nonce_hash not in token
     assert len(event.qr_nonce_hash) == 64
+
+
+# --- частота отметок -------------------------------------------------------
+
+def test_scan_endpoint_stops_a_brute_force_run(bot_client, context, display,
+                                               qr_settings):
+    """Перебор кодов упирается в предел, а не идёт бесконечно.
+
+    Подпись подобрать нельзя, но пробовать её можно сколько угодно — если
+    ничего не считает попытки. Считает: отдельный предел на отметки и есть
+    единственное, что стоит между перебором и сервером, поэтому проверяется
+    он живым запросом, а не чтением настроек.
+
+    Отказ по существу тоже тратит счётчик: перебор именно из отказов и
+    состоит.
+    """
+    from django.core.cache import cache
+
+    from humotech.selfservice.throttling import ScanRateThrottle
+
+    cache.clear()
+    limit = ScanRateThrottle().num_requests
+    assert limit, "предел на отметки не задан — перебор ничем не ограничен"
+
+    codes = []
+    try:
+        for _ in range(limit + 1):
+            response = bot_client.post(
+                SCAN,
+                {"token": "HT1" + "A" * 100},
+                format="json",
+                **bot_headers(TG_ID),
+            )
+            codes.append(response.status_code)
+    finally:
+        cache.clear()
+
+    assert 429 not in codes[:limit], f"предел сработал раньше времени: {codes}"
+    assert codes[-1] == 429
+
+
+def test_cabinet_and_scan_have_separate_limits():
+    """Общий предел кабинета не должен покрывать отметки.
+
+    Экран сам обновляет статус, поэтому предел кабинета щедрый. Если бы
+    отметки считались тем же счётчиком, перебор кодов растворился бы в
+    обычном фоне обращений.
+    """
+    from humotech.selfservice.throttling import EmployeeRateThrottle, ScanRateThrottle
+
+    cabinet = EmployeeRateThrottle()
+    scanning = ScanRateThrottle()
+
+    assert cabinet.scope != scanning.scope
+    assert cabinet.rate and scanning.rate
+    assert scanning.num_requests < cabinet.num_requests

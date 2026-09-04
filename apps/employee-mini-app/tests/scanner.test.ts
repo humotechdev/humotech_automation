@@ -21,8 +21,6 @@ import {
   telegramScanner,
 } from '../src/scanner';
 
-const API = 'https://api.humotech.test/api/v1';
-
 function windowWith(webApp: object | null): Window {
   return (webApp ? { Telegram: { WebApp: webApp } } : {}) as unknown as Window;
 }
@@ -276,10 +274,17 @@ describe('адрес API', () => {
   });
 });
 
-// --- API проверяется только через `call`, поэтому адрес фиксируем ----------
+it('по умолчанию адрес относительный, а не чужой хост', async () => {
+  // Тот же origin, что и страница: в разработке всё проксируется, CORS не
+  // участвует, а запрос с внутренним токеном не может уйти на чужой хост
+  // из-за незаданной переменной сборки.
+  const fetchImpl = vi.fn(
+    async () => new Response('{}', { status: 200,
+      headers: { 'Content-Type': 'application/json' } }),
+  ) as unknown as typeof fetch;
 
-it('API_URL по умолчанию не абсолютный', () => {
-  // Относительный адрес означает тот же origin, что и страница: в
-  // разработке всё проксируется и CORS не участвует вовсе.
-  expect(API.startsWith('http')).toBe(true); // сама константа теста
+  await call('/me/profile', { fetchImpl, token: 'x' });
+
+  const [url] = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
+  expect(String(url).startsWith('/api/v1/')).toBe(true);
 });

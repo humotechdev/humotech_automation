@@ -339,7 +339,9 @@ class AbsenceService(BaseService):
             request.status = "CANCELLED"
             request.save(update_fields=["status", "updated_at"])
             self._act(context, request, "CANCELLED", previous, "CANCELLED")
-            self._release(context, request, moment)
+            self._release(
+                context, request, moment, was_approved=previous == "APPROVED"
+            )
             EmployeeAbsence.objects.filter(
                 origin_request=request, status__in=("PLANNED", "ACTIVE")
             ).update(status="CANCELLED", cancelled_at=moment)
@@ -476,7 +478,7 @@ class AbsenceService(BaseService):
             EmployeeAbsence.objects.filter(
                 origin_request=request, status__in=("PLANNED", "ACTIVE")
             ).update(status="CANCELLED", cancelled_at=moment)
-            self._release(context, request, moment)
+            self._release(context, request, moment, was_approved=True)
             self._notify(request, "cancelled")
             self.audit.record(
                 actor,
@@ -736,8 +738,19 @@ class AbsenceService(BaseService):
         row.reserved_minutes += working_days * MINUTES_PER_WORKING_DAY
         row.save(update_fields=["reserved_minutes", "updated_at"])
 
-    def _release(self, context, request: AbsenceRequest, now) -> None:
-        """Вернуть резерв: заявка отклонена или отменена."""
+    def _release(
+        self, context, request: AbsenceRequest, now, *,
+        was_approved: bool = False,
+    ) -> None:
+        """Вернуть дни в остаток: заявка отклонена или отменена.
+
+        Куда возвращать — зависит от того, где эти дни лежат сейчас.
+        Пока заявку не подтвердили, они в резерве. После подтверждения
+        резерв уже переехал в израсходованное (`_consume_reservation`),
+        и вычитать отмену из резерва нельзя: он ноль, вычитание из нуля
+        ничего не меняет, а израсходованное остаётся начисленным —
+        сотрудник насовсем теряет отпуск, которого не было.
+        """
         if not request.absence_type.deducts_leave_balance:
             return
         if not (request.requested_start_at and request.requested_end_at):
@@ -759,12 +772,15 @@ class AbsenceService(BaseService):
         )
         if row is None:
             return
-        # Ниже нуля резерв не опускаем: ограничение в базе это запрещает,
-        # а расхождение лучше оставить нулём, чем уронить отмену заявки.
-        row.reserved_minutes = max(
-            row.reserved_minutes - working * MINUTES_PER_WORKING_DAY, 0
+        field = "used_minutes" if was_approved else "reserved_minutes"
+        # Ниже нуля не опускаем: ограничение в базе это запрещает, а
+        # расхождение лучше оставить нулём, чем уронить отмену заявки.
+        setattr(
+            row,
+            field,
+            max(getattr(row, field) - working * MINUTES_PER_WORKING_DAY, 0),
         )
-        row.save(update_fields=["reserved_minutes", "updated_at"])
+        row.save(update_fields=[field, "updated_at"])
 
     def _consume_reservation(self, request: AbsenceRequest, now) -> None:
         context = _ContextFromRequest(request)
