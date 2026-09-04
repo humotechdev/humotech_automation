@@ -41,7 +41,10 @@ from humotech.core.validation import clean_text
 from humotech.offices.models import Office
 from humotech.schedules.models import CalendarException
 
-CALENDAR_FIELDS = ("date", "name", "exception_type", "is_working_day", "reason")
+CALENDAR_FIELDS = (
+    "date", "name", "exception_type", "is_working_day", "reason",
+    "is_active",
+)
 
 # Сколько дней можно завести одним запросом.
 #
@@ -83,6 +86,7 @@ class CalendarExceptionService(BaseService):
         date_to: date | None = None,
         exception_type: str | None = None,
         search: str | None = None,
+        include_inactive: bool = False,
         limit: int | None = None,
         cursor: str | None = None,
     ) -> Page:
@@ -91,6 +95,12 @@ class CalendarExceptionService(BaseService):
         queryset = CalendarException.objects.filter(
             organization_id=actor.organization_id
         ).select_related("office")
+
+        if not include_inactive:
+            # Умолчание — действующий календарь. Снятые исключения нужны,
+            # когда разбираются в прошлом, а не когда смотрят, какие дни
+            # в этом месяце рабочие.
+            queryset = queryset.filter(is_active=True)
 
         if office_id:
             self.access.require_office(actor, office_id)
@@ -266,16 +276,97 @@ class CalendarExceptionService(BaseService):
             )
         return row
 
+    def deactivate(
+        self, actor: Actor, exception_id: uuid.UUID
+    ) -> CalendarException:
+        """Снять исключение с действия, оставив строку.
+
+        Так снимают отменённый приказом перенос: сам факт «в марте
+        собирались работать в субботу, потом отменили» через полгода
+        объясняет расхождение в табеле, а удалённая строка не объясняет
+        ничего.
+
+        На расчёт снятое исключение не влияет: все четыре читателя
+        календаря — присутствие, аналитика, статистика и отсутствия —
+        спрашивают только действующие.
+        """
+        return self._set_active(
+            actor, exception_id, active=False,
+            action="calendar_exception.deactivate",
+            already="Исключение уже снято",
+        )
+
+    def reactivate(
+        self, actor: Actor, exception_id: uuid.UUID
+    ) -> CalendarException:
+        """Вернуть снятое исключение в действие.
+
+        Дата к этому моменту могла быть занята: пока исключение было
+        снято, на тот же день завели другое. Это проверяется здесь и
+        отвечает понятным отказом — без проверки ответ пришёл бы из
+        ограничения целостности, то есть сообщением про индекс вместо
+        сообщения про календарь.
+        """
+        row = self._require(actor, exception_id)
+        if not row.is_active:
+            taken = CalendarException.objects.filter(
+                organization_id=actor.organization_id,
+                date=row.date,
+                office_id=row.office_id,
+                is_active=True,
+            ).exclude(id=row.id)
+            if taken.exists():
+                raise Conflict(
+                    "На эту дату уже действует другое исключение: "
+                    "снимите его или оставьте это снятым",
+                    details={"date": row.date.isoformat(),
+                             "office_id": str(row.office_id)
+                             if row.office_id else None},
+                )
+        return self._set_active(
+            actor, exception_id, active=True,
+            action="calendar_exception.reactivate",
+            already="Исключение уже действует",
+        )
+
+    def _set_active(
+        self,
+        actor: Actor,
+        exception_id: uuid.UUID,
+        *,
+        active: bool,
+        action: str,
+        already: str,
+    ) -> CalendarException:
+        self.access.require(actor, "calendar.manage")
+        row = self._require(actor, exception_id)
+        if row.is_active == active:
+            raise Conflict(already, details={"is_active": row.is_active})
+
+        before = snapshot(row, CALENDAR_FIELDS)
+        with self.atomic():
+            row.is_active = active
+            row.save(update_fields=["is_active", "updated_at"])
+            self.audit.record(
+                actor,
+                action=action,
+                entity_type="calendar_exceptions",
+                entity_id=row.id,
+                before=before,
+                after=snapshot(row, CALENDAR_FIELDS),
+            )
+        return row
+
     def delete(self, actor: Actor, exception_id: uuid.UUID) -> None:
-        """Исключение удаляется физически, и это осознанно.
+        """Удалить строку целиком: её не должно было быть вовсе.
 
-        У модели нет ни статуса, ни даты архивации, а «отменённый
-        праздник», оставшийся строкой, продолжал бы влиять на расчёт:
-        читатели календаря спрашивают только дату и офис. Отменённый
-        перенос обязан исчезнуть, иначе он не отменён.
+        Отличается от снятия намеренно. Снятие говорит «так было, потом
+        отменили» и остаётся в календаре прошлого; удаление говорит
+        «этого не было» и применяется к опечаткам — заведённому не на
+        тот день или не в тот офис.
 
-        Сама операция при этом остаётся в журнале вместе со снимком
-        удалённого — восстановить, что именно снесли, можно.
+        Сама операция остаётся в журнале вместе со снимком удалённого,
+        так что восстановить, что именно снесли, можно.
         """
         self.access.require(actor, "calendar.manage")
         row = self._require(actor, exception_id)

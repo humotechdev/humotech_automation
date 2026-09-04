@@ -437,6 +437,7 @@ def _calendar_exceptions(context, first: date, last: date) -> dict[date, bool]:
         organization_id=context.organization_id,
         date__gte=first,
         date__lte=last,
+        is_active=True,
     )
     # Сначала общие по организации, затем офисные поверх них: сортировка
     # по `office_id` с NULL впереди делает перезапись правильной без

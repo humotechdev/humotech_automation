@@ -753,6 +753,7 @@ class AbsenceService(BaseService):
                     organization_id=context.organization_id,
                     date__gte=first_day,
                     date__lte=last_day,
+                    is_active=True,
                 ),
                 key=lambda r: r.office_id is not None,
             )

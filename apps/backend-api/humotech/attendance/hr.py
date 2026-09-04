@@ -726,6 +726,7 @@ class AttendanceHrService(BaseService):
             Q(office_id__in=office_ids) | Q(office__isnull=True),
             organization_id=organization_id,
             date=day,
+            is_active=True,
         )
         for row in sorted(calendar, key=lambda r: r.office_id is not None):
             exceptions[row.office_id] = row.is_working_day

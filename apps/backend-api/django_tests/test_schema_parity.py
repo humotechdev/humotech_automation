@@ -59,7 +59,12 @@ def _django_url() -> str:
 #   * очередь фоновых выгрузок: большой XLSX собирается воркером, а не
 #     в запросе, и заданию нужны состояние, попытки и ссылка на файл;
 #   * у календарного исключения появилось основание переноса — название
-#     видит сотрудник, основание читает кадровик.
+#     видит сотрудник, основание читает кадровик;
+#   * исключение стало сниматься с действия, а не только удаляться:
+#     «перенос отменили приказом» через полгода объясняет расхождение
+#     в табеле, а удалённая строка не объясняет ничего. Вместе с колонкой
+#     переписаны оба уникальных ключа — снятая строка не должна занимать
+#     дату.
 KNOWN_DIVERGENCES = {
     "ЛИШНЯЯ ТАБЛИЦА: telegram_link_invitations",
     "telegram_accounts: ОГРАНИЧЕНИЕ ОТСУТСТВУЕТ: "
@@ -95,6 +100,23 @@ KNOWN_DIVERGENCES = {
     # --- фоновые выгрузки и основание переноса ---
     "ЛИШНЯЯ ТАБЛИЦА: export_jobs",
     "calendar_exceptions.reason: лишняя колонка",
+    # --- снятие календарного исключения ---
+    #
+    # Оба уникальных ключа переписаны на условие «действующее». Иначе
+    # снятая строка продолжала бы занимать дату, и завести на неё новое
+    # исключение стало бы нельзя — то есть снятие было бы бессмысленным.
+    "calendar_exceptions.is_active: лишняя колонка",
+    "calendar_exceptions: лишнее ограничение: not null is_active",
+    "calendar_exceptions: ИНДЕКС ОТСУТСТВУЕТ: public.calendar_exceptions "
+    "using btree (office_id, date) where (office_id is not null)",
+    "calendar_exceptions: ИНДЕКС ОТСУТСТВУЕТ: public.calendar_exceptions "
+    "using btree (organization_id, date) where (office_id is null)",
+    "calendar_exceptions: лишний индекс: public.calendar_exceptions "
+    "using btree (office_id, date) where (is_active and "
+    "(office_id is not null))",
+    "calendar_exceptions: лишний индекс: public.calendar_exceptions "
+    "using btree (organization_id, date) where (is_active and "
+    "(office_id is null))",
 }
 
 

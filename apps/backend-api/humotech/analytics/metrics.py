@@ -477,6 +477,7 @@ class AnalyticsService(BaseService):
             organization_id=actor.organization_id,
             date__gte=first,
             date__lte=last,
+            is_active=True,
         )
         for row in sorted(rows, key=lambda r: r.office_id is not None):
             result[row.date] = row.is_working_day

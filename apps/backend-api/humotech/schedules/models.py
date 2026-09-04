@@ -225,6 +225,15 @@ class CalendarException(
     #: в календаре («Навруз»), а основание читает кадровик, разбирая,
     #: почему суббота стала рабочей («приказ №14 от 03.03»).
     reason = models.TextField(null=True, blank=True)
+    #: Действует ли исключение. Снятое остаётся строкой ради истории:
+    #: «перенос отменили приказом» — это факт, который через полгода
+    #: объясняет расхождение в табеле, а удалённая строка не объясняет
+    #: ничего.
+    #:
+    #: Колонка появилась вместе с переписыванием обоих уникальных
+    #: ключей — иначе снятая строка продолжала бы занимать дату, и
+    #: завести на неё новое исключение стало бы нельзя.
+    is_active = models.BooleanField(db_default=True)
 
     class Meta:
         db_table = "calendar_exceptions"
@@ -235,16 +244,22 @@ class CalendarException(
                 "exception_type", CALENDAR_EXCEPTION_TYPES,
                 "ck_calendar_exceptions_exception_type",
             ),
-            # Одна дата — одно исключение: отдельно для офиса и отдельно
-            # для всей организации.
+            # Одна дата — одно ДЕЙСТВУЮЩЕЕ исключение: отдельно для офиса
+            # и отдельно для всей организации. Эти два ключа и есть запрет
+            # противоречащих утверждений об одном дне, и держит его база.
+            #
+            # `is_active` в условии обязателен. Без него снятое исключение
+            # продолжало бы занимать дату: завести на неё новое было бы
+            # нельзя, и отказ приходил бы из ограничения целостности —
+            # там, где кадровик ждёт обычного создания.
             models.UniqueConstraint(
                 fields=["office", "date"],
-                condition=models.Q(office__isnull=False),
+                condition=models.Q(office__isnull=False, is_active=True),
                 name="uq_calendar_exceptions_office_date",
             ),
             models.UniqueConstraint(
                 fields=["organization", "date"],
-                condition=models.Q(office__isnull=True),
+                condition=models.Q(office__isnull=True, is_active=True),
                 name="uq_calendar_exceptions_org_date",
             ),
         ]

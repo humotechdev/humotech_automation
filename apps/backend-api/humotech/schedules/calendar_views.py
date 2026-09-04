@@ -12,6 +12,7 @@ from datetime import date
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiExample, OpenApiParameter, extend_schema
 from rest_framework import serializers
+from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from humotech.core.api import ServiceViewSet, validated
@@ -29,6 +30,10 @@ class CalendarExceptionSerializer(serializers.Serializer):
         help_text="Выводится из типа, отдельно не задаётся",
     )
     reason = serializers.CharField(allow_null=True)
+    is_active = serializers.BooleanField(
+        help_text="Снятое исключение остаётся в истории, но на расчёт "
+                  "не влияет",
+    )
     office_id = serializers.UUIDField(
         allow_null=True, help_text="null — исключение на всю организацию",
     )
@@ -135,6 +140,10 @@ class CalendarExceptionViewSet(ServiceViewSet):
                 "exception_type", str, enum=list(CALENDAR_EXCEPTION_TYPES),
             ),
             OpenApiParameter("search", str, description="Подстрока в названии"),
+            OpenApiParameter(
+                "include_inactive", OpenApiTypes.BOOL,
+                description="true — показать и снятые исключения",
+            ),
             OpenApiParameter("cursor", str),
             OpenApiParameter("limit", int),
         ],
@@ -152,6 +161,9 @@ class CalendarExceptionViewSet(ServiceViewSet):
                 date_from=_date(request, "date_from"),
                 date_to=_date(request, "date_to"),
                 exception_type=request.query_params.get("exception_type") or None,
+                include_inactive=(
+                    request.query_params.get("include_inactive") == "true"
+                ),
             )
         )
 
@@ -202,10 +214,43 @@ class CalendarExceptionViewSet(ServiceViewSet):
         return self.item_response(self.service.update(self.actor, pk, **payload))
 
     @extend_schema(
-        summary="Снять исключение",
+        summary="Снять исключение с действия",
         description=(
-            "Удаляется физически: у модели нет статуса, а «отменённый "
-            "праздник», оставшийся строкой, продолжал бы влиять на расчёт. "
+            "Строка остаётся, но на расчёт не влияет: присутствие, "
+            "аналитика, статистика и отсутствия читают только "
+            "действующие исключения. "
+            "Так снимают отменённый приказом перенос. Сам факт «в марте "
+            "собирались работать в субботу, потом отменили» через "
+            "полгода объясняет расхождение в табеле."
+        ),
+        request=None,
+        responses={200: CalendarExceptionSerializer},
+    )
+    @action(detail=True, methods=["post"])
+    def deactivate(self, request, pk=None):
+        return self.item_response(self.service.deactivate(self.actor, pk))
+
+    @extend_schema(
+        summary="Вернуть снятое исключение в действие",
+        description=(
+            "Отказ, если на эту дату уже действует другое исключение: "
+            "одна дата — одно действующее утверждение о дне, и держит "
+            "это правило база."
+        ),
+        request=None,
+        responses={200: CalendarExceptionSerializer},
+    )
+    @action(detail=True, methods=["post"])
+    def reactivate(self, request, pk=None):
+        return self.item_response(self.service.reactivate(self.actor, pk))
+
+    @extend_schema(
+        summary="Удалить исключение целиком",
+        description=(
+            "Для опечаток: заведено не на тот день или не в тот офис, "
+            "и такой строки не должно было быть вовсе. Отменённый "
+            "приказом перенос снимают действием deactivate — он остаётся "
+            "в календаре прошлого. "
             "Снимок удалённого остаётся в журнале изменений."
         ),
         responses={204: None},
