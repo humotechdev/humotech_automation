@@ -166,29 +166,7 @@ describe('неудачное обновление', () => {
     // «код уже использован». Отметка при этом давно записана.
     inTelegram('подписанная-строка');
 
-    let profileCalls = 0;
-    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
-      const address = String(url);
-      const json = (body: unknown, status = 200) =>
-        new Response(JSON.stringify(body), {
-          status,
-          headers: { 'Content-Type': 'application/json' },
-        });
-
-      if (address.includes('/telegram/mini-app/auth')) {
-        return json({ access_token: 'токен', employee: employeeStub });
-      }
-      if (address.includes('/me/profile')) {
-        profileCalls += 1;
-        // Первый ответ — рабочий, второй — отказ сервера.
-        return profileCalls === 1
-          ? json(profileStub)
-          : json({ error: { code: 'server_error' } }, 500);
-      }
-      if (address.includes('/me/status')) return json(statusStub);
-      return json({ summary: null, days: [] });
-    }) as unknown as typeof fetch;
-    vi.stubGlobal('fetch', fetchImpl);
+    vi.stubGlobal('fetch', cabinetThen(500, { error: { code: 'server_error' } }));
 
     render(<App />);
 
@@ -203,7 +181,71 @@ describe('неудачное обновление', () => {
     expect(screen.getByText('Сейчас в офисе')).toBeTruthy();
     expect(screen.queryByRole('heading', { name: 'Не получилось' })).toBeNull();
   });
+
+  it('истёкший сеанс доходит до экрана, а не прячется в полоску', async () => {
+    // 401 — не «данные могли устареть». Полоска с кнопкой «Ещё раз»
+    // отвечала бы тем же отказом бесконечно: токен просрочен, и обновить
+    // его повтором запроса нельзя. Выход один — выйти и войти заново по
+    // свежей подписи, а эта кнопка есть только на экране ошибки.
+    inTelegram('подписанная-строка');
+    vi.stubGlobal('fetch', cabinetThen(401, { detail: 'expired' }));
+
+    render(<App />);
+    await screen.findByText('Сейчас в офисе');
+
+    fireEvent(window, new Event('online'));
+
+    await screen.findByRole('button', { name: 'Выйти' });
+    expect(screen.queryByText(/Не удалось обновить/)).toBeNull();
+  });
+
+  it('отозванная посреди сеанса привязка тоже доходит до экрана', async () => {
+    // 403 — привязку Telegram отозвали. Оставить человека смотреть
+    // данные сотрудника под полоской «данные могли устареть» нельзя.
+    inTelegram('подписанная-строка');
+    vi.stubGlobal(
+      'fetch',
+      cabinetThen(403, { error: { code: 'forbidden', message: 'нет доступа' } }),
+    );
+
+    render(<App />);
+    await screen.findByText('Сейчас в офисе');
+
+    fireEvent(window, new Event('online'));
+
+    await screen.findByRole('button', { name: 'Выйти' });
+    expect(screen.queryByText(/Не удалось обновить/)).toBeNull();
+  });
 });
+
+/**
+ * Кабинет открывается, второй запрос профиля отвечает отказом.
+ *
+ * Все три проверки выше отличаются только кодом этого отказа — от него
+ * и зависит, полоска это или экран.
+ */
+function cabinetThen(status: number, body: unknown): typeof fetch {
+  let profileCalls = 0;
+  const json = (payload: unknown, code = 200) =>
+    new Response(JSON.stringify(payload), {
+      status: code,
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+  const impl = async (url: string | URL | Request) => {
+    const address = String(url);
+    if (address.includes('/telegram/mini-app/auth')) {
+      return json({ access_token: 'токен', employee: employeeStub });
+    }
+    if (address.includes('/me/profile')) {
+      profileCalls += 1;
+      return profileCalls === 1 ? json(profileStub) : json(body, status);
+    }
+    if (address.includes('/me/status')) return json(statusStub);
+    return json({ summary: null, days: [] });
+  };
+  return impl as unknown as typeof fetch;
+}
 
 // --- оболочка Telegram ------------------------------------------------------
 

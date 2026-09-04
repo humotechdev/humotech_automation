@@ -18,6 +18,44 @@
   box-sizing: border-box;
 }
 
+/*
+ * Подсветка нажатия.
+ *
+ * Android WebView сам заливает нажатое место полупрозрачным синим
+ * прямоугольником. Прямоугольником — не по форме кнопки: у скруглённой
+ * карточки углы остаются квадратными, и это видно. Цвет системный,
+ * к палитре отношения не имеет.
+ *
+ * На iOS такой заливки нет вовсе, и нажатие показывает само правило
+ * `:active` — оно скруглено вместе с кнопкой. Поэтому системная заливка
+ * убирается везде, а `:active` у каждой кнопки свой и уже описан ниже.
+ *
+ * `transparent`, а не `rgba(0,0,0,0)`: часть сборок Android понимает
+ * только ключевое слово.
+ */
+a,
+button,
+label,
+input,
+select,
+textarea,
+[role='button'],
+[tabindex] {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Долгое нажатие на кнопку не должно выделять её подпись и звать
+   системное меню «копировать» — это не текст, это кнопка. */
+button,
+label.file-field,
+.nav-item,
+.quick-action,
+.avatar {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
 html,
 body,
 #root {
@@ -615,6 +653,12 @@ dd {
   color: var(--navy);
 }
 
+/* Своя подсветка нажатия вместо системной, которую мы убрали выше:
+   по форме кнопки, а не квадратом поверх неё. */
+.segmented button:active:not([aria-pressed='true']) {
+  background: var(--surface-sunken);
+}
+
 /* --- нижняя навигация ----------------------------------------------------- */
 
 .bottom-nav {
@@ -645,8 +689,11 @@ dd {
   font-size: var(--text-nav);
   line-height: 1.1;
   cursor: pointer;
-  /* Нажимается вся область кнопки, а не только иконка. */
-  -webkit-tap-highlight-color: transparent;
+}
+
+.nav-item:active .nav-label,
+.nav-item:active .nav-icon {
+  opacity: 0.6;
 }
 
 .nav-item-active {
@@ -755,6 +802,10 @@ dd {
   font-family: inherit;
   font-size: var(--text-small);
   cursor: pointer;
+}
+
+.offline-retry:active {
+  opacity: 0.6;
 }
 
 /* --- наложения ------------------------------------------------------------ */
@@ -922,6 +973,10 @@ textarea:focus {
 }
 
 .file-field {
+  /* Один и тот же вид у <label> и у <button>: «сфотографировать» стала
+     кнопкой, потому что открывает свою камеру, а не системный выбор. */
+  background: var(--surface);
+  font-family: inherit;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -941,8 +996,13 @@ textarea:focus {
   color: var(--navy);
 }
 
+/* Единственная подсветка нажатия на обеих платформах: серая, по форме
+   кнопки. Раньше на Android поверх неё ложился системный синий
+   прямоугольник и перекрывал её целиком. */
 .file-field:active {
   background: var(--surface-sunken);
+  border-style: solid;
+  border-color: var(--navy);
 }
 
 .file-chosen {
@@ -955,7 +1015,8 @@ textarea:focus {
   border-radius: var(--radius-control);
 }
 
-.file-field input[type='file'] {
+.file-field input[type='file'],
+.file-input-hidden {
   /* Родной элемент остаётся в разметке — с ним работают камера,
      клавиатура и экранный диктор; скрыт только его вид. */
   position: absolute;
@@ -986,6 +1047,10 @@ textarea:focus {
   cursor: pointer;
 }
 
+.link-button:active {
+  opacity: 0.6;
+}
+
 .file-clear {
   flex: none;
   min-height: 32px;
@@ -996,6 +1061,10 @@ textarea:focus {
   font-family: inherit;
   font-size: var(--text-small);
   cursor: pointer;
+}
+
+.file-clear:active {
+  opacity: 0.6;
 }
 
 /* --- график по дням ------------------------------------------------------- */
@@ -1221,4 +1290,83 @@ textarea:focus {
   display: block;
   padding: var(--space-3) var(--screen-padding);
   padding-bottom: calc(var(--space-3) + var(--safe-bottom));
+}
+
+
+/* --- своя камера ---------------------------------------------------------
+   Нужна из-за Android: там Telegram перехватывает выбор файла и не
+   смотрит на `capture`, поэтому «сфотографировать» открывало галерею. */
+
+.camera-overlay {
+  background: rgba(11, 31, 51, 0.92);
+}
+
+.camera {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  padding: var(--safe-top) var(--screen-padding)
+    calc(var(--safe-bottom) + var(--space-5));
+}
+
+.camera-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  color: var(--surface);
+  font-size: var(--text-small);
+}
+
+.camera-head .icon-btn {
+  color: var(--surface);
+}
+
+.camera-view {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: var(--radius-card);
+  background: var(--navy-pressed);
+}
+
+.camera-view video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.camera-hint {
+  position: absolute;
+  color: var(--surface);
+  font-size: var(--text-small);
+}
+
+.camera-shutter {
+  align-self: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 68px;
+  height: 68px;
+  margin-top: var(--space-4);
+  border: 3px solid var(--surface);
+  border-radius: 50%;
+  background: var(--navy);
+  color: var(--surface);
+  cursor: pointer;
+}
+
+.camera-shutter:disabled {
+  opacity: 0.5;
+}
+
+.camera-shutter:active:not(:disabled) {
+  background: var(--navy-pressed);
 }

@@ -11,8 +11,9 @@
  * относится «поле заполнено неверно», человек не должен.
  */
 
-import { useId, type ReactNode } from 'react';
+import { useId, useRef, useState, type ReactNode } from 'react';
 
+import { CameraCapture, supportsCamera } from './CameraCapture';
 import { CameraIcon, DocumentIcon } from './icons';
 
 /** Общая обвязка поля: подпись, подсказка, ошибка. */
@@ -107,15 +108,21 @@ export function DateRangePicker({
  *
  * Панель вложений Telegram здесь недоступна и не появится: в WebApp API
  * есть только `downloadFile` — отдать файл человеку. Взять файл из чата
- * или открыть телеграмное окно вложений мини-приложению нечем.
+ * или открыть телеграмную «скрепку» мини-приложению нечем, такого метода
+ * в API нет.
  *
- * Зато родной `input[type=file]` в вебвью Telegram открывает системное
- * окно, где есть и камера, и галерея, и файлы. Камера вынесена отдельной
- * кнопкой с `capture`: бумажную справку почти всегда фотографируют, и
- * лишний выбор в системном меню здесь ни к чему.
+ * «Выбрать файл» — родной `input[type=file]`. На Android его перехватывает
+ * сам Telegram и показывает своё окно снизу; на iPhone открывается
+ * системное. И там, и там есть галерея и файлы.
  *
- * Сам элемент остаётся в разметке — с ним работают камера, клавиатура
- * и экранный диктор; спрятан только его вид.
+ * «Сфотографировать» через тот же `input` с `capture` работало только на
+ * iPhone: Android-Telegram этот атрибут игнорирует и открывает галерею.
+ * Поэтому камера своя (`CameraCapture`), а `input` с `capture` остался
+ * запасным путём — на него откатываемся, если камеры нет или к ней не
+ * пустили.
+ *
+ * Скрытые `input` остаются в разметке: с ними работают клавиатура и
+ * экранный диктор; спрятан только их вид.
  */
 export function FileUploadField({
   file,
@@ -137,6 +144,14 @@ export function FileUploadField({
   const id = useId();
   const pickId = `${id}-pick`;
   const shotId = `${id}-shot`;
+  const shotInput = useRef<HTMLInputElement | null>(null);
+  const [camera, setCamera] = useState(false);
+
+  /** Камера не открылась — отдаём человека системному выбору. */
+  function fallBackToSystem() {
+    setCamera(false);
+    shotInput.current?.click();
+  }
 
   return (
     <Field
@@ -145,6 +160,17 @@ export function FileUploadField({
       hint={hint}
       error={error}
     >
+      {camera && (
+        <CameraCapture
+          onShot={(shot) => {
+            setCamera(false);
+            onFile(shot);
+          }}
+          onCancel={() => setCamera(false)}
+          onUnavailable={fallBackToSystem}
+        />
+      )}
+
       {file ? (
         <div className="file-chosen">
           <DocumentIcon size={20} />
@@ -160,20 +186,33 @@ export function FileUploadField({
         </div>
       ) : (
         <div className="file-actions">
-          <label className="file-field" htmlFor={shotId}>
+          <button
+            type="button"
+            className="file-field"
+            disabled={disabled}
+            onClick={() => {
+              // Своя камера там, где она есть. Где нет — сразу прежний
+              // путь, без промежуточного окна с извинениями.
+              if (supportsCamera()) setCamera(true);
+              else fallBackToSystem();
+            }}
+          >
             <CameraIcon size={20} />
             <span>Сфотографировать</span>
-            <input
-              id={shotId}
-              type="file"
-              accept="image/*"
-              // Подсказка системе открыть камеру сразу, минуя галерею.
-              // Где камеры нет, браузер её просто игнорирует.
-              capture="environment"
-              disabled={disabled}
-              onChange={(event) => onFile(event.target.files?.[0] ?? null)}
-            />
-          </label>
+          </button>
+          <input
+            id={shotId}
+            ref={shotInput}
+            className="file-input-hidden"
+            type="file"
+            accept="image/*"
+            // Запасной путь. На iPhone открывает камеру, на Android
+            // Telegram этот атрибут игнорирует — ради этого и написана
+            // своя камера выше.
+            capture="environment"
+            disabled={disabled}
+            onChange={(event) => onFile(event.target.files?.[0] ?? null)}
+          />
           <label className="file-field" htmlFor={pickId}>
             <DocumentIcon size={20} />
             <span>Выбрать файл</span>

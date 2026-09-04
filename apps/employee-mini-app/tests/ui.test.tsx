@@ -409,18 +409,71 @@ describe('заявки', () => {
 describe('загрузка справки', () => {
   it('даёт и камеру, и выбор файла', () => {
     // Панели вложений Telegram у мини-приложения нет: в WebApp API есть
-    // только downloadFile. Родное системное окно — единственный путь,
-    // и камера вынесена отдельно, потому что справку фотографируют.
+    // только downloadFile. Взять файл из чата нечем.
     const { container } = render(
       <FileUploadField file={null} onFile={noop} accept="application/pdf" />,
     );
 
+    // Оба родных элемента на месте: один — запасной путь для съёмки,
+    // второй — выбор готового файла.
     const inputs = container.querySelectorAll('input[type="file"]');
     expect(inputs).toHaveLength(2);
     expect(inputs[0].getAttribute('capture')).toBe('environment');
     expect(inputs[0].getAttribute('accept')).toBe('image/*');
     expect(inputs[1].getAttribute('accept')).toBe('application/pdf');
-    expect(screen.getByText('Сфотографировать')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Сфотографировать/ })).toBeTruthy();
+  });
+
+  it('«сфотографировать» открывает свою камеру, а не выбор файла', async () => {
+    // Из-за Android: там Telegram перехватывает системный выбор и не
+    // смотрит на `capture`, поэтому кнопка открывала галерею. Своя
+    // камера от чужого выбора не зависит.
+    const { track, stop } = fakeCamera();
+
+    render(<FileUploadField file={null} onFile={noop} />);
+    fireEvent.click(screen.getByRole('button', { name: /Сфотографировать/ }));
+
+    await screen.findByRole('dialog', { name: 'Съёмка справки' });
+    expect(screen.getByRole('button', { name: 'Снять' })).toBeTruthy();
+
+    // Камеру гасим при закрытии: оставленный поток — это горящий
+    // индикатор камеры у человека в кармане.
+    fireEvent.click(screen.getByRole('button', { name: 'Закрыть камеру' }));
+    expect(stop).toHaveBeenCalled();
+    expect(track.stop).toBe(stop);
+  });
+
+  it('без камеры сразу откатывается на системный выбор файла', () => {
+    // На устройстве без getUserMedia промежуточного окна с извинениями
+    // быть не должно: человеку нужен файл, а не объяснение.
+    vi.stubGlobal('navigator', { ...navigator, mediaDevices: undefined });
+
+    const { container } = render(<FileUploadField file={null} onFile={noop} />);
+    const shot = container.querySelector(
+      'input[capture]',
+    ) as HTMLInputElement;
+    const click = vi.fn();
+    shot.click = click;
+
+    fireEvent.click(screen.getByRole('button', { name: /Сфотографировать/ }));
+
+    expect(click).toHaveBeenCalled();
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('отказ в доступе к камере — не тупик', async () => {
+    const denied = Object.assign(new Error('нет'), { name: 'NotAllowedError' });
+    vi.stubGlobal('navigator', {
+      ...navigator,
+      mediaDevices: { getUserMedia: vi.fn(async () => Promise.reject(denied)) },
+    });
+
+    render(<FileUploadField file={null} onFile={noop} />);
+    fireEvent.click(screen.getByRole('button', { name: /Сфотографировать/ }));
+
+    await screen.findByText('Камера закрыта');
+    // Путь вперёд остаётся: справку можно приложить готовым файлом.
+    expect(screen.getByRole('button', { name: 'Выбрать файл' })).toBeTruthy();
   });
 
   it('выбранный файл показан по имени и снимается', () => {
@@ -569,6 +622,23 @@ describe('доступность', () => {
 });
 
 // --- вспомогательное --------------------------------------------------------
+
+/**
+ * Камера, которой нет.
+ *
+ * jsdom не умеет ни getUserMedia, ни воспроизведение видео. Проверяется
+ * не картинка, а то, что поток запрошен и — главное — остановлен.
+ */
+function fakeCamera() {
+  const stop = vi.fn();
+  const track = { stop } as unknown as MediaStreamTrack;
+  const stream = { getTracks: () => [track] } as unknown as MediaStream;
+  vi.stubGlobal('navigator', {
+    ...navigator,
+    mediaDevices: { getUserMedia: vi.fn(async () => stream) },
+  });
+  return { track, stop, stream };
+}
 
 /** Ушедшие на сервер записи по пути и методу. */
 function posts(
