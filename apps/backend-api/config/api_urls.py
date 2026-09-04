@@ -8,6 +8,13 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from humotech.accounts.views import CurrentUserView, LoginView, LogoutView
+from humotech.attendance.views import (
+    AttendanceViewSet,
+    CorrectionDecisionView,
+    CorrectionListView,
+    ManualEventView,
+    PresenceView,
+)
 from humotech.employees.views import EmployeeViewSet
 from humotech.absences.views import (
     AbsenceDecisionView,
@@ -93,6 +100,19 @@ urlpatterns = [
         QrDeviceActionView.as_view(),
         name="qr-device-action",
     ),
+    # Посещаемость глазами кадровика. Сырые события отдаются только на
+    # чтение: строка отметки не меняется никогда, а исправление — это
+    # либо решение по заявке, либо новое событие с source = MANUAL.
+    path("attendance/events", AttendanceViewSet.as_view({"get": "events"}),
+         name="attendance-events"),
+    path("attendance/sessions", AttendanceViewSet.as_view({"get": "sessions"}),
+         name="attendance-sessions"),
+    path("attendance/presence", PresenceView.as_view(), name="attendance-presence"),
+    path("attendance/corrections", CorrectionListView.as_view(),
+         name="attendance-corrections"),
+    path("attendance/corrections/<uuid:request_id>/<str:decision>",
+         CorrectionDecisionView.as_view(), name="attendance-correction-decision"),
+    path("attendance/manual", ManualEventView.as_view(), name="attendance-manual"),
     # Решения по заявкам на отсутствие. React-интерфейса для них пока нет —
     # он следующим этапом, — но подтверждать больничные надо уже сейчас.
     path("absence-requests/pending", PendingAbsenceRequestsView.as_view(),
