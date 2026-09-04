@@ -16,12 +16,14 @@ from __future__ import annotations
 import uuid
 from datetime import date
 
+from drf_spectacular.utils import OpenApiParameter, extend_schema
+from rest_framework import serializers as drf_serializers
 from rest_framework import status as http_status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from humotech.attendance.hr import AttendanceHrService
+from humotech.attendance.hr import PRESENCE_STATES, AttendanceHrService
 from humotech.attendance.serializers import (
     AttendanceEventSerializer,
     AttendanceSessionSerializer,
@@ -33,6 +35,46 @@ from humotech.attendance.serializers import (
 from humotech.core.api import ServiceViewSet, validated
 from humotech.core.errors import ValidationFailed
 from humotech.core.rbac import Actor
+
+
+# Параметры, общие для журналов. Перечислены здесь один раз: схема
+# и код читают один и тот же список, и разъехаться им негде.
+SCOPE_PARAMS = [
+    OpenApiParameter("employee_id", str, description="Один сотрудник"),
+    OpenApiParameter("office_id", str, description="Один офис"),
+    OpenApiParameter("region_id", str, description="Все офисы региона"),
+    OpenApiParameter("date_from", str, description="Начало периода, ГГГГ-ММ-ДД"),
+    OpenApiParameter("date_to", str, description="Конец периода включительно"),
+    OpenApiParameter("cursor", str, description="Курсор следующей страницы"),
+    OpenApiParameter("limit", int, description="Размер страницы, до 200"),
+]
+
+
+class PresenceResponseSerializer(drf_serializers.Serializer):
+    """Ответ экрана присутствия. Нужен схеме; в коде не используется."""
+
+    date = drf_serializers.DateField()
+    timezone = drf_serializers.CharField()
+    counts = drf_serializers.DictField(child=drf_serializers.IntegerField())
+    total = drf_serializers.IntegerField()
+    items = PresenceRowSerializer(many=True)
+
+
+class PageSerializer(drf_serializers.Serializer):
+    next_cursor = drf_serializers.CharField(allow_null=True)
+    has_more = drf_serializers.BooleanField()
+
+
+class EventPageSerializer(PageSerializer):
+    items = AttendanceEventSerializer(many=True)
+
+
+class SessionPageSerializer(PageSerializer):
+    items = AttendanceSessionSerializer(many=True)
+
+
+class CorrectionPageSerializer(PageSerializer):
+    items = CorrectionRequestSerializer(many=True)
 
 
 def _uuid_param(request, name: str) -> uuid.UUID | None:
@@ -78,6 +120,25 @@ class AttendanceViewSet(ServiceViewSet):
             "date_to": _date_param(request, "date_to"),
         }
 
+    @extend_schema(
+        summary="Журнал сканирований",
+        description=(
+            "Сырые события отметки, включая отклонённые. Только чтение: "
+            "строка события не меняется никогда, а исправление — это "
+            "решение по заявке или новое событие с source = MANUAL."
+        ),
+        parameters=SCOPE_PARAMS
+        + [
+            OpenApiParameter("event_type", str, enum=["ENTRY", "EXIT"]),
+            OpenApiParameter("source", str, enum=["QR", "MANUAL", "IMPORT"]),
+            OpenApiParameter(
+                "verification_status", str,
+                enum=["ACCEPTED", "REJECTED", "REVIEW"],
+            ),
+        ],
+        responses=EventPageSerializer,
+        tags=["Посещаемость"],
+    )
     def events(self, request):
         params = self._common(request)
         page = self.service.events(
@@ -92,6 +153,22 @@ class AttendanceViewSet(ServiceViewSet):
         )
         return self.page_response(page, serializer_class=AttendanceEventSerializer)
 
+    @extend_schema(
+        summary="Рабочие сессии",
+        parameters=SCOPE_PARAMS
+        + [
+            OpenApiParameter(
+                "status", str,
+                enum=["OPEN", "CLOSED", "CORRECTED", "INVALID"],
+            ),
+            OpenApiParameter(
+                "open", bool,
+                description="Только незакрытые сессии, без времени выхода",
+            ),
+        ],
+        responses=SessionPageSerializer,
+        tags=["Посещаемость"],
+    )
     def sessions(self, request):
         params = self._common(request)
         page = self.service.sessions(
@@ -121,6 +198,29 @@ class PresenceView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Кто где на выбранный день",
+        description=(
+            "Состав смены целиком, без страниц: по этому ответу считаются "
+            "карточки дашборда, а итог по первым пятидесяти строкам — "
+            "не итог. Поле counts содержит те же числа, что и карточки."
+        ),
+        parameters=[
+            OpenApiParameter("date", str, description="День, ГГГГ-ММ-ДД"),
+            OpenApiParameter("office_id", str),
+            OpenApiParameter("region_id", str),
+            OpenApiParameter("department_id", str),
+            OpenApiParameter("position_id", str),
+            OpenApiParameter("schedule_id", str),
+            OpenApiParameter(
+                "state", str, enum=list(PRESENCE_STATES),
+                description="Оставить только одно состояние",
+            ),
+            OpenApiParameter("search", str, description="Поиск по ФИО и номеру"),
+        ],
+        responses=PresenceResponseSerializer,
+        tags=["Посещаемость"],
+    )
     def get(self, request):
         actor = Actor.from_user(request.user)
         report = AttendanceHrService().presence(
@@ -152,6 +252,22 @@ class CorrectionListView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Заявки на исправление отметок",
+        parameters=[
+            OpenApiParameter(
+                "status", str,
+                enum=["DRAFT", "SUBMITTED", "IN_REVIEW", "APPROVED",
+                      "REJECTED", "CANCELLED"],
+            ),
+            OpenApiParameter("employee_id", str),
+            OpenApiParameter("office_id", str),
+            OpenApiParameter("region_id", str),
+            OpenApiParameter("cursor", str),
+        ],
+        responses=CorrectionPageSerializer,
+        tags=["Посещаемость"],
+    )
     def get(self, request):
         actor = Actor.from_user(request.user)
         page = AttendanceHrService().corrections(
@@ -180,6 +296,17 @@ class CorrectionDecisionView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Решение по заявке на исправление",
+        description=(
+            "decision — approve или reject. Событие при этом не "
+            "переписывается: меняется расчётная сессия, а решение остаётся "
+            "в журнале с автором, временем и причиной."
+        ),
+        request=CorrectionDecisionSerializer,
+        responses=CorrectionRequestSerializer,
+        tags=["Посещаемость"],
+    )
     def post(self, request, request_id, decision):
         actor = Actor.from_user(request.user)
         payload = validated(CorrectionDecisionSerializer, request.data)
@@ -201,6 +328,16 @@ class ManualEventView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Ручная отметка кадровика",
+        description=(
+            "Добавляет НОВОЕ событие с source = MANUAL. Причина "
+            "обязательна: по этим отметкам считают рабочее время."
+        ),
+        request=ManualEventSerializer,
+        responses=AttendanceEventSerializer,
+        tags=["Посещаемость"],
+    )
     def post(self, request):
         actor = Actor.from_user(request.user)
         payload = validated(ManualEventSerializer, request.data)

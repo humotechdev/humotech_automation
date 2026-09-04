@@ -13,6 +13,7 @@ from __future__ import annotations
 from datetime import date
 
 from django.http import HttpResponse, StreamingHttpResponse
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
@@ -42,6 +43,34 @@ class ExportView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Выгрузка отчёта файлом",
+        description=(
+            "kind: employees, attendance, sessions, summary. "
+            "Формат задаётся параметром fmt (csv или xlsx) — имя format "
+            "занято самим DRF под выбор рендерера. CSV отдаётся потоком "
+            "без ограничения размера; у XLSX предел 50 000 строк, при "
+            "превышении приходит понятный отказ, а не обрезанный файл."
+        ),
+        parameters=[
+            OpenApiParameter(
+                "kind", str, location=OpenApiParameter.PATH,
+                enum=["employees", "attendance", "sessions", "summary"],
+            ),
+            OpenApiParameter("fmt", str, enum=["csv", "xlsx"]),
+            OpenApiParameter("date", str, description="Для отчёта attendance"),
+            OpenApiParameter("date_from", str),
+            OpenApiParameter("date_to", str),
+            OpenApiParameter("office_id", str),
+            OpenApiParameter("region_id", str),
+        ],
+        responses={
+            200: OpenApiResponse(
+                description="Файл во вложении (Content-Disposition: attachment)",
+            ),
+        },
+        tags=["Отчёты"],
+    )
     def get(self, request, kind: str):
         actor = Actor.from_user(request.user)
         # Право на выгрузку проверяется первым и отдельно от прав на

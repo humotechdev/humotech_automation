@@ -143,6 +143,9 @@ THIRD_PARTY_APPS = [
     "rest_framework",
     "django_filters",
     "pgvector.django",
+    # Схема OpenAPI. Сама по себе ничего не меняет в поведении API:
+    # генерируется по маршрутам и сериализаторам при обращении к /api/schema.
+    "drf_spectacular",
 ]
 
 # Приложения по доменам: одно к одному с прежними модулями backend-api,
@@ -236,6 +239,7 @@ REST_FRAMEWORK = {
     # Обработчик приводит доменные ошибки к тому же телу ответа,
     # что и раньше: {"error": {"code", "message", "details"}}.
     "EXCEPTION_HANDLER": "humotech.core.exceptions.domain_exception_handler",
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     # Частота обращений к чувствительным endpoint'ам. Считает LocMemCache,
     # то есть на процесс: при нескольких рабочих процессах фактический предел
     # умножается на их число. Это защита от перебора, а не от нагрузки;
@@ -437,5 +441,33 @@ LOGGING = {
             "handlers": ["console"],
             "propagate": False,
         },
+    },
+}
+
+
+# --- схема OpenAPI ----------------------------------------------------------
+#
+# Схема описывает пути, методы, параметры и коды ответов. Тела запросов
+# и ответов она берёт из сериализаторов — там, где они есть; у части
+# наборов действий ответ собирается вручную (`page_response`), и для них
+# точное описание даёт документация для фронтенда:
+# docs/api/hr-crm.md. Схема и документ дополняют друг друга, а не
+# дублируют: расходиться им негде, потому что путь один и тот же.
+SPECTACULAR_SETTINGS = {
+    "TITLE": "HUMOTECH HR CRM API",
+    "DESCRIPTION": (
+        "REST API кадровой системы. Авторизация — сессия Django "
+        "(cookie + CSRF), не JWT. Область видимости и права проверяет "
+        "сервер по авторизованному пользователю; organization_id от "
+        "клиента не принимается ни в одном запросе."
+    ),
+    "VERSION": "1.0.0",
+    # Схема отдаётся отдельным адресом, а не вместе со списком маршрутов.
+    "SERVE_INCLUDE_SCHEMA": False,
+    "SERVE_PERMISSIONS": ["rest_framework.permissions.IsAuthenticated"],
+    "COMPONENT_SPLIT_REQUEST": True,
+    "SCHEMA_PATH_PREFIX": "/api/v1",
+    "ENUM_NAME_OVERRIDES": {
+        "AttendanceEventType": "humotech.core.enums.ATTENDANCE_EVENT_TYPES",
     },
 }

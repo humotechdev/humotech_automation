@@ -42,6 +42,22 @@ class ServiceViewSet(viewsets.ViewSet):
     service_class: type | None = None
     read_serializer_class: type[serializers.Serializer] | None = None
 
+    def get_serializer_class(self):
+        """Только ради генератора схемы OpenAPI.
+
+        Сам набор действий этот метод не вызывает — сериализатор выбирается
+        явно в `page_response` и `item_response`. Но без него генератор
+        не может назвать тип ответа и молча выкидывает весь набор из
+        схемы: у фронтенда получается документация без половины API.
+        """
+        return self.read_serializer_class
+
+    def get_serializer(self, *args, **kwargs):
+        serializer_class = self.get_serializer_class()
+        if serializer_class is None:
+            return None
+        return serializer_class(*args, **kwargs)
+
     @property
     def actor(self) -> Actor:
         return Actor.from_user(self.request.user)

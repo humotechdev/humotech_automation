@@ -19,6 +19,7 @@ import uuid
 from datetime import datetime
 
 from django.db.models import Q
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import serializers
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -56,6 +57,14 @@ class AuditLogSerializer(serializers.Serializer):
     user_agent = serializers.CharField(allow_null=True)
 
 
+class AuditLogPageSerializer(serializers.Serializer):
+    """Страница журнала. Нужна схеме; в коде ответ собирается вручную."""
+
+    items = AuditLogSerializer(many=True)
+    next_cursor = serializers.CharField(allow_null=True)
+    has_more = serializers.BooleanField()
+
+
 class AuditLogView(APIView):
     """Чтение журнала. Требует `audit.read`.
 
@@ -66,6 +75,32 @@ class AuditLogView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Журнал изменений",
+        description=(
+            "Только чтение. Метода записи нет намеренно: единственный "
+            "способ появиться в журнале — быть записанным сервисом, "
+            "который выполняет само действие."
+        ),
+        parameters=[
+            OpenApiParameter(
+                "action", str,
+                description="Точное действие или префикс, например attendance.",
+            ),
+            OpenApiParameter(
+                "entity_type", str,
+                description="Имя таблицы: regions, employees, offices…",
+            ),
+            OpenApiParameter("entity_id", str),
+            OpenApiParameter("actor_user_id", str),
+            OpenApiParameter("date_from", str),
+            OpenApiParameter("date_to", str),
+            OpenApiParameter("cursor", str),
+            OpenApiParameter("limit", int),
+        ],
+        responses=AuditLogPageSerializer,
+        tags=["Аудит"],
+    )
     def get(self, request):
         actor = Actor.from_user(request.user)
         access = AccessControl()
