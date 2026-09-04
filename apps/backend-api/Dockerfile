@@ -36,8 +36,13 @@ COPY . .
 # полный доступ к контейнеру. Каталоги, куда приложение пишет, создаются
 # заранее и передаются пользователю — том монтируется поверх, но права
 # на точку монтирования Docker берёт с образа.
+#
+# Каталог, забытый в этом списке, ломается не при сборке и не в тестах,
+# а в бою: том появляется от root, и процесс молча не может в него
+# писать. Именно так и вышло с `private-exports` — выгрузки собирались
+# и падали на записи файла.
 RUN useradd --create-home --uid 10001 humotech \
-    && mkdir -p /app/staticfiles /app/private-media \
+    && mkdir -p /app/staticfiles /app/private-media /app/private-exports \
     && chown -R humotech:humotech /app
 USER humotech
 
