@@ -388,6 +388,30 @@ FILES = {
     "SCANNER_ENABLED": env("FILES_SCANNER_ENABLED", "false").lower() == "true",
 }
 
+# --- Фоновые выгрузки ---
+#
+# Готовый файл — это кадровые данные, лежащие на диске. Каталог тот же по
+# смыслу, что и у справок: вне зоны раздачи статики, веб-сервер из него
+# ничего не отдаёт, файл выдаёт view, который сначала спрашивает, кому можно.
+EXPORTS = {
+    "PRIVATE_ROOT": env("EXPORTS_PRIVATE_ROOT", str(BASE_DIR / "private-exports")),
+    # Через сколько часов файл удаляется. Выгрузка персональных данных,
+    # лежащая вечно, — это утечка, отложенная во времени.
+    "RETENTION_HOURS": int(env("EXPORTS_RETENTION_HOURS", "72")),
+    # После стольких неудач задание помечается FAILED и больше не берётся.
+    "MAX_ATTEMPTS": int(env("EXPORTS_MAX_ATTEMPTS", "3")),
+    "RETRY_BASE_SECONDS": int(env("EXPORTS_RETRY_BASE_SECONDS", "60")),
+    # Через сколько секунд задание, зависшее в RUNNING, считается брошенным.
+    # Процесс исполнителя мог упасть между захватом и результатом.
+    "LOCK_TIMEOUT_SECONDS": int(env("EXPORTS_LOCK_TIMEOUT_SECONDS", "900")),
+    # Пауза между опросами очереди, когда работы нет.
+    "POLL_INTERVAL_SECONDS": int(env("EXPORTS_POLL_INTERVAL_SECONDS", "5")),
+    # Сколько незавершённых заказов может держать один человек. Не
+    # техническое ограничение: сто нажатий подряд — это не сто отчётов,
+    # это один отчёт и девяносто девять лишних файлов на диске.
+    "MAX_PENDING_PER_USER": int(env("EXPORTS_MAX_PENDING_PER_USER", "5")),
+}
+
 # --- Доверенные прокси ---
 #
 # Сколько прокси стоит перед приложением. Ноль означает: `X-Forwarded-For`
@@ -468,7 +492,12 @@ SPECTACULAR_SETTINGS = {
     "SERVE_PERMISSIONS": ["rest_framework.permissions.IsAuthenticated"],
     "COMPONENT_SPLIT_REQUEST": True,
     "SCHEMA_PATH_PREFIX": "/api/v1",
+    # Одинаково названные поля с разными наборами значений генератор
+    # сводит в один компонент и, не сумев, выдумывает имя вроде
+    # `Status650Enum`. Такое имя попадает в сгенерированные типы клиента
+    # и меняется от любой правки — поэтому имена задаются здесь.
     "ENUM_NAME_OVERRIDES": {
         "AttendanceEventType": "humotech.core.enums.ATTENDANCE_EVENT_TYPES",
+        "ExportKind": "humotech.reports.sheets.EXPORT_KINDS",
     },
 }

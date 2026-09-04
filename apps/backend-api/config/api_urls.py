@@ -59,6 +59,7 @@ from humotech.questions.views import (
     UnansweredQuestionViewSet,
 )
 from humotech.regions.views import RegionViewSet
+from humotech.reports.job_views import ExportJobViewSet
 from humotech.reports.views import ExportView
 from humotech.schedules.calendar_views import CalendarExceptionViewSet
 from humotech.schedules.views import EmployeeScheduleViewSet, WorkScheduleViewSet
@@ -104,6 +105,9 @@ router.register(
 router.register(
     "knowledge/escalations", EscalationViewSet, basename="escalation"
 )
+# Фоновые выгрузки. Мгновенная выгрузка ниже остаётся: короткий отчёт
+# незачем прогонять через заказ, ожидание и скачивание.
+router.register("export-jobs", ExportJobViewSet, basename="export-job")
 router.register(
     "calendar-exceptions", CalendarExceptionViewSet, basename="calendar-exception"
 )

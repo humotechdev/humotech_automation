@@ -101,6 +101,11 @@ services:
       # Справки и больничные. Том, а не каталог образа: пересборка
       # приложения не должна стирать загруженные документы.
       - private_media:/app/private-media
+      # Готовые выгрузки. Том общий с export-worker, и это обязательное
+      # условие: файл пишет исполнитель, а отдаёт backend. Разные тома
+      # дали бы зелёные тесты и 404 при каждом скачивании — на одной
+      # машине такое не воспроизводится вовсе.
+      - private_exports:/app/private-exports
     healthcheck:
       # Host и X-Forwarded-Proto подставляются намеренно. Без Host
       # придёт 400 от ALLOWED_HOSTS, без X-Forwarded-Proto —
@@ -164,6 +169,40 @@ services:
     stop_grace_period: 40s
     logging: *logging
 
+  # Исполнитель очереди выгрузок. Отдельный процесс, а не поток внутри
+  # backend: сборка отчёта за год занимает минуты и ест память, и делать
+  # это там, где одновременно отвечают на запросы, значит подвесить
+  # интерфейс ради одного файла.
+  export-worker:
+    build:
+      context: ../../apps/backend-api
+    image: humotech/backend:local
+    container_name: humotech_export_worker
+    command:
+      - python
+      - manage.py
+      - run_export_worker
+      - --loop=5
+    env_file:
+      - ../../apps/backend-api/.env
+    environment: *backend_env
+    volumes:
+      # Тот же том, что у backend, и смонтирован по тому же пути:
+      # исполнитель пишет файл, backend его отдаёт.
+      - private_exports:/app/private-exports
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - humotech
+    restart: unless-stopped
+    # Незавершённая сборка не портит данные: задание останется в
+    # RUNNING и вернётся в очередь по времени (`reclaim_stale`).
+    stop_grace_period: 30s
+    logging: *logging
+
   # Имя `gateway` — адрес, на который смотрит агент ngrok
   # (`gateway:80` в его команде). Переименование сервиса ломает
   # туннель, поэтому имя менять нельзя без причины.
@@ -220,6 +259,7 @@ services:
 volumes:
   static_files:
   private_media:
+  private_exports:
 
 networks:
   humotech:
