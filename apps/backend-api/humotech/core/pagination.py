@@ -115,3 +115,72 @@ def paginate(
         else None
     )
     return Page(items=items, next_cursor=next_cursor, has_more=has_more)
+
+
+@dataclass(frozen=True)
+class FieldCursor:
+    """Позиция по произвольному полю плюс `id`.
+
+    `paginate` листает по времени создания, и для большинства списков это
+    верно. Но не для всех: календарь читают по датам, а не по тому, когда
+    строку завели, и «следующая страница» там обязана означать «следующие
+    дни». Ключ по-прежнему пара с `id` — по одной дате строки нескольких
+    офисов не различить.
+    """
+
+    value: str
+    id: uuid.UUID
+
+    def encode(self) -> str:
+        payload = json.dumps({"v": self.value, "id": str(self.id)})
+        return base64.urlsafe_b64encode(payload.encode()).decode()
+
+    @classmethod
+    def decode(cls, raw: str) -> "FieldCursor":
+        try:
+            payload = json.loads(base64.urlsafe_b64decode(raw.encode()))
+            return cls(value=str(payload["v"]), id=uuid.UUID(payload["id"]))
+        except (
+            binascii.Error, ValueError, KeyError, TypeError, json.JSONDecodeError
+        ) as exc:
+            raise ValidationFailed(
+                "Некорректный курсор постраничного вывода", details={"cursor": raw}
+            ) from exc
+
+
+def paginate_on(
+    queryset: QuerySet,
+    field: str,
+    *,
+    descending: bool = False,
+    limit: int | None = None,
+    cursor: str | None = None,
+) -> Page:
+    """Одна страница по паре `(field, id)`.
+
+    Поле обязано быть сравнимым и стабильным: сортировка по изменяемому
+    значению приводит ровно к той беде, от которой keyset и защищает —
+    строка переезжает между страницами.
+    """
+    size = normalize_limit(limit)
+    direction = "-" if descending else ""
+    queryset = queryset.order_by(f"{direction}{field}", f"{direction}id")
+
+    if cursor:
+        position = FieldCursor.decode(cursor)
+        operator = "lt" if descending else "gt"
+        queryset = queryset.filter(
+            Q(**{f"{field}__{operator}": position.value})
+            | Q(**{field: position.value, f"id__{operator}": position.id})
+        )
+
+    rows = list(queryset[: size + 1])
+    has_more = len(rows) > size
+    items = rows[:size]
+
+    next_cursor = (
+        FieldCursor(value=str(getattr(items[-1], field)), id=items[-1].id).encode()
+        if has_more and items
+        else None
+    )
+    return Page(items=items, next_cursor=next_cursor, has_more=has_more)

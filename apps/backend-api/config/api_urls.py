@@ -37,6 +37,7 @@ from humotech.qr_codes.views import (
 )
 from humotech.regions.views import RegionViewSet
 from humotech.reports.views import ExportView
+from humotech.schedules.calendar_views import CalendarExceptionViewSet
 from humotech.schedules.views import EmployeeScheduleViewSet, WorkScheduleViewSet
 from humotech.telegram.views import (
     BotLinkView,
@@ -56,6 +57,9 @@ router.register("work-schedules", WorkScheduleViewSet, basename="work-schedule")
 router.register("qr-points", QrPointViewSet, basename="qr-point")
 router.register("departments", DepartmentViewSet, basename="department")
 router.register("positions", PositionViewSet, basename="position")
+router.register(
+    "calendar-exceptions", CalendarExceptionViewSet, basename="calendar-exception"
+)
 router.register(
     "telegram/invitations", TelegramInvitationViewSet, basename="telegram-invitation"
 )
