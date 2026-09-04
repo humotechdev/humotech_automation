@@ -78,3 +78,75 @@ __all__ = [
     "PairSerializer",
     "PairedDeviceSerializer",
 ]
+
+
+# --- точки отметки ----------------------------------------------------------
+
+
+class QrPointSerializer(serializers.Serializer):
+    """Карточка точки.
+
+    Поля `static_token_hash` здесь нет намеренно, и это не забывчивость:
+    сериализатор, который его не знает, не сможет его отдать даже по
+    ошибке. Сам секрет живёт ровно в одном ответе — на выпуск.
+    """
+
+    id = serializers.UUIDField()
+    office_id = serializers.UUIDField()
+    office_name = serializers.CharField(source="office.name")
+    region_id = serializers.UUIDField(source="office.region_id", allow_null=True)
+
+    code = serializers.CharField()
+    name = serializers.CharField()
+    direction_mode = serializers.CharField()
+    qr_mode = serializers.CharField()
+    rotation_seconds = serializers.IntegerField(allow_null=True)
+    token_version = serializers.IntegerField()
+    require_geolocation = serializers.BooleanField()
+    require_office_network = serializers.BooleanField()
+    allowed_location_accuracy_m = serializers.IntegerField(allow_null=True)
+    is_active = serializers.BooleanField()
+    created_at = serializers.DateTimeField()
+    updated_at = serializers.DateTimeField()
+
+
+class IssuedQrPointSerializer(serializers.Serializer):
+    """Точка вместе с секретом — единственное место, где секрет виден.
+
+    `static_token` возвращается один раз. Записать его должен тот, кто
+    печатает наклейку; повторно узнать его нельзя ни через API, ни через
+    базу — там только хеш.
+    """
+
+    point = QrPointSerializer()
+    static_token = serializers.CharField(allow_null=True)
+
+
+class QrPointCreateSerializer(serializers.Serializer):
+    office_id = serializers.UUIDField()
+    code = serializers.CharField(max_length=100)
+    name = serializers.CharField(max_length=255)
+    direction_mode = serializers.ChoiceField(
+        choices=["ENTRY", "EXIT", "BOTH"], default="BOTH"
+    )
+    qr_mode = serializers.ChoiceField(choices=["STATIC", "ROTATING"],
+                                      default="ROTATING")
+    rotation_seconds = serializers.IntegerField(required=False, allow_null=True)
+    require_geolocation = serializers.BooleanField(default=False)
+    require_office_network = serializers.BooleanField(default=False)
+    allowed_location_accuracy_m = serializers.IntegerField(
+        required=False, allow_null=True, min_value=1
+    )
+
+
+class QrPointUpdateSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=255, required=False)
+    direction_mode = serializers.ChoiceField(
+        choices=["ENTRY", "EXIT", "BOTH"], required=False
+    )
+    rotation_seconds = serializers.IntegerField(required=False)
+    require_geolocation = serializers.BooleanField(required=False)
+    require_office_network = serializers.BooleanField(required=False)
+    allowed_location_accuracy_m = serializers.IntegerField(
+        required=False, min_value=1
+    )

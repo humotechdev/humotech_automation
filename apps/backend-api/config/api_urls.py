@@ -27,6 +27,7 @@ from humotech.qr_codes.views import (
     QrDeviceListView,
     QrDisplayCodeView,
     QrDisplayPairView,
+    QrPointViewSet,
 )
 from humotech.regions.views import RegionViewSet
 from humotech.schedules.views import EmployeeScheduleViewSet, WorkScheduleViewSet
@@ -45,6 +46,7 @@ router.register("regions", RegionViewSet, basename="region")
 router.register("offices", OfficeViewSet, basename="office")
 router.register("employees", EmployeeViewSet, basename="employee")
 router.register("work-schedules", WorkScheduleViewSet, basename="work-schedule")
+router.register("qr-points", QrPointViewSet, basename="qr-point")
 router.register(
     "telegram/invitations", TelegramInvitationViewSet, basename="telegram-invitation"
 )

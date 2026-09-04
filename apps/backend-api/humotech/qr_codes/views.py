@@ -22,16 +22,23 @@ from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
-from humotech.core.api import validated
+from rest_framework.decorators import action
+
+from humotech.core.api import ServiceViewSet, validated
 from humotech.core.errors import PermissionDenied
 from humotech.core.rbac import Actor
+from humotech.qr_codes.points import QrPointService
 from humotech.qr_codes.serializers import (
     DeviceCreateSerializer,
     DeviceSerializer,
     IssuedDeviceSerializer,
+    IssuedQrPointSerializer,
     IssuedQrSerializer,
     PairedDeviceSerializer,
     PairSerializer,
+    QrPointCreateSerializer,
+    QrPointSerializer,
+    QrPointUpdateSerializer,
 )
 from humotech.qr_codes.services import QrDisplayService
 
@@ -148,3 +155,78 @@ __all__ = [
     "QrDisplayCodeView",
     "QrDisplayPairView",
 ]
+
+
+class QrPointViewSet(ServiceViewSet):
+    """Справочник точек отметки.
+
+    Секрет статической точки возвращается ровно в двух ответах — на
+    создание и на перевыпуск — и больше нигде. Сериализатор списка и
+    карточки поля с секретом не знает вовсе.
+    """
+
+    service_class = QrPointService
+    read_serializer_class = QrPointSerializer
+
+    def list(self, request):
+        params = self.list_params()
+        params.pop("status", None)
+        active = request.query_params.get("is_active")
+        return self.page_response(
+            self.service.list(
+                self.actor,
+                **params,
+                office_id=_uuid_or_none(request, "office_id"),
+                region_id=_uuid_or_none(request, "region_id"),
+                is_active=None if active is None else active.lower() == "true",
+            )
+        )
+
+    def retrieve(self, request, pk=None):
+        return self.item_response(self.service.get(self.actor, pk))
+
+    def create(self, request):
+        payload = validated(QrPointCreateSerializer, request.data)
+        issued = self.service.create(self.actor, **payload)
+        return Response(
+            IssuedQrPointSerializer(issued).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    def partial_update(self, request, pk=None):
+        payload = validated(QrPointUpdateSerializer, request.data)
+        return self.item_response(self.service.update(self.actor, pk, **payload))
+
+    @action(detail=True, methods=["post"])
+    def activate(self, request, pk=None):
+        return self.item_response(
+            self.service.set_active(self.actor, pk, active=True)
+        )
+
+    @action(detail=True, methods=["post"])
+    def deactivate(self, request, pk=None):
+        return self.item_response(
+            self.service.set_active(self.actor, pk, active=False)
+        )
+
+    @action(detail=True, methods=["post"], url_path="reissue-token")
+    def reissue_token(self, request, pk=None):
+        """Новый секрет наклейки. Прежний перестаёт работать сразу."""
+        issued = self.service.reissue_static_token(self.actor, pk)
+        return Response(IssuedQrPointSerializer(issued).data)
+
+
+def _uuid_or_none(request, name: str):
+    import uuid as _uuid
+
+    from humotech.core.errors import ValidationFailed
+
+    raw = request.query_params.get(name)
+    if not raw:
+        return None
+    try:
+        return _uuid.UUID(raw)
+    except (ValueError, TypeError) as exc:
+        raise ValidationFailed(
+            f"Параметр «{name}» должен быть UUID", details={"field": name}
+        ) from exc
