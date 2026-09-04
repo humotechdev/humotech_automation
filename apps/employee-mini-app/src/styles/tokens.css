@@ -85,17 +85,27 @@
      затем env() самого вебвью, затем ноль. На клиенте постарше переменных
      нет, и всю работу делает env(); в полноэкранном режиме бывает наоборот.
      Приложение обязано остаться рабочим в обоих случаях. */
-  --safe-top: calc(
-    max(
-      var(--tg-safe-area-inset-top, 0px),
-      env(safe-area-inset-top, 0px)
-    ) + var(--tg-content-safe-area-inset-top, 0px)
+  /* Третий источник — `--app-safe-*`, которые пишет адаптер из JS по
+     `safeAreaInset` и `contentSafeAreaInset`. Он не заменяет переменные
+     Telegram, а страхует: у части клиентов есть объекты в JS, но нет
+     переменных в CSS, и наоборот. Берём наибольшее из двух сумм. */
+  --safe-top: max(
+    calc(
+      max(
+        var(--tg-safe-area-inset-top, 0px),
+        env(safe-area-inset-top, 0px)
+      ) + var(--tg-content-safe-area-inset-top, 0px)
+    ),
+    var(--app-safe-top, 0px)
   );
-  --safe-bottom: calc(
-    max(
-      var(--tg-safe-area-inset-bottom, 0px),
-      env(safe-area-inset-bottom, 0px)
-    ) + var(--tg-content-safe-area-inset-bottom, 0px)
+  --safe-bottom: max(
+    calc(
+      max(
+        var(--tg-safe-area-inset-bottom, 0px),
+        env(safe-area-inset-bottom, 0px)
+      ) + var(--tg-content-safe-area-inset-bottom, 0px)
+    ),
+    var(--app-safe-bottom, 0px)
   );
 
   /* Высота нижней навигации + её безопасная зона: на эту величину

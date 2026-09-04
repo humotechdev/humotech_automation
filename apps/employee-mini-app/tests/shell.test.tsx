@@ -254,16 +254,18 @@ describe('оболочка Telegram', () => {
     const ready = vi.fn();
     const expand = vi.fn();
     const setBackgroundColor = vi.fn();
-    const setBottomBarColor = vi.fn();
-    inTelegram('', { ready, expand, setBackgroundColor, setBottomBarColor });
+    const setHeaderColor = vi.fn();
+    inTelegram('', { ready, expand, setBackgroundColor, setHeaderColor });
     vi.stubGlobal('fetch', respond(200, {}));
 
     render(<App />);
 
     await waitFor(() => expect(ready).toHaveBeenCalled());
     expect(expand).toHaveBeenCalled();
-    expect(setBackgroundColor).toHaveBeenCalledWith('#f7f9fc');
-    expect(setBottomBarColor).toHaveBeenCalledWith('#ffffff');
+    // Шапка и фон одного цвета: родная панель Telegram с названием бота
+    // должна продолжать фон приложения, а не стоять над ним чужой полосой.
+    expect(setBackgroundColor).toHaveBeenCalledWith('#F7F9FC');
+    expect(setHeaderColor).toHaveBeenCalledWith('#F7F9FC');
   });
 
   it('старый клиент без новых методов не роняет запуск', () => {

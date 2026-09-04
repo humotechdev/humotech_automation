@@ -34,7 +34,13 @@ import { Profile } from './screens/Profile';
 import { Requests, type AbsenceKind } from './screens/Requests';
 import { Scan } from './screens/Scan';
 import { Stats } from './screens/Stats';
-import { backButton, prepare } from './telegram';
+import {
+  backButton,
+  isFullscreen,
+  onShellEvent,
+  prepare,
+  watchViewport,
+} from './telegram';
 import { AppHeader } from './ui/AppHeader';
 import { BottomNavigation, type Tab } from './ui/BottomNavigation';
 import { PageContainer, PrimaryButton, SecondaryButton } from './ui/primitives';
@@ -64,7 +70,12 @@ export default function App() {
 
   useEffect(() => {
     prepare();
+    // Пересчёт безопасных зон и устойчивой высоты живёт всё время работы
+    // приложения: они меняются от поворота экрана, клавиатуры и входа в
+    // полноэкранный режим.
+    const stop = watchViewport();
     void run();
+    return stop;
   }, [run]);
 
   if (phase.kind === 'loading') {
@@ -147,6 +158,7 @@ export default function App() {
 function Cabinet({ onSignOut }: { onSignOut: () => void }) {
   const [tab, setTab] = useState<Tab>('home');
   const [profileOpen, setProfileOpen] = useState(false);
+  const [wide, setWide] = useState(false);
   const [absenceForm, setAbsenceForm] = useState<AbsenceKind | null>(null);
 
   const [profile, setProfile] = useState<ProfileData | null>(null);
@@ -223,11 +235,36 @@ function Cabinet({ onSignOut }: { onSignOut: () => void }) {
     };
   }, [refresh]);
 
-  // Родная кнопка «назад» Telegram — только на вложенном экране.
+  /*
+   * Полноэкранный режим просит только экран QR, но знать о нём должна и
+   * навигация: панель поверх камеры не нужна. Подписка одна, здесь, а не
+   * в каждом экране по копии.
+   */
   useEffect(() => {
-    if (!profileOpen) return backButton(null);
-    return backButton(() => setProfileOpen(false));
-  }, [profileOpen]);
+    const update = () => setWide(isFullscreen());
+    const off = [
+      onShellEvent('fullscreenChanged', update),
+      // Отказ — не ошибка человека и показывать её нечего. Экран просто
+      // остаётся обычным, а навигация — на месте.
+      onShellEvent('fullscreenFailed', () => setWide(false)),
+    ];
+    return () => off.forEach((stop) => stop());
+  }, []);
+
+  /*
+   * Родная кнопка «назад» Telegram: на главной её нет, на всех остальных
+   * экранах есть и ведёт внутрь приложения, а не закрывает его.
+   *
+   * Вкладки статистики, истории и заявок тоже считаются «не главной»
+   * намеренно. На Android эта кнопка совмещена с системной, и без
+   * обработчика нажатие на вкладке «Статистика» закрывало бы кабинет
+   * целиком — вместо ожидаемого возврата на главную.
+   */
+  useEffect(() => {
+    if (profileOpen) return backButton(() => setProfileOpen(false));
+    if (tab !== 'home') return backButton(() => setTab('home'));
+    return backButton(null);
+  }, [profileOpen, tab]);
 
   if (error) {
     return (
@@ -298,6 +335,7 @@ function Cabinet({ onSignOut }: { onSignOut: () => void }) {
               {tab === 'scan' && (
                 <Scan
                   timeZone={status.timezone}
+                  wide={wide}
                   onDone={() => void refresh()}
                   onHome={() => setTab('home')}
                 />
@@ -311,7 +349,10 @@ function Cabinet({ onSignOut }: { onSignOut: () => void }) {
         </PageContainer>
       </div>
 
-      {profileOpen ? (
+      {/* В полноэкранном режиме панели нет вовсе: она стояла бы поверх
+          окна сканера. Возврат на главную — внутренней кнопкой на самом
+          экране и родной кнопкой «назад». */}
+      {wide ? null : profileOpen ? (
         <div className="bottom-nav bottom-nav-single">
           <PrimaryButton onClick={() => setProfileOpen(false)} wide>
             Вернуться в кабинет

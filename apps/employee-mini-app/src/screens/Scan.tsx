@@ -18,9 +18,19 @@
  *
  * Отклик телефона — только на итог отметки, прошедшей или отказанной.
  * Это как раз тот случай, когда человек смотрит не на экран, а на дверь.
+ *
+ * Полноэкранный режим (Bot API 8.0) запрашивается только здесь и больше
+ * нигде. Он раздвигает НАШ экран до краёв — саму камеру показывает окно
+ * Telegram, которое и так накрывает всё; ни рамки, ни тёмной области с
+ * живым изображением у нас нет и рисовать их нельзя, это выглядело бы
+ * как включённая камера при выключенной.
+ *
+ * Запрос ровно один на открытие экрана. Ответ приходит событием, и на
+ * `fullscreenFailed` повтора нет: следующая попытка — только после того,
+ * как человек снова откроет экран. Иначе отказ превращается в цикл.
  */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { api, type ScanResponse } from '../api';
 import { time } from '../format';
@@ -28,11 +38,17 @@ import {
   SCAN_RESULTS,
   SCAN_UNKNOWN,
   cameraAvailable,
+  closeScanner,
   looksLikeOurCode,
   newAttemptId,
   scanWithTelegram,
 } from '../scanner';
-import { haptic } from '../telegram';
+import {
+  exitFullscreen,
+  fullscreenSupported,
+  haptic,
+  requestFullscreen,
+} from '../telegram';
 import { Field } from '../ui/fields';
 import { AlertIcon, CameraIcon, CheckIcon, QrIcon } from '../ui/icons';
 import {
@@ -49,10 +65,14 @@ type Phase =
 
 export function Scan({
   timeZone,
+  wide = false,
   onDone,
   onHome,
 }: {
   timeZone: string;
+  /** Идёт ли полноэкранный режим. Состоянием владеет App: от него же
+      зависит, показывать ли нижнюю навигацию. */
+  wide?: boolean;
   /** Обновить статус и статистику после прошедшей отметки. */
   onDone: () => void;
   onHome: () => void;
@@ -60,6 +80,27 @@ export function Scan({
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' });
   const [manual, setManual] = useState('');
   const [showManual, setShowManual] = useState(false);
+
+  // Запрошен ли уже режим на этом открытии экрана. Через ссылку, а не
+  // через состояние: `fullscreenChanged` перерисовывает экран, и запрос,
+  // зависящий от состояния, ушёл бы по кругу. После отказа повтора нет
+  // до следующего открытия экрана — то есть до действия человека.
+  const asked = useRef(false);
+
+  useEffect(() => {
+    if (!asked.current && fullscreenSupported()) {
+      asked.current = true;
+      requestFullscreen();
+    }
+
+    return () => {
+      // Единственная точка ухода с экрана: нижняя навигация, кнопка
+      // «назад» Telegram, внутренняя кнопка «на главную» — всё это
+      // размонтирует экран, потому что App рисует его по условию вкладки.
+      closeScanner();
+      exitFullscreen();
+    };
+  }, []);
 
   async function submit(code: string) {
     if (phase.kind === 'working') return; // защита от двойного нажатия
@@ -71,6 +112,13 @@ export function Scan({
       setPhase({ kind: 'idle', error: response.message });
       return;
     }
+
+    // Результат показывается ВНУТРИ этого же экрана, размонтирования не
+    // происходит, и очистка эффекта не сработает. Поэтому камера и режим
+    // закрываются здесь явно — иначе итог отметки читался бы поверх
+    // работающей камеры.
+    closeScanner();
+    exitFullscreen();
 
     setPhase({ kind: 'done', result: response.value });
     haptic(response.value.accepted ? 'success' : 'error');
@@ -113,7 +161,7 @@ export function Scan({
   const busy = phase.kind === 'working';
 
   return (
-    <>
+    <div className={`scan-screen${wide ? ' scan-screen-wide' : ''}`}>
       <SectionHeader title="Отметка" />
       <p className="muted">
         Наведите камеру на код у входа. Вход это или выход, определит
@@ -178,7 +226,17 @@ export function Scan({
           Ввести код вручную
         </SecondaryButton>
       )}
-    </>
+
+      {wide && (
+        // Своя кнопка возврата нужна только в полноэкранном режиме: там
+        // нижняя навигация скрыта. Это внутреннее возвращение на главную,
+        // а не крестик Telegram — крестик закрывает приложение целиком,
+        // и подделывать его нельзя.
+        <SecondaryButton onClick={onHome} wide>
+          На главную
+        </SecondaryButton>
+      )}
+    </div>
   );
 }
 

@@ -20,6 +20,8 @@
  * само по себе, выглядит подозрительно и справедливо.
  */
 
+import { onShellEvent } from './telegram';
+
 /** Что вернуло сканирование. */
 export type ScanOutcome =
   | { kind: 'code'; value: string }
@@ -81,17 +83,45 @@ export function scanWithTelegram(source: Window = window): Promise<ScanOutcome> 
 
   return new Promise((resolve) => {
     let settled = false;
+    const settle = (outcome: ScanOutcome) => {
+      if (settled) return;
+      settled = true;
+      stopWatchingClose();
+      resolve(outcome);
+    };
+
+    // Закрытие окна человеком приходит СОБЫТИЕМ, а не вызовом обработчика
+    // текста. Без этой подписки промис не разрешался никогда: закрыл окно
+    // крестиком — и ожидание висит до конца жизни экрана.
+    const stopWatchingClose = onShellEvent(
+      'scanQrPopupClosed',
+      () => settle({ kind: 'cancelled' }),
+      source,
+    );
+
     app.showScanQrPopup!({ text: 'Наведите камеру на код у входа' }, (text) => {
       if (!looksLikeOurCode(text)) {
         return false;
       }
-      if (!settled) {
-        settled = true;
-        resolve({ kind: 'code', value: text.trim() });
-      }
+      settle({ kind: 'code', value: text.trim() });
       return true;
     });
   });
+}
+
+/**
+ * Закрыть окно сканера принудительно.
+ *
+ * Нужно на уходе с экрана: окно Telegram живёт своей жизнью и камеру
+ * держит оно. Если экран сменился, а окно осталось открытым, камера
+ * продолжает работать — этого быть не должно.
+ */
+export function closeScanner(source: Window = window): void {
+  try {
+    telegramScanner(source)?.closeScanQrPopup?.();
+  } catch {
+    // Окно уже закрыто или клиент не умеет — не повод падать.
+  }
 }
 
 /**
