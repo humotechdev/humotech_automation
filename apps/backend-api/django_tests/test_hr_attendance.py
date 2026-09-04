@@ -567,6 +567,54 @@ class TestHttp:
         assert body["total"] == 1
         assert body["items"][0]["state"] == "IN_OFFICE"
 
+    def test_counts_stay_exact_when_rows_are_cut_off(
+        self, attendance_client, organization, employee, office, monkeypatch
+    ):
+        """Обрезка списка не должна врать в числах.
+
+        У администратора офиса область видимости и правда ограничивает
+        размер ответа, а у HR_ADMIN она — вся организация, поэтому у
+        списка есть потолок. Но карточка «в офисе: 1» считается по всем
+        найденным, а не по отданным: иначе дашборд начал бы занижать
+        числа ровно тогда, когда компания вырастет.
+        """
+        from humotech.employees.models import Employee, EmployeeAssignment
+
+        monkeypatch.setattr("humotech.attendance.views.PRESENCE_MAX_ROWS", 1)
+        open_session(organization, employee, office)
+
+        second = Employee.objects.create(
+            organization=organization,
+            employee_number="EMP-0002",
+            first_name="Пётр",
+            last_name="Яковлев",  # сортировка по имени: он окажется вторым
+            hire_date=date(2024, 2, 1),
+            employment_status="ACTIVE",
+        )
+        EmployeeAssignment.objects.create(
+            organization=organization,
+            employee=second,
+            office=office,
+            employment_type="FULL_TIME",
+            work_mode="ONSITE",
+            is_primary=True,
+            valid_from=date(2024, 2, 1),
+        )
+
+        response = attendance_client.get(
+            f"{API}/attendance/presence",
+            {"date": DAY.isoformat(), "office_id": str(office.id)},
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body["items"]) == 1
+        assert body["truncated"] is True
+        assert body["total"] == 2
+        # Оба человека посчитаны, хотя показан один.
+        assert sum(body["counts"].values()) == 2
+        assert body["counts"]["IN_OFFICE"] == 1
+
     def test_events_are_read_only_over_http(
         self, attendance_client, organization, employee, office
     ):

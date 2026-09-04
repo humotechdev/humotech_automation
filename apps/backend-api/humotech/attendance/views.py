@@ -37,6 +37,18 @@ from humotech.core.errors import ValidationFailed
 from humotech.core.rbac import Actor
 
 
+# Потолок числа строк в одном ответе присутствия.
+#
+# У экрана присутствия нет страниц намеренно (см. `AttendanceHrService.
+# presence`), а «размер ограничен областью видимости» — правда только для
+# администратора офиса. У HR_ADMIN область — вся организация, и без
+# потолка ответ рос бы вместе с компанией без предела.
+#
+# Обрезаются только строки ответа; `counts` считается по всему набору,
+# иначе карточка «не пришли: 7» начала бы врать ровно на большом штате.
+# Дашборд и выгрузка берут набор целиком, мимо этого потолка.
+PRESENCE_MAX_ROWS = 500
+
 # Параметры, общие для журналов. Перечислены здесь один раз: схема
 # и код читают один и тот же список, и разъехаться им негде.
 SCOPE_PARAMS = [
@@ -55,8 +67,17 @@ class PresenceResponseSerializer(drf_serializers.Serializer):
 
     date = drf_serializers.DateField()
     timezone = drf_serializers.CharField()
-    counts = drf_serializers.DictField(child=drf_serializers.IntegerField())
-    total = drf_serializers.IntegerField()
+    counts = drf_serializers.DictField(
+        child=drf_serializers.IntegerField(),
+        help_text="Числа по всем найденным, даже если строк отдано меньше",
+    )
+    total = drf_serializers.IntegerField(help_text="Сколько нашлось всего")
+    truncated = drf_serializers.BooleanField(
+        help_text=(
+            f"В «items» попали не все: их больше {PRESENCE_MAX_ROWS}. "
+            "Сузьте область офисом, регионом или состоянием."
+        ),
+    )
     items = PresenceRowSerializer(many=True)
 
 
@@ -240,9 +261,13 @@ class PresenceView(APIView):
                 "timezone": report.timezone,
                 # Сводка рядом со строками: дашборд берёт числа отсюда,
                 # а не пересчитывает их у себя. Один источник — одна правда.
+                # Считается по всему набору, даже когда строк отдано меньше.
                 "counts": report.counts(),
                 "total": len(report.rows),
-                "items": PresenceRowSerializer(report.rows, many=True).data,
+                "truncated": len(report.rows) > PRESENCE_MAX_ROWS,
+                "items": PresenceRowSerializer(
+                    report.rows[:PRESENCE_MAX_ROWS], many=True
+                ).data,
             }
         )
 
