@@ -111,11 +111,31 @@ function query(params?: Record<string, string | number | undefined>): string {
 
 // --- типы ответов ----------------------------------------------------------
 
+/**
+ * Профиль.
+ *
+ * Поля описаны такими, какими их отдаёт `ProfileView`: `assignment`
+ * и `telegram` в ответе есть давно, просто не были объявлены. Отсутствие
+ * поля в типе не мешает серверу его прислать — мешает клиенту им
+ * пользоваться, не обходя проверку типов приведением.
+ */
 export interface Profile {
-  employee: { id: string; full_name: string; employee_number: string };
+  employee: {
+    id: string;
+    full_name: string;
+    employee_number: string;
+    employment_status?: string;
+    preferred_language?: string | null;
+  };
   office: { id: string; name: string; timezone: string };
   position: { name: string } | null;
   department: { name: string } | null;
+  assignment?: {
+    employment_type: string;
+    work_mode: string;
+    valid_from: string;
+  };
+  telegram?: { status: string; username: string | null };
 }
 
 export interface OpenSession {
@@ -207,6 +227,9 @@ export interface AbsenceRequest {
   review_comment: string | null;
   documents: number;
   can_cancel: boolean;
+  submitted_at: string | null;
+  reviewed_at: string | null;
+  absence_status: string | null;
 }
 
 export interface AbsenceOptions {
@@ -236,9 +259,16 @@ export const api = {
     call<{ summary: Summary; days: Day[] }>('/me/statistics', { query: params }),
   history: (params: { date_from?: string; date_to?: string; limit?: number;
                       offset?: number; period?: string }) =>
-    call<{ days: Day[]; total: number; has_more: boolean }>('/me/history', {
-      query: params,
-    }),
+    // `period` в ответе несёт пояс офиса: без него клиент подписал бы
+    // отметки временем телефона, а не временем места, где они сделаны.
+    call<{
+      period: { first: string; last: string; timezone: string };
+      days: Day[];
+      total: number;
+      offset: number;
+      limit: number;
+      has_more: boolean;
+    }>('/me/history', { query: params }),
   /**
    * Отметка. Наружу уходит один код — ни офиса, ни направления,
    * ни времени: всё это решает сервер.

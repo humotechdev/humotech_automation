@@ -33,24 +33,11 @@ export interface Employee {
   preferred_language: string | null;
 }
 
-/** Минимальная часть Telegram WebApp, которая здесь нужна. */
-interface TelegramWebApp {
-  initData?: string;
-  ready?: () => void;
-  expand?: () => void;
-  /** Собственный сканер Telegram: см. `scanner.ts`. */
-  showScanQrPopup?: (
-    params: { text?: string },
-    callback: (text: string) => boolean | void,
-  ) => void;
-  closeScanQrPopup?: () => void;
-}
+// Тип Telegram WebApp и объявление `window.Telegram` живут в `telegram.ts`:
+// одно объявление глобального типа на приложение, иначе два разных
+// описания одного и того же объекта неизбежно разъедутся.
+import './telegram';
 
-declare global {
-  interface Window {
-    Telegram?: { WebApp?: TelegramWebApp };
-  }
-}
 
 const MESSAGES = {
   network: 'Не удалось связаться с сервером. Проверьте связь и попробуйте ещё раз.',

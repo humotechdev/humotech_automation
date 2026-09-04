@@ -1,18 +1,26 @@
 /**
- * Личный кабинет сотрудника в Telegram.
+ * Каркас личного кабинета.
  *
  * Авторизация решается первой и отдельно (`auth.ts`): пока неизвестно,
- * кто пришёл, показывать нечего. Пять исходов входа остались прежними,
- * к ним добавились экраны самого кабинета.
+ * кто пришёл, показывать нечего. Пять исходов входа остались прежними —
+ * поменялось только их оформление.
  *
- * Навигация плоская: главный экран и пять разделов, из каждого — «Назад».
- * Вложенных путей нет намеренно: приложение открывают на минуту, чтобы
- * отметиться, а не листать.
+ * Навигация плоская: пять разделов внизу, профиль за аватаром. Вложенных
+ * путей нет намеренно — приложение открывают на минуту, чтобы отметиться,
+ * а не листать. Единственный вложенный экран, профиль, закрывается родной
+ * кнопкой Telegram: своей стрелки нет, потому что на Android кнопка
+ * Telegram совмещена с системной, и две разные «назад» на одном экране —
+ * способ закрыть приложение вместо возврата.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { api, type Profile, type Status } from './api';
+import {
+  api,
+  type Profile as ProfileData,
+  type Status,
+  type Summary,
+} from './api';
 import {
   authenticate,
   forgetToken,
@@ -20,22 +28,27 @@ import {
   rememberToken,
   type AuthResult,
 } from './auth';
-import { Absences } from './screens/Absences';
+import { History } from './screens/History';
 import { Home } from './screens/Home';
+import { Profile } from './screens/Profile';
+import { Requests, type AbsenceKind } from './screens/Requests';
 import { Scan } from './screens/Scan';
-import { History, Stats } from './screens/Stats';
+import { Stats } from './screens/Stats';
+import { backButton, prepare } from './telegram';
+import { AppHeader } from './ui/AppHeader';
+import { BottomNavigation, type Tab } from './ui/BottomNavigation';
+import { PageContainer, PrimaryButton, SecondaryButton } from './ui/primitives';
+import {
+  ErrorState,
+  LoadingScreen,
+  OfflineBanner,
+  StaleBanner,
+} from './ui/states';
 
 const API_URL = import.meta.env.VITE_API_URL ?? '/api/v1';
+const VERSION = '1.0';
 
 type Phase = { kind: 'loading' } | { kind: 'done'; result: AuthResult };
-
-type Screen =
-  | 'home'
-  | 'scan'
-  | 'stats'
-  | 'history'
-  | 'sick-leave'
-  | 'vacation';
 
 export default function App() {
   const [phase, setPhase] = useState<Phase>({ kind: 'loading' });
@@ -50,151 +63,270 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    window.Telegram?.WebApp?.ready?.();
-    window.Telegram?.WebApp?.expand?.();
+    prepare();
     void run();
   }, [run]);
 
   if (phase.kind === 'loading') {
-    return <Screen title="Проверяем доступ…" />;
+    return (
+      <Standalone title="Проверяем доступ">
+        <LoadingScreen label="Проверяем доступ" cards={2} />
+      </Standalone>
+    );
   }
 
   const { result } = phase;
 
   switch (result.state) {
     case 'authenticated':
-      return <Cabinet onSignOut={() => { forgetToken(); void run(); }} />;
+      return (
+        <Cabinet
+          onSignOut={() => {
+            forgetToken();
+            void run();
+          }}
+        />
+      );
 
     case 'pending':
       return (
-        <Screen title="Привязка ожидает подтверждения">
-          <p>
-            Вы перешли по ссылке, и заявка ушла в отдел кадров. Доступ появится
-            после подтверждения — открывать приложение заново не нужно.
+        <Standalone title="Привязка ожидает подтверждения">
+          <p className="state-text">
+            Вы перешли по ссылке, и заявка ушла в отдел кадров. Доступ
+            появится после подтверждения — открывать приложение заново
+            не нужно.
           </p>
-          <button type="button" onClick={() => void run()}>
+          <SecondaryButton onClick={() => void run()} wide>
             Проверить ещё раз
-          </button>
-        </Screen>
+          </SecondaryButton>
+        </Standalone>
       );
 
     case 'unlinked':
       return (
-        <Screen title="Telegram не привязан">
-          <p>
+        <Standalone title="Telegram не привязан">
+          <p className="state-text">
             Этот Telegram не связан с учётной записью сотрудника. Попросите
             персональную ссылку в отделе кадров — она открывается один раз.
           </p>
-        </Screen>
+        </Standalone>
       );
 
     case 'outside-telegram':
       return (
-        <Screen title="Откройте кнопкой в чате">
-          <p>
-            Кабинет открывают кнопкой «🏠 Открыть личный кабинет» в чате
-            с ботом HUMOTECH. По обычной ссылке — даже открытой внутри
-            Telegram — приложение не получает подпись запуска, а без неё
-            оно не знает, кто пришёл, и показывать ему нечего.
+        <Standalone title="Откройте кнопкой в чате">
+          <p className="state-text">
+            Кабинет открывают кнопкой «Открыть личный кабинет» в чате с ботом
+            HUMOTECH. По обычной ссылке — даже открытой внутри Telegram —
+            приложение не получает подпись запуска, а без неё оно не знает,
+            кто пришёл.
           </p>
-          <p className="muted">
+          <p className="state-text muted">
             Кнопки в чате нет? Отправьте боту /start. Она появляется только
             после того, как отдел кадров подтвердил привязку.
           </p>
-        </Screen>
+        </Standalone>
       );
 
     case 'error':
       return (
-        <Screen title="Не получилось">
-          <p>{result.message}</p>
-          <button type="button" onClick={() => void run()}>
-            Попробовать снова
-          </button>
-        </Screen>
+        <Standalone title="Не получилось">
+          <ErrorState message={result.message} onRetry={() => void run()} />
+        </Standalone>
       );
   }
 }
 
+/**
+ * Сам кабинет: данные, разделы и навигация.
+ *
+ * Профиль и статус грузятся один раз на весь кабинет, а не на каждом
+ * экране: имя и офис не меняются между вкладками, и перезапрашивать их
+ * при каждом переключении значило бы моргать содержимым на ровном месте.
+ */
 function Cabinet({ onSignOut }: { onSignOut: () => void }) {
-  const [screen, setScreen] = useState<Screen>('home');
-  const [profile, setProfile] = useState<Profile | null>(null);
+  const [tab, setTab] = useState<Tab>('home');
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [absenceForm, setAbsenceForm] = useState<AbsenceKind | null>(null);
+
+  const [profile, setProfile] = useState<ProfileData | null>(null);
   const [status, setStatus] = useState<Status | null>(null);
+  const [today, setToday] = useState<Summary | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Неудачное обновление уже открытого кабинета — полоской, не экраном. */
+  const [stale, setStale] = useState<string | null>(null);
+  const [offline, setOffline] = useState(!navigatorOnline());
+
+  // Через ссылку, а не через зависимость: `refresh` должен остаться
+  // одним и тем же на всё время жизни кабинета — его вызывают из
+  // сканера и из обработчиков сети.
+  const loaded = useRef(false);
+  loaded.current = profile !== null;
 
   const refresh = useCallback(async () => {
-    const [me, now] = await Promise.all([api.profile(), api.status()]);
+    const [me, now, stats] = await Promise.all([
+      api.profile(),
+      api.status(),
+      api.statistics({ period: 'today' }),
+    ]);
+
     if (!me.ok) {
+      // Обрыв связи — не отказ в доступе. Уже загруженное остаётся
+      // на экране: смотреть вчерашние отметки без сети безопасно.
+      if (me.kind === 'network') {
+        setOffline(true);
+        return;
+      }
+      // Кабинет уже открыт — значит, это неудачное обновление, а не
+      // неудачный вход. Подменять экран ошибкой здесь нельзя: сразу
+      // после отметки `refresh` вызывает сам сканер, и упавший запрос
+      // стёр бы с экрана «Вход отмечен, 08:54». Человек решил бы, что
+      // отметка не прошла, и приложил бы пропуск второй раз — а сервер
+      // ответил бы, что код уже использован.
+      if (loaded.current) {
+        setStale(me.message);
+        return;
+      }
       setError(me.message);
       return;
     }
+
+    setOffline(false);
+    setError(null);
+    setStale(null);
     setProfile(me.value);
     if (now.ok) setStatus(now.value);
-    setError(null);
+    if (stats.ok) setToday(stats.value.summary);
   }, []);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
+  // Сеть вернулась — обновляем данные молча, без вопросов к человеку.
+  useEffect(() => {
+    const back = () => {
+      setOffline(false);
+      void refresh();
+    };
+    const gone = () => setOffline(true);
+    window.addEventListener('online', back);
+    window.addEventListener('offline', gone);
+    return () => {
+      window.removeEventListener('online', back);
+      window.removeEventListener('offline', gone);
+    };
+  }, [refresh]);
+
+  // Родная кнопка «назад» Telegram — только на вложенном экране.
+  useEffect(() => {
+    if (!profileOpen) return backButton(null);
+    return backButton(() => setProfileOpen(false));
+  }, [profileOpen]);
+
   if (error) {
     return (
-      <Screen title="Не получилось">
-        <p>{error}</p>
-        <button type="button" onClick={() => void refresh()}>
-          Обновить
-        </button>
-        <button type="button" onClick={onSignOut}>
+      <Standalone title="Не получилось">
+        <ErrorState message={error} onRetry={() => void refresh()} />
+        <SecondaryButton onClick={onSignOut} wide>
           Выйти
-        </button>
-      </Screen>
+        </SecondaryButton>
+      </Standalone>
     );
   }
 
   if (!profile || !status) {
-    return <Screen title="Загружаем…" />;
+    return (
+      <Standalone title="Загружаем">
+        <LoadingScreen cards={3} />
+      </Standalone>
+    );
   }
 
-  const back = () => {
-    setScreen('home');
-    void refresh();
-  };
-
   return (
-    <main className="app">
-      {screen === 'home' && (
-        <>
-          <Home
-            profile={profile}
-            status={status}
-            onScan={() => setScreen('scan')}
-            onHistory={() => setScreen('history')}
-            onSickLeave={() => setScreen('sick-leave')}
-            onVacation={() => setScreen('vacation')}
-          />
-          <div className="grid">
-            <button type="button" onClick={() => setScreen('stats')}>
-              Статистика
-            </button>
-            <button type="button" className="quiet" onClick={onSignOut}>
-              Выйти
-            </button>
-          </div>
-        </>
+    <div className="app-shell">
+      {offline && <OfflineBanner onRetry={() => void refresh()} />}
+      {!offline && stale && (
+        <StaleBanner message={stale} onRetry={() => void refresh()} />
       )}
 
-      {screen === 'scan' && (
-        <Scan onDone={() => void refresh()} onBack={back} />
+      <div className="app-scroll">
+        <PageContainer>
+          {profileOpen ? (
+            <Profile
+              profile={profile}
+              status={status}
+              version={VERSION}
+              onSignOut={onSignOut}
+            />
+          ) : (
+            <>
+              {tab === 'home' && (
+                <>
+                  <AppHeader
+                    fullName={profile.employee.full_name}
+                    office={profile.office.name}
+                    position={profile.position?.name}
+                    timeZone={status.timezone}
+                    onProfile={() => setProfileOpen(true)}
+                  />
+                  <Home
+                    profile={profile}
+                    status={status}
+                    today={today}
+                    onScan={() => setTab('scan')}
+                    onHistory={() => setTab('history')}
+                    onSickLeave={() => {
+                      setAbsenceForm('SICK_LEAVE');
+                      setTab('requests');
+                    }}
+                    onVacation={() => {
+                      setAbsenceForm('ANNUAL_LEAVE');
+                      setTab('requests');
+                    }}
+                  />
+                </>
+              )}
+
+              {tab === 'stats' && <Stats />}
+
+              {tab === 'scan' && (
+                <Scan
+                  timeZone={status.timezone}
+                  onDone={() => void refresh()}
+                  onHome={() => setTab('home')}
+                />
+              )}
+
+              {tab === 'history' && <History />}
+
+              {tab === 'requests' && <Requests openForm={absenceForm} />}
+            </>
+          )}
+        </PageContainer>
+      </div>
+
+      {profileOpen ? (
+        <div className="bottom-nav bottom-nav-single">
+          <PrimaryButton onClick={() => setProfileOpen(false)} wide>
+            Вернуться в кабинет
+          </PrimaryButton>
+        </div>
+      ) : (
+        <BottomNavigation
+          active={tab}
+          onChange={(next) => {
+            if (next !== 'requests') setAbsenceForm(null);
+            setTab(next);
+          }}
+        />
       )}
-      {screen === 'stats' && <Stats onBack={back} />}
-      {screen === 'history' && <History onBack={back} />}
-      {screen === 'sick-leave' && <Absences kind="SICK_LEAVE" onBack={back} />}
-      {screen === 'vacation' && <Absences kind="ANNUAL_LEAVE" onBack={back} />}
-    </main>
+    </div>
   );
 }
 
-function Screen({
+/** Экран без навигации: вход, ошибки, ожидание. */
+function Standalone({
   title,
   children,
 }: {
@@ -202,9 +334,18 @@ function Screen({
   children?: React.ReactNode;
 }) {
   return (
-    <main className="app screen">
-      <h1>{title}</h1>
-      {children}
-    </main>
+    <div className="app-shell">
+      <div className="app-scroll">
+        <PageContainer>
+          <h1>{title}</h1>
+          {children}
+        </PageContainer>
+      </div>
+    </div>
   );
+}
+
+/** `navigator.onLine` есть не везде; отсутствие считаем «сеть есть». */
+function navigatorOnline(): boolean {
+  return typeof navigator === 'undefined' || navigator.onLine !== false;
 }
