@@ -389,6 +389,20 @@ npm run dev                   # http://localhost:5174, запросы к /api п
 Ни один тест не обращается в Telegram: строка `initData` подписывается тем же
 алгоритмом локально, заведомо ненастоящим токеном бота.
 
+Двум наборам нужны переменные окружения, иначе часть проверок молча
+пропускается:
+
+```bash
+# сверка схемы с эталоном Alembic; без неё test_schema_parity пропускается
+ALEMBIC_BASELINE_URL=postgresql://humotech:humotech_local@127.0.0.1:5433/humotech_baseline
+
+# прежний набор SQLAlchemy; без неё 161 тест из 351 пропускается
+TEST_DATABASE_URL=postgresql+psycopg://humotech:humotech_local@127.0.0.1:5433/humotech_test   .venv/Scripts/python.exe -m pytest -c pytest-legacy.ini
+```
+
+Как собрать эталонную базу — в комментарии рядом с `ALEMBIC_BASELINE_URL`
+в `apps/backend-api/.env.example`.
+
 Тест гонки помечен `transaction=True` — иначе два потока не видят записей друг
 друга, `select_for_update` блокируется на пустом месте, и тест проходит, ничего
 не проверив. Он откалиброван: со снятой блокировкой падает.
