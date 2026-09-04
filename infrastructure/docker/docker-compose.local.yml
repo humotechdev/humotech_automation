@@ -13,8 +13,9 @@
 # Проще запускать скриптами: scripts\local-start.ps1 и соседние.
 #
 # Наружу не публикуется ничего, кроме PostgreSQL на петлевом адресе.
-# Единственный вход снаружи — Cloudflare Tunnel, и он смотрит на
-# gateway внутри сети Docker.
+# Единственный вход снаружи — агент ngrok, и он смотрит на gateway
+# внутри сети Docker. Входящих соединений с интернета машина не
+# принимает вовсе: туннель открывает агент изнутри.
 
 services:
   # PostgreSQL описан в базовом файле. Здесь только то, что меняется
@@ -68,9 +69,9 @@ services:
       # внутри сети Docker, и в его запросах Host — это `gateway`, а не
       # адрес снаружи. Без него каждый запрос бота получает 400 от
       # проверки хостов, и очередь уведомлений стоит.
-      DJANGO_ALLOWED_HOSTS: ${PUBLIC_HOSTNAME:-hr-dev.humotech.com},gateway
-      DJANGO_CSRF_TRUSTED_ORIGINS: https://${PUBLIC_HOSTNAME:-hr-dev.humotech.com}
-      TELEGRAM_MINI_APP_URL: https://${PUBLIC_HOSTNAME:-hr-dev.humotech.com}
+      DJANGO_ALLOWED_HOSTS: ${NGROK_DOMAIN:?нужен NGROK_DOMAIN в infrastructure/docker/.env},gateway
+      DJANGO_CSRF_TRUSTED_ORIGINS: https://${NGROK_DOMAIN:?нужен NGROK_DOMAIN в infrastructure/docker/.env}
+      TELEGRAM_MINI_APP_URL: https://${NGROK_DOMAIN:?нужен NGROK_DOMAIN в infrastructure/docker/.env}
       # Браузер ходит на тот же origin через gateway, поэтому CORS
       # не участвует и зона остаётся закрытой.
       TELEGRAM_MINI_APP_ALLOWED_ORIGINS: ""
@@ -112,7 +113,7 @@ services:
         - -o
         - /dev/null
         - -H
-        - "Host: ${PUBLIC_HOSTNAME:-hr-dev.humotech.com}"
+        - "Host: ${NGROK_DOMAIN:?нужен NGROK_DOMAIN в infrastructure/docker/.env}"
         - -H
         - "X-Forwarded-Proto: https"
         - http://127.0.0.1:8000/readyz
@@ -151,7 +152,7 @@ services:
       BACKEND_API_URL: http://gateway/api/v1
       # Постоянный адрес. Бот сверяет с ним кнопку меню на старте и
       # переписывает её, только если она смотрит не туда.
-      MINI_APP_URL: https://${PUBLIC_HOSTNAME:-hr-dev.humotech.com}
+      MINI_APP_URL: https://${NGROK_DOMAIN:?нужен NGROK_DOMAIN в infrastructure/docker/.env}
     depends_on:
       gateway:
         condition: service_healthy
@@ -163,9 +164,9 @@ services:
     stop_grace_period: 40s
     logging: *logging
 
-  # Имя `gateway` записано в Cloudflare как адрес публичного hostname
-  # (`http://gateway:80`). Переименование сервиса ломает туннель и
-  # требует правки в панели Cloudflare.
+  # Имя `gateway` — адрес, на который смотрит агент ngrok
+  # (`gateway:80` в его команде). Переименование сервиса ломает
+  # туннель, поэтому имя менять нельзя без причины.
   gateway:
     build:
       context: ../../apps/employee-mini-app
@@ -183,16 +184,34 @@ services:
     restart: unless-stopped
     logging: *logging
 
-  cloudflared:
+  # Публичный вход. Постоянный домен закреплён за аккаунтом ngrok:
+  # без `--domain` агент выдал бы случайный адрес, и кнопка бота
+  # устаревала бы при каждом перезапуске — ровно то, от чего уходили.
+  ngrok:
     # Версия закреплена намеренно. `latest` означает, что однажды утром
     # туннель поднимется другой сборкой, и разбираться придётся с тем,
     # чего вчера не было.
-    image: cloudflare/cloudflared:2026.8.3
-    container_name: humotech_cloudflared
-    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:?нужен CLOUDFLARE_TUNNEL_TOKEN в infrastructure/docker/.env}
+    image: ngrok/ngrok:3.39.11-alpine
+    container_name: humotech_ngrok
+    command:
+      - http
+      - --domain=${NGROK_DOMAIN:?нужен NGROK_DOMAIN в infrastructure/docker/.env}
+      # Логи в stdout, иначе `docker logs` пуст и состояние туннеля
+      # видно только изнутри контейнера.
+      - --log=stdout
+      - --log-format=logfmt
+      - gateway:80
+    environment:
+      # Токен только переменной окружения. Аргументом командной строки
+      # он был бы виден в `docker ps` и в списке процессов хоста.
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:?нужен NGROK_AUTHTOKEN в infrastructure/docker/.env}
+    # Порт агента (4040) наружу не публикуется вовсе. Состояние туннеля
+    # читается изнутри контейнера — `docker exec ... wget 127.0.0.1:4040`,
+    # см. scripts/local-status.ps1. Опубликованный инспектор показывает
+    # тела запросов, а в них ходят и подписи Telegram.
     depends_on:
       gateway:
-        condition: service_started
+        condition: service_healthy
     networks:
       - humotech
     restart: unless-stopped

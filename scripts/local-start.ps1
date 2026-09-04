@@ -8,9 +8,10 @@
     нужен после `local-stop.ps1`, после первой настройки и когда что-то
     пошло не так и хочется убедиться, что всё на месте.
 
-    Публичный адрес не меняется никогда: он живёт в Cloudflare, а не
-    в этих скриптах. Ни кнопку бота, ни адрес Mini App после запуска
-    трогать не требуется.
+    Публичный адрес не меняется никогда: домен закреплён за аккаунтом
+    ngrok, а не выдаётся заново при каждом запуске. Ни кнопку бота, ни
+    адрес Mini App после запуска трогать не требуется — бот сверяет
+    кнопку сам и молчит, если она уже верна.
 
 .PARAMETER Build
     Пересобрать образы перед запуском. Нужно только после правки кода;
@@ -66,13 +67,36 @@ if (-not (Wait-ForHealthy -Name 'humotech_backend' -TimeoutSeconds 300)) {
 }
 Write-Ok 'backend'
 
-foreach ($name in @('humotech_gateway', 'humotech_bot', 'humotech_cloudflared')) {
+foreach ($name in @('humotech_gateway', 'humotech_bot', 'humotech_ngrok')) {
     if (Wait-ForHealthy -Name $name -TimeoutSeconds 120) {
         Write-Ok $name.Replace('humotech_', '')
     }
     else {
         Write-Meh "$($name.Replace('humotech_', '')) не подтвердил готовность"
     }
+}
+
+Write-Step 'Публичный адрес'
+
+# Адрес спрашивается у самого агента, а не берётся из .env на веру:
+# только так видно, что туннель действительно поднялся именно на
+# закреплённом домене, а не на случайном.
+$actual = $null
+for ($i = 0; $i -lt 20; $i++) {
+    $actual = Get-NgrokTunnelUrl
+    if ($actual) { break }
+    Start-Sleep -Seconds 3
+}
+
+if (-not $actual) {
+    Write-Bad 'агент ngrok не сообщил адрес — logs: scripts\local-logs.ps1 -Service ngrok'
+}
+elseif ($actual.TrimEnd('/') -ne "https://$publicHost") {
+    Write-Bad "туннель поднялся на $actual, а ожидался https://$publicHost"
+    Write-Host '    Проверьте NGROK_DOMAIN в infrastructure\docker\.env' -ForegroundColor Yellow
+}
+else {
+    Write-Ok $actual
 }
 
 Write-Host ''

@@ -40,7 +40,7 @@ def run(coro):
 
 @pytest.fixture()
 def url(monkeypatch):
-    address = "https://hr-dev.humotech.com"
+    address = "https://example-stand.ngrok-free.dev"
     monkeypatch.setattr(mb.settings, "mini_app_url", address, raising=False)
     return address
 

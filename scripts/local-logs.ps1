@@ -7,7 +7,7 @@
     что с чем совпало по времени. С именем сервиса — только он.
 
 .PARAMETER Service
-    postgres, migrate, backend, bot, gateway или cloudflared.
+    postgres, migrate, backend, bot, gateway или ngrok.
 
 .PARAMETER Tail
     Сколько последних строк показать. По умолчанию 100.
@@ -24,7 +24,7 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet('postgres', 'migrate', 'backend', 'bot', 'gateway', 'cloudflared')]
+    [ValidateSet('postgres', 'migrate', 'backend', 'bot', 'gateway', 'ngrok')]
     [string]$Service,
 
     [int]$Tail = 100,
@@ -38,8 +38,8 @@ if (-not (Test-DockerEngine)) {
     throw 'Docker не запущен.'
 }
 
-# Файлы compose требуют CLOUDFLARE_TUNNEL_TOKEN уже при чтении:
-# без него docker compose не соберёт конфигурацию и ответит своей
+# Файлы compose требуют NGROK_AUTHTOKEN и NGROK_DOMAIN уже при чтении:
+# без них docker compose не соберёт конфигурацию и ответит своей
 # ошибкой вместо понятной. Проверяем раньше и говорим по делу.
 Assert-TunnelToken
 
@@ -47,7 +47,7 @@ $arguments = @('logs', '--tail', "$Tail")
 if ($Follow) { $arguments += '--follow' }
 if ($Service) { $arguments += $Service }
 
-# Токены в логи не попадают: бот их не печатает, cloudflared показывает
-# только идентификатор соединения. Но если однажды что-то утечёт, эти
-# строки уйдут на экран — читайте, прежде чем пересылать.
+# Токены в логи не попадают: бот их не печатает, агент ngrok печатает
+# только адрес туннеля и идентификатор сессии. Но если однажды что-то
+# утечёт, эти строки уйдут на экран — читайте, прежде чем пересылать.
 Invoke-Compose -ComposeArgs $arguments

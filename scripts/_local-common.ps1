@@ -20,7 +20,7 @@ $ComposeFiles = @(
     '-f', (Join-Path $DockerDir 'docker-compose.local.yml')
 )
 
-$Services = @('postgres', 'migrate', 'backend', 'bot', 'gateway', 'cloudflared')
+$Services = @('postgres', 'migrate', 'backend', 'bot', 'gateway', 'ngrok')
 
 function Write-Step { param([string]$Text) Write-Host "==> $Text" -ForegroundColor Cyan }
 function Write-Ok { param([string]$Text) Write-Host "    OK   $Text" -ForegroundColor Green }
@@ -102,26 +102,61 @@ function Read-LocalEnv {
 }
 
 function Get-PublicHostname {
+    <#
+        Постоянный домен ngrok. Не секрет: это публичный адрес, его
+        видит каждый, кто открывает Mini App.
+
+        Умолчания нет намеренно. Молча подставленный чужой домен увёл
+        бы запросы неизвестно куда, и заметить это было бы нечем.
+    #>
     $settings = Read-LocalEnv
-    if ($settings.ContainsKey('PUBLIC_HOSTNAME') -and $settings['PUBLIC_HOSTNAME']) {
-        return $settings['PUBLIC_HOSTNAME']
+    if ($settings.ContainsKey('NGROK_DOMAIN') -and $settings['NGROK_DOMAIN']) {
+        return $settings['NGROK_DOMAIN']
     }
-    return 'hr-dev.humotech.com'
+    throw "В $EnvFile не задан NGROK_DOMAIN. Смотрите .env.example."
 }
 
 function Assert-TunnelToken {
     <#
-        Без токена туннеля стек поднимется, но публичного адреса не будет.
-        Сказать об этом здесь дешевле, чем разбирать потом, почему
-        cloudflared перезапускается по кругу.
+        Проверяется НАЛИЧИЕ значений, и ничего больше.
+
+        Ни токен, ни его длина, ни первые символы наружу не выводятся:
+        по длине и началу токен угадывается заметно легче, чем кажется,
+        а журнал сессии живёт дольше, чем задача.
     #>
     if (-not (Test-Path $EnvFile)) {
-        throw "Нет $EnvFile. Скопируйте $EnvExample и впишите CLOUDFLARE_TUNNEL_TOKEN."
+        throw "Нет $EnvFile. Скопируйте $EnvExample и заполните его."
     }
     $settings = Read-LocalEnv
-    if (-not $settings['CLOUDFLARE_TUNNEL_TOKEN']) {
-        throw "В $EnvFile пуст CLOUDFLARE_TUNNEL_TOKEN. Где его взять — написано в .env.example."
+    if (-not $settings['NGROK_AUTHTOKEN']) {
+        throw "В $EnvFile пуст NGROK_AUTHTOKEN. Где его взять — написано в .env.example."
     }
+    if (-not $settings['NGROK_DOMAIN']) {
+        throw "В $EnvFile пуст NGROK_DOMAIN. Где его посмотреть — написано в .env.example."
+    }
+}
+
+function Get-NgrokTunnelUrl {
+    <#
+        Публичный адрес, который агент ngrok считает действующим сейчас.
+
+        Читается изнутри контейнера: порт агента (4040) наружу не
+        публикуется вовсе. Инспектор показывает тела запросов, а в них
+        ходят подписи Telegram — открывать его даже на петлевом адресе
+        значит держать их в одном HTTP-запросе от любопытного процесса.
+    #>
+    $raw = docker exec humotech_ngrok wget -qO- http://127.0.0.1:4040/api/tunnels 2>$null
+    if (-not $raw) { return $null }
+    try {
+        $parsed = $raw | ConvertFrom-Json
+    }
+    catch {
+        return $null
+    }
+    foreach ($tunnel in $parsed.tunnels) {
+        if ($tunnel.public_url -like 'https://*') { return $tunnel.public_url }
+    }
+    return $null
 }
 
 function Get-ContainerState {

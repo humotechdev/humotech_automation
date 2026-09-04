@@ -31,7 +31,7 @@ def test_local_and_container_names_are_internal(hostname):
     "hostname",
     [
         "api.example.com",
-        "hr-dev.humotech.com",
+        "example-stand.ngrok-free.dev",
         "10.0.0.7",
         "backend.local",
         "evil.com",

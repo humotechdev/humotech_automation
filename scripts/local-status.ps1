@@ -22,8 +22,8 @@ param()
 
 $problems = 0
 
-# Файлы compose требуют CLOUDFLARE_TUNNEL_TOKEN уже при чтении:
-# без него docker compose не соберёт конфигурацию и ответит своей
+# Файлы compose требуют NGROK_AUTHTOKEN и NGROK_DOMAIN уже при чтении:
+# без них docker compose не соберёт конфигурацию и ответит своей
 # ошибкой вместо понятной. Проверяем раньше и говорим по делу.
 Assert-TunnelToken
 
@@ -48,7 +48,7 @@ $expected = [ordered]@{
     'humotech_backend'     = 'backend (Django + gunicorn)'
     'humotech_bot'         = 'Telegram-бот'
     'humotech_gateway'     = 'обратный прокси + Mini App'
-    'humotech_cloudflared' = 'Cloudflare Tunnel'
+    'humotech_ngrok'       = 'ngrok (публичный вход)'
 }
 
 foreach ($name in $expected.Keys) {
@@ -119,8 +119,24 @@ else {
     $problems++
 }
 
-Write-Step 'Публичный адрес'
+Write-Step 'Туннель'
 $publicHost = Get-PublicHostname
+$tunnelUrl = Get-NgrokTunnelUrl
+if (-not $tunnelUrl) {
+    Write-Bad 'агент ngrok не сообщает адрес'
+    $problems++
+}
+elseif ($tunnelUrl.TrimEnd('/') -ne "https://$publicHost") {
+    # Несовпадение значит, что туннель поднялся на случайном адресе:
+    # кнопка бота ведёт на закреплённый домен и будет вести в никуда.
+    Write-Bad "туннель на $tunnelUrl, а ожидался https://$publicHost"
+    $problems++
+}
+else {
+    Write-Ok "закреплённый домен: $tunnelUrl"
+}
+
+Write-Step 'Публичный адрес'
 $checks = [ordered]@{
     "https://$publicHost/health/live"  = 'живость через туннель'
     "https://$publicHost/health/ready" = 'готовность через туннель'
