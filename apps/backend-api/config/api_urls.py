@@ -12,6 +12,8 @@ from humotech.accounts.rbac_views import (
     CrmUserViewSet,
     GrantCreateView,
     GrantDetailView,
+    PermissionListView,
+    RoleDetailView,
     RoleListView,
     UserGrantsView,
 )
@@ -148,6 +150,10 @@ urlpatterns = [
     # который выполняет само действие.
     path("audit-logs", AuditLogView.as_view(), name="audit-logs"),
     path("roles", RoleListView.as_view(), name="roles"),
+    path("roles/<uuid:role_id>", RoleDetailView.as_view(), name="role-detail"),
+    # Справочник разрешений. Только чтение: список операций системы задан
+    # миграциями, а не настройкой организации.
+    path("permissions", PermissionListView.as_view(), name="permissions"),
     path(
         "users/<uuid:user_id>/grants",
         UserGrantsView.as_view(),

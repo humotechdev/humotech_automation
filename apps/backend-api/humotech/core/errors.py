@@ -73,6 +73,11 @@ _CONSTRAINT_MESSAGES: dict[str, str] = {
     "uq_departments_office_code": "Отдел с таким кодом в офисе уже есть",
     "uq_positions_org_code": "Должность с таким кодом в организации уже есть",
     "uq_users_org_lower_email": "Пользователь с таким email уже есть",
+    "uq_users_employee_id": (
+        "У этого сотрудника уже есть учётная запись: "
+        "одному человеку — один вход"
+    ),
+    "uq_roles_org_code": "Роль с таким кодом в организации уже есть",
     "uq_telegram_accounts_employee": "Telegram уже привязан к этому сотруднику",
     "uq_telegram_accounts_tg_user": "Этот Telegram уже привязан к другому сотруднику",
     "ex_employee_assignments_primary_overlap": (

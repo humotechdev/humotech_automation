@@ -42,6 +42,8 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta
 
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Q
 from django.utils import timezone
 
@@ -51,8 +53,9 @@ from humotech.core.errors import Conflict, NotFound, PermissionDenied, Validatio
 from humotech.core.pagination import Page, paginate
 from humotech.core.rbac import Actor, snapshot
 from humotech.core.service import BaseService
-from humotech.core.validation import validate_email
-from humotech.rbac.models import Permission, Role
+from humotech.core.validation import clean_code, clean_text, validate_email
+from humotech.employees.selectors import require_visible_employee
+from humotech.rbac.models import Permission, Role, RolePermission
 
 USER_FIELDS = ("email", "status", "mfa_enabled")
 
@@ -68,11 +71,17 @@ REVOKE_BACKDATE = timedelta(seconds=1)
 class UserAdminService(BaseService):
     """Учётные записи CRM. Требует `users.manage`.
 
-    Пароли здесь не задаются и не меняются — ни при создании, ни потом.
-    Новая запись заводится без пригодного пароля и в статусе INACTIVE:
-    вход открывается, когда человек установит пароль сам. Учётная
-    запись, чей пароль знает кто-то ещё, не отвечает на вопрос «кто это
-    сделал», а именно на него отвечает весь журнал.
+    Запись заводится без пригодного пароля и в статусе INACTIVE: пока
+    пароля нет, войти под ней нельзя вовсе, и перебирать нечего.
+
+    Пароль ставит администратор отдельным действием. Раздавать его
+    таким способом хуже, чем ссылкой на самостоятельную установку:
+    человек, знающий чужой пароль, размывает ответ на вопрос «кто это
+    сделал». Но ссылку некуда отправить — почтового канала в проекте
+    нет, а Telegram привязан к сотруднику, а не к учётной записи CRM.
+    Выбор между «неидеально» и «завести пользователя нельзя вовсе»
+    решается в пользу первого; сам пароль в журнал при этом не
+    попадает никогда — записывается только факт установки.
     """
 
     def list(
@@ -174,6 +183,103 @@ class UserAdminService(BaseService):
         self.access.invalidate()
         return user
 
+    def update(
+        self,
+        actor: Actor,
+        user_id: uuid.UUID,
+        *,
+        email: str | None = None,
+        employee_id: uuid.UUID | None = None,
+        unlink_employee: bool = False,
+    ) -> User:
+        """Правка адреса и привязки к сотруднику.
+
+        Статус сюда не входит: у него свои действия, и они делают больше
+        правки поля — отключение последнего суперадминистратора
+        организации обязано быть отказано.
+        """
+        self.access.require(actor, "users.manage")
+        user = self._require(actor, user_id)
+        before = snapshot(user, USER_FIELDS)
+        changed: list[str] = []
+
+        if email is not None:
+            address = validate_email(email, field="email")
+            if address is None:
+                raise ValidationFailed(
+                    "Адрес электронной почты обязателен",
+                    details={"field": "email"},
+                )
+            if address.lower() != user.email.lower():
+                user.email = address
+                changed.append("email")
+
+        if unlink_employee:
+            # Отвязка задаётся отдельным признаком, а не `employee_id=None`:
+            # у частичной правки «не передали» и «передали пусто» — разные
+            # намерения, и склеить их значит отвязывать сотрудника при
+            # каждом изменении адреса.
+            if user.employee_id is not None:
+                user.employee_id = None
+                changed.append("employee_id")
+        elif employee_id is not None and employee_id != user.employee_id:
+            require_visible_employee(self.access, actor, employee_id)
+            user.employee_id = employee_id
+            changed.append("employee_id")
+
+        if not changed:
+            return user
+
+        with self.atomic():
+            user.save(update_fields=[*changed, "updated_at"])
+            self.audit.record(
+                actor,
+                action="user.update",
+                entity_type="users",
+                entity_id=user.id,
+                before=before,
+                after=snapshot(user, USER_FIELDS),
+            )
+        return user
+
+    def set_password(
+        self, actor: Actor, user_id: uuid.UUID, *, password: str
+    ) -> User:
+        """Установить пароль учётной записи.
+
+        Проверка стойкости — настоящая, django-овская: те же правила, что
+        и везде, включая сходство с адресом и именем. Ради последнего
+        `validate_password` получает пользователя: без него этот
+        валидатор не проверяет ничего.
+
+        В журнал уходит только факт. Не пароль, не его хеш и не длина:
+        длина сама по себе сужает перебор.
+        """
+        self.access.require(actor, "users.manage")
+        user = self._require(actor, user_id)
+
+        try:
+            validate_password(password, user=user)
+        except DjangoValidationError as exc:
+            raise ValidationFailed(
+                "Пароль не соответствует требованиям",
+                details={"field": "password", "reasons": list(exc.messages)},
+            ) from exc
+
+        with self.atomic():
+            user.set_password(password)
+            user.save(update_fields=["password", "updated_at"])
+            self.audit.record(
+                actor,
+                action="user.password.set",
+                entity_type="users",
+                entity_id=user.id,
+                # Ключ намеренно не называется `password`: такой отфильтровало
+                # бы `sanitize`, и в журнале осталась бы запись без «после».
+                after={"has_usable_password": True},
+            )
+        return user
+
     def _require(self, actor: Actor, user_id: uuid.UUID) -> User:
         user = (
             User.objects.select_related("employee")
@@ -215,6 +321,7 @@ class RoleAdminService(BaseService):
                     "id": row.id,
                     "code": row.code,
                     "name": row.name,
+                    "description": row.description,
                     "is_system": row.organization_id is None,
                     "permissions": sorted(granted),
                     "grantable": not missing,
@@ -224,6 +331,161 @@ class RoleAdminService(BaseService):
                 }
             )
         return result
+
+    def role(self, actor: Actor, role_id: uuid.UUID) -> dict:
+        """Одна роль в том же виде, что и строка списка."""
+        self.access.require(actor, "roles.manage")
+        return self._describe(actor, self._require_role(actor, role_id))
+
+    def permissions_catalog(self, actor: Actor) -> list[Permission]:
+        """Справочник разрешений целиком.
+
+        Он общий для всех организаций и меняется миграциями, поэтому
+        фильтра по организации здесь нет и быть не должно: это не данные
+        организации, а словарь операций системы.
+        """
+        self.access.require(actor, "roles.manage")
+        return list(Permission.objects.order_by("code"))
+
+    def create_role(
+        self,
+        actor: Actor,
+        *,
+        code: str,
+        name: str,
+        description: str | None = None,
+        permissions: list[str] | None = None,
+    ) -> dict:
+        """Завести роль организации.
+
+        Системной роли отсюда не появится: `organization_id` проставляется
+        сам. Системные роли общие для всех организаций, и заводить их из
+        одной означало бы менять права остальным.
+        """
+        self.access.require(actor, "roles.manage")
+        cleaned_code = clean_code(code)
+        _refuse_super_admin_code(cleaned_code)
+        codes = self._grantable_codes(actor, permissions or [])
+
+        with self.atomic():
+            role = Role.objects.create(
+                organization_id=actor.organization_id,
+                code=cleaned_code,
+                name=clean_text(name, field="name", required=True,
+                                max_length=100),
+                description=clean_text(description, field="description"),
+                is_system=False,
+            )
+            self._replace_permissions(role, codes)
+            self.audit.record(
+                actor,
+                action="role.create",
+                entity_type="roles",
+                entity_id=role.id,
+                after={"code": role.code, "name": role.name,
+                       "permissions": sorted(codes)},
+            )
+        self.access.invalidate()
+        return self._describe(actor, role)
+
+    def update_role(
+        self,
+        actor: Actor,
+        role_id: uuid.UUID,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        permissions: list[str] | None = None,
+    ) -> dict:
+        """Изменить название, описание или набор прав роли.
+
+        Код не меняется: по нему роль опознают проверки и настройки, и
+        переименование кода — это другая роль, а не правка опечатки.
+        """
+        self.access.require(actor, "roles.manage")
+        role = self._require_role(actor, role_id)
+        _refuse_system_role(role)
+        _refuse_super_admin_code(role.code)
+
+        before_codes = _permissions_by_role([role.id]).get(role.id, set())
+        before = {"code": role.code, "name": role.name,
+                  "permissions": sorted(before_codes)}
+        fields: list[str] = []
+
+        if name is not None:
+            role.name = clean_text(name, field="name", required=True,
+                                   max_length=100)
+            fields.append("name")
+        if description is not None:
+            role.description = clean_text(description, field="description")
+            fields.append("description")
+
+        after_codes = before_codes
+        with self.atomic():
+            if permissions is not None:
+                # Проверка та же, что при выдаче роли: собрать роль из прав,
+                # которых у тебя нет, а потом выдать её себе — это тот же
+                # обход, только в два шага.
+                after_codes = self._grantable_codes(actor, permissions)
+                self._replace_permissions(role, after_codes)
+            if fields:
+                role.save(update_fields=[*fields, "updated_at"])
+            if fields or permissions is not None:
+                self.audit.record(
+                    actor,
+                    action="role.update",
+                    entity_type="roles",
+                    entity_id=role.id,
+                    before=before,
+                    after={"code": role.code, "name": role.name,
+                           "permissions": sorted(after_codes)},
+                )
+        self.access.invalidate()
+        return self._describe(actor, role)
+
+    def _grantable_codes(self, actor: Actor, codes: list[str]) -> set[str]:
+        """Права, которые актор действительно может вложить в роль."""
+        wanted = {code.strip() for code in codes if code and code.strip()}
+        unknown = sorted(
+            wanted
+            - set(Permission.objects.filter(code__in=wanted).values_list(
+                "code", flat=True
+            ))
+        )
+        if unknown:
+            raise ValidationFailed(
+                "Таких разрешений нет в справочнике",
+                details={"field": "permissions", "unknown": unknown},
+            )
+        missing = sorted(wanted - self.access.permissions(actor))
+        if missing:
+            raise PermissionDenied(
+                "Нельзя вложить в роль права, которых нет у вас самих",
+                details={"missing_permissions": missing},
+            )
+        return wanted
+
+    @staticmethod
+    def _replace_permissions(role: Role, codes: set[str]) -> None:
+        RolePermission.objects.filter(role=role).delete()
+        RolePermission.objects.bulk_create(
+            RolePermission(role=role, permission=permission)
+            for permission in Permission.objects.filter(code__in=codes)
+        )
+
+    def _describe(self, actor: Actor, role: Role) -> dict:
+        granted = _permissions_by_role([role.id]).get(role.id, set())
+        missing = sorted(granted - self.access.permissions(actor))
+        return {
+            "id": role.id,
+            "code": role.code,
+            "name": role.name,
+            "description": role.description,
+            "is_system": role.organization_id is None,
+            "permissions": sorted(granted),
+            "grantable": not missing,
+            "missing_permissions": missing,
+        }
 
     # -------------------------------------------------------------- назначения
 
@@ -569,3 +831,31 @@ def _refuse_if_last_super_admin(
 
 
 __all__ = ["REVOKE_BACKDATE", "RoleAdminService", "UserAdminService"]
+
+
+def _refuse_system_role(role: Role) -> None:
+    """Системную роль из одной организации не правят.
+
+    Она общая для всех: изменив её здесь, поменяли бы права соседям.
+    """
+    if role.organization_id is None or role.is_system:
+        raise PermissionDenied(
+            "Системная роль не редактируется",
+            details={"role": role.code},
+        )
+
+
+def _refuse_super_admin_code(code: str) -> None:
+    """Роль с кодом SUPER_ADMIN не заводится и не правится.
+
+    По этому коду считается, остался ли в организации хоть один
+    администратор (`_refuse_if_last_super_admin`). Своя роль с тем же
+    кодом либо подменяла бы этот счёт, либо позволяла бы снять с неё
+    права и оставить организацию без управления — при формально
+    непустом счёте.
+    """
+    if code == SUPER_ADMIN:
+        raise PermissionDenied(
+            "Роль SUPER_ADMIN не заводится и не правится через API",
+            details={"role": SUPER_ADMIN},
+        )

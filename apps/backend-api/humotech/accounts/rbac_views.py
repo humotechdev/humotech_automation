@@ -39,10 +39,67 @@ class CrmUserCreateSerializer(serializers.Serializer):
     employee_id = serializers.UUIDField(required=False, allow_null=True)
 
 
+class CrmUserUpdateSerializer(serializers.Serializer):
+    email = serializers.EmailField(required=False)
+    employee_id = serializers.UUIDField(required=False, allow_null=True)
+    unlink_employee = serializers.BooleanField(
+        required=False,
+        help_text="true — отвязать сотрудника от учётной записи",
+    )
+
+
+class SetPasswordSerializer(serializers.Serializer):
+    password = serializers.CharField(
+        max_length=256,
+        write_only=True,
+        help_text="Проверяется правилами Django: длина, распространённость, "
+                  "сходство с адресом",
+    )
+
+
+class PermissionSerializer(serializers.Serializer):
+    code = serializers.CharField()
+    name = serializers.CharField()
+    description = serializers.CharField(allow_null=True)
+
+
+class PermissionListSerializer(serializers.Serializer):
+    items = PermissionSerializer(many=True)
+
+
+class RoleWriteSerializer(serializers.Serializer):
+    code = serializers.CharField(
+        max_length=50, help_text="Приводится к верхнему регистру",
+    )
+    name = serializers.CharField(max_length=100)
+    description = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True,
+    )
+    permissions = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text="Коды из /api/v1/permissions. Вложить можно только те, "
+                  "которыми владеет сам выдающий",
+    )
+
+
+class RoleUpdateSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=100, required=False)
+    description = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True,
+    )
+    permissions = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text="Полная замена набора, а не добавление",
+    )
+
+
 class RoleSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     code = serializers.CharField()
     name = serializers.CharField()
+    description = serializers.CharField(allow_null=True)
     is_system = serializers.BooleanField()
     permissions = serializers.ListField(child=serializers.CharField())
     grantable = serializers.BooleanField(
@@ -143,6 +200,38 @@ class CrmUserViewSet(ServiceViewSet):
             self.service.create(self.actor, **payload), created=True
         )
 
+    @extend_schema(
+        summary="Изменить адрес или привязку к сотруднику",
+        description=(
+            "Статус сюда не входит: у него свои действия, и они делают "
+            "больше правки поля."
+        ),
+        request=CrmUserUpdateSerializer,
+        responses={200: CrmUserSerializer},
+    )
+    def partial_update(self, request, pk=None):
+        payload = validated(CrmUserUpdateSerializer, request.data)
+        return self.item_response(self.service.update(self.actor, pk, **payload))
+
+    @extend_schema(
+        summary="Установить пароль",
+        description=(
+            "Пароль проверяется теми же правилами Django, что и везде. "
+            "В журнал попадает только факт установки: ни значение, ни хеш, "
+            "ни длина — длина сама по себе сужает перебор.\n\n"
+            "Действующие сессии этой учётной записи после смены перестают "
+            "работать: Django сверяет с сессией отпечаток пароля."
+        ),
+        request=SetPasswordSerializer,
+        responses={200: CrmUserSerializer},
+    )
+    @action(detail=True, methods=["post"], url_path="set-password")
+    def set_password(self, request, pk=None):
+        payload = validated(SetPasswordSerializer, request.data)
+        return self.item_response(
+            self.service.set_password(self.actor, pk, **payload)
+        )
+
     @extend_schema(summary="Включить учётную запись", responses={200: CrmUserSerializer})
     @action(detail=True, methods=["post"])
     def activate(self, request, pk=None):
@@ -172,6 +261,7 @@ class RoleListView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
+        operation_id="roles_list",
         summary="Роли и их разрешения",
         description=(
             "Рядом с каждой ролью — может ли ЭТОТ пользователь её выдать "
@@ -183,6 +273,96 @@ class RoleListView(APIView):
     def get(self, request):
         actor = Actor.from_user(request.user)
         return Response({"items": RoleAdminService().roles(actor)})
+
+    @extend_schema(
+        operation_id="roles_create",
+        summary="Завести роль организации",
+        description=(
+            "Системная роль отсюда не появится: роль всегда заводится "
+            "внутри своей организации. Вложить в неё можно только те "
+            "права, которыми владеет сам заводящий, — иначе роль стала бы "
+            "обходом собственных ограничений в два шага."
+        ),
+        request=RoleWriteSerializer,
+        responses={201: RoleSerializer},
+        examples=[
+            OpenApiExample(
+                "Кадровик региона",
+                value={"code": "HR_REGION", "name": "Кадровик региона",
+                       "permissions": ["employees.read", "schedules.read"]},
+                request_only=True,
+            ),
+        ],
+    )
+    def post(self, request):
+        actor = Actor.from_user(request.user)
+        role = RoleAdminService().create_role(
+            actor, **validated(RoleWriteSerializer, request.data)
+        )
+        return Response(RoleSerializer(role).data, status=201)
+
+
+@extend_schema(tags=["Роли"])
+class RoleDetailView(APIView):
+    """Одна роль. Требует `roles.manage`."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        operation_id="roles_retrieve",
+        summary="Одна роль",
+        responses={200: RoleSerializer},
+    )
+    def get(self, request, role_id):
+        actor = Actor.from_user(request.user)
+        return Response(
+            RoleSerializer(RoleAdminService().role(actor, role_id)).data
+        )
+
+    @extend_schema(
+        operation_id="roles_partial_update",
+        summary="Изменить название, описание или права роли",
+        description=(
+            "Код не меняется: по нему роль опознают проверки, и другой код "
+            "означает другую роль. Набор прав заменяется целиком, а не "
+            "дополняется. Системные роли не правятся — они общие для всех "
+            "организаций."
+        ),
+        request=RoleUpdateSerializer,
+        responses={200: RoleSerializer},
+    )
+    def patch(self, request, role_id):
+        actor = Actor.from_user(request.user)
+        role = RoleAdminService().update_role(
+            actor, role_id, **validated(RoleUpdateSerializer, request.data)
+        )
+        return Response(RoleSerializer(role).data)
+
+
+@extend_schema(tags=["Роли"])
+class PermissionListView(APIView):
+    """Справочник разрешений. Требует `roles.manage`.
+
+    Общий для всех организаций и меняется миграциями: это словарь
+    операций системы, а не данные организации.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        operation_id="permissions_list",
+        summary="Все разрешения системы",
+        responses={200: PermissionListSerializer},
+    )
+    def get(self, request):
+        actor = Actor.from_user(request.user)
+        return Response(
+            {
+                "items": PermissionSerializer(
+                    RoleAdminService().permissions_catalog(actor), many=True
+                ).data
+            }
+        )
 
 
 @extend_schema(tags=["Роли"])
@@ -290,6 +470,8 @@ __all__ = [
     "CrmUserViewSet",
     "GrantCreateView",
     "GrantDetailView",
+    "PermissionListView",
+    "RoleDetailView",
     "RoleListView",
     "UserGrantsView",
 ]
