@@ -381,7 +381,7 @@ npm run dev                   # http://localhost:5174, запросы к /api п
 |---|---|---|
 | подпись `initData`, 18 проверок | `django_tests/test_telegram_initdata.py` | `pytest` |
 | сервис привязки, 38 | `django_tests/test_telegram_link.py` | `pytest` |
-| REST API, 31 | `django_tests/test_api_telegram.py` | `pytest` |
+| REST API, 29 | `django_tests/test_api_telegram.py` | `pytest` |
 | гонка при переходе по ссылке, 1 | `django_tests/test_telegram_concurrency.py` | `pytest` |
 | обработчик бота, 26 | `apps/employee-telegram-bot/tests/test_link_flow.py` | `pytest` |
 | Mini App, 17 | `apps/employee-mini-app/tests/auth.test.ts` | `npm test` |
