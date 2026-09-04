@@ -38,6 +38,12 @@ interface TelegramWebApp {
   initData?: string;
   ready?: () => void;
   expand?: () => void;
+  /** Собственный сканер Telegram: см. `scanner.ts`. */
+  showScanQrPopup?: (
+    params: { text?: string },
+    callback: (text: string) => boolean | void,
+  ) => void;
+  closeScanQrPopup?: () => void;
 }
 
 declare global {

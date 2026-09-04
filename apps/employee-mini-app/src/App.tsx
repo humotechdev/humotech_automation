@@ -1,15 +1,18 @@
 /**
- * Экраны авторизации Mini App.
+ * Личный кабинет сотрудника в Telegram.
  *
- * Полного личного кабинета здесь нет и не должно быть — это следующий этап.
- * Задача этого экрана одна: довести человека от запуска до понятного ответа
- * и не соврать ни в одном из пяти исходов.
+ * Авторизация решается первой и отдельно (`auth.ts`): пока неизвестно,
+ * кто пришёл, показывать нечего. Пять исходов входа остались прежними,
+ * к ним добавились экраны самого кабинета.
  *
- * Решения принимает `auth.ts`, компонент только выбирает, что показать.
+ * Навигация плоская: главный экран и пять разделов, из каждого — «Назад».
+ * Вложенных путей нет намеренно: приложение открывают на минуту, чтобы
+ * отметиться, а не листать.
  */
 
 import { useCallback, useEffect, useState } from 'react';
 
+import { api, type Profile, type Status } from './api';
 import {
   authenticate,
   forgetToken,
@@ -17,10 +20,22 @@ import {
   rememberToken,
   type AuthResult,
 } from './auth';
+import { Absences } from './screens/Absences';
+import { Home } from './screens/Home';
+import { Scan } from './screens/Scan';
+import { History, Stats } from './screens/Stats';
 
 const API_URL = import.meta.env.VITE_API_URL ?? '/api/v1';
 
 type Phase = { kind: 'loading' } | { kind: 'done'; result: AuthResult };
+
+type Screen =
+  | 'home'
+  | 'scan'
+  | 'stats'
+  | 'history'
+  | 'sick-leave'
+  | 'vacation';
 
 export default function App() {
   const [phase, setPhase] = useState<Phase>({ kind: 'loading' });
@@ -36,6 +51,7 @@ export default function App() {
 
   useEffect(() => {
     window.Telegram?.WebApp?.ready?.();
+    window.Telegram?.WebApp?.expand?.();
     void run();
   }, [run]);
 
@@ -47,27 +63,7 @@ export default function App() {
 
   switch (result.state) {
     case 'authenticated':
-      return (
-        <Screen title={result.employee.full_name}>
-          <p className="muted">Табельный номер: {result.employee.employee_number}</p>
-          <p>
-            Вход выполнен. Отметки, отпуска и больничные появятся здесь на
-            следующем этапе.
-          </p>
-          <button
-            type="button"
-            onClick={() => {
-              // Выход стирает только эту сессию. Отключить привязку целиком
-              // может лишь отдел кадров — иначе доступ отзывался бы с того
-              // самого устройства, которое мог взять кто угодно.
-              forgetToken();
-              void run();
-            }}
-          >
-            Выйти
-          </button>
-        </Screen>
-      );
+      return <Cabinet onSignOut={() => { forgetToken(); void run(); }} />;
 
     case 'pending':
       return (
@@ -114,6 +110,84 @@ export default function App() {
   }
 }
 
+function Cabinet({ onSignOut }: { onSignOut: () => void }) {
+  const [screen, setScreen] = useState<Screen>('home');
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [status, setStatus] = useState<Status | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    const [me, now] = await Promise.all([api.profile(), api.status()]);
+    if (!me.ok) {
+      setError(me.message);
+      return;
+    }
+    setProfile(me.value);
+    if (now.ok) setStatus(now.value);
+    setError(null);
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  if (error) {
+    return (
+      <Screen title="Не получилось">
+        <p>{error}</p>
+        <button type="button" onClick={() => void refresh()}>
+          Обновить
+        </button>
+        <button type="button" onClick={onSignOut}>
+          Выйти
+        </button>
+      </Screen>
+    );
+  }
+
+  if (!profile || !status) {
+    return <Screen title="Загружаем…" />;
+  }
+
+  const back = () => {
+    setScreen('home');
+    void refresh();
+  };
+
+  return (
+    <main className="app">
+      {screen === 'home' && (
+        <>
+          <Home
+            profile={profile}
+            status={status}
+            onScan={() => setScreen('scan')}
+            onHistory={() => setScreen('history')}
+            onSickLeave={() => setScreen('sick-leave')}
+            onVacation={() => setScreen('vacation')}
+          />
+          <div className="grid">
+            <button type="button" onClick={() => setScreen('stats')}>
+              Статистика
+            </button>
+            <button type="button" className="quiet" onClick={onSignOut}>
+              Выйти
+            </button>
+          </div>
+        </>
+      )}
+
+      {screen === 'scan' && (
+        <Scan onDone={() => void refresh()} onBack={back} />
+      )}
+      {screen === 'stats' && <Stats onBack={back} />}
+      {screen === 'history' && <History onBack={back} />}
+      {screen === 'sick-leave' && <Absences kind="SICK_LEAVE" onBack={back} />}
+      {screen === 'vacation' && <Absences kind="ANNUAL_LEAVE" onBack={back} />}
+    </main>
+  );
+}
+
 function Screen({
   title,
   children,
@@ -122,7 +196,7 @@ function Screen({
   children?: React.ReactNode;
 }) {
   return (
-    <main className="screen">
+    <main className="app screen">
       <h1>{title}</h1>
       {children}
     </main>
