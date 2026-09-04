@@ -38,6 +38,11 @@ class AbsencePolicy:
     require_hr_approval: bool = True
     # Справка обязательна сразу при подаче.
     document_required: bool = False
+    # С какого дня болезни справка обязательна. Ноль означает «с первого»,
+    # то есть требование действует всегда, когда включено `document_required`.
+    # Отдельное число, а не второй флаг: «справка с четвёртого дня» —
+    # распространённое правило, и выразить его двумя булевыми нельзя.
+    document_required_from_day: int = 0
     # Справку можно донести позже — например, после выхода с больничного.
     document_can_be_added_later: bool = True
     # Сотрудник сам снимает свою НЕрассмотренную заявку.
@@ -51,6 +56,19 @@ class AbsencePolicy:
     # Уход в минус по остатку отпуска. По умолчанию нельзя: минус —
     # это решение, которое принимает человек, а не следствие опечатки.
     allow_negative_leave_balance: bool = False
+    # На сколько дней назад можно оформить отсутствие. Ноль означает
+    # «без ограничения», как и у соседней настройки срока подачи.
+    #
+    # Умолчание здесь намеренно НЕ закрытое, в отличие от флагов выше.
+    # Больничный по своей природе оформляется задним числом: человек
+    # заболел, вышел и принёс справку. Запрет по умолчанию сломал бы
+    # главный сценарий продукта, а осторожное умолчание существует, чтобы
+    # не открывать лишнего, а не чтобы закрывать нужное.
+    backdating_days_allowed: int = 0
+    # За сколько дней подаётся заявка на отпуск. Ноль — требования нет.
+    # Умолчание нейтральное намеренно: срок подачи — правило конкретной
+    # организации, и придумывать его за HUMO не следует.
+    vacation_min_days_ahead: int = 0
 
     def as_dict(self) -> dict:
         return {
@@ -63,8 +81,19 @@ class AbsencePolicy:
             "max_document_bytes": self.max_document_bytes,
             "allowed_document_types": list(self.allowed_document_types),
             "allow_negative_leave_balance": self.allow_negative_leave_balance,
+            "document_required_from_day": self.document_required_from_day,
+            "backdating_days_allowed": self.backdating_days_allowed,
+            "vacation_min_days_ahead": self.vacation_min_days_ahead,
         }
 
+
+# Настройки, измеряемые в днях. Верхняя граница — год: срок больше
+# означает опечатку, а не правило.
+_DAY_COUNT_FIELDS = {
+    "document_required_from_day",
+    "backdating_days_allowed",
+    "vacation_min_days_ahead",
+}
 
 _BOOL_FIELDS = {
     "require_hr_approval",
@@ -118,6 +147,12 @@ def _from_dict(values: dict) -> AbsencePolicy:
         elif key == "max_document_bytes":
             if isinstance(value, int) and 0 < value <= 100 * 1024 * 1024:
                 parsed[key] = value
+        elif key in _DAY_COUNT_FIELDS:
+            # `bool` — подкласс `int`, и без явной проверки `true`
+            # молча превратилось бы в «один день».
+            if isinstance(value, int) and not isinstance(value, bool):
+                if 0 <= value <= 366:
+                    parsed[key] = value
         elif key == "allowed_document_types":
             if isinstance(value, (list, tuple)):
                 cleaned = tuple(

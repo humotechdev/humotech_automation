@@ -28,6 +28,10 @@ from humotech.absences.views import (
     PendingAbsenceRequestsView,
 )
 from humotech.offices.views import OfficeViewSet
+from humotech.organizations.views import (
+    OrganizationSettingDetailView,
+    OrganizationSettingsView,
+)
 from humotech.qr_codes.views import (
     QrDeviceActionView,
     QrDeviceListView,
@@ -131,6 +135,12 @@ urlpatterns = [
     # единственный способ появиться в журнале — быть записанным сервисом,
     # который выполняет само действие.
     path("audit-logs", AuditLogView.as_view(), name="audit-logs"),
+    path("settings", OrganizationSettingsView.as_view(), name="settings"),
+    path(
+        "settings/<str:key>",
+        OrganizationSettingDetailView.as_view(),
+        name="setting-detail",
+    ),
     # Посещаемость глазами кадровика. Сырые события отдаются только на
     # чтение: строка отметки не меняется никогда, а исправление — это
     # либо решение по заявке, либо новое событие с source = MANUAL.

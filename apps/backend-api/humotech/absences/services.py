@@ -47,7 +47,12 @@ from humotech.absences.policy import AbsencePolicy, policy_for
 from humotech.core.errors import Conflict, NotFound, PermissionDenied, ValidationFailed
 from humotech.core.rbac import Actor, snapshot
 from humotech.core.service import BaseService
-from humotech.core.timeframes import closed_range_bounds, days_in, range_bounds
+from humotech.core.timeframes import (
+    closed_range_bounds,
+    days_in,
+    local_date,
+    range_bounds,
+)
 from humotech.files.storage import store
 from humotech.notifications import messages
 from humotech.notifications.outbox import enqueue
@@ -184,6 +189,8 @@ class AbsenceService(BaseService):
         absence_type = self._require_type(context, absence_type_code)
 
         self._check_period(context, first_day, last_day)
+        self._check_backdating(context, first_day, policy, moment)
+        self._check_lead_time(context, absence_type, first_day, policy, moment)
         self._check_overlap(context, first_day, last_day)
 
         # Конец ВКЛЮЧЁН: `end_at` читают через `local_date(end_at)`, и
@@ -198,10 +205,14 @@ class AbsenceService(BaseService):
                 context, absence_type, working_days, policy, start_at
             )
 
-        if policy.document_required and document is None:
+        if self._document_needed(policy, working_days) and document is None:
             raise ValidationFailed(
                 "К заявке нужно приложить справку",
-                details={"reason": "document_required"},
+                details={
+                    "reason": "document_required",
+                    "from_day": policy.document_required_from_day,
+                    "days": working_days,
+                },
             )
 
         with self.atomic():
@@ -630,6 +641,68 @@ class AbsenceService(BaseService):
         if (last_day - first_day).days > 365:
             raise ValidationFailed(
                 "Период длиннее года", details={"reason": "too_long"}
+            )
+
+    @staticmethod
+    def _document_needed(policy, days: int) -> bool:
+        """Нужна ли справка к заявке такой длины.
+
+        `document_required_from_day` = 0 означает «с первого дня», то есть
+        требование действует всегда. Значение 4 означает «справка нужна,
+        если отсутствие длиннее трёх дней» — короткие больничные многие
+        организации принимают без неё.
+        """
+        if not policy.document_required:
+            return False
+        return days >= max(policy.document_required_from_day, 1)
+
+    def _check_backdating(self, context, first_day: date, policy, now) -> None:
+        """Насколько глубоко в прошлое можно оформить отсутствие.
+
+        Ноль означает «без ограничения»: больничный по своей природе
+        оформляется задним числом — человек заболел, вышел и принёс
+        справку. Организация может поставить границу, но её отсутствие
+        не должно ломать главный сценарий.
+        """
+        allowed = policy.backdating_days_allowed
+        if not allowed:
+            return
+        today = local_date(now, context.timezone)
+        if first_day >= today:
+            return
+        behind = (today - first_day).days
+        if behind > allowed:
+            raise ValidationFailed(
+                "Задним числом отсутствие так далеко не оформляется",
+                details={
+                    "reason": "backdating_not_allowed",
+                    "days_back": behind,
+                    "allowed": allowed,
+                },
+            )
+
+    def _check_lead_time(
+        self, context, absence_type, first_day: date, policy, now
+    ) -> None:
+        """За сколько дней подаётся заявка на отпуск.
+
+        Правило применяется только к типам, которые списывают остаток
+        отпуска: больничный по определению не планируется заранее, и
+        требовать срок подачи от него было бы бессмыслицей.
+        """
+        required = policy.vacation_min_days_ahead
+        if not required or not absence_type.deducts_leave_balance:
+            return
+        today = local_date(now, context.timezone)
+        ahead = (first_day - today).days
+        if ahead < required:
+            raise ValidationFailed(
+                f"Заявка на отпуск подаётся не позднее чем за {required} дн.",
+                details={
+                    "reason": "lead_time_required",
+                    "days_ahead": ahead,
+                    "required": required,
+                },
             )
 
     def _check_overlap(self, context, first_day: date, last_day: date) -> None:

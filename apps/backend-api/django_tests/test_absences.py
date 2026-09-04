@@ -932,3 +932,112 @@ def test_a_vacation_is_charged_to_the_year_it_falls_in(
         "резерв ушёл не в тот год: заявку подают сейчас, а отпуск в январе"
     )
     assert balance.reserved_minutes == 0, "резерв лёг в год подачи заявки"
+
+
+# --- организационные правила сроков ------------------------------------------
+#
+# Три настройки из `absences.policy`, каждая проверяется поведением, а не
+# тем, что значение записалось. Настройка, на которую никто не смотрит,
+# ничем не лучше опечатки.
+
+
+def test_backdating_is_unlimited_by_default(service, context, sick_leave):
+    """Ноль означает «без ограничения», а не «ничего задним числом».
+
+    Больничный по своей природе оформляется после болезни: человек
+    заболел, вышел и принёс справку. Закрытое умолчание здесь сломало бы
+    главный сценарий продукта, поэтому его нет.
+    """
+    view = service.create(
+        context, absence_type_code="SICK_LEAVE",
+        first_day=soon(-30), last_day=soon(-28),
+    )
+    assert view.request.status == "SUBMITTED"
+
+
+def test_backdating_limit_refuses_an_old_absence(
+    service, context, sick_leave, organization
+):
+    save_policy(organization.id, {"backdating_days_allowed": 3})
+
+    with pytest.raises(ValidationFailed) as exc:
+        service.create(
+            context, absence_type_code="SICK_LEAVE",
+            first_day=soon(-10), last_day=soon(-8),
+        )
+    assert exc.value.details["reason"] == "backdating_not_allowed"
+
+
+def test_backdating_limit_allows_what_fits(
+    service, context, sick_leave, organization
+):
+    save_policy(organization.id, {"backdating_days_allowed": 5})
+
+    view = service.create(
+        context, absence_type_code="SICK_LEAVE",
+        first_day=soon(-3), last_day=soon(-1),
+    )
+    assert view.request.status == "SUBMITTED"
+
+
+def test_document_required_only_from_the_configured_day(
+    service, context, sick_leave, organization
+):
+    """«Справка с четвёртого дня» — распространённое правило.
+
+    Двумя булевыми его не выразить, поэтому это число: короткий
+    больничный принимается без справки, длинный — нет.
+    """
+    save_policy(
+        organization.id,
+        {"document_required": True, "document_required_from_day": 4},
+    )
+
+    short = service.create(
+        context, absence_type_code="SICK_LEAVE",
+        first_day=soon(0), last_day=soon(1),
+    )
+    assert short.request.status == "SUBMITTED"
+
+    with pytest.raises(ValidationFailed) as exc:
+        service.create(
+            context, absence_type_code="SICK_LEAVE",
+            first_day=soon(10), last_day=soon(20),
+        )
+    assert exc.value.details["reason"] == "document_required"
+
+
+def test_vacation_lead_time_applies_only_to_leave_types(
+    service, context, sick_leave, annual_leave, balance, organization
+):
+    """Срок подачи — про отпуск, а не про болезнь.
+
+    Требовать заявку за две недели от больничного означало бы требовать
+    планировать болезнь.
+    """
+    save_policy(organization.id, {"vacation_min_days_ahead": 14})
+
+    # Больничный на завтра проходит: он под это правило не подпадает.
+    assert service.create(
+        context, absence_type_code="SICK_LEAVE",
+        first_day=soon(1), last_day=soon(2),
+    ).request.status == "SUBMITTED"
+
+    with pytest.raises(ValidationFailed) as exc:
+        service.create(
+            context, absence_type_code="ANNUAL_LEAVE",
+            first_day=soon(3), last_day=soon(5),
+        )
+    assert exc.value.details["reason"] == "lead_time_required"
+
+
+def test_vacation_lead_time_allows_a_timely_request(
+    service, context, annual_leave, balance, organization
+):
+    save_policy(organization.id, {"vacation_min_days_ahead": 14})
+
+    view = service.create(
+        context, absence_type_code="ANNUAL_LEAVE",
+        first_day=soon(20), last_day=soon(22),
+    )
+    assert view.request.status == "SUBMITTED"
