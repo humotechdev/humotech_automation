@@ -22,7 +22,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from humotech.core.errors import PermissionDenied
+from humotech.core.errors import NotFound, PermissionDenied
 from humotech.core.rbac import AccessControl, Actor, AuditTrail
 from humotech.ai_assistant.errors import PublishingError
 from humotech.ai_assistant.models import UnansweredQuestion
@@ -67,6 +67,39 @@ class KnowledgeAdminUseCases:
     def _require(self, actor: Actor, permission: str) -> None:
         self.access.require(actor, permission)
 
+    def _require_source(
+        self, actor: Actor, source_id: uuid.UUID
+    ) -> KnowledgeSource:
+        """Источник существует И принадлежит организации актора.
+
+        Проверка живёт здесь, а не в `KnowledgePublishingService`: тот
+        слой ниже и работает без пользователя — его зовёт ещё и воркер
+        индексации, у которого организация приходит из самой строки.
+        Организацию знает только этот слой, и только он может сверить.
+
+        Без этой сверки правка, публикация и архивация чужой базы знаний
+        проходили по одному идентификатору: разрешение `knowledge.write`
+        отвечает «что можно делать», но не «с чьими данными».
+        """
+        source = KnowledgeSource.objects.filter(
+            id=source_id, organization_id=actor.organization_id
+        ).first()
+        if source is None:
+            # Чужая организация отвечает как отсутствие записи: иначе
+            # перебором можно пересчитать документы соседей.
+            raise NotFound("Источник знаний не найден")
+        return source
+
+    def _require_question(
+        self, actor: Actor, question_id: uuid.UUID
+    ) -> UnansweredQuestion:
+        question = UnansweredQuestion.objects.filter(
+            id=question_id, organization_id=actor.organization_id
+        ).first()
+        if question is None:
+            raise NotFound("Вопрос не найден")
+        return question
+
     def _audit(
         self,
         actor: Actor,
@@ -86,6 +119,11 @@ class KnowledgeAdminUseCases:
 
     def create_draft(self, actor: Actor, **payload) -> KnowledgeSource:
         self._require(actor, "knowledge.write")
+        parent_id = payload.get("parent_source_id")
+        if parent_id is not None:
+            # Новая версия чужого документа — тот же обход, только через
+            # родителя: содержимое соседней организации попало бы в нашу.
+            self._require_source(actor, parent_id)
         source = self.publishing.create_draft(
             organization_id=actor.organization_id,
             created_by_user_id=actor.user_id,
@@ -102,8 +140,8 @@ class KnowledgeAdminUseCases:
         self, actor: Actor, source_id: uuid.UUID, **fields
     ) -> KnowledgeSource:
         self._require(actor, "knowledge.write")
-        before = KnowledgeSource.objects.filter(id=source_id).first()
-        old = {"title": before.title, "status": before.status} if before else None
+        before = self._require_source(actor, source_id)
+        old = {"title": before.title, "status": before.status}
         source = self.publishing.update_draft(source_id, **fields)
         self._audit(
             actor, action="knowledge.draft.update",
@@ -116,6 +154,7 @@ class KnowledgeAdminUseCases:
 
     def start_indexing(self, actor: Actor, source_id: uuid.UUID) -> KnowledgeIndexJob:
         self._require(actor, "knowledge.index")
+        self._require_source(actor, source_id)
         job = self.publishing.enqueue_indexing(source_id)
         self._audit(
             actor, action="knowledge.index.start",
@@ -126,9 +165,7 @@ class KnowledgeAdminUseCases:
 
     def index_status(self, actor: Actor, source_id: uuid.UUID) -> IndexStatusResponse:
         self._require(actor, "knowledge.read")
-        source = KnowledgeSource.objects.filter(id=source_id).first()
-        if source is None:
-            raise PublishingError(f"Источник {source_id} не найден")
+        source = self._require_source(actor, source_id)
 
         job = (
             KnowledgeIndexJob.objects.filter(source_id=source_id)
@@ -151,6 +188,7 @@ class KnowledgeAdminUseCases:
 
     def publish(self, actor: Actor, source_id: uuid.UUID):
         self._require(actor, "knowledge.publish")
+        self._require_source(actor, source_id)
         result = self.publishing.publish(source_id, approved_by_user_id=actor.user_id)
         self._audit(
             actor, action="knowledge.publish",
@@ -167,6 +205,7 @@ class KnowledgeAdminUseCases:
 
     def archive(self, actor: Actor, source_id: uuid.UUID) -> int:
         self._require(actor, "knowledge.publish")
+        self._require_source(actor, source_id)
         revision = self.publishing.archive(source_id)
         self._audit(
             actor, action="knowledge.archive",
@@ -260,6 +299,7 @@ class KnowledgeAdminUseCases:
         self, actor: Actor, question_id: uuid.UUID, *, to_user_id: uuid.UUID
     ) -> UnansweredQuestion:
         self._require(actor, "questions.answer")
+        self._require_question(actor, question_id)
         record = self.escalation.assign(question_id, user_id=to_user_id)
         self._audit(
             actor, action="ai.question.assign",
@@ -287,6 +327,9 @@ class KnowledgeAdminUseCases:
         До этого запись остаётся в статусе DRAFT и в поиск не попадает.
         """
         self._require(actor, "questions.answer")
+        self._require_question(actor, question_id)
+        if source_id is not None:
+            self._require_source(actor, source_id)
         faq = FaqEntry.objects.create(
             organization_id=actor.organization_id,
             canonical_question=canonical_question,
@@ -359,6 +402,7 @@ class KnowledgeAdminUseCases:
         note: str | None = None,
     ) -> UnansweredQuestion:
         self._require(actor, "questions.answer")
+        self._require_question(actor, question_id)
         record = (
             self.escalation.resolve_as_answered(question_id, note=note)
             if as_answered

@@ -36,6 +36,11 @@ from humotech.absences.views import (
     AbsenceDecisionView,
     PendingAbsenceRequestsView,
 )
+from humotech.knowledge.views import (
+    FaqViewSet,
+    KnowledgeIndexJobViewSet,
+    KnowledgeSourceViewSet,
+)
 from humotech.notifications.views import NotificationViewSet
 from humotech.offices.views import OfficeViewSet
 from humotech.organizations.views import (
@@ -48,6 +53,10 @@ from humotech.qr_codes.views import (
     QrDisplayCodeView,
     QrDisplayPairView,
     QrPointViewSet,
+)
+from humotech.questions.views import (
+    EscalationViewSet,
+    UnansweredQuestionViewSet,
 )
 from humotech.regions.views import RegionViewSet
 from humotech.reports.views import ExportView
@@ -75,6 +84,26 @@ router.register("users", CrmUserViewSet, basename="crm-user")
 # Очередь уведомлений глазами кадровика: почему сообщение не дошло
 # и как отправить его снова. Отправляет по-прежнему бот.
 router.register("notifications", NotificationViewSet, basename="notification")
+# База знаний. Документы и FAQ ведутся при выключенном ассистенте —
+# отказывают только индексация и включение FAQ в поиск: посчитать
+# эмбеддинг нечем, а подставить вместо него случайный нельзя.
+router.register(
+    "knowledge/sources", KnowledgeSourceViewSet, basename="knowledge-source"
+)
+router.register("knowledge/faq", FaqViewSet, basename="knowledge-faq")
+router.register(
+    "knowledge/index-jobs", KnowledgeIndexJobViewSet,
+    basename="knowledge-index-job",
+)
+# Два разных списка под похожими названиями: кластеры формулировок для
+# пополнения базы знаний и обращения конкретных людей, ждущих ответа.
+router.register(
+    "knowledge/unanswered-questions", UnansweredQuestionViewSet,
+    basename="unanswered-question",
+)
+router.register(
+    "knowledge/escalations", EscalationViewSet, basename="escalation"
+)
 router.register(
     "calendar-exceptions", CalendarExceptionViewSet, basename="calendar-exception"
 )
