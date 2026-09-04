@@ -51,6 +51,52 @@ def service() -> AttendanceHrService:
 
 
 @pytest.fixture()
+def make_absence(db, organization):
+    """Согласованное отсутствие, накрывающее проверяемый день.
+
+    Границы хранятся моментами времени, а не датами: сутки берутся
+    целиком в поясе офиса, иначе перекрытие поехало бы на границе дня.
+    """
+    from humotech.absences.models import (
+        AbsenceRequest,
+        AbsenceType,
+        EmployeeAbsence,
+    )
+
+    def _make(employee, *, code="SICK_LEAVE", day=DAY):
+        absence_type, _ = AbsenceType.objects.get_or_create(
+            organization=organization,
+            code=code,
+            defaults={"name": code.title(), "is_paid": True,
+                      "requires_approval": True},
+        )
+        # `origin_request_id` объявлен NOT NULL: отсутствие существует
+        # только как следствие согласованной заявки. Отсутствия «просто
+        # так», без основания, в схеме нет — и это правильно.
+        origin = AbsenceRequest.objects.create(
+            organization=organization,
+            employee=employee,
+            absence_type=absence_type,
+            request_kind="CREATE",
+            requested_start_at=utc(0, day=day),
+            requested_end_at=utc(23, 59, day=day),
+            status="APPROVED",
+            submitted_at=utc(0, day=day),
+        )
+        return EmployeeAbsence.objects.create(
+            origin_request=origin,
+            organization=organization,
+            employee=employee,
+            absence_type=absence_type,
+            start_at=utc(0, day=day),
+            end_at=utc(23, 59, day=day),
+            status="ACTIVE",
+        )
+
+    return _make
+
+
+@pytest.fixture()
 def attendance_actor(make_actor, organization):
     return make_actor(
         organization,
@@ -656,3 +702,92 @@ class TestQueryCount:
         with django_assert_max_num_queries(12):
             report = service.presence(attendance_actor, day=DAY, office_id=office.id)
         assert len(report.rows) == 11
+
+
+# --- дашборд -----------------------------------------------------------------
+
+
+@pytest.mark.django_db
+class TestDashboard:
+    def test_card_number_matches_the_list_behind_it(
+        self, attendance_client, organization, employee, office
+    ):
+        """Число на карточке и список по её адресу — одно и то же.
+
+        Это главное свойство дашборда. Если карточка считает сама, а список
+        отбирает по своим правилам, они однажды разойдутся, и объяснить
+        расхождение будет нечем: кадровик поверит тому числу, которое
+        меньше, и окажется неправ.
+        """
+        open_session(organization, employee, office)
+
+        board = attendance_client.get(
+            f"{API}/dashboard",
+            {"date": DAY.isoformat(), "office_id": str(office.id)},
+        ).json()
+
+        card = next(c for c in board["cards"] if c["key"] == "in_office")
+        assert card["value"] == 1
+
+        listing = attendance_client.get(card["endpoint"], card["params"]).json()
+        assert listing["total"] == card["value"]
+        assert listing["items"][0]["employee_id"] == str(employee.id)
+
+    def test_headcount_and_shift_are_different_numbers(
+        self, attendance_client, organization, employee, office
+    ):
+        # В штате человек есть, но графика у него нет — значит, «должны
+        # работать сегодня» про него ничего не утверждает.
+        board = attendance_client.get(
+            f"{API}/dashboard",
+            {"date": DAY.isoformat(), "office_id": str(office.id)},
+        ).json()
+
+        cards = {c["key"]: c["value"] for c in board["cards"]}
+        assert cards["active_employees"] == 1
+        assert cards["should_work_today"] == 0
+
+    def test_marks_during_absence_are_shown_as_something_to_check(
+        self, attendance_client, organization, employee, office, make_absence
+    ):
+        make_absence(employee, code="SICK_LEAVE")
+        open_session(organization, employee, office)
+
+        board = attendance_client.get(
+            f"{API}/dashboard",
+            {"date": DAY.isoformat(), "office_id": str(office.id)},
+        ).json()
+
+        codes = {w["code"] for w in board["warnings"]}
+        assert "marks_during_absence" in codes
+        # Человек при этом числится на больничном, а не «пришедшим»:
+        # отсутствие сильнее присутствия.
+        cards = {c["key"]: c["value"] for c in board["cards"]}
+        assert cards["sick_leave"] == 1
+        assert cards["in_office"] == 0
+
+    def test_pending_requests_hidden_without_permission(
+        self, api_client, make_user, organization
+    ):
+        """Карточка «12 заявок ждут» тому, кто не может открыть ни одну, —
+        это утечка числа, а не полезная сводка."""
+        user = make_user(organization, permissions=("attendance.read",))
+        api_client.force_authenticate(user=user)
+
+        board = api_client.get(f"{API}/dashboard").json()
+        cards = {c["key"]: c["value"] for c in board["cards"]}
+        assert cards["pending_requests"] == 0
+
+    def test_dashboard_respects_scope(
+        self, api_client, make_user, organization, employee, office, other_office
+    ):
+        open_session(organization, employee, office)
+        stranger = make_user(
+            organization, permissions=("attendance.read",), office=other_office
+        )
+        api_client.force_authenticate(user=stranger)
+
+        board = api_client.get(f"{API}/dashboard", {"date": DAY.isoformat()}).json()
+        cards = {c["key"]: c["value"] for c in board["cards"]}
+        assert cards["in_office"] == 0
+        assert cards["active_employees"] == 0

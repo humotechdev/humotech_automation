@@ -8,6 +8,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from humotech.accounts.views import CurrentUserView, LoginView, LogoutView
+from humotech.analytics.views import DashboardView
 from humotech.attendance.views import (
     AttendanceViewSet,
     CorrectionDecisionView,
@@ -100,6 +101,10 @@ urlpatterns = [
         QrDeviceActionView.as_view(),
         name="qr-device-action",
     ),
+    # Главная страница CRM: одним запросом вместо тринадцати. Каждая
+    # карточка несёт адрес, по которому виден её состав, — число без
+    # такого адреса кадровику бесполезно.
+    path("dashboard", DashboardView.as_view(), name="dashboard"),
     # Посещаемость глазами кадровика. Сырые события отдаются только на
     # чтение: строка отметки не меняется никогда, а исправление — это
     # либо решение по заявке, либо новое событие с source = MANUAL.
