@@ -66,5 +66,8 @@ urlpatterns = [
     path(
         "telegram/mini-app/me", MiniAppMeView.as_view(), name="telegram-mini-app-me"
     ),
+    # Личный кабинет сотрудника. Один набор endpoint'ов на Mini App и бота:
+    # разные клиенты, но одни и те же цифры.
+    path("me/", include("humotech.selfservice.urls")),
     path("", include(router.urls)),
 ]

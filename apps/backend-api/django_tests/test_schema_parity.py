@@ -46,6 +46,14 @@ def _django_url() -> str:
 #   * у привязки появился статус PENDING — переход по ссылке больше не даёт
 #     доступа сам по себе, доступ открывает подтверждение HR.
 #
+# Этап сотруднической части:
+#   * экраны показа QR стали объектом со своим доступом: раньше код мог
+#     запросить кто угодно, знающий адрес;
+#   * у сессии показа появилась ссылка на экран — иначе на вопрос «какой
+#     экран показал код, по которому прошла отметка» ответа нет;
+#   * таблица уведомлений превратилась в очередь отправки: попытки, время
+#     следующей попытки, захват строки отправщиком и ключ повтора.
+#
 # Ничего, кроме перечисленного, разойтись не имеет права: любая другая
 # строка в выводе `diff` роняет тест.
 KNOWN_DIVERGENCES = {
@@ -55,6 +63,31 @@ KNOWN_DIVERGENCES = {
     "telegram_accounts: лишнее ограничение: "
     "check (((status) = any "
     "((array['pending', 'active', 'revoked', 'blocked'])[])))",
+    # --- экраны показа QR ---
+    "ЛИШНЯЯ ТАБЛИЦА: qr_display_devices",
+    "qr_display_sessions.device_id: лишняя колонка",
+    "qr_display_sessions: лишнее ограничение: foreign key (device_id) "
+    "references qr_display_devices(id) on delete restrict",
+    "qr_display_sessions: лишний индекс: "
+    "public.qr_display_sessions using btree (device_id)",
+    # --- очередь отправки уведомлений ---
+    "notifications.attempts: лишняя колонка",
+    "notifications.idempotency_key: лишняя колонка",
+    "notifications.locked_at: лишняя колонка",
+    "notifications.next_attempt_at: лишняя колонка",
+    "notifications: ОГРАНИЧЕНИЕ ОТСУТСТВУЕТ: check (((status) = any "
+    "((array['pending', 'sent', 'failed', 'cancelled', 'read'])[])))",
+    "notifications: лишнее ограничение: "
+    "check ((((status) <> 'running') or (locked_at is not null)))",
+    "notifications: лишнее ограничение: check (((status) = any "
+    "((array['pending', 'running', 'sent', 'failed', 'cancelled', "
+    "'read'])[])))",
+    "notifications: лишнее ограничение: check ((attempts >= 0))",
+    "notifications: лишнее ограничение: not null attempts",
+    "notifications: лишний индекс: public.notifications using btree "
+    "(next_attempt_at) where ((status) = 'pending')",
+    "notifications: лишний индекс: public.notifications using btree "
+    "(organization_id, idempotency_key) where (idempotency_key is not null)",
 }
 
 
@@ -89,9 +122,10 @@ def test_business_schema_has_expected_shape():
     снятое ограничение, пропавший индекс.
     """
     snapshot = dump(_django_url())
-    # 44 таблицы перенесены с Alembic + telegram_link_invitations.
-    assert len(snapshot["tables"]) == 45, (
-        f"бизнес-таблиц {len(snapshot['tables'])}, ожидалось 45"
+    # 44 таблицы перенесены с Alembic, + telegram_link_invitations,
+    # + qr_display_devices.
+    assert len(snapshot["tables"]) == 46, (
+        f"бизнес-таблиц {len(snapshot['tables'])}, ожидалось 46"
     )
 
     counts = {"c": 0, "f": 0, "u": 0, "x": 0}
@@ -106,8 +140,15 @@ def test_business_schema_has_expected_shape():
     #   UNIQUE 20 + 1  — хеш токена. Второй уникальный ключ приглашений
     #                    частичный, а частичный Django строит ИНДЕКСОМ,
     #                    и в pg_constraint он не попадает.
-    assert counts["c"] == 93, f"CHECK: {counts['c']}, ожидалось 93"
-    assert counts["f"] == 131, f"FOREIGN KEY: {counts['f']}, ожидалось 131"
+    #
+    # Прибавка сотруднической части:
+    #   CHECK  93 + 6  — четыре у экранов показа (статус и три согласования
+    #                    состояния с секретами) и два в очереди отправки;
+    #   FK    131 + 4  — организация, точка и автор у экрана, плюс ссылка
+    #                    сессии показа на экран;
+    #   UNIQUE 21 + 0  — оба новых ключа частичные, то есть индексы.
+    assert counts["c"] == 99, f"CHECK: {counts['c']}, ожидалось 99"
+    assert counts["f"] == 135, f"FOREIGN KEY: {counts['f']}, ожидалось 135"
     assert counts["u"] == 21, f"UNIQUE: {counts['u']}, ожидалось 21"
     assert counts["x"] == 2, f"EXCLUDE: {counts['x']}, ожидалось 2"
     assert {"btree_gist", "vector"} <= set(snapshot["extensions"])
@@ -133,7 +174,7 @@ def test_every_foreign_key_keeps_its_on_delete_action():
         )
         rows = cursor.fetchall()
 
-    assert len(rows) == 131, f"внешних ключей {len(rows)}, ожидалось 131"
+    assert len(rows) == 135, f"внешних ключей {len(rows)}, ожидалось 135"
 
     # 'a' = NO ACTION: значит, действие не задано
     without_action = [f"{t}.{n}" for t, n, kind, _ in rows if kind == "a"]
@@ -149,8 +190,9 @@ def test_every_foreign_key_keeps_its_on_delete_action():
     for _, _, kind, _ in rows:
         actions[kind] = actions.get(kind, 0) + 1
     # +3 RESTRICT и +1 SET NULL — ключи telegram_link_invitations.
-    # SET NULL ровно один: учётную запись HR можно заблокировать, но запись
-    # о принятом им решении обязана остаться.
-    assert actions["r"] == 110, f"RESTRICT: {actions['r']}, ожидалось 110"
-    assert actions["n"] == 15, f"SET NULL: {actions['n']}, ожидалось 15"
+    # Ещё +3 RESTRICT и +1 SET NULL — экраны показа QR. SET NULL в обоих
+    # случаях один и тот же по смыслу: учётную запись сотрудника HR можно
+    # заблокировать, но запись о том, что он что-то создал, обязана остаться.
+    assert actions["r"] == 113, f"RESTRICT: {actions['r']}, ожидалось 113"
+    assert actions["n"] == 16, f"SET NULL: {actions['n']}, ожидалось 16"
     assert actions["c"] == 6, f"CASCADE: {actions['c']}, ожидалось 6"

@@ -33,7 +33,22 @@ def domain_exception_handler(exc, context):
             "error": {
                 "code": str(code),
                 "message": str(message) if message else "Запрос не выполнен",
-                "details": None if message else detail,
+                "details": _details(detail, message),
             }
         }
     return response
+
+
+def _details(detail, message):
+    """Что положить в `details` рядом с текстом.
+
+    Исключение может нести не только текст: отказ во входе, например,
+    добавляет `reason`, по которому бот выбирает формулировку человеку.
+    Без этой ветки всё, кроме `detail`, молча терялось бы, и клиент
+    различал бы причины по тексту сообщения — то есть перестал бы их
+    различать при первом же переводе.
+    """
+    if message is None:
+        return detail
+    extra = {key: value for key, value in detail.items() if key != "detail"}
+    return extra or None

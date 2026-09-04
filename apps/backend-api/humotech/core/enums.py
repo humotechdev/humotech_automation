@@ -40,6 +40,11 @@ CALENDAR_EXCEPTION_TYPES = ("HOLIDAY", "SHORT_DAY", "WORKING_WEEKEND", "CLOSURE"
 QR_DIRECTION_MODES = ("ENTRY", "EXIT", "BOTH")
 QR_MODES = ("STATIC", "ROTATING")
 QR_DISPLAY_SESSION_STATUSES = ("ACTIVE", "EXPIRED", "REVOKED", "CLOSED")
+# Экран в офисе, показывающий меняющийся QR.
+#   PENDING — заведён, но ещё не сопряжён: на руках только одноразовый код;
+#   ACTIVE  — сопряжён, у него есть свой credential;
+#   REVOKED — доступ отозван, новых кодов не получает.
+QR_DISPLAY_DEVICE_STATUSES = ("PENDING", "ACTIVE", "REVOKED")
 DEVICE_STATUSES = ("PENDING", "TRUSTED", "REVOKED")
 
 # --- отметки ---
@@ -110,7 +115,13 @@ QUESTION_STATUSES = (
     "NEW", "AI_ANSWERED", "ESCALATED_TO_HR", "HR_ANSWERED", "CLOSED",
 )
 NOTIFICATION_CHANNELS = ("TELEGRAM", "EMAIL", "PUSH", "IN_APP")
-NOTIFICATION_STATUSES = ("PENDING", "SENT", "FAILED", "CANCELLED", "READ")
+# Очередь отправки (transactional outbox). PENDING — это и есть «в очереди»:
+# заводить отдельный QUEUED значило бы иметь два имени одного состояния.
+# RUNNING держит строку, которую уже взял отправщик, — без него повторный
+# запуск воркера отправил бы сообщение дважды.
+NOTIFICATION_STATUSES = (
+    "PENDING", "RUNNING", "SENT", "FAILED", "CANCELLED", "READ",
+)
 
 # --- роли, создаваемые сидом ---
 SYSTEM_ROLE_CODES = (

@@ -12,6 +12,7 @@ from django.db import models
 from humotech.core.constraints import raw_check
 from humotech.core.enums import (
     QR_DIRECTION_MODES,
+    QR_DISPLAY_DEVICE_STATUSES,
     QR_DISPLAY_SESSION_STATUSES,
     QR_MODES,
     choices,
@@ -96,6 +97,103 @@ class OfficeQrPoint(
         return f"{self.code} — {self.name}"
 
 
+class QrDisplayDevice(
+    UUIDPrimaryKeyModel, OrganizationScopedModel, TimestampedModel
+):
+    """Экран в офисе, которому разрешено запрашивать коды.
+
+    Экран привязан к одной QR-точке, и офис берётся из неё. Frontend не
+    передаёт ни офис, ни точку: подменить можно только то, что где-то
+    принимается.
+
+    Живёт в два шага. Сначала HR заводит устройство и получает одноразовый
+    код сопряжения — он показывается ровно один раз, в базе от него остаётся
+    только хеш. Экран предъявляет этот код, получает собственный долгий
+    credential и переходит в ACTIVE; хеш кода сопряжения при этом стирается,
+    поэтому второй раз тем же кодом сопрячься нельзя.
+    """
+
+    qr_point = models.ForeignKey(
+        OfficeQrPoint,
+        on_delete=models.PROTECT,
+        db_column="qr_point_id",
+        db_index=False,
+        related_name="display_devices",
+    )
+    name = models.CharField(max_length=255)
+    status = models.CharField(
+        max_length=20, choices=choices(QR_DISPLAY_DEVICE_STATUSES)
+    )
+    # Только хеши. Ни код сопряжения, ни credential в базе не лежат:
+    # чтения базы недостаточно, чтобы начать выдавать коды.
+    pairing_secret_hash = models.CharField(max_length=64, null=True, blank=True)
+    pairing_expires_at = models.DateTimeField(null=True, blank=True)
+    paired_at = models.DateTimeField(null=True, blank=True)
+    credential_hash = models.CharField(max_length=64, null=True, blank=True)
+    credential_issued_at = models.DateTimeField(null=True, blank=True)
+    credential_expires_at = models.DateTimeField(null=True, blank=True)
+    last_seen_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    created_by_user = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,
+        db_column="created_by_user_id",
+        db_index=False,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+
+    class Meta:
+        db_table = "qr_display_devices"
+        verbose_name = "экран показа QR"
+        verbose_name_plural = "экраны показа QR"
+        constraints = [
+            status_check(
+                "status", QR_DISPLAY_DEVICE_STATUSES, "ck_qr_display_devices_status"
+            ),
+            # Состояние и наличие секретов должны совпадать, иначе устройство
+            # оказывается ACTIVE без credential — то есть недоступно, но
+            # выглядит рабочим.
+            raw_check(
+                "status <> 'PENDING' OR pairing_secret_hash IS NOT NULL",
+                "ck_qr_display_devices_pending_has_secret",
+            ),
+            raw_check(
+                "status <> 'ACTIVE' OR credential_hash IS NOT NULL",
+                "ck_qr_display_devices_active_has_credential",
+            ),
+            # Отозванное устройство не должно сохранять рабочий credential:
+            # иначе отзыв виден в интерфейсе, но не в проверке доступа.
+            raw_check(
+                "status <> 'REVOKED' "
+                "OR (revoked_at IS NOT NULL AND credential_hash IS NULL)",
+                "ck_qr_display_devices_revoked_is_disarmed",
+            ),
+            models.UniqueConstraint(
+                fields=["credential_hash"],
+                condition=models.Q(credential_hash__isnull=False),
+                name="uq_qr_display_devices_credential",
+            ),
+            models.UniqueConstraint(
+                fields=["pairing_secret_hash"],
+                condition=models.Q(pairing_secret_hash__isnull=False),
+                name="uq_qr_display_devices_pairing_secret",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["organization"], name="ix_qr_display_devices_organization_id"
+            ),
+            models.Index(
+                fields=["qr_point"], name="ix_qr_display_devices_qr_point_id"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.name} ({self.status})"
+
+
 class QrDisplaySession(UUIDPrimaryKeyModel, OrganizationScopedModel, CreatedAtModel):
     """Сессия показа меняющегося QR на экране терминала."""
 
@@ -105,6 +203,15 @@ class QrDisplaySession(UUIDPrimaryKeyModel, OrganizationScopedModel, CreatedAtMo
         db_column="qr_point_id",
         db_index=False,
         related_name="display_sessions",
+    )
+    device = models.ForeignKey(
+        QrDisplayDevice,
+        on_delete=models.PROTECT,
+        db_column="device_id",
+        db_index=False,
+        null=True,
+        blank=True,
+        related_name="sessions",
     )
     # Только хеш идентификатора экрана: сам идентификатор не хранится.
     display_identifier_hash = models.TextField(null=True, blank=True)
@@ -146,6 +253,7 @@ class QrDisplaySession(UUIDPrimaryKeyModel, OrganizationScopedModel, CreatedAtMo
             models.Index(
                 fields=["qr_point"], name="ix_qr_display_sessions_qr_point_id"
             ),
+            models.Index(fields=["device"], name="ix_qr_display_sessions_device_id"),
         ]
 
     def __str__(self) -> str:

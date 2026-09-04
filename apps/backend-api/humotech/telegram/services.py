@@ -47,16 +47,21 @@ from humotech.core.rbac import Actor, snapshot
 from humotech.core.service import BaseService
 from humotech.employees.models import Employee, EmployeeAssignment
 from humotech.employees.selectors import require_visible_employee
+from humotech.telegram.identity import (
+    # Статусы сотрудника, при которых привязка невозможна, определены там же,
+    # где и проверка допуска: два списка разошлись бы.
+    BLOCKED_EMPLOYMENT_STATUSES,
+    AccessDenied,
+    EmployeeContext,
+    resolve_account,
+    resolve_by_telegram_user_id,
+)
 from humotech.telegram.models import TelegramAccount, TelegramLinkInvitation
 from humotech.telegram.tokens import (
     build_invitation_link,
     generate_invitation_token,
     hash_invitation_token,
 )
-
-# Статусы сотрудника, при которых привязка невозможна: уволенному и
-# отправленному в архив доступ не открывают.
-BLOCKED_EMPLOYMENT_STATUSES = ("TERMINATED", "ARCHIVED")
 
 # Что попадает в журнал. Токена здесь нет и быть не может — ни открытого,
 # ни хеша: `AuditTrail` вычёркивает `token_hash` дополнительно, но правильнее
@@ -72,6 +77,16 @@ ACCOUNT_AUDIT_FIELDS = (
 
 ENTITY_INVITATION = "telegram_link_invitations"
 ENTITY_ACCOUNT = "telegram_accounts"
+
+# Что показать человеку при отказе. Различаются ровно три случая, потому что
+# делать в них надо разное: подождать, попросить ссылку, идти к HR. Все
+# остальные причины сведены к последнему — по разнице ответов иначе
+# выясняют, кто заведён в системе.
+MINI_APP_REFUSALS = {
+    "not_linked": "Telegram не привязан к сотруднику",
+    "pending_confirmation": "Привязка ожидает подтверждения отдела кадров",
+    "access_denied": "Доступ закрыт: обратитесь в отдел кадров",
+}
 
 
 @dataclass(frozen=True)
@@ -641,39 +656,18 @@ class TelegramMiniAppService(BaseService):
                 details={"reason": "init_data_rejected"},
             ) from exc
 
-        account = (
-            TelegramAccount.objects.select_related("employee", "organization")
-            .filter(telegram_user_id=verified.user.id)
-            .first()
-        )
-        # Все три отказа отвечают разными кодами, но одинаково безопасно:
-        # ни один не раскрывает, есть ли в системе такой сотрудник.
-        if account is None:
+        # Дальше — тот же шлюз, что и у бота. Отдельная цепочка проверок
+        # здесь разошлась бы с ботовой на первой же правке.
+        resolved = resolve_by_telegram_user_id(verified.user.id, now=now)
+        if isinstance(resolved, AccessDenied):
             raise PermissionDenied(
-                "Telegram не привязан к сотруднику",
-                details={"reason": "not_linked"},
+                MINI_APP_REFUSALS.get(
+                    resolved.public_reason, "Доступ закрыт: обратитесь в отдел кадров"
+                ),
+                details={"reason": resolved.public_reason},
             )
-        if account.status == "PENDING":
-            raise PermissionDenied(
-                "Привязка ожидает подтверждения отдела кадров",
-                details={"reason": "pending_confirmation"},
-            )
-        if account.status != "ACTIVE":
-            raise PermissionDenied(
-                "Привязка Telegram отключена",
-                details={"reason": "not_linked"},
-            )
-
-        employee = account.employee
-        if (
-            employee.employment_status in BLOCKED_EMPLOYMENT_STATUSES
-            or employee.archived_at is not None
-            or account.organization.status != "ACTIVE"
-        ):
-            raise PermissionDenied(
-                "Доступ закрыт: обратитесь в отдел кадров",
-                details={"reason": "not_linked"},
-            )
+        account = resolved.account
+        employee = resolved.employee
 
         account.last_interaction_at = now or timezone.now()
         account.save(update_fields=["last_interaction_at", "updated_at"])
@@ -693,7 +687,7 @@ class TelegramMiniAppService(BaseService):
             expires_in=config["MINI_APP_SESSION_SECONDS"],
         )
 
-    def resolve(self, token: str) -> tuple[TelegramAccount, Employee] | None:
+    def resolve(self, token: str) -> EmployeeContext | None:
         """Проверка внутреннего токена на каждом запросе Mini App.
 
         Подписи мало. Строка привязки у сотрудника одна и переиспользуется
@@ -715,20 +709,14 @@ class TelegramMiniAppService(BaseService):
 
         account = (
             TelegramAccount.objects.select_related("employee", "organization")
-            .filter(id=claims.telegram_account_id, status="ACTIVE")
+            .filter(id=claims.telegram_account_id)
             .first()
         )
         if account is None or account.telegram_user_id != claims.telegram_user_id:
             return None
 
-        employee = account.employee
-        if (
-            employee.employment_status in BLOCKED_EMPLOYMENT_STATUSES
-            or employee.archived_at is not None
-            or account.organization.status != "ACTIVE"
-        ):
-            return None
-        return account, employee
+        resolved = resolve_account(account)
+        return None if isinstance(resolved, AccessDenied) else resolved
 
 
 __all__ = [

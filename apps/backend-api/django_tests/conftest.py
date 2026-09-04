@@ -448,6 +448,12 @@ def telegram_settings(settings):
         "MINI_APP_SESSION_SECONDS": 43200,
         "MINI_APP_ALLOWED_ORIGINS": ["https://mini.humotech.tj"],
     }
+    # CORS читает свой словарь: списки origin'ов у Mini App и у экранов
+    # показа QR разные, и держать их в настройках Telegram было бы неверно.
+    settings.CORS_ORIGINS = {
+        "MINI_APP_ALLOWED_ORIGINS": ["https://mini.humotech.tj"],
+        "QR_DISPLAY_ALLOWED_ORIGINS": ["https://qr.humotech.tj"],
+    }
     return settings.TELEGRAM
 
 
@@ -492,3 +498,62 @@ def build_init_data(
 
     fields.update(tamper or {})
     return urlencode(fields)
+
+
+# --- вход сотрудника ---
+#
+# Привязка через полный путь HR -> ссылка -> переход -> подтверждение здесь
+# не нужна: он проверен отдельно. Тестам сотруднической части нужна уже
+# готовая рабочая привязка, и делать её каждый раз в четыре шага значило бы
+# проверять чужой сценарий заодно со своим.
+
+def link_telegram(
+    employee,
+    *,
+    telegram_user_id: int = 777_000_111,
+    status: str = "ACTIVE",
+    username: str | None = "ivan",
+):
+    """Готовая привязка Telegram нужного состояния."""
+    from humotech.telegram.models import TelegramAccount
+
+    return TelegramAccount.objects.create(
+        organization=employee.organization,
+        employee=employee,
+        telegram_user_id=telegram_user_id,
+        telegram_chat_id=telegram_user_id,
+        telegram_username=username,
+        language_code="ru",
+        status=status,
+        connected_at=datetime.now(tz=dt_timezone.utc),
+    )
+
+
+@pytest.fixture()
+def linked_account(db, employee, telegram_settings):
+    """Сотрудник с подтверждённой привязкой."""
+    return link_telegram(employee)
+
+
+def bot_headers(telegram_user_id: int = 777_000_111, *, secret: str = TEST_BOT_SECRET):
+    """Заголовки бота, действующего за сотрудника.
+
+    Ровно два: общий секрет и подтверждённый Telegram ID. Ни `employee_id`,
+    ни `organization_id` здесь нет и появиться не может — их негде принять.
+    """
+    return {
+        "HTTP_X_BOT_TOKEN": secret,
+        "HTTP_X_TELEGRAM_USER_ID": str(telegram_user_id),
+    }
+
+
+@pytest.fixture()
+def bot_client():
+    """Отдельный клиент для бота.
+
+    Именно отдельный: общий `api_client` в этом наборе уже носит сессию HR,
+    и подмешанная авторизация превратила бы отказ в успех незаметно.
+    """
+    from rest_framework.test import APIClient
+
+    return APIClient()

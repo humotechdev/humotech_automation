@@ -183,7 +183,7 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     # CORS только для Mini App и только для его путей — см. модуль.
-    "humotech.telegram.middleware.MiniAppCorsMiddleware",
+    "humotech.core.cors.ScopedCorsMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -250,8 +250,26 @@ REST_FRAMEWORK = {
         "telegram_bot_link": env("THROTTLE_TELEGRAM_BOT_LINK", "60/min"),
         # Выдача ссылок HR. Массовая рассылка ссылок — не рабочий сценарий.
         "telegram_invitations": env("THROTTLE_TELEGRAM_INVITATIONS", "60/min"),
+        # Личный кабинет. Считается на сотрудника, а не на адрес: за одним
+        # офисным IP сидит весь офис, и общий счётчик закрыл бы доступ всем
+        # из-за одного. Предел щедрый — экран обновляет статус сам.
+        "employee_self": env("THROTTLE_EMPLOYEE_SELF", "120/min"),
     },
 }
+
+def _origin_list(name: str) -> list[str]:
+    """Список origin'ов из переменной окружения через запятую.
+
+    Хвостовой слэш снимается: браузер шлёт Origin без него, а человек
+    в `.env` его нередко дописывает, и сравнение молча переставало
+    совпадать.
+    """
+    return [
+        origin.strip().rstrip("/")
+        for origin in env(name, "").split(",")
+        if origin.strip()
+    ]
+
 
 # --- Telegram ---
 #
@@ -283,13 +301,21 @@ TELEGRAM = {
     # бы к найденной ссылке ЧУЖОЙ Telegram.
     "BOT_API_SECRET": env("TELEGRAM_BOT_API_SECRET"),
     # Origin'ы, которым разрешено обращаться к endpoint'ам Mini App.
-    # Пусто = браузерных клиентов нет вовсе.
-    "MINI_APP_ALLOWED_ORIGINS": [
-        origin.strip().rstrip("/")
-        for origin in env("TELEGRAM_MINI_APP_ALLOWED_ORIGINS", "").split(",")
-        if origin.strip()
-    ],
+    # Пусто = браузерных клиентов нет вовсе. Тот же список читает
+    # `CORS_ORIGINS` ниже — здесь он остаётся ради обратной совместимости
+    # с кодом, который берёт настройки Mini App одним словарём.
+    "MINI_APP_ALLOWED_ORIGINS": _origin_list("TELEGRAM_MINI_APP_ALLOWED_ORIGINS"),
 }
+
+# --- CORS ---
+#
+# Ключи соответствуют зонам в `humotech/core/cors.py`. Списки РАЗНЫЕ
+# намеренно: адрес Mini App не должен попутно открывать выдачу QR-кодов.
+CORS_ORIGINS = {
+    "MINI_APP_ALLOWED_ORIGINS": _origin_list("TELEGRAM_MINI_APP_ALLOWED_ORIGINS"),
+    "QR_DISPLAY_ALLOWED_ORIGINS": _origin_list("QR_DISPLAY_ALLOWED_ORIGINS"),
+}
+
 
 PASSWORD_HASHERS = [
     "django.contrib.auth.hashers.Argon2PasswordHasher",
