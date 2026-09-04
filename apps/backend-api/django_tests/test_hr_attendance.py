@@ -51,52 +51,6 @@ def service() -> AttendanceHrService:
 
 
 @pytest.fixture()
-def make_absence(db, organization):
-    """Согласованное отсутствие, накрывающее проверяемый день.
-
-    Границы хранятся моментами времени, а не датами: сутки берутся
-    целиком в поясе офиса, иначе перекрытие поехало бы на границе дня.
-    """
-    from humotech.absences.models import (
-        AbsenceRequest,
-        AbsenceType,
-        EmployeeAbsence,
-    )
-
-    def _make(employee, *, code="SICK_LEAVE", day=DAY):
-        absence_type, _ = AbsenceType.objects.get_or_create(
-            organization=organization,
-            code=code,
-            defaults={"name": code.title(), "is_paid": True,
-                      "requires_approval": True},
-        )
-        # `origin_request_id` объявлен NOT NULL: отсутствие существует
-        # только как следствие согласованной заявки. Отсутствия «просто
-        # так», без основания, в схеме нет — и это правильно.
-        origin = AbsenceRequest.objects.create(
-            organization=organization,
-            employee=employee,
-            absence_type=absence_type,
-            request_kind="CREATE",
-            requested_start_at=utc(0, day=day),
-            requested_end_at=utc(23, 59, day=day),
-            status="APPROVED",
-            submitted_at=utc(0, day=day),
-        )
-        return EmployeeAbsence.objects.create(
-            origin_request=origin,
-            organization=organization,
-            employee=employee,
-            absence_type=absence_type,
-            start_at=utc(0, day=day),
-            end_at=utc(23, 59, day=day),
-            status="ACTIVE",
-        )
-
-    return _make
-
-
-@pytest.fixture()
 def attendance_actor(make_actor, organization):
     return make_actor(
         organization,
@@ -750,7 +704,7 @@ class TestDashboard:
     def test_marks_during_absence_are_shown_as_something_to_check(
         self, attendance_client, organization, employee, office, make_absence
     ):
-        make_absence(employee, code="SICK_LEAVE")
+        make_absence(employee, code="SICK_LEAVE", day=DAY)
         open_session(organization, employee, office)
 
         board = attendance_client.get(

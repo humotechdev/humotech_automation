@@ -8,7 +8,11 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from humotech.accounts.views import CurrentUserView, LoginView, LogoutView
-from humotech.analytics.views import DashboardView
+from humotech.analytics.views import (
+    AnalyticsView,
+    ComparisonView,
+    DashboardView,
+)
 from humotech.attendance.views import (
     AttendanceViewSet,
     CorrectionDecisionView,
@@ -107,6 +111,10 @@ urlpatterns = [
     # карточка несёт адрес, по которому виден её состав, — число без
     # такого адреса кадровику бесполезно.
     path("dashboard", DashboardView.as_view(), name="dashboard"),
+    # Аналитика. Каждая доля приходит с числителем, знаменателем и
+    # словесным определением формулы: процент без них проверить нечем.
+    path("analytics", AnalyticsView.as_view(), name="analytics"),
+    path("analytics/compare", ComparisonView.as_view(), name="analytics-compare"),
     # Посещаемость глазами кадровика. Сырые события отдаются только на
     # чтение: строка отметки не меняется никогда, а исправление — это
     # либо решение по заявке, либо новое событие с source = MANUAL.

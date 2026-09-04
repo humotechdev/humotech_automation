@@ -557,3 +557,66 @@ def bot_client():
     from rest_framework.test import APIClient
 
     return APIClient()
+
+
+def _day_bounds(day, tz_name: str = "Asia/Dushanbe"):
+    """Сутки целиком в поясе офиса, приведённые к UTC.
+
+    Не в UTC напрямую: офис живёт в +5, и «сутки» от полуночи UTC
+    накрывают пять часов СЛЕДУЮЩЕГО местного дня. Отсутствие, заданное
+    так, молча становится двухдневным — и знаменатель посещаемости
+    уезжает на день.
+    """
+    from zoneinfo import ZoneInfo
+
+    zone = ZoneInfo(tz_name)
+    start = datetime(day.year, day.month, day.day, 0, 0, tzinfo=zone)
+    end = datetime(day.year, day.month, day.day, 23, 59, tzinfo=zone)
+    return start.astimezone(dt_timezone.utc), end.astimezone(dt_timezone.utc)
+
+
+@pytest.fixture()
+def make_absence(db, organization):
+    """Согласованное отсутствие, накрывающее проверяемый день.
+
+    Границы хранятся моментами времени, а не датами: сутки берутся
+    целиком в поясе офиса, иначе перекрытие поехало бы на границе дня.
+    """
+    from humotech.absences.models import (
+        AbsenceRequest,
+        AbsenceType,
+        EmployeeAbsence,
+    )
+
+    def _make(employee, *, code="SICK_LEAVE", day, tz_name="Asia/Dushanbe"):
+        first_moment, last_moment = _day_bounds(day, tz_name)
+        absence_type, _ = AbsenceType.objects.get_or_create(
+            organization=organization,
+            code=code,
+            defaults={"name": code.title(), "is_paid": True,
+                      "requires_approval": True},
+        )
+        # `origin_request_id` объявлен NOT NULL: отсутствие существует
+        # только как следствие согласованной заявки. Отсутствия «просто
+        # так», без основания, в схеме нет — и это правильно.
+        origin = AbsenceRequest.objects.create(
+            organization=organization,
+            employee=employee,
+            absence_type=absence_type,
+            request_kind="CREATE",
+            requested_start_at=first_moment,
+            requested_end_at=last_moment,
+            status="APPROVED",
+            submitted_at=first_moment,
+        )
+        return EmployeeAbsence.objects.create(
+            origin_request=origin,
+            organization=organization,
+            employee=employee,
+            absence_type=absence_type,
+            start_at=first_moment,
+            end_at=last_moment,
+            status="ACTIVE",
+        )
+
+    return _make
