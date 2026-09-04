@@ -56,6 +56,10 @@ def _django_url() -> str:
 #
 # Ничего, кроме перечисленного, разойтись не имеет права: любая другая
 # строка в выводе `diff` роняет тест.
+#   * очередь фоновых выгрузок: большой XLSX собирается воркером, а не
+#     в запросе, и заданию нужны состояние, попытки и ссылка на файл;
+#   * у календарного исключения появилось основание переноса — название
+#     видит сотрудник, основание читает кадровик.
 KNOWN_DIVERGENCES = {
     "ЛИШНЯЯ ТАБЛИЦА: telegram_link_invitations",
     "telegram_accounts: ОГРАНИЧЕНИЕ ОТСУТСТВУЕТ: "
@@ -88,6 +92,9 @@ KNOWN_DIVERGENCES = {
     "(next_attempt_at) where ((status) = 'pending')",
     "notifications: лишний индекс: public.notifications using btree "
     "(organization_id, idempotency_key) where (idempotency_key is not null)",
+    # --- фоновые выгрузки и основание переноса ---
+    "ЛИШНЯЯ ТАБЛИЦА: export_jobs",
+    "calendar_exceptions.reason: лишняя колонка",
 }
 
 
@@ -123,9 +130,9 @@ def test_business_schema_has_expected_shape():
     """
     snapshot = dump(_django_url())
     # 44 таблицы перенесены с Alembic, + telegram_link_invitations,
-    # + qr_display_devices.
-    assert len(snapshot["tables"]) == 46, (
-        f"бизнес-таблиц {len(snapshot['tables'])}, ожидалось 46"
+    # + qr_display_devices, + export_jobs.
+    assert len(snapshot["tables"]) == 47, (
+        f"бизнес-таблиц {len(snapshot['tables'])}, ожидалось 47"
     )
 
     counts = {"c": 0, "f": 0, "u": 0, "x": 0}
@@ -147,8 +154,14 @@ def test_business_schema_has_expected_shape():
     #   FK    131 + 4  — организация, точка и автор у экрана, плюс ссылка
     #                    сессии показа на экран;
     #   UNIQUE 21 + 0  — оба новых ключа частичные, то есть индексы.
-    assert counts["c"] == 99, f"CHECK: {counts['c']}, ожидалось 99"
-    assert counts["f"] == 135, f"FOREIGN KEY: {counts['f']}, ожидалось 135"
+    #
+    # Прибавка очереди выгрузок:
+    #   CHECK  99 + 1  — статус задания;
+    #   FK    135 + 2  — организация и автор выгрузки;
+    #   UNIQUE 21 + 0  — уникальных ключей у очереди нет: одну и ту же
+    #                    выгрузку можно заказать дважды, это не ошибка.
+    assert counts["c"] == 100, f"CHECK: {counts['c']}, ожидалось 100"
+    assert counts["f"] == 137, f"FOREIGN KEY: {counts['f']}, ожидалось 137"
     assert counts["u"] == 21, f"UNIQUE: {counts['u']}, ожидалось 21"
     assert counts["x"] == 2, f"EXCLUDE: {counts['x']}, ожидалось 2"
     assert {"btree_gist", "vector"} <= set(snapshot["extensions"])
@@ -174,7 +187,7 @@ def test_every_foreign_key_keeps_its_on_delete_action():
         )
         rows = cursor.fetchall()
 
-    assert len(rows) == 135, f"внешних ключей {len(rows)}, ожидалось 135"
+    assert len(rows) == 137, f"внешних ключей {len(rows)}, ожидалось 137"
 
     # 'a' = NO ACTION: значит, действие не задано
     without_action = [f"{t}.{n}" for t, n, kind, _ in rows if kind == "a"]
@@ -193,6 +206,7 @@ def test_every_foreign_key_keeps_its_on_delete_action():
     # Ещё +3 RESTRICT и +1 SET NULL — экраны показа QR. SET NULL в обоих
     # случаях один и тот же по смыслу: учётную запись сотрудника HR можно
     # заблокировать, но запись о том, что он что-то создал, обязана остаться.
-    assert actions["r"] == 113, f"RESTRICT: {actions['r']}, ожидалось 113"
+    # 113 + 2 — организация и автор у задания на выгрузку.
+    assert actions["r"] == 115, f"RESTRICT: {actions['r']}, ожидалось 115"
     assert actions["n"] == 16, f"SET NULL: {actions['n']}, ожидалось 16"
     assert actions["c"] == 6, f"CASCADE: {actions['c']}, ожидалось 6"

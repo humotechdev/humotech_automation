@@ -106,6 +106,13 @@ LLM_QUERY_STATUSES = (
 ANSWER_FEEDBACK_RATINGS = ("HELPFUL", "NOT_HELPFUL")
 INDEX_JOB_STATUSES = ("QUEUED", "RUNNING", "SUCCEEDED", "FAILED")
 
+# Очередь фоновых выгрузок. Отличается от очереди индексации на два
+# состояния: CANCELLED — задание отменили до запуска, а SUCCEEDED здесь
+# означает, что файл существует и его можно скачать.
+EXPORT_JOB_STATUSES = (
+    "QUEUED", "RUNNING", "SUCCEEDED", "FAILED", "CANCELLED",
+)
+
 # Уровень действия правила. Чем выше число, тем выше приоритет:
 # правило офиса перекрывает региональное, региональное — глобальное.
 SCOPE_LEVEL_GLOBAL = 1

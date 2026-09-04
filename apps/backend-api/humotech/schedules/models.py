@@ -221,6 +221,10 @@ class CalendarException(
         max_length=30, choices=choices(CALENDAR_EXCEPTION_TYPES)
     )
     is_working_day = models.BooleanField()
+    #: Основание переноса. Отдельно от `name`: название видит сотрудник
+    #: в календаре («Навруз»), а основание читает кадровик, разбирая,
+    #: почему суббота стала рабочей («приказ №14 от 03.03»).
+    reason = models.TextField(null=True, blank=True)
 
     class Meta:
         db_table = "calendar_exceptions"

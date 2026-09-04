@@ -63,6 +63,17 @@ PERMISSIONS: tuple[tuple[str, str, str], ...] = (
     ("knowledge.index", "Индексация знаний", "Запускать переиндексацию источников"),
     ("questions.read", "Просмотр вопросов", "Видеть вопросы сотрудников"),
     ("questions.answer", "Ответы на вопросы", "Отвечать на эскалированные вопросы"),
+    # уведомления
+    #
+    # Отдельная пара, потому что ничего подходящего в каталоге не было:
+    # `telegram.manage` — про то, кому открыт вход, а не про то, кто может
+    # переотправить сообщение. Читать очередь и вмешиваться в неё — тоже
+    # разные решения: посмотреть, почему не дошло, безопасно, а повторная
+    # отправка доходит до сотрудника.
+    ("notifications.read", "Просмотр уведомлений",
+     "Видеть очередь отправки, попытки и причины отказов"),
+    ("notifications.manage", "Управление уведомлениями",
+     "Повторять отправку и отменять неотправленные уведомления"),
     # аналитика и администрирование
     ("analytics.read", "Аналитика", "Дашборды и сводные показатели"),
     ("reports.export", "Выгрузка отчётов", "Экспорт данных в файлы"),
@@ -98,6 +109,12 @@ _HR_FULL = (
     "knowledge.read", "knowledge.write", "knowledge.publish", "knowledge.index",
     "questions.read", "questions.answer",
     "analytics.read", "reports.export", "ai.metrics.read",
+    "notifications.read", "notifications.manage",
+    # Кадровый администратор читает журнал изменений — но только своей
+    # организации: область проверяется отдельно от разрешения. Прав на
+    # учётные записи, роли и настройки здесь по-прежнему нет: управление
+    # доступом — не кадровая операция.
+    "audit.read",
 )
 
 # Роль отвечает за НАБОР действий; территорию ограничивает user_role_scopes.
@@ -115,13 +132,14 @@ ROLE_PERMISSIONS: dict[str, tuple[str, ...]] = {
         "absences.read", "absences.approve", "absences.documents",
         "knowledge.read", "questions.read", "questions.answer",
         "analytics.read", "reports.export",
+        "notifications.read",
     ),
     "OFFICE_ADMIN": (
         "offices.read", "employees.read", "telegram.read",
         "attendance.read", "attendance.correct", "attendance.manual",
         "qr_points.read", "qr_points.manage", "qr_display.start",
         "schedules.read", "absences.read",
-        "knowledge.read",
+        "knowledge.read", "notifications.read",
     ),
     "MANAGER": (
         "employees.read", "attendance.read",
@@ -136,5 +154,6 @@ ROLE_PERMISSIONS: dict[str, tuple[str, ...]] = {
         "users.manage", "roles.manage", "settings.manage", "audit.read",
         "offices.read", "qr_points.read", "qr_points.manage",
         "knowledge.index", "ai.metrics.read",
+        "notifications.read", "notifications.manage",
     ),
 }
