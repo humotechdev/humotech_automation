@@ -394,7 +394,7 @@ class AttendanceHrService(BaseService):
             self.audit.record(
                 actor,
                 action="attendance.correction.reviewed",
-                entity_type="attendance_correction_request",
+                entity_type="attendance_correction_requests",
                 entity_id=request.id,
                 before=before,
                 after={
@@ -453,7 +453,7 @@ class AttendanceHrService(BaseService):
             self.audit.record(
                 actor,
                 action="attendance.event.manual",
-                entity_type="attendance_event",
+                entity_type="attendance_events",
                 entity_id=event.id,
                 before=None,
                 after={

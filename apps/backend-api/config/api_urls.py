@@ -8,6 +8,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from humotech.accounts.views import CurrentUserView, LoginView, LogoutView
+from humotech.audit.views import AuditLogView
 from humotech.analytics.views import (
     AnalyticsView,
     ComparisonView,
@@ -119,6 +120,10 @@ urlpatterns = [
     # Выгрузки. Право reports.export проверяется отдельно от прав на сами
     # данные: выгрузка не должна быть обходным путём к закрытому экрану.
     path("reports/<str:kind>/export", ExportView.as_view(), name="report-export"),
+    # Журнал изменений. Только чтение: метода записи здесь нет намеренно,
+    # единственный способ появиться в журнале — быть записанным сервисом,
+    # который выполняет само действие.
+    path("audit-logs", AuditLogView.as_view(), name="audit-logs"),
     # Посещаемость глазами кадровика. Сырые события отдаются только на
     # чтение: строка отметки не меняется никогда, а исправление — это
     # либо решение по заявке, либо новое событие с source = MANUAL.

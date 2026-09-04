@@ -161,7 +161,7 @@ class QrPointService(BaseService):
             self.audit.record(
                 actor,
                 action="qr.point.create",
-                entity_type="office_qr_point",
+                entity_type="office_qr_points",
                 entity_id=point.id,
                 before=None,
                 # `static_token_hash` не попадает в журнал: в нём нет
@@ -223,7 +223,7 @@ class QrPointService(BaseService):
             self.audit.record(
                 actor,
                 action="qr.point.update",
-                entity_type="office_qr_point",
+                entity_type="office_qr_points",
                 entity_id=point.id,
                 before=before,
                 after=snapshot(point, AUDITED_FIELDS),
@@ -252,7 +252,7 @@ class QrPointService(BaseService):
             self.audit.record(
                 actor,
                 action="qr.point.activate" if active else "qr.point.deactivate",
-                entity_type="office_qr_point",
+                entity_type="office_qr_points",
                 entity_id=point.id,
                 before=before,
                 after=snapshot(point, AUDITED_FIELDS),
@@ -288,7 +288,7 @@ class QrPointService(BaseService):
             self.audit.record(
                 actor,
                 action="qr.point.token.reissue",
-                entity_type="office_qr_point",
+                entity_type="office_qr_points",
                 entity_id=point.id,
                 before=before,
                 after=snapshot(point, AUDITED_FIELDS),
