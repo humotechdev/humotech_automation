@@ -14,6 +14,7 @@ from rest_framework import serializers, status, viewsets
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from humotech.core.openapi import ServiceViewSetAutoSchema
 from humotech.core.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, Page
 from humotech.core.rbac import Actor
 
@@ -38,6 +39,9 @@ class ServiceViewSet(viewsets.ViewSet):
     """
 
     permission_classes = [IsAuthenticated]
+    # Генератор схемы не может вывести тип `id` без queryset-а, а его
+    # здесь нет намеренно. См. `humotech/core/openapi.py`.
+    schema = ServiceViewSetAutoSchema()
     # Класс сервиса и сериализатора задаёт наследник.
     service_class: type | None = None
     read_serializer_class: type[serializers.Serializer] | None = None

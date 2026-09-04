@@ -34,6 +34,7 @@ from humotech.absences.views import (
     AbsenceDecisionView,
     PendingAbsenceRequestsView,
 )
+from humotech.notifications.views import NotificationViewSet
 from humotech.offices.views import OfficeViewSet
 from humotech.organizations.views import (
     OrganizationSettingDetailView,
@@ -69,6 +70,9 @@ router.register("qr-points", QrPointViewSet, basename="qr-point")
 router.register("departments", DepartmentViewSet, basename="department")
 router.register("positions", PositionViewSet, basename="position")
 router.register("users", CrmUserViewSet, basename="crm-user")
+# Очередь уведомлений глазами кадровика: почему сообщение не дошло
+# и как отправить его снова. Отправляет по-прежнему бот.
+router.register("notifications", NotificationViewSet, basename="notification")
 router.register(
     "calendar-exceptions", CalendarExceptionViewSet, basename="calendar-exception"
 )

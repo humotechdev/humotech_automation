@@ -86,3 +86,56 @@ def test_docs_pages_are_development_only(client, settings):
         assert {"swagger", "redoc"} <= names
     else:
         assert not ({"swagger", "redoc"} & names)
+
+
+# --- бюджет диагностики ---
+#
+# drf-spectacular умеет строить схему «как получится», молча подменяя
+# то, что не смог вывести. Такая схема генерируется без ошибки, но
+# описывает не наш API: у половины эндпоинтов тело запроса пропадает,
+# и сгенерированный клиент получает `unknown` вместо типов.
+#
+# Поэтому диагностика измеряется числом и зафиксирована здесь. Бюджет
+# движется только вниз: новый модуль, добавивший непокрытый view,
+# роняет тест сразу, а не через месяц во фронтенде.
+
+MAX_ERRORS = 26
+MAX_WARNINGS = 27
+
+
+def _generate_schema_diagnostics() -> tuple[list[str], list[str]]:
+    """Собирает схему и возвращает уникальные ошибки и предупреждения."""
+    from drf_spectacular.drainage import GENERATOR_STATS, reset_generator_stats
+    from drf_spectacular.generators import SchemaGenerator
+
+    reset_generator_stats()
+    was_silent = GENERATOR_STATS.silent
+    GENERATOR_STATS.silent = True
+    try:
+        SchemaGenerator().get_schema(request=None, public=True)
+        return (
+            sorted(GENERATOR_STATS._error_cache),
+            sorted(GENERATOR_STATS._warn_cache),
+        )
+    finally:
+        GENERATOR_STATS.silent = was_silent
+        reset_generator_stats()
+
+
+def test_schema_generates_without_complaints():
+    """Сборка схемы не должна давать ни ошибок, ни предупреждений.
+
+    Оба числа блокирующие: сборка идёт с `--fail-on-warn`, и
+    предупреждение «не смог определить тип параметра» означает ровно то
+    же, что ошибка, — неверный контракт у клиента.
+    """
+    errors, warnings = _generate_schema_diagnostics()
+
+    assert len(errors) <= MAX_ERRORS, (
+        f"Ошибок в схеме {len(errors)}, бюджет {MAX_ERRORS}. "
+        "Новые:\n" + "\n".join(errors)
+    )
+    assert len(warnings) <= MAX_WARNINGS, (
+        f"Предупреждений в схеме {len(warnings)}, бюджет {MAX_WARNINGS}. "
+        "Новые:\n" + "\n".join(warnings)
+    )
