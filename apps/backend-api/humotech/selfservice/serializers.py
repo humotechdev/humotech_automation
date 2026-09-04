@@ -23,3 +23,39 @@ class ScanRequestSerializer(serializers.Serializer):
     client_event_id = serializers.CharField(
         max_length=100, required=False, allow_blank=False
     )
+
+
+class PeriodSerializer(serializers.Serializer):
+    """Период статистики: либо готовое имя, либо две даты.
+
+    Даты, а не моменты времени. «За сентябрь» — вопрос о календаре,
+    и в каком поясе начался сентябрь, решает сервер по офису сотрудника,
+    а не клиент по часам телефона.
+    """
+
+    PERIODS = ("today", "week", "month")
+    MAX_DAYS = 366
+
+    period = serializers.ChoiceField(choices=PERIODS, required=False)
+    date_from = serializers.DateField(required=False)
+    date_to = serializers.DateField(required=False)
+
+    def validate(self, attrs):
+        if attrs.get("period"):
+            return attrs
+        if not (attrs.get("date_from") and attrs.get("date_to")):
+            # Умолчание — текущий месяц: самый частый вопрос, и отвечать
+            # на пустой запрос ошибкой было бы придирчиво.
+            attrs["period"] = "month"
+            return attrs
+        if attrs["date_to"] < attrs["date_from"]:
+            raise serializers.ValidationError(
+                {"date_to": "Конец периода раньше начала"}
+            )
+        if (attrs["date_to"] - attrs["date_from"]).days + 1 > self.MAX_DAYS:
+            # Предел не про удобство, а про нагрузку: запрос на десять лет
+            # строит десять тысяч дневных записей на каждый вызов.
+            raise serializers.ValidationError(
+                {"date_to": "Период длиннее года — сузьте запрос"}
+            )
+        return attrs

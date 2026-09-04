@@ -9,9 +9,18 @@
 
 from django.urls import path
 
-from humotech.selfservice.views import ProfileView, ScanView
+from humotech.selfservice.views import (
+    HistoryView,
+    ProfileView,
+    ScanView,
+    StatisticsView,
+    StatusView,
+)
 
 urlpatterns = [
     path("profile", ProfileView.as_view(), name="self-profile"),
+    path("status", StatusView.as_view(), name="self-status"),
+    path("statistics", StatisticsView.as_view(), name="self-statistics"),
+    path("history", HistoryView.as_view(), name="self-history"),
     path("attendance/scan", ScanView.as_view(), name="self-scan"),
 ]

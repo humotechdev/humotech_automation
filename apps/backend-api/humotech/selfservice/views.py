@@ -15,10 +15,17 @@ from __future__ import annotations
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from humotech.attendance import statistics
 from humotech.attendance.scanning import scan
 from humotech.core.api import validated
 from humotech.core.clientip import client_ip
-from humotech.selfservice.serializers import ScanRequestSerializer
+from humotech.selfservice.presentation import (
+    day_json,
+    session_json,
+    status_json,
+    summary_json,
+)
+from humotech.selfservice.serializers import PeriodSerializer, ScanRequestSerializer
 from humotech.selfservice.throttling import EmployeeRateThrottle, ScanRateThrottle
 from humotech.telegram.auth import (
     BotEmployeeAuthentication,
@@ -150,9 +157,106 @@ class ScanView(EmployeeSelfView):
         )
 
 
+class StatusView(EmployeeSelfView):
+    """Главный экран: где человек сейчас и что у него сегодня."""
+
+    def get(self, request):
+        return Response(status_json(statistics.current_status(self.context)))
+
+
+class StatisticsView(EmployeeSelfView):
+    """Статистика за сегодня, неделю, месяц или произвольный период.
+
+    Период задаётся датами в поясе офиса, а не моментами времени: человек
+    спрашивает «за сентябрь», и в каком часовом поясе начался сентябрь —
+    вопрос, на который отвечает сервер, а не клиент.
+    """
+
+    def get(self, request):
+        params = validated(PeriodSerializer, request.query_params)
+        report = _report(self.context, params)
+        return Response(
+            {
+                "summary": summary_json(report),
+                # Дневная разбивка идёт вместе с итогом: иначе клиенту
+                # пришлось бы просить её отдельным запросом и складывать
+                # самому — то есть считать статистику второй раз.
+                "days": [day_json(day) for day in report.days],
+            }
+        )
+
+
+class HistoryView(EmployeeSelfView):
+    """История посещений: день за днём, с каждым входом и выходом.
+
+    Порядок обратный — от свежего к старому: человек смотрит историю,
+    чтобы проверить вчерашнее, а не позапрошлогоднее.
+    """
+
+    MAX_DAYS = 62
+
+    def get(self, request):
+        params = validated(PeriodSerializer, request.query_params)
+        report = _report(self.context, params)
+
+        offset = max(int(request.query_params.get("offset") or 0), 0)
+        limit = min(max(int(request.query_params.get("limit") or 31), 1),
+                    self.MAX_DAYS)
+
+        # Показываем только дни, о которых есть что сказать: пустые
+        # выходные посреди истории — это шум, через который приходится
+        # прокручивать.
+        meaningful = [
+            day for day in reversed(report.days)
+            if day.sessions or day.absence_code is not None or day.missed
+        ]
+        page = meaningful[offset:offset + limit]
+
+        return Response(
+            {
+                "period": {
+                    "first": report.first.isoformat(),
+                    "last": report.last.isoformat(),
+                    "timezone": report.timezone,
+                },
+                "days": [
+                    {
+                        **day_json(day),
+                        "sessions": [session_json(s) for s in day.sessions],
+                    }
+                    for day in page
+                ],
+                "total": len(meaningful),
+                "offset": offset,
+                "limit": limit,
+                "has_more": offset + limit < len(meaningful),
+            }
+        )
+
+
+def _report(context, params):
+    """Готовый период по имени либо произвольный по датам."""
+    period = params.get("period")
+    if period == "today":
+        return statistics.for_today(context)
+    if period == "week":
+        return statistics.for_week(context)
+    if period == "month":
+        return statistics.for_month(context)
+    return statistics.for_period(context, params["date_from"], params["date_to"])
+
+
 def full_name(employee) -> str:
     parts = [employee.last_name, employee.first_name, employee.middle_name]
     return " ".join(part for part in parts if part)
 
 
-__all__ = ["EmployeeSelfView", "ProfileView", "ScanView", "full_name"]
+__all__ = [
+    "EmployeeSelfView",
+    "HistoryView",
+    "ProfileView",
+    "ScanView",
+    "StatisticsView",
+    "StatusView",
+    "full_name",
+]
