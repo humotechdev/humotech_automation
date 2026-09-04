@@ -21,6 +21,7 @@ from humotech.attendance.views import (
     ManualEventView,
     PresenceView,
 )
+from humotech.departments.views import DepartmentViewSet, PositionViewSet
 from humotech.employees.views import EmployeeViewSet
 from humotech.absences.views import (
     AbsenceDecisionView,
@@ -53,6 +54,8 @@ router.register("offices", OfficeViewSet, basename="office")
 router.register("employees", EmployeeViewSet, basename="employee")
 router.register("work-schedules", WorkScheduleViewSet, basename="work-schedule")
 router.register("qr-points", QrPointViewSet, basename="qr-point")
+router.register("departments", DepartmentViewSet, basename="department")
+router.register("positions", PositionViewSet, basename="position")
 router.register(
     "telegram/invitations", TelegramInvitationViewSet, basename="telegram-invitation"
 )
