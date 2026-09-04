@@ -296,17 +296,30 @@ class AuditTrail:
         entity_id: uuid.UUID,
         before: dict | None = None,
         after: dict | None = None,
+        organization_id: uuid.UUID | None = None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
     ):
+        """Запись о действии пользователя CRM.
+
+        `organization_id` почти всегда совпадает с организацией актора и
+        отдельно не передаётся. Исключение — аварийная админка: туда
+        пускают только `SUPER_ADMIN`, и организация правимой записи может
+        оказаться не его собственной. Записать такое изменение на
+        организацию админа значило бы положить его не в тот журнал.
+        """
         from humotech.audit.models import AuditLog
 
         return AuditLog.objects.create(
-            organization_id=actor.organization_id,
+            organization_id=organization_id or actor.organization_id,
             actor_user_id=actor.user_id,
             action=action,
             entity_type=entity_type,
             entity_id=entity_id,
             old_values=self.sanitize(before),
             new_values=self.sanitize(after),
+            ip_address=ip_address,
+            user_agent=(user_agent or None) and user_agent[:1000],
             occurred_at=timezone.now(),
         )
 
