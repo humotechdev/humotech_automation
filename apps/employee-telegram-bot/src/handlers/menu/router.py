@@ -77,6 +77,27 @@ async def start(message: Message, employee, denial) -> None:
     )
 
 
+@router.message(F.text == kb.BTN_CABINET)
+@router.message(Command("cabinet"))
+async def cabinet(message: Message, employee, denial) -> None:
+    """Кабинет открывается ОТДЕЛЬНОЙ inline-кнопкой, а не этой.
+
+    Telegram передаёт подписанные данные о пользователе только
+    приложениям, открытым из inline-кнопки, кнопки меню или прямой
+    ссылки. Открытое из нижней клавиатуры не получает ни подписи,
+    ни имени — и кабинет не смог бы понять, кто пришёл.
+    """
+    if not await _guard(message, employee, denial):
+        return
+    if not settings.mini_app_url:
+        await message.answer(text.CABINET_UNAVAILABLE)
+        return
+    await message.answer(
+        text.CABINET_OPEN,
+        reply_markup=kb.cabinet_button(settings.mini_app_url),
+    )
+
+
 @router.message(Command("menu"))
 async def menu(message: Message, employee, denial) -> None:
     if not await _guard(message, employee, denial):

@@ -53,6 +53,11 @@ class Command(BaseCommand):
                  "и генерируется у нового",
         )
         parser.add_argument(
+            "--add-employee", metavar="ФАМИЛИЯ ИМЯ",
+            help="добавить ещё одного сотрудника в тот же офис и график; "
+                 "табельный номер выдаётся следующий по порядку",
+        )
+        parser.add_argument(
             "--yes", action="store_true",
             help="подтвердить запуск при выключенном DEBUG",
         )
@@ -169,6 +174,21 @@ class Command(BaseCommand):
                 },
             )
 
+        if options["add_employee"]:
+            extra = self._add_employee(
+                org, office, department, position, schedule,
+                options["add_employee"], annual,
+            )
+            self.stdout.write(self.style.SUCCESS(
+                f"Добавлен сотрудник: {extra.last_name} {extra.first_name}, "
+                f"таб. № {extra.employee_number}"
+            ))
+            self.stdout.write(
+                "  Ссылка привязки:  manage.py telegram_link "
+                f"--issue {extra.employee_number} --as-user {options['hr_email']}"
+            )
+            return
+
         hr_password = self._hr_user(org, options)
 
         self.stdout.write(self.style.SUCCESS("Пример данных готов."))
@@ -188,6 +208,55 @@ class Command(BaseCommand):
         self.stdout.write(f"  кадровик:     {options['hr_email']}")
         if hr_password:
             self.stdout.write(f"  пароль:       {hr_password}")
+
+    def _add_employee(
+        self, org, office, department, position, schedule, full_name, annual,
+    ):
+        """Ещё один сотрудник в том же офисе — чтобы проверять вдвоём.
+
+        Номер выдаётся следующий свободный: придумывать его руками значит
+        рано или поздно занять чужой.
+        """
+        parts = full_name.split()
+        last_name = parts[0]
+        first_name = parts[1] if len(parts) > 1 else "Сотрудник"
+
+        taken = set(
+            Employee.objects.filter(
+                organization=org, employee_number__startswith=f"{org.code}-"
+            ).values_list("employee_number", flat=True)
+        )
+        number = next(
+            f"{org.code}-{n:03d}" for n in range(1, 1000)
+            if f"{org.code}-{n:03d}" not in taken
+        )
+
+        employee = Employee.objects.create(
+            organization=org,
+            employee_number=number,
+            first_name=first_name,
+            last_name=last_name,
+            hire_date=date.today(),
+            employment_status="ACTIVE",
+            preferred_language="ru",
+        )
+        EmployeeAssignment.objects.create(
+            organization=org, employee=employee, office=office,
+            department=department, position=position,
+            employment_type="FULL_TIME", work_mode="ONSITE",
+            is_primary=True, valid_from=employee.hire_date,
+        )
+        EmployeeScheduleAssignment.objects.create(
+            organization=org, employee=employee, schedule=schedule,
+            valid_from=employee.hire_date,
+        )
+        if annual is not None:
+            LeaveBalance.objects.create(
+                organization=org, employee=employee, absence_type=annual,
+                year=date.today().year,
+                allocated_minutes=ANNUAL_LEAVE_DAYS * MINUTES_PER_WORKING_DAY,
+            )
+        return employee
 
     def _hr_user(self, org, options) -> str | None:
         """Кадровик с полными правами по своей организации."""

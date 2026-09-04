@@ -18,6 +18,7 @@ import pytest
 from src.api.errors import ApiError, ServerError, Unauthorized
 from src.handlers.menu import router as menu_router  # noqa: F401 - сборка
 from src.handlers.menu.router import (
+    cabinet,
     help_handler,
     history,
     month,
@@ -203,27 +204,83 @@ def test_no_access_menu_shows_only_help():
 
 # --- меню ------------------------------------------------------------------
 
-def test_menu_has_all_ten_items():
+def test_menu_has_all_ten_items(monkeypatch):
+    from src.config import settings as settings_module
+
+    # Адрес задаётся явно: иначе тест проверял бы не меню, а то, что
+    # в окружении разработчика пусто, и «зеленел» бы по случайности.
+    monkeypatch.setattr(
+        settings_module.settings, "mini_app_url", "https://mini.example", False
+    )
     message, _ = run(start, needs_client=False)
 
     _, markup = message.answers[-1]
     labels = [b.text for row in markup.keyboard for b in row]
-    # Кабинет не показан: адреса Mini App в тестовых настройках нет,
-    # а кнопка, которая ничего не открывает, хуже её отсутствия.
+    assert set(labels) == set(kb.ALL_BUTTONS)
+
+
+def test_menu_hides_the_cabinet_without_an_address(monkeypatch):
+    from src.config import settings as settings_module
+
+    monkeypatch.setattr(settings_module.settings, "mini_app_url", "", False)
+    message, _ = run(start, needs_client=False)
+
+    _, markup = message.answers[-1]
+    labels = [b.text for row in markup.keyboard for b in row]
     assert set(labels) == set(kb.ALL_BUTTONS) - {kb.BTN_CABINET}
 
 
-def test_cabinet_button_appears_only_with_an_address(monkeypatch):
+def test_the_keyboard_cabinet_button_is_not_a_web_app():
+    """Кнопка нижней клавиатуры НЕ должна открывать Mini App.
+
+    Telegram передаёт подписанные данные о пользователе только
+    приложениям, открытым из inline-кнопки, кнопки меню или прямой
+    ссылки. Приложение, открытое из нижней клавиатуры, не получает
+    ни подписи, ни имени — кабинет не смог бы понять, кто пришёл,
+    и показал бы «откройте из Telegram» тому, кто уже в Telegram.
+
+    Проверено живьём: такой запуск приносит только tgWebAppVersion,
+    tgWebAppPlatform и tgWebAppThemeParams, без tgWebAppData.
+    """
+    markup = kb.employee_menu("https://mini.example")
+    first = markup.keyboard[0][0]
+
+    assert first.text == kb.BTN_CABINET
+    assert first.web_app is None
+
+
+def test_cabinet_opens_through_an_inline_button():
+    """А вот inline-кнопка — открывает, и адрес в ней настоящий."""
+    markup = kb.cabinet_button("https://mini.example")
+    button = markup.inline_keyboard[0][0]
+
+    assert button.web_app is not None
+    assert button.web_app.url == "https://mini.example"
+
+
+def test_pressing_the_cabinet_sends_the_inline_button(monkeypatch):
     from src.config import settings as settings_module
 
     monkeypatch.setattr(
         settings_module.settings, "mini_app_url", "https://mini.example", False
     )
-    markup = kb.employee_menu(settings_module.settings.mini_app_url)
-    first = markup.keyboard[0][0]
+    message, _ = run(cabinet, needs_client=False)
 
-    assert first.text == kb.BTN_CABINET
-    assert first.web_app is not None
+    _, markup = message.answers[-1]
+    assert markup.inline_keyboard[0][0].web_app.url == "https://mini.example"
+
+
+def test_cabinet_without_an_address_says_so_instead_of_opening_nothing(
+    monkeypatch,
+):
+    from src.config import settings as settings_module
+
+    monkeypatch.setattr(settings_module.settings, "mini_app_url", "", False)
+    message, _ = run(cabinet, needs_client=False)
+
+    answer, markup = message.answers[-1]
+    assert "не настроен" in answer
+    assert markup is None
 
 
 # --- числа приходят с сервера ---------------------------------------------

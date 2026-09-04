@@ -128,10 +128,14 @@ class Command(BaseCommand):
         )
 
     def _say_decided(self, account, verb: str) -> None:
+        # Только кириллица и ASCII: консоль Windows живёт в cp1251, и одна
+        # типографская стрелка роняет команду UnicodeEncodeError уже ПОСЛЕ
+        # того, как решение записано в базу. Выглядит это как «не сработало»,
+        # хотя сработало.
         employee = account.employee
         self.stdout.write(
             self.style.SUCCESS(
-                f"Привязка {verb}: {employee.last_name} {employee.first_name} "
-                f"→ {account.status}"
+                f"Привязка {verb}: {employee.last_name} {employee.first_name}, "
+                f"состояние {account.status}"
             )
         )

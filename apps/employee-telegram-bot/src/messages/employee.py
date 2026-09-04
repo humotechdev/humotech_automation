@@ -86,6 +86,16 @@ CABINET_HINT = (
     "Там же сканер QR, оформление больничного и отпуска."
 )
 
+CABINET_OPEN = (
+    "Нажмите кнопку ниже — кабинет откроется внутри Telegram.\n\n"
+    "Там ваш статус, часы, сканер QR, больничный и отпуск."
+)
+
+CABINET_UNAVAILABLE = (
+    "Кабинет пока не настроен: администратор не указал его адрес. "
+    "Всё остальное в меню работает."
+)
+
 
 def greet(profile: dict) -> str:
     employee = profile.get("employee") or {}
@@ -293,6 +303,8 @@ def _moment(value: str | None, tz=UTC) -> str:
 __all__ = [
     "BACKEND_DOWN",
     "CABINET_HINT",
+    "CABINET_OPEN",
+    "CABINET_UNAVAILABLE",
     "HELP",
     "NOT_LINKED",
     "NO_ACCESS",
