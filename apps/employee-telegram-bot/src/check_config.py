@@ -32,6 +32,31 @@ def _mask(value: str) -> str:
     return f"задано, {len(value)} символов" if value else "НЕ ЗАДАНО"
 
 
+def _stays_on_this_machine(hostname: str | None) -> bool:
+    """Не покинет ли запрос эту машину.
+
+    HTTPS обязателен всюду, кроме случая, когда трафик физически никуда
+    не идёт: секрет бота — единственное, чем он доказывает, что он наш,
+    и в открытой сети ему делать нечего.
+
+    Своими считаются два вида адресов:
+
+      * петлевой — очевидно;
+      * имя без единой точки. Это имя сервиса во внутренней сети Docker
+        («gateway», «backend»). Публичным DNS-именем такое быть не может:
+        в интернете нет доменов первого уровня без точки, и резолвится
+        оно только внутри сети контейнеров, то есть в пределах хоста.
+
+    Имя с точкой под правило не подпадает никогда — `api.example.com`
+    по http останется ошибкой, как и было.
+    """
+    if not hostname:
+        return False
+    if hostname in ("localhost", "127.0.0.1", "::1"):
+        return True
+    return "." not in hostname
+
+
 def check() -> list[str]:
     """Возвращает список проблем. Пустой список — конфигурация рабочая."""
     problems: list[str] = []
@@ -72,9 +97,7 @@ def check() -> list[str]:
     else:
         print(f"{OK} BACKEND_BOT_SECRET: {_mask(settings.backend_bot_secret)}")
 
-    if parsed.scheme != "https" and parsed.hostname not in (
-        "localhost", "127.0.0.1"
-    ):
+    if parsed.scheme != "https" and not _stays_on_this_machine(parsed.hostname):
         problems.append(
             "BACKEND_API_URL без https: секрет бота пойдёт открытым текстом"
         )

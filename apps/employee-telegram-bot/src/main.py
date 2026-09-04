@@ -31,6 +31,7 @@ from src.messages import employee as text
 from src.middlewares.employee import EmployeeMiddleware
 from src.notifications.worker import run_worker
 from src.utils.commands import set_default_commands
+from src.utils.menu_button import ensure_menu_button
 
 logger = logging.getLogger("humotech.bot")
 
@@ -85,6 +86,7 @@ async def main() -> None:
 
     me = await bot.get_me()
     await set_default_commands(bot)
+    await ensure_menu_button(bot)
     logger.info("bot @%s started, api=%s", me.username, settings.backend_api_url)
 
     worker = asyncio.create_task(run_worker(bot, client))
