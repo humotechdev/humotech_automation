@@ -1,0 +1,44 @@
+/* Оформление намеренно минимальное: этап про авторизацию, а не про дизайн.
+   Цвета берутся из темы Telegram, чтобы экран не спорил с клиентом. */
+
+:root {
+  --bg: var(--tg-theme-bg-color, #ffffff);
+  --fg: var(--tg-theme-text-color, #1a1a1a);
+  --muted: var(--tg-theme-hint-color, #707579);
+  --accent: var(--tg-theme-button-color, #2481cc);
+  --accent-fg: var(--tg-theme-button-text-color, #ffffff);
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 16px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.screen {
+  max-width: 32rem;
+  margin: 0 auto;
+  padding: 2rem 1.25rem;
+}
+
+.screen h1 {
+  font-size: 1.375rem;
+  margin: 0 0 0.75rem;
+}
+
+.muted {
+  color: var(--muted);
+  margin-top: 0;
+}
+
+button {
+  margin-top: 1rem;
+  padding: 0.75rem 1.25rem;
+  border: 0;
+  border-radius: 0.5rem;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font: inherit;
+  cursor: pointer;
+}

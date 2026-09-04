@@ -19,12 +19,7 @@ from datetime import date, timedelta
 
 from django.db.models import Q
 
-from humotech.core.errors import (
-    Conflict,
-    NotFound,
-    PermissionDenied,
-    ValidationFailed,
-)
+from humotech.core.errors import Conflict, NotFound, ValidationFailed
 from humotech.core.pagination import Page, paginate
 from humotech.core.rbac import Actor, snapshot
 from humotech.core.service import BaseService
@@ -37,6 +32,7 @@ from humotech.core.validation import (
 )
 from humotech.departments.models import Department
 from humotech.employees.models import Employee, EmployeeAssignment
+from humotech.employees.selectors import require_visible_employee
 from humotech.offices.models import Office
 from humotech.positions.models import Position
 from humotech.schedules.models import EmployeeScheduleAssignment
@@ -628,27 +624,9 @@ class EmployeeService(BaseService):
     def _require_visible_employee(
         self, actor: Actor, employee_id: uuid.UUID, *, at: date | None = None
     ) -> Employee:
-        employee = Employee.objects.filter(
-            id=employee_id, organization_id=actor.organization_id
-        ).first()
-        if employee is None:
-            # чужая организация отвечает так же, как отсутствие записи
-            raise NotFound("Сотрудник не найден")
-
-        visible = self.access.visible_office_ids(actor)
-        if visible is None:
-            return employee
-
-        # У сотрудника мог смениться офис, поэтому проверяется не только
-        # текущий период, но и любой, попадающий в область видимости.
-        # Сузить до текущего нельзя: увольнение закрывает все периоды,
-        # и HR своего же региона потерял бы доступ к карточкам своих уволенных.
-        allowed = EmployeeAssignment.objects.filter(
-            employee_id=employee_id, office_id__in=visible
-        ).exists()
-        if not allowed:
-            raise PermissionDenied("Сотрудник вне вашей области видимости")
-        return employee
+        # Само правило лежит в selectors: тем же пользуется привязка Telegram,
+        # и разойтись эти два ответа не имеют права.
+        return require_visible_employee(self.access, actor, employee_id)
 
     def _require_assignable_office(
         self, actor: Actor, office_id: uuid.UUID

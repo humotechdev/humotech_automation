@@ -46,7 +46,14 @@ def _norm(phone: str) -> str:
 
 class StubBackendClient(BackendClient):
     def __init__(self):
-        self._tokens: dict[str, str] = {}          # access_token -> phone
+        # Привязку теперь начинает HR одноразовой ссылкой, и токена доступа
+        # она боту не возвращает: обмен появится вместе с личным кабинетом.
+        # Чтобы режим stub не перестал показывать вообще ничего, демо-токены
+        # заведены заранее — по одному на каждого демо-сотрудника.
+        self._tokens: dict[str, str] = {                # access_token -> phone
+            f"stub-token-{employee['id']}": phone
+            for phone, employee in _DIRECTORY.items()
+        }
         self._ids = itertools.count(1000)
         self._absences: list[dict] = []            # заявки сотрудника
         self._questions: list[dict] = []
@@ -89,6 +96,31 @@ class StubBackendClient(BackendClient):
             raise Forbidden(403, "forbidden", "Недостаточно прав для этой операции")
 
     # --- привязка ---
+    async def consume_link_token(self, token, telegram_user_id, telegram_chat_id,
+                                 telegram_username=None, language_code=None):
+        """Заглушка отвечает по СОДЕРЖИМОМУ токена.
+
+        Так все ветки ответа можно пройти руками, не поднимая backend:
+        отказ по каждой причине выглядит и читается ровно так, как в бою.
+        Настоящий токен — 43 случайных символа, ни одно из этих слов
+        в него попасть не может.
+        """
+        reasons = {
+            "expired": "Срок действия ссылки истёк",
+            "revoked": "Ссылка отозвана",
+            "used": "Ссылка уже использована",
+            "pending": "Ссылка уже использована, привязка ждёт подтверждения",
+            "telegram_taken": "Этот Telegram уже привязан к другому сотруднику",
+            "employee_inactive": "Привязка недоступна: обратитесь в отдел кадров",
+        }
+        for reason, message in reasons.items():
+            if token == f"stub-{reason}":
+                raise Conflict(409, "conflict", message, {"reason": reason})
+        if token == "stub-invalid":
+            raise Conflict(409, "conflict", "Ссылка недействительна",
+                           {"reason": "invalid"})
+        return {"status": "PENDING", "employee_known": True}
+
     async def request_code(self, phone, telegram_id):
         if _norm(phone) not in _DIRECTORY:
             raise NotFound(404, "not_found", "Такой номер не найден среди сотрудников")

@@ -18,7 +18,18 @@ from src.config.settings import settings
 class BackendClient:
     """Базовый интерфейс. Реализации: LiveBackendClient и StubBackendClient."""
 
-    # --- привязка аккаунта (публичные) ---
+    # --- привязка аккаунта ---
+    #
+    # Привязка выполняется одноразовой ссылкой, которую выдаёт HR. Бот в этом
+    # участвует ровно одним вызовом: сообщает backend токен из ссылки и
+    # подтверждённый Telegram-аккаунт. Ни сотрудника, ни организацию бот
+    # не знает и не передаёт — их определяет токен.
+    async def consume_link_token(
+        self, token: str, telegram_user_id: int, telegram_chat_id: int,
+        telegram_username: str | None = None,
+        language_code: str | None = None,
+    ) -> dict: ...
+
     async def request_code(self, phone: str, telegram_id: int) -> dict: ...
     async def link(self, phone: str, code: str, telegram_id: int,
                    telegram_username: str | None) -> dict: ...
@@ -70,9 +81,13 @@ class LiveBackendClient(BackendClient):
 
     async def _request(self, method: str, path: str, *, token: str | None = None,
                        json: dict | None = None,
-                       params: dict | None = None) -> Any:
+                       params: dict | None = None,
+                       bot_secret: str | None = None) -> Any:
         session = await self._get_session()
         headers = {"Authorization": f"Bearer {token}"} if token else {}
+        if bot_secret:
+            # Секрет бота, а не пользователя: за этим запросом человека нет.
+            headers["X-Bot-Token"] = bot_secret
         url = f"{self._base_url}{path}"
 
         async with session.request(method, url, json=json, params=params,
@@ -95,6 +110,20 @@ class LiveBackendClient(BackendClient):
             return payload
 
     # --- привязка ---
+    async def consume_link_token(self, token, telegram_user_id, telegram_chat_id,
+                                 telegram_username=None, language_code=None):
+        return await self._request(
+            "POST", "/telegram/bot/link",
+            bot_secret=settings.backend_bot_secret,
+            json={
+                "token": token,
+                "telegram_user_id": telegram_user_id,
+                "telegram_chat_id": telegram_chat_id,
+                "telegram_username": telegram_username,
+                "language_code": language_code,
+            },
+        )
+
     async def request_code(self, phone, telegram_id):
         return await self._request("POST", "/auth/telegram/request-code",
                                    json={"phone": phone, "telegram_id": telegram_id})

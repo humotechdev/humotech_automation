@@ -16,11 +16,19 @@ class Settings(BaseSettings):
     )
 
     bot_token: str
+    # Имя бота нужно только для подсказок в тексте: ссылки привязки
+    # собирает backend — он же знает, кому и на какой срок их выдал.
+    bot_username: str = ""
 
     # stub — фейковые данные вместо backend-api; live — реальные HTTP-запросы
     api_mode: Literal["stub", "live"] = "stub"
     backend_api_url: str = "http://localhost:8000/api/v1"
     api_timeout_seconds: int = 10
+
+    # Общий секрет с backend. Им бот доказывает, что `telegram_user_id`
+    # в запросе привязки пришёл от Telegram через него, а не выдуман
+    # отправителем: проверить это своими силами backend не может.
+    backend_bot_secret: str = ""
 
     bot_internal_token: str = "change-me"
     bot_internal_port: int = 8081

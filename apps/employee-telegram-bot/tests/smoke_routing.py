@@ -108,7 +108,8 @@ async def main():
     bot = Bot(token="42:TEST", session=session)
     dp = Dispatcher(storage=MemoryStorage())
     client = build_client()
-    dp.update.outer_middleware(AuthMiddleware(client, MemoryTokenStorage()))
+    tokens = MemoryTokenStorage()
+    dp.update.outer_middleware(AuthMiddleware(client, tokens))
     dp.include_router(root)
 
     async def feed(update):
@@ -119,11 +120,11 @@ async def main():
     # непривязанный жмёт кнопку из старой клавиатуры
     texts = await feed(msg(100, kb.BTN_PROFILE))
     check("непривязанный получает ответ, а не тишину",
-          any("привязать аккаунт" in t for t in texts), str(texts))
+          any("не привязан" in t for t in texts), str(texts))
 
     texts = await feed(msg(100, "просто текст"))
     check("непривязанный: любой текст не остаётся без ответа",
-          any("привязать аккаунт" in t for t in texts), str(texts))
+          any("не привязан" in t for t in texts), str(texts))
 
     session.reset()
     await dp.feed_update(bot, cb(100, "absence:approve:1"))
@@ -133,14 +134,24 @@ async def main():
 
     await feed(msg(100, "/start"))
     texts = await feed(msg(100, kb.BTN_CANCEL))
-    check("«Отмена» в привязке не принимается за телефон",
+    check("«Отмена» отвечает и непривязанному",
           any("Отменено" in t for t in texts), str(texts))
 
-    # привязка сотрудника
-    await feed(msg(100, "/start"))
-    await feed(msg(100, "+992900000001"))
-    texts = await feed(msg(100, "000000"))
-    check("сотрудник привязался", any("привязан" in t for t in texts), str(texts))
+    # Переход по ссылке привязки доступа НЕ даёт: привязка ждёт HR.
+    texts = await feed(msg(100, "/start link_какой-угодно-токен"))
+    check("переход по ссылке отвечает «ждёт подтверждения»",
+          any("подтверждение" in t for t in texts), str(texts))
+    texts = await feed(msg(100, kb.BTN_PROFILE))
+    check("после перехода по ссылке доступа ещё нет",
+          any("не привязан" in t for t in texts), str(texts))
+
+    # Дальше проверяется МАРШРУТИЗАЦИЯ, а не привязка, поэтому токен
+    # кладётся в хранилище напрямую. Настоящий бот получит его отдельным
+    # обменом, когда HR подтвердит привязку, — это следующий этап.
+    await tokens.set(100, "stub-token-42")
+    texts = await feed(msg(100, "/start"))
+    check("сотрудник с токеном попадает в меню",
+          any("Главное меню" in t for t in texts), str(texts))
 
     # обе формы вызова профиля
     texts = await feed(msg(100, "/profile"))
@@ -180,11 +191,11 @@ async def main():
           str(texts))
     await feed(msg(100, kb.BTN_CANCEL))
 
-    # привязка HR
-    await feed(msg(200, "/start"))
-    await feed(msg(200, "+992900000002"))
-    texts = await feed(msg(200, "000000"))
-    check("HR привязался", any("привязан" in t for t in texts), str(texts))
+    # HR — тем же способом: маршрутизация от привязки не зависит.
+    await tokens.set(200, "stub-token-9")
+    texts = await feed(msg(200, "/start"))
+    check("HR с токеном попадает в меню",
+          any("Главное меню" in t for t in texts), str(texts))
 
     texts = await feed(msg(200, kb.BTN_HR_PANEL))
     check("HR видит панель", any("HR-панель" in t for t in texts), str(texts))

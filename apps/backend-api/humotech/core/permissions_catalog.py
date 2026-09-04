@@ -28,6 +28,16 @@ PERMISSIONS: tuple[tuple[str, str, str], ...] = (
     ("employees.manage", "Управление сотрудниками", "Создавать и изменять сотрудников"),
     ("employees.archive", "Архивирование сотрудников", "Переводить в архив"),
     ("employees.access", "Доступ к офисам", "Выдавать доступ к дополнительным офисам"),
+    # привязка Telegram
+    #
+    # Отдельно от `employees.manage`, потому что это другое решение: правка
+    # карточки меняет данные о человеке, а подтверждение привязки открывает
+    # ему вход в систему с конкретного устройства. Право дать вход не обязано
+    # прилагаться к праву исправить отчество.
+    ("telegram.read", "Просмотр привязок Telegram",
+     "Видеть состояние привязки и заявки, ожидающие подтверждения"),
+    ("telegram.manage", "Управление привязками Telegram",
+     "Выдавать ссылки, подтверждать, отклонять и отключать привязку"),
     # отметки
     ("attendance.read", "Просмотр отметок", "Видеть события и рабочие сессии"),
     ("attendance.correct", "Исправление отметок", "Рассматривать заявки на корректировку"),
@@ -79,6 +89,7 @@ _HR_FULL = (
     "regions.read", "regions.manage", "offices.read", "offices.manage",
     "departments.manage", "positions.manage",
     "employees.read", "employees.manage", "employees.archive", "employees.access",
+    "telegram.read", "telegram.manage",
     "attendance.read", "attendance.correct", "attendance.manual",
     "qr_points.read", "qr_points.manage",
     "schedules.read", "schedules.manage", "calendar.manage",
@@ -97,6 +108,7 @@ ROLE_PERMISSIONS: dict[str, tuple[str, ...]] = {
     "HR_ADMIN": _HR_FULL,
     "REGIONAL_HR": (
         "offices.read", "employees.read", "employees.manage", "employees.access",
+        "telegram.read", "telegram.manage",
         "attendance.read", "attendance.correct",
         "qr_points.read",
         "schedules.read", "schedules.manage",
@@ -105,7 +117,7 @@ ROLE_PERMISSIONS: dict[str, tuple[str, ...]] = {
         "analytics.read", "reports.export",
     ),
     "OFFICE_ADMIN": (
-        "offices.read", "employees.read",
+        "offices.read", "employees.read", "telegram.read",
         "attendance.read", "attendance.correct", "attendance.manual",
         "qr_points.read", "qr_points.manage", "qr_display.start",
         "schedules.read", "absences.read",

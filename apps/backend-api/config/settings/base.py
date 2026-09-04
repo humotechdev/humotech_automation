@@ -182,6 +182,8 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    # CORS только для Mini App и только для его путей — см. модуль.
+    "humotech.telegram.middleware.MiniAppCorsMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -234,6 +236,59 @@ REST_FRAMEWORK = {
     # Обработчик приводит доменные ошибки к тому же телу ответа,
     # что и раньше: {"error": {"code", "message", "details"}}.
     "EXCEPTION_HANDLER": "humotech.core.exceptions.domain_exception_handler",
+    # Частота обращений к чувствительным endpoint'ам. Считает LocMemCache,
+    # то есть на процесс: при нескольких рабочих процессах фактический предел
+    # умножается на их число. Это защита от перебора, а не от нагрузки;
+    # общий счётчик появится вместе с Redis.
+    "DEFAULT_THROTTLE_RATES": {
+        # Обмен initData на внутренний токен: сюда приходит каждый запуск
+        # Mini App, поэтому предел щедрый, но конечный.
+        "telegram_mini_app": env("THROTTLE_TELEGRAM_MINI_APP", "30/min"),
+        # Погашение ссылки привязки. Проверка секрета бота идёт РАНЬШЕ
+        # ограничения, поэтому чужие запросы счётчик не тратят: предел
+        # рассчитан на массовый выход сотрудников по ссылкам в один день.
+        "telegram_bot_link": env("THROTTLE_TELEGRAM_BOT_LINK", "60/min"),
+        # Выдача ссылок HR. Массовая рассылка ссылок — не рабочий сценарий.
+        "telegram_invitations": env("THROTTLE_TELEGRAM_INVITATIONS", "60/min"),
+    },
+}
+
+# --- Telegram ---
+#
+# Токен бота живёт ТОЛЬКО здесь, на сервере. Им подписывается `initData`
+# Mini App, и любой, у кого он есть, может выпустить строку от имени любого
+# сотрудника. Во frontend он не передаётся ни при каких условиях.
+TELEGRAM = {
+    "BOT_TOKEN": env("TELEGRAM_BOT_TOKEN"),
+    "BOT_USERNAME": env("TELEGRAM_BOT_USERNAME"),
+    "MINI_APP_URL": env("TELEGRAM_MINI_APP_URL"),
+    # Пять минут — рекомендация Telegram. Строка живёт от открытия Mini App
+    # до обмена на внутренний токен, дольше ей быть незачем.
+    "INIT_DATA_MAX_AGE_SECONDS": int(
+        env("TELEGRAM_INIT_DATA_MAX_AGE_SECONDS", "300")
+    ),
+    # Сколько живёт ссылка привязки. Сутки: HR выдаёт её в рабочее время,
+    # человек открывает в тот же день или на следующее утро.
+    "INVITATION_TTL_SECONDS": int(env("TELEGRAM_INVITATION_TTL_SECONDS", "86400")),
+    # Срок внутреннего токена Mini App. Заметно больше `initData`: строка
+    # Telegram выдаётся один раз при открытии, и перевыпустить её нельзя —
+    # если внутренний токен протухнет раньше, чем человек закроет приложение,
+    # войти повторно будет нечем.
+    "MINI_APP_SESSION_SECONDS": int(
+        env("TELEGRAM_MINI_APP_SESSION_SECONDS", "43200")
+    ),
+    # Общий секрет между ботом и backend. Нужен потому, что бот сообщает
+    # backend идентификатор Telegram-пользователя как факт: подтвердить его
+    # своими силами backend не может. Без этого секрета кто угодно привязал
+    # бы к найденной ссылке ЧУЖОЙ Telegram.
+    "BOT_API_SECRET": env("TELEGRAM_BOT_API_SECRET"),
+    # Origin'ы, которым разрешено обращаться к endpoint'ам Mini App.
+    # Пусто = браузерных клиентов нет вовсе.
+    "MINI_APP_ALLOWED_ORIGINS": [
+        origin.strip().rstrip("/")
+        for origin in env("TELEGRAM_MINI_APP_ALLOWED_ORIGINS", "").split(",")
+        if origin.strip()
+    ],
 }
 
 PASSWORD_HASHERS = [

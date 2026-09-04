@@ -265,6 +265,11 @@ class AuditTrail:
             "password", "password_hash", "token", "access_token", "api_key",
             "secret", "static_token_hash", "device_identifier_hash",
             "display_identifier_hash", "qr_nonce_hash",
+            # Привязка Telegram. `token_hash` — не открытый токен, но и он
+            # в журнале не нужен: пользы никакой, а рядом с ним однажды
+            # окажется сам токен. `init_data` — подписанная строка Telegram
+            # целиком, в ней имя, фамилия и подпись.
+            "token_hash", "init_data", "initdata", "bot_token",
         }
     )
 
@@ -294,6 +299,37 @@ class AuditTrail:
         return AuditLog.objects.create(
             organization_id=actor.organization_id,
             actor_user_id=actor.user_id,
+            action=action,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            old_values=self.sanitize(before),
+            new_values=self.sanitize(after),
+            occurred_at=timezone.now(),
+        )
+
+    def record_by_employee(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        employee_id: uuid.UUID,
+        action: str,
+        entity_type: str,
+        entity_id: uuid.UUID,
+        before: dict | None = None,
+        after: dict | None = None,
+    ):
+        """Действие, совершённое самим сотрудником, а не пользователем CRM.
+
+        Так в журнал попадает переход по ссылке привязки: учётной записи CRM
+        у сотрудника обычно нет, и `actor_user_id` остался бы пустым, а вместе
+        с ним пропало бы и «кто это сделал». Для таких случаев в `audit_logs`
+        есть отдельная колонка `actor_employee_id`.
+        """
+        from humotech.audit.models import AuditLog
+
+        return AuditLog.objects.create(
+            organization_id=organization_id,
+            actor_employee_id=employee_id,
             action=action,
             entity_type=entity_type,
             entity_id=entity_id,

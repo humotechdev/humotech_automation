@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>HUMOTECH</title>
+    <!--
+      Скрипт Telegram отдаёт window.Telegram.WebApp и подписанную строку
+      запуска. Токен бота во frontend не попадает никогда: подпись
+      проверяет backend, у которого этот токен есть.
+    -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

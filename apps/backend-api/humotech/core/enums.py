@@ -65,7 +65,27 @@ ABSENCE_ACTIONS = (
 )
 
 # --- Telegram, знания, вопросы, уведомления ---
-TELEGRAM_ACCOUNT_STATUSES = ("ACTIVE", "REVOKED", "BLOCKED")
+# PENDING — бот получил одноразовую ссылку и подтвердил Telegram-аккаунт,
+# но HR привязку ещё не утвердил. До утверждения доступа к данным нет:
+# ссылку мог открыть не тот, кому её передавали.
+TELEGRAM_ACCOUNT_STATUSES = ("PENDING", "ACTIVE", "REVOKED", "BLOCKED")
+
+# Жизненный цикл одноразовой ссылки привязки.
+#   ACTIVE               — выдана HR, ещё не использована;
+#   PENDING_CONFIRMATION — сотрудник перешёл по ней, ждём решения HR;
+#   USED                 — HR подтвердил привязку, ссылка отработала;
+#   REJECTED             — HR отклонил привязку;
+#   REVOKED              — HR отозвал ссылку до того, как ею воспользовались;
+#   EXPIRED              — срок вышел раньше, чем ссылкой воспользовались.
+#
+# Срок держится на `expires_at`, а не на статусе: строка переводится
+# в EXPIRED в тот момент, когда система на неё натыкается. Так истечение
+# не зависит от фонового процесса, которого может не быть.
+TELEGRAM_INVITATION_STATUSES = (
+    "ACTIVE", "PENDING_CONFIRMATION", "USED", "REJECTED", "REVOKED", "EXPIRED",
+)
+# Статусы, при которых приглашение ещё «живое» и занимает место у сотрудника.
+TELEGRAM_INVITATION_OPEN_STATUSES = ("ACTIVE", "PENDING_CONFIRMATION")
 
 # --- база знаний AI-ассистента ---
 KNOWLEDGE_SOURCE_TYPES = ("FAQ", "POLICY", "INSTRUCTION", "DOCUMENT")

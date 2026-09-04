@@ -408,3 +408,87 @@ def fresh_qr(now: datetime) -> dict:
 @pytest.fixture()
 def other_qr_point(db, organization, other_office) -> OfficeQrPoint:
     return make_qr_point(organization, other_office, code="BRANCH_ENTRANCE")
+
+
+# --- привязка Telegram ---
+#
+# Ограничение частоты в DRF считает в кэше процесса, а кэш живёт дольше
+# одного теста. Без сброса порядок тестов начинает влиять на результат:
+# тест, который просто вызывает endpoint, падает с 429 из-за соседа.
+
+@pytest.fixture(autouse=True)
+def reset_throttle_counters():
+    from django.core.cache import cache
+
+    cache.clear()
+    yield
+    cache.clear()
+
+
+# Токен заведомо ненастоящий и в Telegram не отправляется: им только
+# подписываются строки `initData` внутри тестов.
+TEST_BOT_TOKEN = "123456:TEST-BOT-TOKEN-NOT-REAL"
+TEST_BOT_SECRET = "test-bot-to-backend-secret"
+
+
+@pytest.fixture()
+def telegram_settings(settings):
+    """Настройки Telegram для тестов.
+
+    Отдельная фикстура, а не значения в `config/settings/test.py`: тест,
+    проверяющий поведение БЕЗ токена бота, должен уметь его убрать.
+    """
+    settings.TELEGRAM = {
+        **settings.TELEGRAM,
+        "BOT_TOKEN": TEST_BOT_TOKEN,
+        "BOT_USERNAME": "humotech_test_bot",
+        "BOT_API_SECRET": TEST_BOT_SECRET,
+        "INIT_DATA_MAX_AGE_SECONDS": 300,
+        "INVITATION_TTL_SECONDS": 86400,
+        "MINI_APP_SESSION_SECONDS": 43200,
+        "MINI_APP_ALLOWED_ORIGINS": ["https://mini.humotech.tj"],
+    }
+    return settings.TELEGRAM
+
+
+def build_init_data(
+    *,
+    bot_token: str = TEST_BOT_TOKEN,
+    telegram_user_id: int = 777_000_111,
+    auth_date: datetime | None = None,
+    username: str | None = "ivan",
+    extra: dict | None = None,
+    tamper: dict | None = None,
+) -> str:
+    """Строка `initData`, подписанная так же, как её подписывает Telegram.
+
+    `tamper` подменяет поля УЖЕ ПОСЛЕ подписи — ровно то, что сделал бы
+    злоумышленник, у которого есть чужая подписанная строка.
+    """
+    import hashlib
+    import hmac
+    import json
+    from urllib.parse import urlencode
+
+    moment = auth_date or datetime.now(tz=dt_timezone.utc)
+    user = {"id": telegram_user_id, "first_name": "Иван", "language_code": "ru"}
+    if username:
+        user["username"] = username
+
+    fields = {
+        "auth_date": str(int(moment.timestamp())),
+        "query_id": "AAEtest",
+        "user": json.dumps(user, ensure_ascii=False, separators=(",", ":")),
+    }
+    fields.update(extra or {})
+
+    check_string = "\n".join(f"{k}={fields[k]}" for k in sorted(fields))
+    secret = hmac.new(
+        b"WebAppData", bot_token.encode("utf-8"), hashlib.sha256
+    ).digest()
+    fields["hash"] = hmac.new(
+        secret, check_string.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+
+    fields.update(tamper or {})
+    return urlencode(fields)
