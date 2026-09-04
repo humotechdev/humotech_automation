@@ -794,3 +794,141 @@ def test_approved_absence_shows_up_in_statistics(
 
     report = statistics.for_period(context, soon(0), soon(2))
     assert report.sick_leave_days == 3
+
+
+# --- продление и остаток ---------------------------------------------------
+
+def test_extending_a_vacation_costs_the_balance(
+    service, context, annual_leave, balance, hr
+):
+    """Продлённые дни списываются так же, как исходные.
+
+    Иначе неделю берут заявкой, а месяц — продлением, и остаток
+    уменьшается только на неделю.
+    """
+    view = service.create(
+        context, absence_type_code="ANNUAL_LEAVE",
+        first_day=soon(10), last_day=soon(16),
+    )
+    service.decide(hr, view.request.id, approve=True)
+    balance.refresh_from_db()
+    for_the_original = balance.used_minutes
+
+    extension = service.extend(context, view.request.id, new_last_day=soon(23))
+    balance.refresh_from_db()
+    assert balance.reserved_minutes > 0, "продление не зарезервировало ничего"
+
+    service.decide(hr, extension.request.id, approve=True)
+    balance.refresh_from_db()
+    assert balance.reserved_minutes == 0
+    assert balance.used_minutes > for_the_original, (
+        "продлённые дни не списались с остатка"
+    )
+
+
+def test_extension_does_not_count_the_last_day_twice(
+    service, context, annual_leave, balance, hr
+):
+    """Период продления начинается со СЛЕДУЮЩЕГО дня.
+
+    Прежний конец принадлежит исходной заявке, и включать его в продление
+    значит списать один день дважды.
+    """
+    view = service.create(
+        context, absence_type_code="ANNUAL_LEAVE",
+        first_day=soon(10), last_day=soon(16),
+    )
+    service.decide(hr, view.request.id, approve=True)
+    extension = service.extend(context, view.request.id, new_last_day=soon(23))
+    service.decide(hr, extension.request.id, approve=True)
+
+    balance.refresh_from_db()
+    whole = service._working_days(context, soon(10), soon(23))
+    assert balance.used_minutes == whole * MINUTES_PER_WORKING_DAY
+
+
+def test_extension_beyond_the_balance_is_refused(
+    service, context, annual_leave, balance, hr
+):
+    """Запрет уходить в минус нельзя обойти продлением."""
+    view = service.create(
+        context, absence_type_code="ANNUAL_LEAVE",
+        first_day=soon(10), last_day=soon(16),
+    )
+    service.decide(hr, view.request.id, approve=True)
+
+    with pytest.raises(Conflict) as exc:
+        service.extend(context, view.request.id, new_last_day=soon(400))
+    assert exc.value.details["reason"] == "insufficient_balance"
+
+
+def test_cancelling_a_vacation_extended_and_approved_gives_everything_back(
+    service, context, annual_leave, balance, hr
+):
+    """Отмена возвращает и исходные дни, и добавленные продлением."""
+    view = service.create(
+        context, absence_type_code="ANNUAL_LEAVE",
+        first_day=soon(10), last_day=soon(16),
+    )
+    service.decide(hr, view.request.id, approve=True)
+    extension = service.extend(context, view.request.id, new_last_day=soon(23))
+    service.decide(hr, extension.request.id, approve=True)
+
+    service.cancel_approved(hr, view.request.id, comment="Перенос")
+
+    balance.refresh_from_db()
+    assert balance.used_minutes == 0
+    assert balance.reserved_minutes == 0
+
+
+def test_a_rejected_extension_gives_its_reservation_back(
+    service, context, annual_leave, balance, hr
+):
+    """Отказ в продлении возвращает ровно то, что продление отложило."""
+    view = service.create(
+        context, absence_type_code="ANNUAL_LEAVE",
+        first_day=soon(10), last_day=soon(16),
+    )
+    service.decide(hr, view.request.id, approve=True)
+    balance.refresh_from_db()
+    for_the_original = balance.used_minutes
+
+    extension = service.extend(context, view.request.id, new_last_day=soon(23))
+    service.decide(hr, extension.request.id, approve=False)
+
+    balance.refresh_from_db()
+    assert balance.reserved_minutes == 0
+    assert balance.used_minutes == for_the_original
+
+
+def test_a_vacation_is_charged_to_the_year_it_falls_in(
+    service, context, annual_leave, balance, organization, employee
+):
+    """Остаток берётся за год отпуска, а не за год подачи заявки.
+
+    В декабре просят январь. Если зарезервировать в старом году, а списать
+    в новом, то в старом останется вечный резерв, а в новом — списание
+    без резерва, и обе строки разойдутся с действительностью.
+
+    Фикстура `balance` — строка текущего года, и до исправления резерв
+    ложился именно в неё.
+    """
+    from humotech.absences.models import LeaveBalance as Balance
+
+    january = date(date.today().year + 1, 1, 12)
+    next_year = Balance.objects.create(
+        organization=organization, employee=employee, absence_type=annual_leave,
+        year=january.year, allocated_minutes=28 * MINUTES_PER_WORKING_DAY,
+    )
+
+    service.create(
+        context, absence_type_code="ANNUAL_LEAVE",
+        first_day=january, last_day=january + timedelta(days=6),
+    )
+
+    next_year.refresh_from_db()
+    balance.refresh_from_db()
+    assert next_year.reserved_minutes > 0, (
+        "резерв ушёл не в тот год: заявку подают сейчас, а отпуск в январе"
+    )
+    assert balance.reserved_minutes == 0, "резерв лёг в год подачи заявки"

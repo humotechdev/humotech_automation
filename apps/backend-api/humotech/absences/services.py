@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from django.db import transaction
 from django.utils import timezone
@@ -186,9 +186,17 @@ class AbsenceService(BaseService):
         self._check_period(context, first_day, last_day)
         self._check_overlap(context, first_day, last_day)
 
+        # Конец ВКЛЮЧЁН: `end_at` читают через `local_date(end_at)`, и
+        # полуинтервал дал бы начало следующих суток — лишний день
+        # в каждом больничном и в каждом отпуске.
+        start_at, end_at = closed_range_bounds(
+            first_day, last_day, context.timezone
+        )
         working_days = self._working_days(context, first_day, last_day)
         if absence_type.deducts_leave_balance:
-            self._check_balance(context, absence_type, working_days, policy, moment)
+            self._check_balance(
+                context, absence_type, working_days, policy, start_at
+            )
 
         if policy.document_required and document is None:
             raise ValidationFailed(
@@ -196,12 +204,6 @@ class AbsenceService(BaseService):
                 details={"reason": "document_required"},
             )
 
-        # Конец ВКЛЮЧЁН: `end_at` читают через `local_date(end_at)`, и
-        # полуинтервал дал бы начало следующих суток — лишний день
-        # в каждом больничном и в каждом отпуске.
-        start_at, end_at = closed_range_bounds(
-            first_day, last_day, context.timezone
-        )
         with self.atomic():
             request = AbsenceRequest.objects.create(
                 organization_id=context.organization_id,
@@ -222,7 +224,7 @@ class AbsenceService(BaseService):
                 # Резерв, а не списание: заявка ещё может быть отклонена.
                 # Списывать до решения значило бы удерживать остаток за то,
                 # чего не случилось.
-                self._reserve(context, absence_type, working_days, moment)
+                self._reserve(context, absence_type, working_days, start_at)
 
             if not policy.require_hr_approval:
                 # Организация решила обходиться без согласования: заявка
@@ -286,6 +288,24 @@ class AbsenceService(BaseService):
                 details={"reason": "not_longer"},
             )
 
+        # Период продления — только ДОБАВЛЕННЫЕ дни, со следующего дня после
+        # прежнего конца. Начать его прежним концом значило бы посчитать
+        # последний день исходного отсутствия дважды: и в нём, и в продлении.
+        first_extra_day = current_end.astimezone(context.timezone).date() + (
+            timedelta(days=1)
+        )
+        extra_start, _ = closed_range_bounds(
+            first_extra_day, new_last_day, context.timezone
+        )
+        extra_days = self._working_days(context, first_extra_day, new_last_day)
+        if parent.absence_type.deducts_leave_balance:
+            # Продление отпуска стоит остатка ровно так же, как сам отпуск.
+            # Без этой проверки запрет уходить в минус обходился бы одним
+            # продлением, а добавленные дни не списывались бы вовсе.
+            self._check_balance(
+                context, parent.absence_type, extra_days, policy, extra_start
+            )
+
         with self.atomic():
             child = AbsenceRequest.objects.create(
                 organization_id=context.organization_id,
@@ -294,12 +314,16 @@ class AbsenceService(BaseService):
                 request_kind="EXTEND",
                 parent_request=parent,
                 status="SUBMITTED",
-                requested_start_at=current_end,
+                requested_start_at=extra_start,
                 requested_end_at=new_end,
                 employee_comment=comment or None,
                 submitted_at=moment,
             )
             self._act(context, child, "SUBMITTED", None, "SUBMITTED")
+            if parent.absence_type.deducts_leave_balance:
+                self._reserve(
+                    context, parent.absence_type, extra_days, extra_start
+                )
             self._notify(child, "created")
             self.audit.record_by_employee(
                 organization_id=context.organization_id,
@@ -527,6 +551,11 @@ class AbsenceService(BaseService):
             EmployeeAbsence.objects.filter(
                 origin_request=parent, status__in=("PLANNED", "ACTIVE")
             ).update(end_at=request.requested_end_at)
+            if request.absence_type.deducts_leave_balance:
+                # Резерв под добавленные дни превращается в списание —
+                # ровно как у исходной заявки. Без этого продлением можно
+                # было бы отгулять сколько угодно бесплатно.
+                self._consume_reservation(request, now)
             return
 
         absence = EmployeeAbsence.objects.create(
@@ -687,12 +716,18 @@ class AbsenceService(BaseService):
         return total
 
     def _check_balance(
-        self, context, absence_type, working_days: int, policy, now
+        self, context, absence_type, working_days: int, policy, start_at
     ) -> None:
+        """Хватает ли остатка ТОГО года, на который просят отпуск.
+
+        Не года подачи заявки: в декабре просят январь, и остаток за январь
+        лежит в другой строке. Проверить одну, а списать с другой значило бы
+        и пропустить перерасход, и оставить в старом году вечный резерв.
+        """
         balance = LeaveBalance.objects.filter(
             employee_id=context.employee.id,
             absence_type=absence_type,
-            year=now.astimezone(context.timezone).year,
+            year=start_at.astimezone(context.timezone).year,
         ).first()
         if balance is None:
             raise Conflict(
@@ -716,14 +751,19 @@ class AbsenceService(BaseService):
                 },
             )
 
-    def _reserve(self, context, absence_type, working_days: int, now) -> None:
+    def _reserve(
+        self, context, absence_type, working_days: int, start_at
+    ) -> None:
         """Отложить минуты под неподтверждённую заявку.
 
         Резерв, а не списание: заявку ещё могут отклонить, и списывать
         остаток за то, чего не случилось, нельзя. Но и не резервировать
         тоже нельзя — иначе на один остаток подадут пять заявок.
+
+        Год — тот, на который просят отпуск: та же строка, из которой
+        потом спишут и в которую вернут.
         """
-        year = now.astimezone(context.timezone).year
+        year = start_at.astimezone(context.timezone).year
         row = (
             LeaveBalance.objects.select_for_update()
             .filter(
