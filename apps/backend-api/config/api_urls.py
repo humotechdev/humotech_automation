@@ -8,6 +8,13 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from humotech.accounts.views import CurrentUserView, LoginView, LogoutView
+from humotech.accounts.rbac_views import (
+    CrmUserViewSet,
+    GrantCreateView,
+    GrantDetailView,
+    RoleListView,
+    UserGrantsView,
+)
 from humotech.audit.views import AuditLogView
 from humotech.analytics.views import (
     AnalyticsView,
@@ -61,6 +68,7 @@ router.register("work-schedules", WorkScheduleViewSet, basename="work-schedule")
 router.register("qr-points", QrPointViewSet, basename="qr-point")
 router.register("departments", DepartmentViewSet, basename="department")
 router.register("positions", PositionViewSet, basename="position")
+router.register("users", CrmUserViewSet, basename="crm-user")
 router.register(
     "calendar-exceptions", CalendarExceptionViewSet, basename="calendar-exception"
 )
@@ -135,6 +143,18 @@ urlpatterns = [
     # единственный способ появиться в журнале — быть записанным сервисом,
     # который выполняет само действие.
     path("audit-logs", AuditLogView.as_view(), name="audit-logs"),
+    path("roles", RoleListView.as_view(), name="roles"),
+    path(
+        "users/<uuid:user_id>/grants",
+        UserGrantsView.as_view(),
+        name="user-grants",
+    ),
+    path("grants", GrantCreateView.as_view(), name="grant-create"),
+    path(
+        "grants/<uuid:grant_id>",
+        GrantDetailView.as_view(),
+        name="grant-detail",
+    ),
     path("settings", OrganizationSettingsView.as_view(), name="settings"),
     path(
         "settings/<str:key>",
