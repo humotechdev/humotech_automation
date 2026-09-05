@@ -35,11 +35,22 @@ from src.messages import employee as text
 from src.middlewares.employee import REASON_UNAVAILABLE
 
 
+class FakeBot:
+    """Только то, что бот делает с кнопкой меню: помнит записи."""
+
+    def __init__(self):
+        self.menu_writes: list[tuple[object, object]] = []
+
+    async def set_chat_menu_button(self, *, chat_id=None, menu_button=None):
+        self.menu_writes.append((chat_id, menu_button))
+
+
 class FakeMessage:
     def __init__(self, user_id=555):
         self.from_user = SimpleNamespace(id=user_id, username="ivan",
                                          language_code="ru")
         self.chat = SimpleNamespace(id=user_id)
+        self.bot = FakeBot()
         self.answers: list[tuple[str, object]] = []
 
     async def answer(self, text, reply_markup=None, **kwargs):
@@ -314,6 +325,31 @@ def test_start_names_what_each_way_is_for(monkeypatch):
     assert "QR" in answer
     for word in ("статистика", "история", "больничный", "отпуск"):
         assert word.lower() in answer.lower()
+
+
+def test_start_drops_a_personal_button_that_shadows_the_common_one():
+    """Кнопку можно задать отдельному чату, и она перекроет общую навсегда.
+
+    Поймано на живом стенде: бот записал общую кнопку на /scan, Telegram
+    подтвердил запись, а два чата продолжали показывать «Кабинет» —
+    потому что у них стояла своя. В логах при этом всё было хорошо.
+    """
+    from aiogram.types import MenuButtonDefault
+
+    message, _ = run(start, needs_client=False)
+
+    assert message.bot.menu_writes, "персональная кнопка не снималась"
+    chat_id, button = message.bot.menu_writes[-1]
+    assert chat_id == message.chat.id
+    assert isinstance(button, MenuButtonDefault)
+
+
+def test_the_common_button_is_not_touched_per_chat():
+    """Общая кнопка ставится один раз на старте, а не на каждый /start."""
+    message, _ = run(start, needs_client=False)
+
+    for chat_id, _ in message.bot.menu_writes:
+        assert chat_id is not None
 
 
 def test_cabinet_is_still_reachable_by_command():

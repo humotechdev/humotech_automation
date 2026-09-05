@@ -25,6 +25,7 @@ from src.api.errors import ApiError
 from src.api.selfservice import SelfServiceClient
 from src.config.settings import settings
 from src.keyboards import employee as kb
+from src.utils.menu_button import drop_chat_override
 from src.messages import employee as text
 from src.middlewares.employee import REASON_UNAVAILABLE
 
@@ -69,6 +70,10 @@ async def _guard(message: Message, employee, denial) -> bool:
 
 @router.message(CommandStart(deep_link=False))
 async def start(message: Message, employee, denial) -> None:
+    # Персональная кнопка чата перекрывает общую навсегда. Снимается
+    # здесь, на действии, которое человек и так делает, когда кнопка
+    # выглядит устаревшей — см. `drop_chat_override`.
+    await drop_chat_override(message.bot, message.chat.id)
     if not await _guard(message, employee, denial):
         return
     await message.answer(

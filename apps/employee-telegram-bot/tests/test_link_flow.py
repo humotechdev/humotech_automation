@@ -44,6 +44,13 @@ def test_payload_parsing(payload, expected):
 
 # --- дублёры ---------------------------------------------------------------
 
+def _remember_menu_write(message):
+    async def write(*, chat_id=None, menu_button=None):
+        message.menu_writes.append((chat_id, menu_button))
+
+    return write
+
+
 class FakeMessage:
     """Сообщение, которое запоминает ответы вместо отправки в Telegram."""
 
@@ -52,6 +59,12 @@ class FakeMessage:
             id=user_id, username=username, language_code=language_code
         )
         self.chat = SimpleNamespace(id=user_id)
+        # Обычный /start снимает персональную кнопку чата, а чужая
+        # полезная нагрузка ведёт себя как обычный /start.
+        self.bot = SimpleNamespace(
+            set_chat_menu_button=_remember_menu_write(self)
+        )
+        self.menu_writes: list[tuple[object, object]] = []
         self.answers: list[tuple[str, object]] = []
 
     async def answer(self, text, reply_markup=None, **kwargs):

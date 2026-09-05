@@ -35,7 +35,7 @@ from __future__ import annotations
 import logging
 
 from aiogram import Bot
-from aiogram.types import MenuButtonWebApp, WebAppInfo
+from aiogram.types import MenuButtonDefault, MenuButtonWebApp, WebAppInfo
 
 from src.config.settings import settings
 
@@ -102,4 +102,40 @@ async def ensure_menu_button(bot: Bot) -> None:
         logger.exception("menu button: установить не удалось")
 
 
-__all__ = ["BUTTON_TEXT", "SCAN_PATH", "ensure_menu_button", "scan_url"]
+async def drop_chat_override(bot: Bot | None, chat_id: int) -> None:
+    """Вернуть чату общую кнопку бота.
+
+    Кнопку можно задать не только боту целиком, но и отдельному чату,
+    и тогда персональная перекрывает общую НАВСЕГДА. Общую при этом
+    видно и в логах, и через `getChatMenuButton` без `chat_id` — она
+    верная; а человек у себя видит старую и справедливо считает, что
+    ничего не поменялось. Поймано ровно так: бот записал `/scan`,
+    Telegram подтвердил, а два чата продолжали показывать «Кабинет».
+
+    Пишется без чтения: `getChatMenuButton` с `chat_id` возвращает
+    ДЕЙСТВУЮЩУЮ кнопку, а не признак того, что она персональная, и
+    отличить «своя такая же» от «унаследована общая» по ответу нельзя.
+    Запись `default` в обоих случаях означает одно и то же и ничего
+    не портит.
+
+    Вызывается на `/start` — то есть на действии, которое человек и так
+    делает, когда что-то выглядит сломанным.
+    """
+    if bot is None:
+        return
+    try:
+        await bot.set_chat_menu_button(
+            chat_id=chat_id, menu_button=MenuButtonDefault()
+        )
+    except Exception:
+        # Кнопка — удобство. Уронить из-за неё ответ на /start нельзя.
+        logger.exception("menu button: не удалось снять персональную кнопку")
+
+
+__all__ = [
+    "BUTTON_TEXT",
+    "SCAN_PATH",
+    "drop_chat_override",
+    "ensure_menu_button",
+    "scan_url",
+]
