@@ -42,12 +42,17 @@ DENIAL_TEXT = {
 }
 
 
-def _menu(employee):
-    return (
-        kb.employee_menu(settings.mini_app_url)
-        if employee
-        else kb.help_only_menu()
-    )
+def _menu(employee, message: Message | None = None):
+    """Нижняя клавиатура. Один сборщик на бота, здесь только выбор набора.
+
+    Тип чата важен: `web_app` у кнопки нижней клавиатуры Telegram
+    разрешает только в личном чате, и в группе такая клавиатура — ошибка
+    запроса целиком, то есть человек остался бы вообще без кнопок.
+    """
+    if not employee:
+        return kb.help_only_menu()
+    private = message is None or getattr(message.chat, "type", "private") == "private"
+    return kb.employee_menu(settings.mini_app_url, private=private)
 
 
 async def _guard(message: Message, employee, denial) -> bool:
@@ -83,10 +88,11 @@ async def start(message: Message, employee, denial) -> None:
     await drop_chat_override(message.bot, message.chat.id)
     await message.answer(
         f"{text.greet(employee)}\n\n{text.CABINET_HINT}",
-        reply_markup=_menu(employee),
+        reply_markup=_menu(employee, message),
     )
 
 
+@router.message(F.text == kb.BTN_OPEN)
 @router.message(F.text == kb.BTN_CABINET)
 @router.message(Command("cabinet"))
 async def cabinet(message: Message, employee, denial) -> None:
@@ -109,10 +115,37 @@ async def cabinet(message: Message, employee, denial) -> None:
 
 
 @router.message(Command("menu"))
+@router.message(Command("keyboard"))
 async def menu(message: Message, employee, denial) -> None:
+    """Вернуть нижнюю клавиатуру, если её свернули или удалили.
+
+    `/keyboard` — то же самое под именем, которое ищут, когда кнопки
+    пропали: «меню» в этот момент звучит как список команд.
+    """
     if not await _guard(message, employee, denial):
         return
-    await message.answer("Меню", reply_markup=_menu(employee))
+    await message.answer("Меню", reply_markup=_menu(employee, message))
+
+
+@router.message(F.text == kb.BTN_SCAN)
+@router.message(Command("scan"))
+async def scan(message: Message, employee, denial) -> None:
+    """Отметка inline-кнопкой — запасной путь к тому же экрану.
+
+    Обычно сюда не попадают: кнопка нижней клавиатуры открывает
+    приложение сама и боту ничего не шлёт. Обработчик нужен на случай,
+    когда она этого не сделала, — тогда человек получает рабочую
+    кнопку, а не молчание.
+    """
+    if not await _guard(message, employee, denial):
+        return
+    if not settings.mini_app_url:
+        await message.answer(text.CABINET_UNAVAILABLE)
+        return
+    await message.answer(
+        text.SCAN_OPEN,
+        reply_markup=kb.scan_button(settings.mini_app_url),
+    )
 
 
 # --- быстрые ответы --------------------------------------------------------
@@ -125,7 +158,7 @@ async def where_am_i(
     if not await _guard(message, employee, denial):
         return
     body = await client.status(message.from_user.id)
-    await message.answer(text.presence(body), reply_markup=_menu(employee))
+    await message.answer(text.presence(body), reply_markup=_menu(employee, message))
 
 
 @router.message(F.text == kb.BTN_TODAY)
@@ -156,7 +189,7 @@ async def _summary(message, employee, denial, client, period, title) -> None:
     if not await _guard(message, employee, denial):
         return
     body = await client.statistics(message.from_user.id, period)
-    await message.answer(text.summary(body, title), reply_markup=_menu(employee))
+    await message.answer(text.summary(body, title), reply_markup=_menu(employee, message))
 
 
 @router.message(F.text == kb.BTN_HISTORY)
@@ -167,7 +200,7 @@ async def history(
     if not await _guard(message, employee, denial):
         return
     body = await client.history(message.from_user.id)
-    await message.answer(text.history(body), reply_markup=_menu(employee))
+    await message.answer(text.history(body), reply_markup=_menu(employee, message))
 
 
 @router.message(F.text == kb.BTN_MY_REQUESTS)
@@ -178,7 +211,7 @@ async def my_requests(
     if not await _guard(message, employee, denial):
         return
     body = await client.absences(message.from_user.id)
-    await message.answer(text.requests(body), reply_markup=_menu(employee))
+    await message.answer(text.requests(body), reply_markup=_menu(employee, message))
 
 
 # --- то, что оформляется в кабинете ----------------------------------------
@@ -205,7 +238,7 @@ async def sick_leave(
     lines = ["<b>Больничный</b>", "", text.CABINET_HINT]
     if open_rows:
         lines += ["", "Сейчас оформлено:", text.requests({"requests": open_rows})]
-    await message.answer("\n".join(lines), reply_markup=_menu(employee))
+    await message.answer("\n".join(lines), reply_markup=_menu(employee, message))
 
 
 @router.message(F.text == kb.BTN_VACATION)
@@ -228,7 +261,7 @@ async def vacation(
         logger.info("leave balance unavailable: %s", error)
 
     lines += ["", text.CABINET_HINT]
-    await message.answer("\n".join(lines), reply_markup=_menu(employee))
+    await message.answer("\n".join(lines), reply_markup=_menu(employee, message))
 
 
 # --- помощь ----------------------------------------------------------------
@@ -241,7 +274,7 @@ async def help_handler(message: Message, employee, denial) -> None:
     Человек, которому отказали, должен хотя бы понимать, что это за бот
     и к кому идти.
     """
-    await message.answer(text.HELP, reply_markup=_menu(employee))
+    await message.answer(text.HELP, reply_markup=_menu(employee, message))
 
 
 __all__ = ["router"]

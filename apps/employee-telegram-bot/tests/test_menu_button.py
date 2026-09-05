@@ -22,6 +22,7 @@ class FakeBot:
     def __init__(self, current=None, fails: bool = False):
         self.current = current or MenuButtonCommands()
         self.writes: list[MenuButtonWebApp] = []
+        self.chat_writes: list[tuple[int, object]] = []
         self.fails = fails
 
     async def get_chat_menu_button(self, **_):
@@ -29,9 +30,14 @@ class FakeBot:
             raise RuntimeError("Telegram недоступен")
         return self.current
 
-    async def set_chat_menu_button(self, *, menu_button, **_):
-        self.writes.append(menu_button)
-        self.current = menu_button
+    async def set_chat_menu_button(self, *, menu_button, chat_id=None, **_):
+        if self.fails:
+            raise RuntimeError("Telegram недоступен")
+        if chat_id is None:
+            self.writes.append(menu_button)
+            self.current = menu_button
+        else:
+            self.chat_writes.append((chat_id, menu_button))
 
 
 def run(coro):
@@ -52,7 +58,7 @@ def test_button_is_set_when_it_points_at_commands(url):
 
     assert len(bot.writes) == 1
     assert isinstance(bot.writes[0], MenuButtonWebApp)
-    assert bot.writes[0].web_app.url == url + "/scan"
+    assert bot.writes[0].web_app.url == url
     assert bot.writes[0].text == mb.BUTTON_TEXT
 
 
@@ -74,7 +80,7 @@ def test_trailing_slash_is_not_a_change(url):
     """
     bot = FakeBot(
         MenuButtonWebApp(
-            text=mb.BUTTON_TEXT, web_app=WebAppInfo(url=url + "/scan/")
+            text=mb.BUTTON_TEXT, web_app=WebAppInfo(url=url + "/")
         )
     )
 
@@ -94,7 +100,7 @@ def test_different_address_is_rewritten(url):
     run(mb.ensure_menu_button(bot))
 
     assert len(bot.writes) == 1
-    assert bot.writes[0].web_app.url == url + "/scan"
+    assert bot.writes[0].web_app.url == url
 
 
 def test_without_address_nothing_is_touched(monkeypatch):
@@ -115,20 +121,21 @@ def test_telegram_failure_does_not_stop_the_bot(url):
     assert bot.writes == []
 
 
-# --- быстрая отметка --------------------------------------------------------
+# --- назначение кнопки ------------------------------------------------------
 
-def test_button_opens_the_scan_route(url):
-    """Синяя кнопка ведёт на отметку, а не в кабинет целиком.
+def test_button_opens_the_cabinet_root(url):
+    """Синяя кнопка открывает кабинет целиком, а не один его экран.
 
-    Место у поля ввода одно на бота, и занимает его то, что делают
-    чаще: отмечаются дважды в день, кабинет открывают изредка.
+    Отметка живёт на нижней клавиатуре: там помещаются две кнопки,
+    а у поля ввода место одно на бота.
     """
     bot = FakeBot()
 
     run(mb.ensure_menu_button(bot))
 
-    assert bot.writes[0].web_app.url.endswith("/scan")
-    assert bot.writes[0].text == "Отметиться"
+    assert bot.writes[0].text == "Кабинет"
+    assert bot.writes[0].web_app.url == url
+    assert not bot.writes[0].web_app.url.endswith("/scan")
 
 
 def test_address_is_built_from_the_setting_not_written_in_code(monkeypatch):
@@ -144,7 +151,7 @@ def test_address_is_built_from_the_setting_not_written_in_code(monkeypatch):
 
     run(mb.ensure_menu_button(bot))
 
-    assert bot.writes[0].web_app.url == "https://another-stand.example/scan"
+    assert bot.writes[0].web_app.url == "https://another-stand.example"
 
 
 def test_no_domain_is_hardcoded_in_the_module():
@@ -163,26 +170,49 @@ def test_scan_url_tolerates_a_trailing_slash():
     assert mb.scan_url("https://example.test") == "https://example.test/scan"
 
 
-def test_restart_does_not_leave_the_old_cabinet_button(url):
-    """Прежняя кнопка вела в корень кабинета — её надо переписать."""
+def test_a_button_left_pointing_at_the_scanner_is_moved_back(url):
+    """Промежуточное состояние: кнопка успела съездить на /scan."""
     bot = FakeBot(
-        MenuButtonWebApp(text="Кабинет", web_app=WebAppInfo(url=url))
+        MenuButtonWebApp(
+            text="Отметиться", web_app=WebAppInfo(url=url + "/scan")
+        )
     )
 
     run(mb.ensure_menu_button(bot))
 
     assert len(bot.writes) == 1
-    assert bot.writes[0].web_app.url == url + "/scan"
-    assert bot.writes[0].text == "Отметиться"
+    assert bot.writes[0].web_app.url == url
+    assert bot.writes[0].text == "Кабинет"
 
 
 def test_same_address_but_old_caption_is_rewritten(url):
     """Адрес верный, подпись прежняя — кнопку всё равно надо поправить."""
     bot = FakeBot(
-        MenuButtonWebApp(text="Кабинет", web_app=WebAppInfo(url=url + "/scan"))
+        MenuButtonWebApp(text="Отметиться", web_app=WebAppInfo(url=url))
     )
 
     run(mb.ensure_menu_button(bot))
 
     assert len(bot.writes) == 1
-    assert bot.writes[0].text == "Отметиться"
+    assert bot.writes[0].text == "Кабинет"
+
+
+# --- персональная кнопка чата -----------------------------------------------
+
+def test_personal_button_is_dropped_so_the_common_one_shows_through():
+    """Персональная кнопка чата перекрывает общую бессрочно.
+
+    Поймано на живом стенде: общая была верной, а два чата продолжали
+    показывать прежнюю.
+    """
+    from aiogram.types import MenuButtonDefault
+
+    bot = FakeBot()
+    run(mb.drop_chat_override(bot, 4242))
+
+    assert bot.chat_writes == [(4242, MenuButtonDefault())]
+
+
+def test_dropping_a_personal_button_survives_telegram_being_down():
+    bot = FakeBot(fails=True)
+    run(mb.drop_chat_override(bot, 4242))  # не должно бросить

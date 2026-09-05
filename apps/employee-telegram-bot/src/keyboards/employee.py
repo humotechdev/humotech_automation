@@ -1,19 +1,29 @@
-"""Меню сотрудника. Десять пунктов, никаких подменю глубже одного уровня.
+"""Меню сотрудника: два действия сверху, быстрые ответы под ними.
 
 Правило разделения простое: то, на что есть короткий ответ, отвечается
-прямо в чате; то, где надо что-то заполнить, открывается в Mini App.
-Заставлять человека вводить даты сообщениями в чат — способ получить
-«3 сентебря» и три уточняющих вопроса.
+прямо в чате; то, где надо что-то заполнить или навести камеру,
+открывается в Mini App.
 
-Кнопка личного кабинета — обычная текстовая, и она первая: это главный
-вход. Само приложение открывается ОТДЕЛЬНОЙ inline-кнопкой, которую бот
-присылает в ответ, — и это не украшение.
+Верхний ряд — ДВЕ кнопки запуска приложения, `KeyboardButton` с
+`web_app`. Отметка и кабинет: то, ради чего сюда заходят, в одно
+нажатие и без промежуточных сообщений.
 
-Telegram передаёт подписанные данные о пользователе только приложениям,
-открытым из inline-кнопки, кнопки меню или прямой ссылки. Приложение,
-открытое из нижней клавиатуры, не получает ничего: ни подписи, ни имени.
-Оно и не должно — такие Mini App умеют только отправить ответ боту через
-`sendData`. Кабинету этого мало: ему надо знать, кто пришёл.
+Про подпись запуска. Раньше здесь стояла обычная текстовая кнопка, а в
+пояснении к ней было записано, что приложение, открытое из нижней
+клавиатуры, не получает ни подписи, ни имени. По документации Bot API
+это не так: `KeyboardButton.web_app` — полноценный запуск, он приносит
+`initData` вместе с `query_id`, и отличается от inline-кнопки только
+тем, что дополнительно умеет `answerWebAppQuery`. Прежнее наблюдение
+похоже на запуск обычной текстовой кнопкой, которая Mini App не
+открывает вовсе.
+
+Проверять это должен живой Android, а не документация, поэтому запасной
+путь оставлен целиком: `/cabinet` и `/scan` присылают то же приложение
+inline-кнопкой, про которую сомнений нет.
+
+`web_app` у кнопки нижней клавиатуры Telegram разрешает ТОЛЬКО в личном
+чате. В группе такая клавиатура — ошибка запроса, поэтому там верхний
+ряд собирается текстовой кнопкой, как раньше.
 
 Остальные кнопки — обычные текстовые: их видно в истории чата, и по ним
 можно вернуться к прошлому ответу, не нажимая заново.
@@ -29,6 +39,13 @@ from aiogram.types import (
     WebAppInfo,
 )
 
+#: Верхний ряд: две кнопки запуска Mini App.
+BTN_SCAN = "📷 Отметиться"
+BTN_OPEN = "👤 Кабинет"
+
+#: Прежняя текстовая кнопка кабинета. Осталась для группового чата, где
+#: `web_app` в нижней клавиатуре запрещён, и как запасной путь: по её
+#: тексту бот присылает кабинет inline-кнопкой.
 BTN_CABINET = "🏠 Открыть личный кабинет"
 BTN_WHERE_AM_I = "📍 Я сейчас в офисе?"
 BTN_TODAY = "📅 Сегодня"
@@ -41,21 +58,51 @@ BTN_MY_REQUESTS = "📄 Мои заявки"
 BTN_HELP = "❓ Помощь"
 
 # Все подписи разом — по ним фильтруются хендлеры, и список должен быть один.
+#
+# Кнопки верхнего ряда сюда входят намеренно, хотя `web_app`-кнопка текста
+# боту не шлёт: на клиенте, который её не открыл, человек всё равно
+# нажмёт — и должен получить запасной путь, а не молчание.
 ALL_BUTTONS = (
+    BTN_SCAN, BTN_OPEN,
     BTN_CABINET, BTN_WHERE_AM_I, BTN_TODAY, BTN_WEEK, BTN_MONTH,
     BTN_HISTORY, BTN_SICK_LEAVE, BTN_VACATION, BTN_MY_REQUESTS, BTN_HELP,
 )
 
+#: Путь быстрой отметки. Домен не хранится нигде в коде — приходит из
+#: MINI_APP_URL, см. `utils/menu_button.scan_url`.
+SCAN_PATH = "/scan"
 
-def employee_menu(mini_app_url: str | None) -> ReplyKeyboardMarkup:
-    """Меню сотрудника с рабочей привязкой.
 
-    Без адреса Mini App кнопка кабинета не показывается вовсе: кнопка,
+def scan_url(mini_app_url: str) -> str:
+    """Адрес быстрой отметки. Хвостовая косая черта у базы допустима."""
+    return mini_app_url.rstrip("/") + SCAN_PATH
+
+
+def cabinet_url(mini_app_url: str) -> str:
+    """Адрес кабинета: корень приложения, ровно как в настройке."""
+    return mini_app_url.rstrip("/") + "/"
+
+
+def employee_menu(
+    mini_app_url: str | None, *, private: bool = True
+) -> ReplyKeyboardMarkup:
+    """Меню сотрудника с рабочей привязкой. Единственный сборщик на бота.
+
+    Без адреса Mini App верхний ряд не показывается вовсе: кнопка,
     которая ничего не открывает, хуже её отсутствия.
+
+    `private=False` — групповой чат. Там `web_app` в нижней клавиатуре
+    запрещён Telegram, и ряд собирается прежней текстовой кнопкой:
+    иначе Telegram отклонит весь запрос целиком, и человек останется
+    вообще без клавиатуры.
+
+    `is_persistent` — чтобы клавиатура не сворачивалась в значок после
+    первого же ответа: она здесь постоянный инструмент, а не разовый
+    вопрос. `one_time_keyboard` по той же причине выключен явно.
     """
     rows = []
     if mini_app_url:
-        rows.append([KeyboardButton(text=BTN_CABINET)])
+        rows.append(_launch_row(mini_app_url, private=private))
     rows.extend(
         [
             [KeyboardButton(text=BTN_WHERE_AM_I)],
@@ -67,19 +114,51 @@ def employee_menu(mini_app_url: str | None) -> ReplyKeyboardMarkup:
             [KeyboardButton(text=BTN_MY_REQUESTS), KeyboardButton(text=BTN_HELP)],
         ]
     )
-    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
+    return ReplyKeyboardMarkup(
+        keyboard=rows,
+        resize_keyboard=True,
+        is_persistent=True,
+        one_time_keyboard=False,
+    )
+
+
+def _launch_row(mini_app_url: str, *, private: bool) -> list[KeyboardButton]:
+    """Верхний ряд: отметка и кабинет одним нажатием."""
+    if not private:
+        return [KeyboardButton(text=BTN_CABINET)]
+    return [
+        KeyboardButton(
+            text=BTN_SCAN, web_app=WebAppInfo(url=scan_url(mini_app_url))
+        ),
+        KeyboardButton(
+            text=BTN_OPEN, web_app=WebAppInfo(url=cabinet_url(mini_app_url))
+        ),
+    ]
 
 
 def cabinet_button(mini_app_url: str) -> InlineKeyboardMarkup:
-    """Единственная кнопка, которой кабинет открывается по-настоящему.
+    """Кабинет inline-кнопкой — запасной путь, в котором нет сомнений.
 
-    Именно inline: приложение, открытое отсюда, получает подписанную
-    Telegram строку запуска и может доказать backend, кто пришёл.
+    Приложение, открытое отсюда, точно получает подписанную Telegram
+    строку запуска. Верхний ряд нижней клавиатуры делает то же самое
+    и на одно нажатие короче, но проверяется он только на живом
+    телефоне — поэтому этот путь остаётся.
     """
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=BTN_CABINET,
                                   web_app=WebAppInfo(url=mini_app_url))]
+        ]
+    )
+
+
+def scan_button(mini_app_url: str) -> InlineKeyboardMarkup:
+    """Отметка inline-кнопкой. Запасной путь к тому же экрану `/scan`."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text=BTN_SCAN, web_app=WebAppInfo(url=scan_url(mini_app_url))
+            )]
         ]
     )
 
@@ -98,8 +177,14 @@ def help_only_menu() -> ReplyKeyboardMarkup:
 
 __all__ = [
     "ALL_BUTTONS",
+    "SCAN_PATH",
     "cabinet_button",
+    "cabinet_url",
+    "scan_button",
+    "scan_url",
     "BTN_CABINET",
+    "BTN_OPEN",
+    "BTN_SCAN",
     "BTN_HELP",
     "BTN_HISTORY",
     "BTN_MONTH",

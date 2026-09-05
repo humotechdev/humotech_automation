@@ -19,10 +19,13 @@ logger = logging.getLogger(__name__)
 
 COMMANDS = [
     BotCommand(command="menu", description="Главное меню"),
-    # Кабинет стоит списком с тех пор, как синюю кнопку занял сканер:
-    # иначе полный кабинет открывался бы только кнопкой снизу, а её
-    # не видно, пока не развернёшь клавиатуру.
+    # Обе команды ведут в Mini App inline-кнопкой. Обычно они не нужны:
+    # то же самое делают кнопки нижней клавиатуры, и на одно нажатие
+    # короче. Нужны они там, где клавиатуру свернули или где запуск
+    # из неё почему-то не сработал.
+    BotCommand(command="scan", description="Отметиться по QR"),
     BotCommand(command="cabinet", description="Личный кабинет"),
+    BotCommand(command="keyboard", description="Вернуть кнопки внизу"),
     BotCommand(command="status", description="Я сейчас в офисе?"),
     BotCommand(command="today", description="Сегодня"),
     BotCommand(command="week", description="За неделю"),

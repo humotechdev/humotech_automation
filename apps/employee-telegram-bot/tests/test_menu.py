@@ -215,7 +215,7 @@ def test_no_access_menu_shows_only_help():
 
 # --- меню ------------------------------------------------------------------
 
-def test_menu_has_all_ten_items(monkeypatch):
+def test_menu_shows_every_button(monkeypatch):
     from src.config import settings as settings_module
 
     # Адрес задаётся явно: иначе тест проверял бы не меню, а то, что
@@ -227,7 +227,9 @@ def test_menu_has_all_ten_items(monkeypatch):
 
     _, markup = message.answers[-1]
     labels = [b.text for row in markup.keyboard for b in row]
-    assert set(labels) == set(kb.ALL_BUTTONS)
+    # BTN_CABINET остался только для группового чата и как запасной путь
+    # по тексту — в личной клавиатуре его место занял верхний ряд.
+    assert set(labels) == set(kb.ALL_BUTTONS) - {kb.BTN_CABINET}
 
 
 def test_menu_hides_the_cabinet_without_an_address(monkeypatch):
@@ -238,26 +240,135 @@ def test_menu_hides_the_cabinet_without_an_address(monkeypatch):
 
     _, markup = message.answers[-1]
     labels = [b.text for row in markup.keyboard for b in row]
-    assert set(labels) == set(kb.ALL_BUTTONS) - {kb.BTN_CABINET}
+    # Без адреса верхнего ряда нет вовсе: кнопка, которая ничего не
+    # открывает, хуже её отсутствия.
+    assert set(labels) == set(kb.ALL_BUTTONS) - {kb.BTN_CABINET, kb.BTN_SCAN, kb.BTN_OPEN}
 
 
-def test_the_keyboard_cabinet_button_is_not_a_web_app():
-    """Кнопка нижней клавиатуры НЕ должна открывать Mini App.
+def test_the_top_row_launches_the_mini_app_directly():
+    """Верхний ряд — две кнопки запуска, а не текст.
 
-    Telegram передаёт подписанные данные о пользователе только
-    приложениям, открытым из inline-кнопки, кнопки меню или прямой
-    ссылки. Приложение, открытое из нижней клавиатуры, не получает
-    ни подписи, ни имени — кабинет не смог бы понять, кто пришёл,
-    и показал бы «откройте из Telegram» тому, кто уже в Telegram.
+    Здесь стояла обычная текстовая кнопка, и в пояснении к ней было
+    записано, что запуск из нижней клавиатуры не приносит подписи. По
+    документации Bot API это не так: `KeyboardButton.web_app` —
+    полноценный запуск с `initData` и `query_id`. Прежнее наблюдение
+    похоже на нажатие текстовой кнопки, которая Mini App не открывает
+    вовсе.
 
-    Проверено живьём: такой запуск приносит только tgWebAppVersion,
-    tgWebAppPlatform и tgWebAppThemeParams, без tgWebAppData.
+    Окончательно это решает живой Android, поэтому запасной путь
+    (inline-кнопка по /scan и /cabinet) оставлен целиком.
     """
     markup = kb.employee_menu("https://mini.example")
-    first = markup.keyboard[0][0]
+    scan, cabinet = markup.keyboard[0]
 
-    assert first.text == kb.BTN_CABINET
-    assert first.web_app is None
+    assert [scan.text, cabinet.text] == [kb.BTN_SCAN, kb.BTN_OPEN]
+    assert scan.web_app is not None
+    assert cabinet.web_app is not None
+
+
+def test_the_two_launch_buttons_point_where_they_promise():
+    markup = kb.employee_menu("https://mini.example")
+    scan, cabinet = markup.keyboard[0]
+
+    assert scan.web_app.url == "https://mini.example/scan"
+    assert cabinet.web_app.url == "https://mini.example/"
+
+
+def test_exactly_two_buttons_launch_the_mini_app():
+    """Остальные кнопки — обычный текст: они отвечают прямо в чате."""
+    markup = kb.employee_menu("https://mini.example")
+    launchers = [b for row in markup.keyboard for b in row if b.web_app]
+
+    assert len(launchers) == 2
+
+
+def test_addresses_come_from_the_setting_and_tolerate_a_slash():
+    assert kb.scan_url("https://mini.example/") == "https://mini.example/scan"
+    assert kb.cabinet_url("https://mini.example/") == "https://mini.example/"
+
+
+def test_no_domain_is_hardcoded_in_the_keyboard_module():
+    import inspect
+
+    code = inspect.getsource(kb).split('"""', 2)[-1]
+    assert "https://" not in code
+    assert "ngrok" not in code
+
+
+def test_the_keyboard_stays_on_screen():
+    """Постоянная и подогнанная по размеру.
+
+    Без `is_persistent` Telegram сворачивает её в значок после первого
+    же ответа, и человек каждый раз разворачивает клавиатуру, чтобы
+    отметиться — то есть ровно то лишнее действие, от которого уходим.
+    """
+    markup = kb.employee_menu("https://mini.example")
+
+    assert markup.resize_keyboard is True
+    assert markup.is_persistent is True
+    assert markup.one_time_keyboard is False
+
+
+def test_a_group_chat_gets_no_web_app_buttons():
+    """`web_app` у кнопки нижней клавиатуры Telegram разрешает только
+    в личном чате. В группе такая клавиатура — ошибка запроса целиком,
+    и человек остался бы вообще без кнопок."""
+    markup = kb.employee_menu("https://mini.example", private=False)
+
+    assert all(b.web_app is None for row in markup.keyboard for b in row)
+    assert markup.keyboard[0][0].text == kb.BTN_CABINET
+
+
+def test_start_sends_the_keyboard(monkeypatch):
+    from src.config import settings as settings_module
+
+    monkeypatch.setattr(
+        settings_module.settings, "mini_app_url", "https://mini.example", False
+    )
+    message, _ = run(start, needs_client=False)
+
+    _, markup = message.answers[-1]
+    labels = [b.text for row in markup.keyboard for b in row]
+    assert kb.BTN_SCAN in labels
+    assert kb.BTN_OPEN in labels
+
+
+def test_unconfirmed_employee_gets_no_launch_buttons():
+    """Непривязанному рабочие функции не открываются.
+
+    Кнопка, которая всё равно ответит отказом, — обещание того, чего нет.
+    """
+    message, _ = run(start, employee=None, denial="pending", needs_client=False)
+
+    _, markup = message.answers[-1]
+    assert [b.text for row in markup.keyboard for b in row] == [kb.BTN_HELP]
+    assert all(b.web_app is None for row in markup.keyboard for b in row)
+
+
+def test_pressing_the_launch_button_text_still_gets_a_working_way_in():
+    """Запасной путь: клиент не открыл приложение и прислал текст.
+
+    Обычно этого не происходит — `web_app`-кнопка боту ничего не шлёт.
+    Но если случится, человек должен получить рабочую кнопку, а не
+    молчание.
+    """
+    from src.config import settings as settings_module
+    from src.handlers.menu.router import scan as scan_handler
+
+    settings_module.settings.mini_app_url = "https://mini.example"
+    message, _ = run(scan_handler, needs_client=False)
+
+    answer, markup = message.answers[-1]
+    button = markup.inline_keyboard[0][0]
+    assert button.web_app.url == "https://mini.example/scan"
+
+
+def test_scan_command_is_listed_and_kept():
+    """`/scan` и `/keyboard` — запасные входы, они должны быть видны."""
+    from src.utils.commands import COMMANDS
+
+    names = {item.command for item in COMMANDS}
+    assert {"scan", "cabinet", "keyboard", "menu"} <= names
 
 
 def test_cabinet_opens_through_an_inline_button():
@@ -295,10 +406,10 @@ def test_cabinet_without_an_address_says_so_instead_of_opening_nothing(
 
 
 def test_start_explains_both_ways_in(monkeypatch):
-    """Синяя кнопка теперь сканер, и это надо сказать словами.
+    """Кнопок внизу две, и надо сказать, какая для чего.
 
-    Человек, привыкший открывать кабинет синей кнопкой, иначе решит,
-    что кабинет пропал: место у поля ввода одно, и его занял сканер.
+    Иначе человек нажимает наугад и решает, что отметка не работает,
+    когда открылся кабинет.
     """
     from src.config import settings as settings_module
 
@@ -308,8 +419,8 @@ def test_start_explains_both_ways_in(monkeypatch):
     message, _ = run(start, needs_client=False)
 
     answer, _ = message.answers[-1]
-    assert "Отметиться" in answer
-    assert "/cabinet" in answer
+    assert kb.BTN_SCAN in answer
+    assert kb.BTN_OPEN in answer
 
 
 def test_start_names_what_each_way_is_for(monkeypatch):
