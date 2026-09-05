@@ -269,7 +269,10 @@ def test_the_two_launch_buttons_point_where_they_promise():
     markup = kb.employee_menu("https://mini.example")
     scan, cabinet = markup.keyboard[0]
 
-    assert scan.web_app.url == "https://mini.example/scan"
+    # У отметки метка транспорта: подписи запуска у Mini App, открытого
+    # нижней кнопкой, нет, и экран должен отдать данные боту, а не идти
+    # на сервер сам. Авторизацией эта метка не является.
+    assert scan.web_app.url == "https://mini.example/scan?source=keyboard"
     assert cabinet.web_app.url == "https://mini.example/"
 
 

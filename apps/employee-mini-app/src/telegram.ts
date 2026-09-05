@@ -64,6 +64,32 @@ export interface TelegramWebApp {
   closeScanQrPopup?: () => void;
 
   close?: () => void;
+
+  /**
+   * Отправить боту служебное сообщение и закрыть приложение.
+   *
+   * Работает ТОЛЬКО у Mini App, открытого кнопкой нижней клавиатуры, —
+   * и ровно там, где подписи запуска нет. Это не запасной канал, а
+   * единственный: доказать серверу, кто пришёл, приложение в этом
+   * режиме не может, поэтому решение принимает бот, получив от Telegram
+   * настоящий `message.from.id`.
+   */
+  sendData?: (data: string) => void;
+
+  /** Геопозиция средствами Telegram. Bot API 8.0. */
+  LocationManager?: {
+    init?: (callback?: () => void) => void;
+    isInited?: boolean;
+    isLocationAvailable?: boolean;
+    isAccessGranted?: boolean;
+    getLocation?: (callback: (location: TelegramLocation | null) => void) => void;
+  };
+}
+
+export interface TelegramLocation {
+  latitude?: number;
+  longitude?: number;
+  horizontal_accuracy?: number | null;
 }
 
 declare global {
@@ -346,6 +372,126 @@ export function backButton(
  * Вибрация на каждое нажатие быстро становится шумом, который выключают
  * вместе с полезными сигналами.
  */
+/** Умеет ли этот запуск отдать данные боту. */
+export function canSendData(source: Window = window): boolean {
+  return typeof webApp(source)?.sendData === 'function';
+}
+
+/**
+ * Отдать боту одну попытку отметки.
+ *
+ * Telegram закрывает приложение сам сразу после вызова, поэтому
+ * показывать что-либо после него бессмысленно — и невозможно показать
+ * ложный успех: результат придёт сообщением бота, когда его подтвердит
+ * сервер.
+ */
+export function sendToBot(payload: string, source: Window = window): boolean {
+  const app = webApp(source);
+  if (typeof app?.sendData !== 'function') return false;
+  try {
+    app.sendData(payload);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Где человек находится. `null` — узнать не вышло. */
+export interface Position {
+  latitude: number;
+  longitude: number;
+  accuracy: number;
+}
+
+/**
+ * Геопозиция: сначала средствами Telegram, потом браузером.
+ *
+ * `LocationManager` появился в Bot API 8.0 и требует `init` до первого
+ * запроса. Где его нет, остаётся `navigator.geolocation` — он внутри
+ * вебвью Telegram работает не везде и умеет висеть, поэтому ожидание
+ * ограничено по времени: экран, застрявший на «получаем геопозицию»,
+ * человеку у двери бесполезен.
+ */
+export function requestPosition(
+  { timeoutMs = 12_000, source = window }: {
+    timeoutMs?: number;
+    source?: Window;
+  } = {},
+): Promise<Position | null> {
+  const native = webApp(source)?.LocationManager;
+  if (native?.getLocation && atLeast('8.0', source)) {
+    return withTimeout(fromTelegram(native), timeoutMs);
+  }
+  return withTimeout(fromBrowser(source), timeoutMs);
+}
+
+function fromTelegram(
+  manager: NonNullable<TelegramWebApp['LocationManager']>,
+): Promise<Position | null> {
+  return new Promise((resolve) => {
+    const ask = () => {
+      try {
+        manager.getLocation!((location) => resolve(readTelegram(location)));
+      } catch {
+        resolve(null);
+      }
+    };
+    if (manager.isInited) {
+      ask();
+      return;
+    }
+    try {
+      manager.init?.(ask);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+function readTelegram(location: TelegramLocation | null): Position | null {
+  if (!location) return null;
+  const { latitude, longitude, horizontal_accuracy: accuracy } = location;
+  if (typeof latitude !== 'number' || typeof longitude !== 'number') return null;
+  return {
+    latitude,
+    longitude,
+    // Telegram не всегда сообщает погрешность. Ноль сюда ставить нельзя:
+    // на сервере нулевая погрешность — признак подделки, а не точности.
+    accuracy: typeof accuracy === 'number' && accuracy > 0 ? accuracy : 30,
+  };
+}
+
+function fromBrowser(source: Window): Promise<Position | null> {
+  const api = source.navigator?.geolocation;
+  if (!api?.getCurrentPosition) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    try {
+      api.getCurrentPosition(
+        (position) =>
+          resolve({
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+            accuracy: position.coords.accuracy || 30,
+          }),
+        () => resolve(null),
+        { enableHighAccuracy: true, timeout: 10_000, maximumAge: 30_000 },
+      );
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+function withTimeout(
+  work: Promise<Position | null>,
+  ms: number,
+): Promise<Position | null> {
+  return Promise.race([
+    work,
+    new Promise<Position | null>((resolve) => setTimeout(() => resolve(null), ms)),
+  ]);
+}
+
 /**
  * Закрыть Mini App.
  *

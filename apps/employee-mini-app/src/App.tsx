@@ -30,6 +30,7 @@ import {
 } from './auth';
 import { History } from './screens/History';
 import { Home } from './screens/Home';
+import { KeyboardScan, insideTelegram } from './screens/KeyboardScan';
 import { Profile } from './screens/Profile';
 import { QuickScan } from './screens/QuickScan';
 import { Requests, type AbsenceKind } from './screens/Requests';
@@ -74,10 +75,35 @@ export function isQuickScanRoute(
   return pathname.replace(/\/+$/, '') === QUICK_SCAN_PATH;
 }
 
+/**
+ * Режим нижней кнопки Telegram.
+ *
+ * Отличается ТОЛЬКО транспортом: подписи запуска у такого Mini App нет,
+ * поэтому данные уходят боту через `sendData`, а не на сервер напрямую.
+ *
+ * `source=keyboard` — не авторизация и не доказательство чего-либо.
+ * Подставить его в адресную строку может кто угодно, и всё, что он
+ * включает, — путь, на котором личность всё равно устанавливает бот по
+ * подтверждённому Telegram `message.from.id`.
+ */
+export const KEYBOARD_SOURCE = 'keyboard';
+
+export function isKeyboardScan(
+  pathname: string = window.location.pathname,
+  search: string = window.location.search,
+): boolean {
+  if (!isQuickScanRoute(pathname)) return false;
+  return new URLSearchParams(search).get('source') === KEYBOARD_SOURCE;
+}
+
 type Phase = { kind: 'loading' } | { kind: 'done'; result: AuthResult };
 
 export default function App() {
   const [phase, setPhase] = useState<Phase>({ kind: 'loading' });
+  // Режим нижней кнопки решается ДО всего остального: обменивать
+  // подпись там не на что, и запрос авторизации был бы обращением к
+  // серверу с заведомо пустыми руками.
+  const [keyboard, setKeyboard] = useState(() => isKeyboardScan());
   // Куда открыли приложение. Состоянием, а не чтением адреса при каждой
   // отрисовке: с экрана быстрой отметки можно уйти в кабинет, и адрес
   // при этом не меняется — переписывать историю браузера в вебвью
@@ -99,9 +125,27 @@ export default function App() {
     // приложения: они меняются от поворота экрана, клавиатуры и входа в
     // полноэкранный режим.
     const stop = watchViewport();
-    void run();
+    if (!keyboard) void run();
     return stop;
-  }, [run]);
+  }, [run, keyboard]);
+
+  if (keyboard) {
+    // Ни одного запроса на сервер отсюда не уходит: ни авторизации, ни
+    // отметки. Всё, что делает экран, — собирает попытку и отдаёт её
+    // боту, а решает всё равно сервер по его запросу.
+    if (!insideTelegram()) {
+      return (
+        <Standalone title="Откройте кнопкой в чате">
+          <p className="state-text">
+            Так отметиться можно только из чата с ботом HUMOTECH: нажмите
+            внизу «📷 Отметиться». В обычном браузере отметку принять
+            не у кого.
+          </p>
+        </Standalone>
+      );
+    }
+    return <KeyboardScan onOpenCabinet={() => setKeyboard(false)} />;
+  }
 
   if (phase.kind === 'loading') {
     return (

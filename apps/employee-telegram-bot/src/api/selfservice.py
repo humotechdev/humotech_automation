@@ -69,6 +69,42 @@ class SelfServiceClient:
     async def leave_balance(self, telegram_id: int) -> dict:
         return await self._get("/me/leave-balance", telegram_id)
 
+    async def scan(
+        self,
+        *,
+        telegram_user_id: int,
+        token: str,
+        client_event_id: str,
+        latitude: float | None = None,
+        longitude: float | None = None,
+        accuracy_m: float | None = None,
+    ) -> dict:
+        """Отметка по QR за сотрудника.
+
+        Отдельного адреса у этого пути нет: `/me/attendance/scan` давно
+        принимает вход бота, и за ним стоит тот же сервис, что и за
+        отметкой из открытого Mini App. Второй endpoint означал бы вторую
+        систему посещаемости, которую пришлось бы чинить дважды.
+
+        Что уходит: код, ключ попытки и координаты. Ни сотрудника, ни
+        офиса, ни направления, ни времени — таких параметров у запроса
+        нет, поэтому подделать их нечем. Сотрудника определяет сервер по
+        Telegram ID, который подтвердил Telegram, а не отправитель.
+        """
+        body: dict = {"token": token, "client_event_id": client_event_id}
+        if latitude is not None and longitude is not None:
+            body["latitude"] = f"{latitude:.6f}"
+            body["longitude"] = f"{longitude:.6f}"
+            if accuracy_m is not None:
+                body["accuracy_m"] = f"{accuracy_m:.2f}"
+
+        return await self._request(
+            "POST",
+            "/me/attendance/scan",
+            headers={EMPLOYEE_HEADER: str(telegram_user_id)},
+            json=body,
+        )
+
     # --- привязка ---------------------------------------------------------
 
     async def consume_link_token(

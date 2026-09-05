@@ -80,10 +80,18 @@ ALL_BUTTONS = (
 #: второй такой сборщик рано или поздно разойдётся с этим.
 SCAN_PATH = "/scan"
 
+#: Метка транспорта, а НЕ авторизация. Она лишь переключает экран на
+#: отдачу данных боту через `sendData` — подписи запуска у Mini App,
+#: открытого нижней кнопкой, нет, и доказать личность оттуда нечем.
+#: Подставить её в адрес может кто угодно; личность всё равно
+#: устанавливает бот по подтверждённому Telegram `message.from.id`.
+KEYBOARD_SOURCE = "?source=keyboard"
 
-def scan_url(mini_app_url: str) -> str:
+
+def scan_url(mini_app_url: str, *, from_keyboard: bool = False) -> str:
     """Адрес быстрой отметки. Хвостовая косая черта у базы допустима."""
-    return mini_app_url.rstrip("/") + SCAN_PATH
+    base = mini_app_url.rstrip("/") + SCAN_PATH
+    return base + KEYBOARD_SOURCE if from_keyboard else base
 
 
 def cabinet_url(mini_app_url: str) -> str:
@@ -136,7 +144,8 @@ def _launch_row(mini_app_url: str, *, private: bool) -> list[KeyboardButton]:
         return [KeyboardButton(text=BTN_CABINET)]
     return [
         KeyboardButton(
-            text=BTN_SCAN, web_app=WebAppInfo(url=scan_url(mini_app_url))
+            text=BTN_SCAN,
+            web_app=WebAppInfo(url=scan_url(mini_app_url, from_keyboard=True)),
         ),
         KeyboardButton(
             text=BTN_OPEN, web_app=WebAppInfo(url=cabinet_url(mini_app_url))
@@ -185,6 +194,7 @@ def help_only_menu() -> ReplyKeyboardMarkup:
 
 __all__ = [
     "ALL_BUTTONS",
+    "KEYBOARD_SOURCE",
     "SCAN_PATH",
     "cabinet_button",
     "cabinet_url",
