@@ -52,23 +52,46 @@ function network(handler: (path: string) => Response | null = () => null) {
 }
 
 describe('карточки показателей', () => {
-  test('подписи и числа приходят с сервера, а не из кода', async () => {
-    // Сервер сам решает, как назвать показатель: для прошлой даты
-    // «сейчас в офисе» звучало бы неверно, и переименовывать его на
-    // клиенте значило бы держать второе место с теми же правилами.
+  test('короткие подписи держат числа на одной строке', async () => {
+    // Длинные серверные названия переносились на две строки, и числа в
+    // первых двух карточках уезжали ниже остальных.
     network();
     renderApp('/');
 
-    expect(await screen.findByText('Сейчас в офисе')).toBeTruthy();
-    expect(screen.getByText('Активные сотрудники')).toBeTruthy();
+    await screen.findByText('Сейчас в офисах');
+
+    // Слово «Сотрудники» есть и в навигации — берём именно карточки.
+    const titles = [...document.querySelectorAll('.metric__head')].map(
+      (el) => el.textContent,
+    );
+    expect(titles).toEqual([
+      'Сотрудники', 'По графику сегодня', 'Сейчас в офисах',
+      'Нет отметки', 'В отпуске', 'На больничном',
+    ]);
     expect(screen.getByText('214')).toBeTruthy();
     expect(screen.getByText('180')).toBeTruthy();
+  });
+
+  test('для прошлой даты подпись не обещает настоящее время', async () => {
+    // «Сейчас в офисах» на архивной дате — неправда: показан не текущий
+    // момент, а состояние того дня.
+    network();
+    renderApp('/');
+    await screen.findByText('Сейчас в офисах');
+
+    fireEvent.change(screen.getByLabelText('Дата'), {
+      target: { value: '2020-01-02' },
+    });
+
+    expect(await screen.findByText('В офисах')).toBeTruthy();
+    expect(screen.queryByText('Сейчас в офисах')).toBeNull();
+    expect(screen.getByText('По графику')).toBeTruthy();
   });
 
   test('доля считается от знаменателя, который вернул сервер', async () => {
     network();
     renderApp('/');
-    await screen.findByText('Сейчас в офисе');
+    await screen.findByText('Сейчас в офисах');
 
     expect(screen.getByText('из 200 · 90,0%')).toBeTruthy();
   });
@@ -80,7 +103,7 @@ describe('карточки показателей', () => {
         : null,
     );
     renderApp('/');
-    await screen.findByText('Сейчас в офисе');
+    await screen.findByText('Сейчас в офисах');
 
     expect(screen.getByText('Сравнивать не с чем')).toBeTruthy();
     expect(screen.queryByText(/0,0%/)).toBeNull();
@@ -93,7 +116,7 @@ describe('состояния блоков', () => {
     renderApp('/');
 
     expect(await screen.findByText(/Не удалось загрузить показатели/)).toBeTruthy();
-    expect(screen.queryByText('Активные сотрудники')).toBeNull();
+    expect(document.querySelectorAll('.metric')).toHaveLength(0);
   });
 
   test('сбой одного блока не гасит соседние', async () => {
@@ -101,7 +124,7 @@ describe('состояния блоков', () => {
     network((path) => (path.includes('/offices') ? json(500, { error: {} }) : null));
     renderApp('/');
 
-    expect(await screen.findByText('Сейчас в офисе')).toBeTruthy();
+    expect(await screen.findByText('Сейчас в офисах')).toBeTruthy();
     expect(screen.getByText('214')).toBeTruthy();
   });
 
@@ -122,7 +145,7 @@ describe('фильтры', () => {
     // Поздний ответ отменённого фильтра не должен подменить новый.
     const calls = network();
     renderApp('/');
-    await screen.findByText('Сейчас в офисе');
+    await screen.findByText('Сейчас в офисах');
 
     const before = calls.filter((c) => c.url.includes('/dashboard')).length;
     const date = screen.getByLabelText('Дата') as HTMLInputElement;

@@ -28,14 +28,31 @@ const RANGES = [
   { key: '30', title: 'Месяц', days: 30 },
 ] as const;
 
-/** Шесть карточек образца: ключ сервера -> подпись и иконка. */
-const CARDS: { key: string; icon: IconName; note: string; accent?: boolean }[] = [
-  { key: 'active_employees', icon: 'users', note: 'В доступной области' },
-  { key: 'should_work_today', icon: 'calendar', note: 'Ожидаются на работе' },
-  { key: 'in_office', icon: 'building', note: '', accent: true },
-  { key: 'not_come', icon: 'clock', note: 'Смена уже началась' },
-  { key: 'vacation', icon: 'calendar', note: 'Подтверждено на дату' },
-  { key: 'sick_leave', icon: 'doc', note: 'Подтверждено на дату' },
+/**
+ * Шесть карточек образца: ключ сервера -> короткая подпись и иконка.
+ *
+ * Подписи здесь свои, а не серверные, по одной причине: длинные
+ * («Активные сотрудники», «Должны работать сегодня») переносились на
+ * две строки, и числа в первых двух карточках оказывались ниже
+ * остальных. Для ПРОШЛОЙ даты слова «сегодня» и «сейчас» снимаются —
+ * иначе подпись обещает настоящее время там, где показан архив.
+ */
+const CARDS: {
+  key: string; icon: IconName; title: string; past?: string;
+  note: string; pastNote?: string; accent?: boolean;
+}[] = [
+  { key: 'active_employees', icon: 'users', title: 'Сотрудники',
+    note: 'Активные сотрудники' },
+  { key: 'should_work_today', icon: 'calendar', title: 'По графику сегодня',
+    past: 'По графику', note: 'Ожидаются на работе', pastNote: 'Ожидались на работе' },
+  { key: 'in_office', icon: 'building', title: 'Сейчас в офисах', past: 'В офисах',
+    note: '', accent: true },
+  { key: 'not_come', icon: 'clock', title: 'Нет отметки',
+    note: 'Смена уже началась', pastNote: 'Смена шла без отметки' },
+  { key: 'vacation', icon: 'calendar', title: 'В отпуске',
+    note: 'Подтверждено на дату' },
+  { key: 'sick_leave', icon: 'doc', title: 'На больничном',
+    note: 'Подтверждено на дату' },
 ];
 
 export function DashboardPage() {
@@ -198,11 +215,12 @@ export function DashboardPage() {
                 card.key === 'in_office'
                   ? percent(found.value, counts['should_work_today'] ?? 0)
                   : null;
+              const past = day < today();
               return (
                 <li key={card.key} className={card.accent ? 'metric metric--accent' : 'metric'}>
                   <p className="metric__head">
                     <Icon name={card.icon} size={17} />
-                    {found.title}
+                    <span>{(past && card.past) || card.title}</span>
                   </p>
                   <p className="metric__value">{found.value}</p>
                   <p className="metric__note">
@@ -210,7 +228,7 @@ export function DashboardPage() {
                       ? share === null
                         ? 'Сравнивать не с чем'
                         : `из ${counts['should_work_today']} · ${formatPercent(share)}`
-                      : card.note}
+                      : (past && card.pastNote) || card.note}
                   </p>
                 </li>
               );

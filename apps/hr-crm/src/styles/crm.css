@@ -45,7 +45,7 @@ body,
 
 .canvas {
   flex: 1;
-  padding: 20px 24px 28px;
+  padding: 22px 26px 26px;
   min-width: 0;
 }
 
@@ -320,7 +320,7 @@ body,
   justify-content: space-between;
   gap: 20px;
   flex-wrap: wrap;
-  margin-bottom: 18px;
+  margin-bottom: 16px;
 }
 
 .head__title {
@@ -393,37 +393,53 @@ body,
 
 .cards {
   list-style: none;
-  margin: 0 0 16px;
+  margin: 0 0 14px;
   padding: 0;
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 16px;
 }
 
+/* Одна сетка на все шесть: заголовок занимает фиксированную полосу,
+   поэтому числа стоят на общей линии даже если подпись перенеслась. */
 .metric {
+  display: grid;
+  grid-template-rows: 20px auto auto;
+  gap: 11px;
   background: var(--surface);
   border: 1px solid var(--edge);
   border-radius: 11px;
-  padding: 16px 18px 18px;
+  padding: 18px 16px 20px;
 }
 
 .metric--accent {
-  border-color: #b6b6b6;
-  box-shadow: 0 0 0 1px #ececec;
+  border-color: #9c9c9c;
 }
 
 .metric__head {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   margin: 0;
   font-size: 13px;
   font-weight: 500;
+  line-height: 20px;
+  min-width: 0;
+}
+
+.metric__head span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metric__head svg {
+  flex: none;
 }
 
 .metric__value {
-  margin: 12px 0 6px;
-  font-size: 34px;
+  margin: 0;
+  font-size: 32px;
   font-weight: 700;
   line-height: 1;
   font-variant-numeric: tabular-nums;
@@ -432,6 +448,7 @@ body,
 .metric__note {
   margin: 0;
   font-size: 12px;
+  line-height: 16px;
   color: var(--ink-2);
 }
 
@@ -439,8 +456,8 @@ body,
 
 .grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
-  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) 356px;
+  gap: 14px;
   align-items: start;
 }
 
@@ -448,7 +465,7 @@ body,
 .grid__side {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
   min-width: 0;
 }
 
@@ -456,7 +473,7 @@ body,
   background: var(--surface);
   border: 1px solid var(--edge);
   border-radius: 11px;
-  padding: 18px 20px 20px;
+  padding: 14px 16px 16px;
 }
 
 .panel__head {
@@ -464,24 +481,25 @@ body,
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 14px;
+  margin-bottom: 10px;
 }
 
 .panel__title {
   margin: 0;
-  font-size: 17px;
+  font-size: 18px;
   font-weight: 700;
+  line-height: 1.2;
 }
 
 .panel__title--row {
   display: flex;
   align-items: center;
   gap: 9px;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 
 .panel__sub {
-  margin: 4px 0 0;
+  margin: 3px 0 0;
   font-size: 12.5px;
   color: var(--ink-2);
 }
@@ -541,16 +559,17 @@ body,
 .chart-box {
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: 18px;
 }
 
 .chart-box__plot {
   position: relative;
   flex: 1;
   min-width: 0;
-  /* Высота не растёт вслед за окном: пропорции держит `viewBox`. */
-  aspect-ratio: 1000 / 320;
-  max-height: 260px;
+  /* Высота не растёт вслед за окном: пропорции держит `viewBox`, а
+     потолок не даёт рисунку отодвинуть таблицу офисов вниз. */
+  aspect-ratio: 1000 / 230;
+  max-height: 185px;
 }
 
 .plot {
@@ -625,15 +644,15 @@ body,
 }
 
 .chart-box__total-main {
-  margin: 6px 0 0;
-  font-size: 19px;
+  margin: 4px 0 0;
+  font-size: 18px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
 .chart-box__total-percent {
   margin: 2px 0 0;
-  font-size: 26px;
+  font-size: 24px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
@@ -641,8 +660,8 @@ body,
 .legend {
   display: flex;
   gap: 18px;
-  margin-top: 14px;
-  padding-top: 12px;
+  margin-top: 10px;
+  padding-top: 10px;
   border-top: 1px solid var(--edge);
   font-size: 12px;
   color: var(--ink-2);
@@ -681,7 +700,8 @@ body,
 
 .grid-table th,
 .grid-table td {
-  padding: 8px 10px;
+  padding: 6px 10px;
+  height: 30px;
   text-align: right;
   border-bottom: 1px solid var(--edge);
   white-space: nowrap;
@@ -717,11 +737,14 @@ body,
   padding: 0;
 }
 
+/* Строка образца — около 46 px: иконка, две короткие строки текста и
+   счётчик. Больше воздуха превращает список в пять отдельных карточек. */
 .queue__row {
   display: flex;
   align-items: center;
-  gap: 11px;
-  padding: 10px 0;
+  gap: 10px;
+  min-height: 46px;
+  padding: 6px 0;
   border-bottom: 1px solid var(--edge);
 }
 
@@ -740,10 +763,12 @@ body,
 .queue__title {
   font-size: 13px;
   font-weight: 500;
+  line-height: 17px;
 }
 
 .queue__note {
   font-size: 11.5px;
+  line-height: 15px;
   color: var(--ink-2);
 }
 
@@ -790,7 +815,7 @@ body,
 
 .empty {
   margin: 0;
-  padding: 14px 0;
+  padding: 10px 0;
   font-size: 13px;
   color: var(--ink-2);
 }

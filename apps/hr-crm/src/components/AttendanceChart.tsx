@@ -20,8 +20,8 @@ import type { DayPoint } from '../api/crm';
 import { formatPercent, longDate, percent, shortDate } from '../features/dashboard/data';
 
 const W = 1000;
-const H = 320;
-const PAD = { top: 18, right: 16, bottom: 34, left: 44 };
+const H = 230;
+const PAD = { top: 14, right: 14, bottom: 28, left: 42 };
 
 export type Point = { day: string; attended: number; expected: number; value: number | null };
 
@@ -96,7 +96,7 @@ export function AttendanceChart({ points, previous, label }: Props) {
           {points.map((point, index) => (
             <g key={`t-${point.day}`}>
               {index % step === 0 && (
-                <text className="plot__tick" x={x(index)} y={H - 10} textAnchor="middle">
+                <text className="plot__tick" x={x(index)} y={H - 8} textAnchor="middle">
                   {shortDate(point.day)}
                 </text>
               )}
