@@ -70,12 +70,17 @@ async def _guard(message: Message, employee, denial) -> bool:
 
 @router.message(CommandStart(deep_link=False))
 async def start(message: Message, employee, denial) -> None:
+    if not await _guard(message, employee, denial):
+        return
     # Персональная кнопка чата перекрывает общую навсегда. Снимается
     # здесь, на действии, которое человек и так делает, когда кнопка
     # выглядит устаревшей — см. `drop_chat_override`.
+    #
+    # ПОСЛЕ проверки доступа, а не до: иначе любой посторонний, приславший
+    # /start, заставлял бы нас писать в Telegram. Непривязанному кнопка
+    # всё равно ничего не открывает, а починится она на первом же /start
+    # после подтверждения привязки.
     await drop_chat_override(message.bot, message.chat.id)
-    if not await _guard(message, employee, denial):
-        return
     await message.answer(
         f"{text.greet(employee)}\n\n{text.CABINET_HINT}",
         reply_markup=_menu(employee),

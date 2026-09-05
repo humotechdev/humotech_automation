@@ -344,6 +344,18 @@ def test_start_drops_a_personal_button_that_shadows_the_common_one():
     assert isinstance(button, MenuButtonDefault)
 
 
+def test_a_stranger_does_not_make_us_write_to_telegram():
+    """Кнопка снимается ПОСЛЕ проверки доступа, а не до.
+
+    Иначе любой посторонний, приславший /start, заставлял бы нас
+    обращаться к Telegram. Непривязанному кнопка всё равно ничего не
+    открывает.
+    """
+    message, _ = run(start, employee=None, denial='not_linked', needs_client=False)
+
+    assert message.bot.menu_writes == []
+
+
 def test_the_common_button_is_not_touched_per_chat():
     """Общая кнопка ставится один раз на старте, а не на каждый /start."""
     message, _ = run(start, needs_client=False)
