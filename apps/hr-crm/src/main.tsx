@@ -5,6 +5,7 @@ import { BrowserRouter } from 'react-router-dom';
 import { App } from './app/App';
 import { SessionProvider } from './features/auth/session';
 import './styles/app.css';
+import './styles/crm.css';
 
 const root = document.getElementById('root');
 if (root === null) throw new Error('Не найден узел #root');

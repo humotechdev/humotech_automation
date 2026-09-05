@@ -9,7 +9,7 @@ import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, test } from 'vitest';
 
-import { USER, empty, fakeNetwork, html, json, renderApp } from './helpers';
+import { USER, crm, empty, fakeNetwork, html, json, renderApp } from './helpers';
 
 /** Сессии нет: приложение спрашивает `/auth/me` и получает отказ. */
 function anonymous(after: (path: string, method: string) => Response | Promise<Response>) {
@@ -17,7 +17,7 @@ function anonymous(after: (path: string, method: string) => Response | Promise<R
     if (path.endsWith('/auth/me')) {
       return json(403, { error: { code: 'not_authenticated', message: '…', details: null } });
     }
-    return after(path, call.method);
+    return crm(path) ?? after(path, call.method);
   });
 }
 
@@ -117,7 +117,7 @@ describe('отправка', () => {
     await userEvent.type(screen.getByLabelText('Пароль'), 'пароль');
     await userEvent.click(screen.getByRole('button', { name: 'Войти' }));
 
-    expect(await screen.findByText('Интерфейс CRM будет добавлен следующим этапом')).toBeTruthy();
+    expect(await screen.findByText('Обзор на сегодня')).toBeTruthy();
 
     const login = calls.find((call) => call.url.endsWith('/auth/login'));
     expect(login?.method).toBe('POST');
@@ -155,7 +155,7 @@ describe('отправка', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Проверяем…' }));
 
     release();
-    await screen.findByText('Интерфейс CRM будет добавлен следующим этапом');
+    await screen.findByText('Обзор на сегодня');
     expect(calls.filter((call) => call.url.endsWith('/auth/login'))).toHaveLength(1);
   });
 
@@ -242,7 +242,7 @@ describe('«Запомнить логин»', () => {
     await userEvent.type(screen.getByLabelText('Пароль'), 'очень-секретный-пароль');
     await userEvent.click(screen.getByLabelText('Запомнить логин'));
     await userEvent.click(screen.getByRole('button', { name: 'Войти' }));
-    await screen.findByText('Интерфейс CRM будет добавлен следующим этапом');
+    await screen.findByText('Обзор на сегодня');
 
     const stored = JSON.stringify(localStorage);
     expect(stored).toContain('hr@humotech.local');
@@ -259,7 +259,7 @@ describe('«Запомнить логин»', () => {
     await userEvent.type(screen.getByLabelText('Логин'), 'hr@humotech.local');
     await userEvent.type(screen.getByLabelText('Пароль'), 'пароль');
     await userEvent.click(screen.getByRole('button', { name: 'Войти' }));
-    await screen.findByText('Интерфейс CRM будет добавлен следующим этапом');
+    await screen.findByText('Обзор на сегодня');
 
     expect(JSON.stringify(localStorage)).not.toContain('hr@humotech.local');
   });

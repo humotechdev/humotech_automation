@@ -1,0 +1,879 @@
+/*
+ * Оболочка CRM и главная страница.
+ *
+ * От края до края: ни `max-width`, ни внешних полей, ни общей тени.
+ * Серый — фон рабочей области под карточками, а не рамка вокруг
+ * приложения.
+ */
+
+:root {
+  --surface: #ffffff;
+  --canvas: #f8f8f8;
+  --ink-1: #151515;
+  --ink-2: #686868;
+  --edge: #e7e7e7;
+  --soft: #f1f1f1;
+  --side-width: 244px;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+#root {
+  min-height: 100dvh;
+}
+
+/* --- каркас --------------------------------------------------------------- */
+
+.shell {
+  display: grid;
+  grid-template-columns: var(--side-width) 1fr;
+  min-height: 100dvh;
+  background: var(--canvas);
+  color: var(--ink-1);
+  font-size: 14px;
+}
+
+.work {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.canvas {
+  flex: 1;
+  padding: 20px 24px 28px;
+  min-width: 0;
+}
+
+/* --- боковая панель ------------------------------------------------------- */
+
+.side {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-right: 1px solid var(--edge);
+  padding: 18px 14px 14px;
+  position: sticky;
+  top: 0;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.side__brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 6px 18px;
+}
+
+.side__brand-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.side__name {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1;
+}
+
+.side__tagline {
+  font-size: 8.5px;
+  letter-spacing: 0.18em;
+  color: var(--ink-2);
+  line-height: 1;
+}
+
+/* Содержимое панели должно оставаться доступным на низком экране. */
+.side__scroll {
+  flex: 1;
+  overflow-y: auto;
+  margin: 0 -6px;
+  padding: 0 6px;
+}
+
+.side__group {
+  margin: 10px 8px 8px;
+  font-size: 10.5px;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.side__list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nav {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 9px;
+  background: none;
+  color: var(--ink-1);
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nav:hover:not(:disabled) {
+  background: var(--soft);
+}
+
+.nav:disabled {
+  color: #9a9a9a;
+  cursor: not-allowed;
+}
+
+.nav--active,
+.nav--active:hover {
+  background: var(--ink-1);
+  color: #ffffff;
+}
+
+.nav__badge {
+  margin-left: auto;
+  min-width: 22px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--soft);
+  font-size: 11.5px;
+  font-weight: 600;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.nav--active .nav__badge {
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+}
+
+.side__rule {
+  height: 1px;
+  margin: 12px 8px;
+  background: var(--edge);
+}
+
+.side__user {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 14px 8px 10px;
+  border-top: 1px solid var(--edge);
+  margin-top: 10px;
+}
+
+.side__who {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.side__role {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.side__scope {
+  font-size: 11.5px;
+  color: var(--ink-2);
+}
+
+.side__exit {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 9px;
+  background: none;
+  color: var(--ink-1);
+  font-size: 13.5px;
+  cursor: pointer;
+}
+
+.side__exit:hover {
+  background: var(--soft);
+}
+
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  background: var(--soft);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.avatar--sm {
+  width: 28px;
+  height: 28px;
+  font-size: 11px;
+}
+
+/* --- верхняя панель ------------------------------------------------------- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  height: 52px;
+  padding: 0 24px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--edge);
+}
+
+.crumbs {
+  margin: 0;
+  display: flex;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.crumbs__here {
+  color: var(--ink-1);
+  font-weight: 600;
+}
+
+.topbar__tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.find {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--edge);
+  border-radius: 9px;
+  color: var(--ink-2);
+}
+
+.find input {
+  border: 0;
+  outline: none;
+  background: none;
+  font-size: 13px;
+  width: 180px;
+  color: var(--ink-1);
+}
+
+.tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 34px;
+  height: 34px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: none;
+  color: var(--ink-1);
+  cursor: pointer;
+}
+
+.tool--wide {
+  width: auto;
+  padding: 0 10px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.tool:hover {
+  background: var(--soft);
+}
+
+.lang--top {
+  position: relative;
+}
+
+/* --- заголовок страницы --------------------------------------------------- */
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+.head__title {
+  margin: 0;
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.head__sub {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.dot {
+  padding: 0 4px;
+}
+
+.head__filters {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.filters {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--edge);
+  border-radius: 9px;
+  background: var(--surface);
+  font-size: 13px;
+  color: var(--ink-1);
+  cursor: pointer;
+}
+
+.pick select,
+.pick input {
+  border: 0;
+  outline: none;
+  background: none;
+  font-size: 13px;
+  color: inherit;
+  cursor: pointer;
+}
+
+.pick--icon {
+  width: 38px;
+  justify-content: center;
+  padding: 0;
+}
+
+.head__updated {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+/* --- карточки показателей ------------------------------------------------- */
+
+.cards {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.metric {
+  background: var(--surface);
+  border: 1px solid var(--edge);
+  border-radius: 11px;
+  padding: 16px 18px 18px;
+}
+
+.metric--accent {
+  border-color: #b6b6b6;
+  box-shadow: 0 0 0 1px #ececec;
+}
+
+.metric__head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.metric__value {
+  margin: 12px 0 6px;
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.metric__note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+/* --- сетка ---------------------------------------------------------------- */
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 16px;
+  align-items: start;
+}
+
+.grid__main,
+.grid__side {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--edge);
+  border-radius: 11px;
+  padding: 18px 20px 20px;
+}
+
+.panel__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.panel__title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.panel__title--row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 12px;
+}
+
+.panel__sub {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.panel__foot {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--soft);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.chip--dark {
+  margin-left: auto;
+  background: var(--ink-1);
+  color: #ffffff;
+}
+
+.switch {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--edge);
+  border-radius: 9px;
+  background: var(--surface);
+}
+
+.switch button {
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.switch__on {
+  background: var(--soft);
+  color: var(--ink-1);
+  font-weight: 600;
+}
+
+/* --- график --------------------------------------------------------------- */
+
+.chart-box {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.chart-box__plot {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  /* Высота не растёт вслед за окном: пропорции держит `viewBox`. */
+  aspect-ratio: 1000 / 320;
+  max-height: 260px;
+}
+
+.plot {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.plot__grid {
+  stroke: #ededed;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.plot__tick {
+  fill: var(--ink-2);
+  font-size: 11px;
+}
+
+.plot__line {
+  fill: none;
+  stroke: var(--ink-1);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.plot__line--prev {
+  stroke: #b4b4b4;
+  stroke-dasharray: 3 4;
+}
+
+.plot__dot {
+  fill: var(--ink-1);
+}
+
+.plot__dot--on {
+  fill: #ffffff;
+  stroke: var(--ink-1);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.tip {
+  position: absolute;
+  top: 12%;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: var(--ink-1);
+  color: #ffffff;
+  font-size: 11.5px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.tip__day {
+  color: #bdbdbd;
+}
+
+.chart-box__total {
+  flex: none;
+  text-align: right;
+}
+
+.chart-box__total-label {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.chart-box__total-main {
+  margin: 6px 0 0;
+  font-size: 19px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-box__total-percent {
+  margin: 2px 0 0;
+  font-size: 26px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.legend {
+  display: flex;
+  gap: 18px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--edge);
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.legend__solid,
+.legend__dashed {
+  width: 16px;
+  height: 0;
+  border-top: 2px solid var(--ink-1);
+}
+
+.legend__dashed {
+  border-top-style: dotted;
+  border-color: #b4b4b4;
+}
+
+/* --- таблица офисов ------------------------------------------------------- */
+
+.scroller {
+  overflow-x: auto;
+}
+
+.grid-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.grid-table th,
+.grid-table td {
+  padding: 8px 10px;
+  text-align: right;
+  border-bottom: 1px solid var(--edge);
+  white-space: nowrap;
+}
+
+.grid-table th {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+
+.grid-table th:first-child,
+.grid-table td:first-child {
+  text-align: left;
+  white-space: normal;
+  min-width: 160px;
+}
+
+.grid-table__name {
+  font-weight: 500;
+}
+
+.grid-table tfoot td {
+  font-weight: 700;
+  border-bottom: 0;
+}
+
+/* --- правая колонка ------------------------------------------------------- */
+
+.queue {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.queue__row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--edge);
+}
+
+.queue--flat .queue__row:last-child,
+.queue__row:last-child {
+  border-bottom: 0;
+}
+
+.queue__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.queue__title {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.queue__note {
+  font-size: 11.5px;
+  color: var(--ink-2);
+}
+
+.queue__count {
+  margin-left: auto;
+  min-width: 26px;
+  padding: 2px 8px;
+  border-radius: 7px;
+  background: var(--soft);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.talks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.talks li {
+  display: flex;
+  gap: 10px;
+}
+
+.talks__who,
+.talks__text {
+  display: block;
+}
+
+.talks__who {
+  font-size: 11.5px;
+  color: var(--ink-2);
+}
+
+.talks__text {
+  font-size: 13px;
+  margin-top: 2px;
+}
+
+.empty {
+  margin: 0;
+  padding: 14px 0;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.empty--bad {
+  color: var(--ink-1);
+}
+
+/* --- узкие экраны --------------------------------------------------------- */
+
+@media (max-width: 1440px) {
+  .grid {
+    grid-template-columns: minmax(0, 1fr) 340px;
+  }
+}
+
+/* Шесть в ряд перестают помещаться раньше, чем ломается сетка: сначала
+   карточки уходят в два ряда по три, и только потом правая колонка
+   переезжает под основную. */
+@media (max-width: 1300px) {
+  .cards {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1120px) {
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 900px) {
+  .shell {
+    grid-template-columns: 64px 1fr;
+  }
+
+  .side {
+    padding: 14px 8px;
+  }
+
+  .side__brand-text,
+  .side__group,
+  .nav span,
+  .side__who,
+  .side__exit span,
+  .nav__badge {
+    display: none;
+  }
+
+  .nav,
+  .side__exit {
+    justify-content: center;
+    padding: 10px 0;
+  }
+
+  .cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .canvas {
+    padding: 16px 14px 22px;
+  }
+
+  .find input {
+    width: 110px;
+  }
+}
+
+@media (max-width: 620px) {
+  /* Поиск, уведомления и язык не помещаются рядом с хлебными крошками:
+     на телефоне верхняя панель оставляет только адрес и себя самого,
+     а поиск вернётся отдельным экраном раздела «Сотрудники». */
+  .find,
+  .topbar__tools .tool--wide {
+    display: none;
+  }
+
+  .topbar {
+    padding: 0 14px;
+  }
+
+  .head__filters {
+    align-items: flex-start;
+    width: 100%;
+  }
+}

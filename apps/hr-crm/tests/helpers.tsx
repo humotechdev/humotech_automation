@@ -57,6 +57,49 @@ export function fakeNetwork(handler: (path: string, call: Call) => Response | Pr
   return calls;
 }
 
+/**
+ * Пустые, но правильные по форме ответы главной страницы.
+ *
+ * Возвращает `null` для чужого адреса — тест сам решает, чем ответить.
+ * Пустой дашборд здесь намеренно: проверяется оболочка и маршрут, а не
+ * числа, и выдуманные значения только маскировали бы разбор ответа.
+ */
+export function crm(path: string): Response | null {
+  if (path.includes('/dashboard')) {
+    return json(200, {
+      date: '2026-09-05',
+      timezone: 'Asia/Dushanbe',
+      cards: [
+        { key: 'active_employees', title: 'Активные сотрудники', value: 0,
+          endpoint: null, params: {}, attention: false },
+        { key: 'should_work_today', title: 'Должны работать сегодня', value: 0,
+          endpoint: null, params: {}, attention: false },
+        { key: 'in_office', title: 'Сейчас в офисе', value: 0,
+          endpoint: null, params: {}, attention: false },
+        { key: 'not_come', title: 'Не пришли', value: 0,
+          endpoint: null, params: {}, attention: false },
+        { key: 'vacation', title: 'В отпуске', value: 0,
+          endpoint: null, params: {}, attention: false },
+        { key: 'sick_leave', title: 'На больничном', value: 0,
+          endpoint: null, params: {}, attention: false },
+      ],
+      warnings: [],
+    });
+  }
+  if (path.includes('/analytics')) {
+    return json(200, {
+      period: { first: '2026-08-23', last: '2026-09-05', timezone: 'Asia/Dushanbe' },
+      headcount: 0,
+      series: [],
+    });
+  }
+  if (path.includes('/absence-requests/pending')) return json(200, { requests: [] });
+  // Вход и «кто я» сюда не относятся: ими распоряжается сам тест.
+  if (path.includes('/auth/')) return null;
+  if (path.includes('/api/v1/')) return json(200, { items: [] });
+  return null;
+}
+
 export function renderApp(path = '/') {
   return render(
     <MemoryRouter initialEntries={[path]}>

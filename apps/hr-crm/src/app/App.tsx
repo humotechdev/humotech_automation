@@ -10,7 +10,7 @@
 
 import { Navigate, Route, Routes } from 'react-router-dom';
 
-import { HomePage } from '../pages/HomePage';
+import { DashboardPage } from '../pages/DashboardPage';
 import { LoginPage } from '../pages/LoginPage';
 import { useSession } from '../features/auth/session';
 
@@ -29,7 +29,7 @@ function Protected() {
   const session = useSession();
   if (session.status === 'checking') return <Checking />;
   if (session.status === 'anonymous') return <Navigate to="/login" replace />;
-  return <HomePage />;
+  return <DashboardPage />;
 }
 
 /**
