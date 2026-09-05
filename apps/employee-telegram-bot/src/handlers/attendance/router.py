@@ -82,6 +82,10 @@ async def scan_from_mini_app(message: Message, client: SelfServiceClient) -> Non
         await answer(message, text.SCAN_FAILED)
         return
 
+    # След на удачном пути тоже нужен: по этой строке видно, что
+    # служебное сообщение вообще дошло от Telegram до бота. Ни кода, ни
+    # координат в ней нет — только исход и кто отметился.
+    logger.info("scan handled for %s: %s", user.id, result.get("status"))
     await answer(message, text.outcome(result))
 
 
