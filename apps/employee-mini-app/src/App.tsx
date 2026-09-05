@@ -31,6 +31,7 @@ import {
 import { History } from './screens/History';
 import { Home } from './screens/Home';
 import { Profile } from './screens/Profile';
+import { QuickScan } from './screens/QuickScan';
 import { Requests, type AbsenceKind } from './screens/Requests';
 import { Scan } from './screens/Scan';
 import { Stats } from './screens/Stats';
@@ -54,10 +55,34 @@ import {
 const API_URL = import.meta.env.VITE_API_URL ?? '/api/v1';
 const VERSION = '1.0';
 
+/**
+ * Быстрая отметка живёт по своему адресу.
+ *
+ * Своего маршрутизатора у приложения нет и не нужно: адресов ровно два,
+ * и различить их — одна строка. Библиотека маршрутизации весила бы
+ * больше, чем всё, ради чего её взяли бы.
+ *
+ * На этот адрес смотрит синяя кнопка бота. Раздаёт его тот же
+ * index.html (`try_files` в nginx), поэтому отдельной страницы и
+ * отдельной сборки не появляется.
+ */
+export const QUICK_SCAN_PATH = '/scan';
+
+export function isQuickScanRoute(
+  pathname: string = window.location.pathname,
+): boolean {
+  return pathname.replace(/\/+$/, '') === QUICK_SCAN_PATH;
+}
+
 type Phase = { kind: 'loading' } | { kind: 'done'; result: AuthResult };
 
 export default function App() {
   const [phase, setPhase] = useState<Phase>({ kind: 'loading' });
+  // Куда открыли приложение. Состоянием, а не чтением адреса при каждой
+  // отрисовке: с экрана быстрой отметки можно уйти в кабинет, и адрес
+  // при этом не меняется — переписывать историю браузера в вебвью
+  // Telegram значило бы ломать его же кнопку «назад».
+  const [quick, setQuick] = useState(isQuickScanRoute);
 
   const run = useCallback(async () => {
     setPhase({ kind: 'loading' });
@@ -90,7 +115,9 @@ export default function App() {
 
   switch (result.state) {
     case 'authenticated':
-      return (
+      return quick ? (
+        <QuickScan onOpenCabinet={() => setQuick(false)} />
+      ) : (
         <Cabinet
           onSignOut={() => {
             forgetToken();
@@ -127,10 +154,12 @@ export default function App() {
       return (
         <Standalone title="Откройте кнопкой в чате">
           <p className="state-text">
-            Кабинет открывают кнопкой «Открыть личный кабинет» в чате с ботом
-            HUMOTECH. По обычной ссылке — даже открытой внутри Telegram —
-            приложение не получает подпись запуска, а без неё оно не знает,
-            кто пришёл.
+            {quick
+              ? 'Откройте сканер кнопкой «Отметиться» в чате с ботом HUMOTECH.'
+              : 'Кабинет открывают кнопкой «Открыть личный кабинет» в чате с ботом HUMOTECH.'}{' '}
+            По обычной ссылке — даже открытой внутри Telegram — приложение
+            не получает подпись запуска, а без неё оно не знает, кто
+            пришёл, и отметиться за него не может.
           </p>
           <p className="state-text muted">
             Кнопки в чате нет? Отправьте боту /start. Она появляется только

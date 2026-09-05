@@ -86,6 +86,10 @@ export function Scan({
   // зависящий от состояния, ушёл бы по кругу. После отказа повтора нет
   // до следующего открытия экрана — то есть до действия человека.
   const asked = useRef(false);
+  // Та же причина, что и на экране быстрой отметки: уйти отсюда можно с
+  // открытым окном сканера, и подписка на его закрытие должна уйти
+  // вместе с экраном, а не ждать ответа, которого уже не будет.
+  const leaving = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (!asked.current && fullscreenSupported()) {
@@ -97,6 +101,7 @@ export function Scan({
       // Единственная точка ухода с экрана: нижняя навигация, кнопка
       // «назад» Telegram, внутренняя кнопка «на главную» — всё это
       // размонтирует экран, потому что App рисует его по условию вкладки.
+      leaving.current?.abort();
       closeScanner();
       exitFullscreen();
     };
@@ -129,7 +134,12 @@ export function Scan({
 
   async function startCamera() {
     setPhase({ kind: 'idle' });
-    const outcome = await scanWithTelegram();
+
+    leaving.current?.abort();
+    const stop = new AbortController();
+    leaving.current = stop;
+
+    const outcome = await scanWithTelegram(window, stop.signal);
 
     if (outcome.kind === 'code') {
       await submit(outcome.value);

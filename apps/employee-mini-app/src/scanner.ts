@@ -20,7 +20,7 @@
  * само по себе, выглядит подозрительно и справедливо.
  */
 
-import { onShellEvent } from './telegram';
+import { atLeast, onShellEvent } from './telegram';
 
 /** Что вернуло сканирование. */
 export type ScanOutcome =
@@ -49,6 +49,19 @@ export function telegramScanner(source: Window = window): TelegramScanner | null
   return app && typeof app.showScanQrPopup === 'function' ? app : null;
 }
 
+/**
+ * Готов ли родной сканер Telegram прямо сейчас.
+ *
+ * Проверяется и наличие метода, и версия клиента. Одного метода мало:
+ * на части сборок он объявлен и бросает, а `showScanQrPopup` появился
+ * в Bot API 6.4 — до неё окна сканера нет вовсе.
+ */
+export const SCANNER_SINCE = '6.4';
+
+export function nativeScannerReady(source: Window = window): boolean {
+  return telegramScanner(source) !== null && atLeast(SCANNER_SINCE, source);
+}
+
 export function hasBarcodeDetector(source: Window = window): boolean {
   return 'BarcodeDetector' in source;
 }
@@ -74,11 +87,23 @@ export function looksLikeOurCode(value: string): boolean {
  * `callback` возвращает `true`, чтобы Telegram закрыл окно. На чужом коде
  * возвращаем `false` — человек продолжает наводить камеру, а не получает
  * отказ из-за случайно попавшего в кадр штрихкода на кофейном стакане.
+ *
+ * `signal` нужен на уход с экрана. Без него подписка на закрытие окна
+ * снималась только вместе с разрешением промиса — то есть держалась,
+ * пока окно открыто. Уйти с экрана с открытым окном можно (кнопка
+ * «назад» Telegram, переход в кабинет), и тогда обработчик оставался
+ * висеть, а следующее сканирование добавляло второй.
  */
-export function scanWithTelegram(source: Window = window): Promise<ScanOutcome> {
+export function scanWithTelegram(
+  source: Window = window,
+  signal?: AbortSignal,
+): Promise<ScanOutcome> {
   const app = telegramScanner(source);
   if (!app?.showScanQrPopup) {
     return Promise.resolve({ kind: 'unavailable' });
+  }
+  if (signal?.aborted) {
+    return Promise.resolve({ kind: 'cancelled' });
   }
 
   return new Promise((resolve) => {
@@ -87,17 +112,20 @@ export function scanWithTelegram(source: Window = window): Promise<ScanOutcome> 
       if (settled) return;
       settled = true;
       stopWatchingClose();
+      signal?.removeEventListener('abort', abandon);
       resolve(outcome);
     };
+    const abandon = () => settle({ kind: 'cancelled' });
 
     // Закрытие окна человеком приходит СОБЫТИЕМ, а не вызовом обработчика
     // текста. Без этой подписки промис не разрешался никогда: закрыл окно
     // крестиком — и ожидание висит до конца жизни экрана.
     const stopWatchingClose = onShellEvent(
       'scanQrPopupClosed',
-      () => settle({ kind: 'cancelled' }),
+      abandon,
       source,
     );
+    signal?.addEventListener('abort', abandon, { once: true });
 
     app.showScanQrPopup!({ text: 'Наведите камеру на код у входа' }, (text) => {
       if (!looksLikeOurCode(text)) {

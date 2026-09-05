@@ -62,6 +62,8 @@ export interface TelegramWebApp {
     callback: (text: string) => boolean | void,
   ) => void;
   closeScanQrPopup?: () => void;
+
+  close?: () => void;
 }
 
 declare global {
@@ -344,6 +346,24 @@ export function backButton(
  * Вибрация на каждое нажатие быстро становится шумом, который выключают
  * вместе с полезными сигналами.
  */
+/**
+ * Закрыть Mini App.
+ *
+ * Вызывается только после УДАЧНОЙ отметки: человеку больше нечего здесь
+ * делать, и лишнее нажатие «закрыть» на пороге офиса ни к чему. Отказ
+ * так не закрывается — его надо прочитать.
+ *
+ * Вне Telegram метода нет, и это не ошибка: в обычном браузере окно
+ * закрывать нечему и незачем.
+ */
+export function closeApp(source: Window = window): void {
+  try {
+    webApp(source)?.close?.();
+  } catch {
+    // Старый клиент или запрет — не повод падать на экране успеха.
+  }
+}
+
 export function haptic(
   kind: 'success' | 'error' | 'warning',
   source: Window = window,

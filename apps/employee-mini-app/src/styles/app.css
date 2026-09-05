@@ -1349,6 +1349,84 @@ textarea:focus {
 }
 
 
+/* --- быстрая отметка ------------------------------------------------------
+ *
+ * Отдельный экран под синей кнопкой бота. Нижней навигации, шапки и
+ * разделов здесь нет вовсе: сюда приходят на пятнадцать секунд, чтобы
+ * отметиться, и всё остальное только мешает попасть в нужное.
+ *
+ * Высота — от устойчивой высоты окна Telegram, а не от 100vh: в вебвью
+ * они расходятся, и по 100vh содержимое уезжает под системную полосу.
+ */
+
+.quick-scan {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(
+    var(--app-viewport-height, 100vh) - var(--safe-top) - var(--safe-bottom)
+  );
+  padding: calc(var(--safe-top) + var(--space-5)) var(--screen-padding)
+    calc(var(--safe-bottom) + var(--space-5));
+  background: var(--surface);
+}
+
+.quick-scan-brand {
+  margin: 0;
+  color: var(--navy);
+  font-size: var(--text-small);
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-align: center;
+}
+
+.quick-scan-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  text-align: center;
+}
+
+.quick-scan-body > .btn {
+  /* Кнопки прижимаются к низу блока, но не растягиваются по высоте:
+     иначе «Открыть кабинет» превращается в половину экрана. */
+  flex: none;
+}
+
+.quick-scan-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: var(--navy-soft);
+  color: var(--navy);
+}
+
+.quick-scan-mark-no {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.quick-scan-title {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--text-title);
+  font-weight: 600;
+}
+
+.quick-scan-time {
+  margin: 0;
+  color: var(--navy);
+  font-size: 30px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+
 /* --- экран отметки --------------------------------------------------------
  *
  * В полноэкранном режиме (Bot API 8.0) нижней навигации нет, и запас под
