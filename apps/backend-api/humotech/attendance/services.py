@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
+from django.conf import settings
 from django.db import transaction
 from django.db.models import Q
 
@@ -34,6 +35,7 @@ from humotech.employees.models import (
     EmployeeOfficeAccess,
 )
 from humotech.attendance.models import AttendanceEvent, AttendanceSession
+from humotech.offices.geo import looks_like_coordinates, within_office
 from humotech.qr_codes.models import OfficeQrPoint
 
 # насколько время клиента может отличаться от серверного
@@ -48,6 +50,10 @@ class RejectionReason:
     ALREADY_INSIDE = "ALREADY_INSIDE"
     NOT_INSIDE = "NOT_INSIDE"
     GEOLOCATION_REQUIRED = "GEOLOCATION_REQUIRED"
+    # Координаты пришли, но человек не там.
+    OUTSIDE_GEOFENCE = "OUTSIDE_GEOFENCE"
+    # Координаты пришли, но такой погрешности верить нельзя.
+    LOCATION_TOO_VAGUE = "LOCATION_TOO_VAGUE"
     NETWORK_REQUIRED = "NETWORK_REQUIRED"
     CLOCK_DRIFT = "CLOCK_DRIFT"
 
@@ -197,6 +203,13 @@ def _register_locked(
     else:
         event_type = "EXIT" if current_session is not None else "ENTRY"
 
+    # Считается здесь, а не берётся у вызывающего: «внутри ли» — вывод из
+    # координат и радиуса офиса, и делать его должно одно место.
+    if inside_geofence is None:
+        inside_geofence = location_check(
+            qr_point, latitude, longitude, location_accuracy_m
+        )
+
     reason = _reject_reason(
         employee_id=employee_id,
         qr_point=qr_point,
@@ -207,6 +220,7 @@ def _register_locked(
         qr_expires_at=qr_expires_at,
         latitude=latitude,
         longitude=longitude,
+        location_accuracy_m=location_accuracy_m,
         inside_office_network=inside_office_network,
         current_session=current_session,
     )
@@ -277,6 +291,7 @@ def _reject_reason(
     qr_expires_at: datetime | None,
     latitude: Decimal | None,
     longitude: Decimal | None,
+    location_accuracy_m: Decimal | None,
     inside_office_network: bool | None,
     current_session: AttendanceSession | None,
 ) -> str | None:
@@ -304,6 +319,15 @@ def _reject_reason(
     if qr_point.require_geolocation and (latitude is None or longitude is None):
         return RejectionReason.GEOLOCATION_REQUIRED
 
+    # Координаты прислали — проверяем их независимо от того, требует их
+    # точка или нет. Присланное и негодное хуже неприсланного: молча
+    # принять «я в трёх километрах» значит записать это в журнал как
+    # обычную отметку.
+    if latitude is not None and longitude is not None:
+        geo = _location_verdict(qr_point, latitude, longitude, location_accuracy_m)
+        if geo is not None:
+            return geo
+
     if qr_point.require_office_network and not inside_office_network:
         return RejectionReason.NETWORK_REQUIRED
 
@@ -314,6 +338,51 @@ def _reject_reason(
         return RejectionReason.NOT_INSIDE
 
     return None
+
+
+def _location_verdict(qr_point, latitude, longitude, accuracy_m) -> str | None:
+    """Причина отказа по местоположению, либо None.
+
+    Порядок проверок: сперва вообще похоже ли это на точку на Земле,
+    потом — можно ли верить погрешности, и только потом расстояние.
+    Считать расстояние от мусора бессмысленно, а отвечать «слишком
+    далеко» на широту 900 — врать про причину.
+
+    Офис без координат или без радиуса проверку не проходит и не
+    заваливает: сравнивать не с чем, и записывать это человеку в вину
+    нельзя. `inside_geofence` в таком случае остаётся `None` —
+    «не проверялось», а не «нарушение».
+    """
+    if not looks_like_coordinates(latitude, longitude):
+        return RejectionReason.LOCATION_TOO_VAGUE
+
+    if accuracy_m is not None:
+        try:
+            accuracy = Decimal(str(accuracy_m))
+        except (ArithmeticError, TypeError, ValueError):
+            return RejectionReason.LOCATION_TOO_VAGUE
+        ceiling = settings.QR["MAX_LOCATION_ACCURACY_M"]
+        if not accuracy.is_finite() or accuracy <= 0 or accuracy > ceiling:
+            return RejectionReason.LOCATION_TOO_VAGUE
+
+    verdict = within_office(
+        qr_point.office, latitude, longitude, accuracy_m=accuracy_m
+    )
+    if verdict.checked and not verdict.inside:
+        return RejectionReason.OUTSIDE_GEOFENCE
+    return None
+
+
+def location_check(qr_point, latitude, longitude, accuracy_m):
+    """Тот же расчёт для записи в журнал: внутри ли, если проверяли."""
+    if latitude is None or longitude is None:
+        return None
+    if not looks_like_coordinates(latitude, longitude):
+        return None
+    verdict = within_office(
+        qr_point.office, latitude, longitude, accuracy_m=accuracy_m
+    )
+    return verdict.inside if verdict.checked else None
 
 
 def utcnow() -> datetime:

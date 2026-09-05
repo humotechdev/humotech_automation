@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from rest_framework import serializers
 
 
@@ -23,6 +25,38 @@ class ScanRequestSerializer(serializers.Serializer):
     client_event_id = serializers.CharField(
         max_length=100, required=False, allow_blank=False
     )
+
+    # Местоположение — необязательное и НЕдоверенное. Требует ли его
+    # точка, решает сервер по самой точке; прислать координаты может
+    # кто угодно, и подделать их на Android можно без всякого взлома.
+    # Это ещё один сигнал рядом с подписью кода, а не доказательство.
+    #
+    # Границы стоят прямо здесь: широта 900 должна отвергаться как
+    # неверное поле, а не доезжать до расчёта расстояния.
+    latitude = serializers.DecimalField(
+        max_digits=9, decimal_places=6,
+        min_value=Decimal("-90"), max_value=Decimal("90"),
+        required=False, allow_null=True,
+    )
+    longitude = serializers.DecimalField(
+        max_digits=9, decimal_places=6,
+        min_value=Decimal("-180"), max_value=Decimal("180"),
+        required=False, allow_null=True,
+    )
+    accuracy_m = serializers.DecimalField(
+        max_digits=8, decimal_places=2,
+        min_value=Decimal("0"), required=False, allow_null=True,
+    )
+
+    def validate(self, attrs):
+        """Координата без пары бессмысленна."""
+        has_lat = attrs.get("latitude") is not None
+        has_lon = attrs.get("longitude") is not None
+        if has_lat != has_lon:
+            raise serializers.ValidationError(
+                "Широта и долгота передаются только вместе"
+            )
+        return attrs
 
 
 class PeriodSerializer(serializers.Serializer):

@@ -157,6 +157,9 @@ class ScanView(EmployeeSelfView):
             token=data["token"],
             ip_address=client_ip(request),
             client_event_id=data.get("client_event_id"),
+            latitude=data.get("latitude"),
+            longitude=data.get("longitude"),
+            accuracy_m=data.get("accuracy_m"),
         )
         session = outcome.session
         return Response(

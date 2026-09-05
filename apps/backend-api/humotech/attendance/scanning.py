@@ -57,6 +57,8 @@ class ScanStatus:
     QR_ALREADY_USED = "QR_ALREADY_USED"
     QR_POINT_INACTIVE = "QR_POINT_INACTIVE"
     OFFICE_NOT_ALLOWED = "OFFICE_NOT_ALLOWED"
+    OUTSIDE_GEOFENCE = "OUTSIDE_GEOFENCE"
+    LOCATION_TOO_VAGUE = "LOCATION_TOO_VAGUE"
     NETWORK_REQUIRED = "NETWORK_REQUIRED"
     GEOLOCATION_REQUIRED = "GEOLOCATION_REQUIRED"
 
@@ -76,6 +78,8 @@ _REJECTION_TO_STATUS = {
     RejectionReason.OFFICE_NOT_ALLOWED: ScanStatus.OFFICE_NOT_ALLOWED,
     RejectionReason.NETWORK_REQUIRED: ScanStatus.NETWORK_REQUIRED,
     RejectionReason.GEOLOCATION_REQUIRED: ScanStatus.GEOLOCATION_REQUIRED,
+    RejectionReason.OUTSIDE_GEOFENCE: ScanStatus.OUTSIDE_GEOFENCE,
+    RejectionReason.LOCATION_TOO_VAGUE: ScanStatus.LOCATION_TOO_VAGUE,
     RejectionReason.CLOCK_DRIFT: ScanStatus.QR_EXPIRED,
 }
 
@@ -107,12 +111,19 @@ def scan(
     token: str,
     ip_address: str | None = None,
     client_event_id: str | None = None,
+    latitude=None,
+    longitude=None,
+    accuracy_m=None,
+    source: str = "QR",
     now: datetime | None = None,
 ) -> ScanOutcome:
     """Обработать один скан от сотрудника.
 
     `context` — проверенный `EmployeeContext`. Сотрудник и организация
     берутся только оттуда: параметров с такими именами здесь нет.
+
+    Координаты необязательны и недоверенны: требует ли их точка и
+    достаточно ли они близки, решает правило на сервере.
     """
     moment = now or timezone.now()
     employee = context.employee
@@ -175,8 +186,11 @@ def scan(
             qr_expires_at=payload.expires_at,
             ip_address=ip_address,
             inside_office_network=_inside_office_network(point, ip_address),
+            latitude=latitude,
+            longitude=longitude,
+            location_accuracy_m=accuracy_m,
             client_event_id=client_event_id,
-            source="QR",
+            source=source,
         )
     except IntegrityError as error:
         # Ту же самую попытку прислали второй раз. Так делает автоповтор
