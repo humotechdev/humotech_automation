@@ -1017,6 +1017,14 @@ textarea:focus {
   border-color: var(--navy);
 }
 
+/* Пока заявка уходит, приложить другую справку нельзя. Раньше здесь
+   стояла <button disabled>, и браузер гасил её сам; теперь это <label>
+   с отключённым input внутри, и гасить надо руками — иначе три строки
+   выглядят живыми и молча не работают. */
+.file-field:has(input:disabled) {
+  opacity: 0.5;
+}
+
 .file-chosen {
   display: flex;
   align-items: center;
