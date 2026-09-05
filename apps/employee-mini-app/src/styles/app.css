@@ -973,22 +973,28 @@ textarea:focus {
 }
 
 .file-actions {
+  /* В столбец, а не в сетку: три подписи в ряд не помещаются на узком
+     Android и вылезают за край страницы. Столбец заодно даёт каждому
+     действию строку во всю ширину — попасть пальцем легче. */
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: var(--space-2);
 }
 
 .file-field {
-  /* Один и тот же вид у <label> и у <button>: «сфотографировать» стала
-     кнопкой, потому что открывает свою камеру, а не системный выбор. */
   background: var(--surface);
   font-family: inherit;
+  /* Скрытый input внутри позиционируется от самой кнопки, а не от
+     страницы: иначе он уезжает за её край и растягивает прокрутку. */
+  position: relative;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-  min-height: 72px;
+  justify-content: flex-start;
+  gap: var(--space-3);
+  width: 100%;
+  box-sizing: border-box;
+  min-height: var(--tap-target);
   padding: var(--space-3);
   border: 1px dashed var(--border);
   border-radius: var(--radius-control);
@@ -1014,15 +1020,51 @@ textarea:focus {
 .file-chosen {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-3);
   min-height: var(--tap-target);
+  margin-bottom: var(--space-2);
   padding: var(--space-3);
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
 }
 
-.file-field input[type='file'],
-.file-input-hidden {
+/* Снимок справки виден до отправки: человек должен успеть заметить, что
+   в кадр попал угол стола, а не печать. */
+.file-preview {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: var(--radius-control);
+  background: var(--surface-sunken);
+}
+
+.file-badge {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-control);
+  background: var(--navy-soft);
+  color: var(--navy);
+}
+
+.file-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.file-size {
+  color: var(--text-muted);
+  font-size: var(--text-small);
+}
+
+.file-field input[type='file'] {
   /* Родной элемент остаётся в разметке — с ним работают камера,
      клавиатура и экранный диктор; скрыт только его вид. */
   position: absolute;
@@ -1296,85 +1338,6 @@ textarea:focus {
   display: block;
   padding: var(--space-3) var(--screen-padding);
   padding-bottom: calc(var(--space-3) + var(--safe-bottom));
-}
-
-
-/* --- своя камера ---------------------------------------------------------
-   Нужна из-за Android: там Telegram перехватывает выбор файла и не
-   смотрит на `capture`, поэтому «сфотографировать» открывало галерею. */
-
-.camera-overlay {
-  background: rgba(11, 31, 51, 0.92);
-}
-
-.camera {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  height: 100%;
-  padding: var(--safe-top) var(--screen-padding)
-    calc(var(--safe-bottom) + var(--space-5));
-}
-
-.camera-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  padding: var(--space-3) 0;
-  color: var(--surface);
-  font-size: var(--text-small);
-}
-
-.camera-head .icon-btn {
-  color: var(--surface);
-}
-
-.camera-view {
-  position: relative;
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  border-radius: var(--radius-card);
-  background: var(--navy-pressed);
-}
-
-.camera-view video {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.camera-hint {
-  position: absolute;
-  color: var(--surface);
-  font-size: var(--text-small);
-}
-
-.camera-shutter {
-  align-self: center;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 68px;
-  height: 68px;
-  margin-top: var(--space-4);
-  border: 3px solid var(--surface);
-  border-radius: 50%;
-  background: var(--navy);
-  color: var(--surface);
-  cursor: pointer;
-}
-
-.camera-shutter:disabled {
-  opacity: 0.5;
-}
-
-.camera-shutter:active:not(:disabled) {
-  background: var(--navy-pressed);
 }
 
 

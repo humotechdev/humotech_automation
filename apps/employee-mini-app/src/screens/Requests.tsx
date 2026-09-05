@@ -420,7 +420,8 @@ export function AbsenceForm({
           <FileUploadField
             file={file}
             onFile={setFile}
-            accept={options?.policy.allowed_document_types.join(',')}
+            allowedTypes={options?.policy.allowed_document_types}
+            maxBytes={options?.policy.max_document_bytes}
             required={documentRequired}
             hint={
               documentRequired

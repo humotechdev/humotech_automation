@@ -407,87 +407,266 @@ describe('заявки', () => {
 // --- справка ----------------------------------------------------------------
 
 describe('загрузка справки', () => {
-  it('даёт и камеру, и выбор файла', () => {
-    // Панели вложений Telegram у мини-приложения нет: в WebApp API есть
-    // только downloadFile. Взять файл из чата нечем.
-    const { container } = render(
-      <FileUploadField file={null} onFile={noop} accept="application/pdf" />,
-    );
+  /**
+   * Своей камеры здесь больше нет.
+   *
+   * Она появилась из-за Android, где «сфотографировать» открывало
+   * галерею, и закрыла эту дыру ценой телефона: ни вспышки, ни фокуса,
+   * ни пересъёмки. Теперь три родных `input`, по одному на намерение,
+   * и открывает их `<label for>` — между касанием и системным окном не
+   * должно быть ни строки JavaScript, иначе WebView теряет жест.
+   */
 
-    // Оба родных элемента на месте: один — запасной путь для съёмки,
-    // второй — выбор готового файла.
-    const inputs = container.querySelectorAll('input[type="file"]');
-    expect(inputs).toHaveLength(2);
-    expect(inputs[0].getAttribute('capture')).toBe('environment');
-    expect(inputs[0].getAttribute('accept')).toBe('image/*');
-    expect(inputs[1].getAttribute('accept')).toBe('application/pdf');
-    expect(screen.getByRole('button', { name: /Сфотографировать/ })).toBeTruthy();
-  });
-
-  it('«сфотографировать» открывает свою камеру, а не выбор файла', async () => {
-    // Из-за Android: там Telegram перехватывает системный выбор и не
-    // смотрит на `capture`, поэтому кнопка открывала галерею. Своя
-    // камера от чужого выбора не зависит.
-    const { track, stop } = fakeCamera();
-
-    render(<FileUploadField file={null} onFile={noop} />);
-    fireEvent.click(screen.getByRole('button', { name: /Сфотографировать/ }));
-
-    await screen.findByRole('dialog', { name: 'Съёмка справки' });
-    expect(screen.getByRole('button', { name: 'Снять' })).toBeTruthy();
-
-    // Камеру гасим при закрытии: оставленный поток — это горящий
-    // индикатор камеры у человека в кармане.
-    fireEvent.click(screen.getByRole('button', { name: 'Закрыть камеру' }));
-    expect(stop).toHaveBeenCalled();
-    expect(track.stop).toBe(stop);
-  });
-
-  it('без камеры сразу откатывается на системный выбор файла', () => {
-    // На устройстве без getUserMedia промежуточного окна с извинениями
-    // быть не должно: человеку нужен файл, а не объяснение.
-    vi.stubGlobal('navigator', { ...navigator, mediaDevices: undefined });
-
+  it('камера просит заднюю камеру телефона, а не свой видоискатель', () => {
     const { container } = render(<FileUploadField file={null} onFile={noop} />);
-    const shot = container.querySelector(
+    const camera = container.querySelector(
       'input[capture]',
     ) as HTMLInputElement;
-    const click = vi.fn();
-    shot.click = click;
 
-    fireEvent.click(screen.getByRole('button', { name: /Сфотографировать/ }));
-
-    expect(click).toHaveBeenCalled();
-    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(camera.getAttribute('accept')).toBe('image/*');
+    expect(camera.getAttribute('capture')).toBe('environment');
+    // Открывается подписью, а не кнопкой с обработчиком: программный
+    // click() — первое, что вебвью не считает действием человека.
+    expect(container.querySelector(`label[for="${camera.id}"]`)).toBeTruthy();
   });
 
-  it('отказ в доступе к камере — не тупик', async () => {
-    const denied = Object.assign(new Error('нет'), { name: 'NotAllowedError' });
-    vi.stubGlobal('navigator', {
-      ...navigator,
-      mediaDevices: { getUserMedia: vi.fn(async () => Promise.reject(denied)) },
+  it('галерея — тот же тип файлов, но без capture', () => {
+    // Иначе телефон снова открыл бы камеру, а человеку нужно готовое фото.
+    const { container } = render(<FileUploadField file={null} onFile={noop} />);
+    const gallery = inputFor(container, 'Выбрать из галереи');
+
+    expect(gallery.getAttribute('accept')).toBe('image/*');
+    expect(gallery.hasAttribute('capture')).toBe(false);
+  });
+
+  it('документ принимает PDF и не открывает выбор чего угодно', () => {
+    const { container } = render(
+      <FileUploadField
+        file={null}
+        onFile={noop}
+        allowedTypes={['application/pdf', 'image/jpeg', 'image/png']}
+      />,
+    );
+    const picker = inputFor(container, 'Выбрать документ');
+    const accept = picker.getAttribute('accept') ?? '';
+
+    expect(accept).toContain('.pdf');
+    expect(accept).toContain('application/pdf');
+    // `*/*` открыл бы выбор чего угодно, а отказ пришёл бы уже после
+    // загрузки — на мобильной связи это потерянные мегабайты.
+    expect(accept).not.toContain('*/*');
+  });
+
+  it('к getUserMedia не обращается вовсе', () => {
+    const getUserMedia = vi.fn();
+    vi.stubGlobal('navigator', { ...navigator, mediaDevices: { getUserMedia } });
+
+    const { container } = render(<FileUploadField file={null} onFile={noop} />);
+    fireEvent.click(screen.getByText('Сфотографировать'));
+
+    expect(getUserMedia).not.toHaveBeenCalled();
+    // И никакого своего экрана поверх формы.
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(container.querySelector('video')).toBeNull();
+    expect(container.querySelector('canvas')).toBeNull();
+  });
+
+  it('снимок показан картинкой, именем и размером', () => {
+    const url = stubObjectUrl();
+    const shot = image('спраВка.jpg', 2048);
+
+    const { container } = render(<FileUploadField file={shot} onFile={noop} />);
+
+    const preview = container.querySelector('img.file-preview');
+    expect(preview?.getAttribute('src')).toBe(url.address);
+    expect(screen.getByText('спраВка.jpg')).toBeTruthy();
+    expect(screen.getByText('2 КБ')).toBeTruthy();
+  });
+
+  it('адрес снимка освобождается, когда справку убрали', () => {
+    // createObjectURL держит файл в памяти вкладки, пока адрес не отозван.
+    // На Android это мегабайты за каждую пересъёмку, и сами они не уходят.
+    const url = stubObjectUrl();
+    const { unmount } = render(
+      <FileUploadField file={image('снимок.jpg', 1024)} onFile={noop} />,
+    );
+
+    expect(url.revoke).not.toHaveBeenCalled();
+    unmount();
+    expect(url.revoke).toHaveBeenCalledWith(url.address);
+  });
+
+  it('PDF показан иконкой и именем, без попытки нарисовать картинку', () => {
+    stubObjectUrl();
+    const pdf = new File(['%PDF-1.4'], 'spravka.pdf', {
+      type: 'application/pdf',
     });
 
-    render(<FileUploadField file={null} onFile={noop} />);
-    fireEvent.click(screen.getByRole('button', { name: /Сфотографировать/ }));
+    const { container } = render(<FileUploadField file={pdf} onFile={noop} />);
 
-    await screen.findByText('Камера закрыта');
-    // Путь вперёд остаётся: справку можно приложить готовым файлом.
-    expect(screen.getByRole('button', { name: 'Выбрать файл' })).toBeTruthy();
+    expect(container.querySelector('img.file-preview')).toBeNull();
+    expect(container.querySelector('.file-badge svg')).toBeTruthy();
+    expect(screen.getByText('spravka.pdf')).toBeTruthy();
   });
 
-  it('выбранный файл показан по имени и снимается', () => {
+  it('неподходящий формат отклоняется на телефоне, до отправки', () => {
+    // accept — только подсказка системному окну: часть файловых
+    // провайдеров Android показывает мимо неё что угодно.
     const onFile = vi.fn();
-    render(
-      <FileUploadField
-        file={new File(['%PDF-1.4'], 'spravka.pdf', { type: 'application/pdf' })}
-        onFile={onFile}
+    const { container } = render(
+      <FileUploadField file={null} onFile={onFile} />,
+    );
+
+    choose(inputFor(container, 'Выбрать документ'), [
+      new File(['PK'], 'справка.docx', {
+        type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      }),
+    ]);
+
+    expect(onFile).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert').textContent).toContain('PDF');
+  });
+
+  it('файл без MIME принимается по расширению', () => {
+    // Так отдают файлы некоторые провайдеры Android: файл настоящий,
+    // а `type` пустой. Отказ по этому признаку сломал бы ровно тот
+    // путь, который здесь и чинится.
+    const onFile = vi.fn();
+    const { container } = render(
+      <FileUploadField file={null} onFile={onFile} />,
+    );
+
+    choose(inputFor(container, 'Выбрать документ'), [
+      new File(['%PDF-1.4'], 'spravka.pdf', { type: '' }),
+    ]);
+
+    expect(onFile).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('расширение, спорящее с типом, не проходит', () => {
+    const onFile = vi.fn();
+    const { container } = render(
+      <FileUploadField file={null} onFile={onFile} />,
+    );
+
+    choose(inputFor(container, 'Выбрать документ'), [
+      new File(['%PDF-1.4'], 'spravka.pdf', { type: 'image/png' }),
+    ]);
+
+    expect(onFile).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert').textContent).toContain('Расширение');
+  });
+
+  it('слишком большой файл отклоняется с понятным размером', () => {
+    const onFile = vi.fn();
+    const { container } = render(
+      <FileUploadField file={null} onFile={onFile} maxBytes={1024 * 1024} />,
+    );
+
+    choose(inputFor(container, 'Сфотографировать'), [
+      image('огромная.jpg', 5 * 1024 * 1024),
+    ]);
+
+    expect(onFile).not.toHaveBeenCalled();
+    // Число, а не «ошибка загрузки»: человеку решать, переснимать или нет.
+    expect(screen.getByRole('alert').textContent).toContain('1 МБ');
+  });
+
+  it('пустой файл отклоняется', () => {
+    const onFile = vi.fn();
+    const { container } = render(
+      <FileUploadField file={null} onFile={onFile} />,
+    );
+
+    choose(inputFor(container, 'Выбрать из галереи'), [
+      image('пусто.jpg', 0),
+    ]);
+
+    expect(onFile).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toBeTruthy();
+  });
+
+  it('справку можно убрать и выбрать ту же самую снова', () => {
+    // Про `input.value`: без сброса повторный выбор того же файла не даёт
+    // события вовсе — значение не изменилось, и человек нажимает в пустоту.
+    const onFile = vi.fn();
+    const shot = image('одна-и-та-же.jpg', 4096);
+    const { container, rerender } = render(
+      <FileUploadField file={shot} onFile={onFile} />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Удалить' }));
+    expect(onFile).toHaveBeenCalledWith(null);
+
+    rerender(<FileUploadField file={null} onFile={onFile} />);
+    const camera = inputFor(container, 'Сфотографировать');
+    choose(camera, [shot]);
+
+    expect(camera.value).toBe('');
+    expect(onFile).toHaveBeenLastCalledWith(shot);
+  });
+
+  it('отмена выбора не трогает уже приложенную справку и не ругается', () => {
+    // Пустое событие change — это «передумал открывать», а не «убери
+    // справку». Прежний код на нём вызывал onFile(null) и стирал файл.
+    const onFile = vi.fn();
+    const { container } = render(
+      <FileUploadField file={image('приложена.jpg', 2048)} onFile={onFile} />,
+    );
+
+    choose(inputFor(container, 'Выбрать из галереи'), []);
+
+    expect(onFile).not.toHaveBeenCalled();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByText('приложена.jpg')).toBeTruthy();
+  });
+
+  it('повторный выбор заменяет справку, а не добавляет вторую', () => {
+    const onFile = vi.fn();
+    const { container } = render(
+      <FileUploadField file={image('первая.jpg', 2048)} onFile={onFile} />,
+    );
+
+    const second = image('вторая.jpg', 2048);
+    choose(inputFor(container, 'Сфотографировать'), [second]);
+
+    expect(onFile).toHaveBeenCalledTimes(1);
+    expect(onFile).toHaveBeenCalledWith(second);
+    expect(container.querySelectorAll('.file-chosen')).toHaveLength(1);
+  });
+
+  it('пока заявка уходит, приложить другую справку нельзя', () => {
+    const { container } = render(
+      <FileUploadField file={null} onFile={noop} disabled />,
+    );
+
+    for (const input of container.querySelectorAll('input[type="file"]')) {
+      expect((input as HTMLInputElement).disabled).toBe(true);
+    }
+  });
+
+  it('остальные поля формы переживают выбор справки', () => {
+    // Форма собирается целиком и уходит одним запросом: файл не должен
+    // ни отправляться сам по себе, ни сбрасывать уже введённое.
+    const { container } = render(
+      <AbsenceForm
+        kind="SICK_LEAVE"
+        options={options}
+        balance={null}
+        onClose={noop}
+        onCreated={noop}
       />,
     );
 
-    expect(screen.getByText('spravka.pdf')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Убрать' }));
-    expect(onFile).toHaveBeenCalledWith(null);
+    const comment = screen.getByLabelText(/Комментарий/) as HTMLTextAreaElement;
+    fireEvent.change(comment, { target: { value: 'вернусь в среду' } });
+    choose(inputFor(container, 'Сфотографировать'), [
+      image('справка.jpg', 4096),
+    ]);
+
+    expect(comment.value).toBe('вернусь в среду');
+    expect(screen.getByText('справка.jpg')).toBeTruthy();
   });
 
   it('у поля есть подпись, связанная с элементом', () => {
@@ -623,21 +802,41 @@ describe('доступность', () => {
 
 // --- вспомогательное --------------------------------------------------------
 
+/** Скрытый input, который откроется по нажатию на подпись. */
+function inputFor(container: HTMLElement, label: string): HTMLInputElement {
+  const found = Array.from(container.querySelectorAll('label.file-field')).find(
+    (node) => node.textContent?.includes(label),
+  );
+  if (!found) throw new Error(`нет действия «${label}»`);
+  return found.querySelector('input[type="file"]') as HTMLInputElement;
+}
+
+/** Выбор в системном окне. Пустой список — окно закрыли, не выбрав. */
+function choose(input: HTMLInputElement, files: File[]): void {
+  fireEvent.change(input, { target: { files } });
+}
+
+/** Файл заданного размера: настоящие мегабайты в тесте держать незачем. */
+function image(name: string, size: number): File {
+  const file = new File([''], name, { type: 'image/jpeg' });
+  Object.defineProperty(file, 'size', { value: size });
+  return file;
+}
+
 /**
- * Камера, которой нет.
- *
- * jsdom не умеет ни getUserMedia, ни воспроизведение видео. Проверяется
- * не картинка, а то, что поток запрошен и — главное — остановлен.
+ * `URL.createObjectURL` в jsdom нет вовсе — не заглушка, а `undefined`.
+ * Компонент это переживает и показывает имя без картинки; чтобы проверить
+ * саму картинку и — важнее — освобождение адреса, метод подставляется.
  */
-function fakeCamera() {
-  const stop = vi.fn();
-  const track = { stop } as unknown as MediaStreamTrack;
-  const stream = { getTracks: () => [track] } as unknown as MediaStream;
-  vi.stubGlobal('navigator', {
-    ...navigator,
-    mediaDevices: { getUserMedia: vi.fn(async () => stream) },
+function stubObjectUrl(): { address: string; revoke: ReturnType<typeof vi.fn> } {
+  const address = 'blob:humotech/предпросмотр';
+  const revoke = vi.fn();
+  vi.stubGlobal('URL', {
+    ...URL,
+    createObjectURL: vi.fn(() => address),
+    revokeObjectURL: revoke,
   });
-  return { track, stop, stream };
+  return { address, revoke };
 }
 
 /** Ушедшие на сервер записи по пути и методу. */

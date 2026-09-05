@@ -53,6 +53,21 @@ EXTENSIONS = {
     "image/jpeg": ".jpg",
 }
 
+# Обратное соответствие — для проверки расширения присланного имени.
+# У JPEG их два, и оба настоящие.
+#
+# Список намеренно неполный: неизвестное расширение здесь НЕ повод для
+# отказа. Камера Android отдаёт файл под каким угодно именем, вплоть до
+# имени без точки вовсе, и запрет по этому признаку сломал бы обычную
+# съёмку справки. Ловится только прямое противоречие — «.png», о котором
+# сказано, что это PDF. Настоящая проверка всё равно ниже, по содержимому.
+BY_EXTENSION = {
+    ".pdf": "application/pdf",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+}
+
 # Сколько байт достаточно, чтобы узнать формат.
 SNIFF_BYTES = 16
 
@@ -101,6 +116,11 @@ def store(
             "Такой формат приложить нельзя",
             details={"allowed": list(allowed_types)},
         )
+
+    suffix = Path(_safe_name(upload.name)).suffix.lower()
+    known = BY_EXTENSION.get(suffix)
+    if known is not None and known != declared:
+        raise ValidationFailed("Расширение файла не соответствует его типу")
 
     head = upload.read(SNIFF_BYTES)
     upload.seek(0)

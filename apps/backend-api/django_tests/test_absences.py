@@ -284,6 +284,95 @@ def test_disallowed_format_is_refused(
         )
 
 
+def test_extension_contradicting_the_declared_type_is_refused(
+    service, context, sick_leave, settings, tmp_path
+):
+    """Расширение и MIME спорят между собой.
+
+    Содержимое здесь настоящий PDF, и проверка по первым байтам такой
+    файл пропустила бы: она сравнивает байты с ЗАЯВЛЕННЫМ типом, а
+    заявлен PDF. Ловится именно противоречие в том, что прислал клиент.
+    """
+    settings.FILES = {**settings.FILES, "PRIVATE_ROOT": str(tmp_path)}
+    mismatched = SimpleUploadedFile(
+        "spravka.png", b"%PDF-1.4\nreal pdf bytes",
+        content_type="application/pdf",
+    )
+
+    with pytest.raises(ValidationFailed):
+        service.create(
+            context, absence_type_code="SICK_LEAVE",
+            first_day=soon(0), last_day=soon(2), document=mismatched,
+        )
+
+
+def test_camera_file_without_extension_is_accepted(
+    service, context, sick_leave, settings, tmp_path
+):
+    """Имя без расширения — не повод для отказа.
+
+    Так справку отдаёт камера на части Android: имя без точки вовсе.
+    Запрет по этому признаку сломал бы главный путь — съёмку справки
+    телефоном, ради которого поле и переделано.
+    """
+    settings.FILES = {**settings.FILES, "PRIVATE_ROOT": str(tmp_path)}
+    shot = SimpleUploadedFile(
+        "image", b"\xff\xd8\xff\xe0jpeg bytes",
+        content_type="image/jpeg",
+    )
+
+    view = service.create(
+        context, absence_type_code="SICK_LEAVE",
+        first_day=soon(0), last_day=soon(2), document=shot,
+    )
+
+    assert view.documents == 1
+    assert view.request.documents.first().file.mime_type == "image/jpeg"
+
+
+def test_jpeg_is_accepted_under_both_of_its_extensions(
+    service, context, sick_leave, settings, tmp_path
+):
+    """У JPEG два расширения, и оба настоящие."""
+    settings.FILES = {**settings.FILES, "PRIVATE_ROOT": str(tmp_path)}
+
+    # Периоды разные: два больничных на одни и те же дни — это дубль,
+    # и отказ пришёл бы раньше, чем дело дошло бы до расширения.
+    for offset, name in enumerate(("spravka.jpg", "spravka.JPEG")):
+        shot = SimpleUploadedFile(
+            name, b"\xff\xd8\xffjpeg bytes", content_type="image/jpeg",
+        )
+        view = service.create(
+            context, absence_type_code="SICK_LEAVE",
+            first_day=soon(offset * 10), last_day=soon(offset * 10 + 2),
+            document=shot,
+        )
+        assert view.documents == 1
+
+
+def test_attached_document_leaves_no_trace_in_the_request_history(
+    service, context, sick_leave, settings, tmp_path
+):
+    """Ни имени файла, ни содержимого в истории заявки.
+
+    История видна шире, чем сама справка: имя вида
+    «Иванов-туберкулёз.pdf» рассказало бы диагноз тем, кому файл
+    показывать не собирались.
+    """
+    settings.FILES = {**settings.FILES, "PRIVATE_ROOT": str(tmp_path)}
+    view = service.create(
+        context, absence_type_code="SICK_LEAVE",
+        first_day=soon(0), last_day=soon(2),
+        document=certificate("Иванов-диагноз.pdf"),
+    )
+
+    trail = view.request.actions.filter(action="DOCUMENT_ATTACHED")
+    assert trail.exists()
+    for row in trail:
+        assert row.comment is None
+        assert "Иванов" not in str(row.__dict__)
+
+
 def test_document_can_be_added_later_when_policy_allows(
     service, context, sick_leave, hr, settings, tmp_path
 ):
