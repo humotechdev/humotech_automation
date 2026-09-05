@@ -31,11 +31,13 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 
+from django.db import IntegrityError
 from django.utils import timezone
 
-from humotech.attendance.models import AttendanceSession
+from humotech.attendance.models import AttendanceEvent, AttendanceSession
 from humotech.attendance.services import RejectionReason, register_scan
 from humotech.core.clientip import address_in_networks
+from humotech.core.errors import constraint_name_of
 from humotech.offices.models import OfficeNetwork
 from humotech.qr_codes.models import OfficeQrPoint
 from humotech.qr_codes.tokens import QrTokenError, read
@@ -58,6 +60,9 @@ class ScanStatus:
     NETWORK_REQUIRED = "NETWORK_REQUIRED"
     GEOLOCATION_REQUIRED = "GEOLOCATION_REQUIRED"
 
+
+# Ограничение, по которому узнаётся повторно присланная попытка.
+CLIENT_EVENT_CONSTRAINT = "uq_attendance_events_client_event"
 
 # Причина отказа из правила -> состояние экрана. Отдельная таблица, а не
 # совпадение имён: у отказов свой словарь, у экранов свой, и связывать их
@@ -159,19 +164,29 @@ def scan(
         )
         return ScanOutcome(status=ScanStatus.OFFICE_NOT_ALLOWED)
 
-    result = register_scan(
-        employee_id=employee.id,
-        qr_point=point,
-        now=moment,
-        # occurred_at не передаётся намеренно: время отметки — серверное.
-        qr_nonce_hash=payload.nonce_hash,
-        qr_issued_at=payload.issued_at,
-        qr_expires_at=payload.expires_at,
-        ip_address=ip_address,
-        inside_office_network=_inside_office_network(point, ip_address),
-        client_event_id=client_event_id,
-        source="QR",
-    )
+    try:
+        result = register_scan(
+            employee_id=employee.id,
+            qr_point=point,
+            now=moment,
+            # occurred_at не передаётся намеренно: время отметки — серверное.
+            qr_nonce_hash=payload.nonce_hash,
+            qr_issued_at=payload.issued_at,
+            qr_expires_at=payload.expires_at,
+            ip_address=ip_address,
+            inside_office_network=_inside_office_network(point, ip_address),
+            client_event_id=client_event_id,
+            source="QR",
+        )
+    except IntegrityError as error:
+        # Ту же самую попытку прислали второй раз. Так делает автоповтор
+        # сети: ответ на первый запрос потерялся по дороге, телефон
+        # отправил его заново, а сотрудник не нажимал ничего.
+        replayed = _replay(error, employee_id=employee.id,
+                           client_event_id=client_event_id, point=point)
+        if replayed is None:
+            raise
+        return replayed
 
     if not result.accepted:
         logger.info(
@@ -200,6 +215,70 @@ def scan(
         office_name=point.office.name,
         point_name=point.name,
         occurred_at=result.event.occurred_at,
+    )
+
+
+def _replay(
+    error: IntegrityError,
+    *,
+    employee_id,
+    client_event_id: str | None,
+    point: OfficeQrPoint,
+) -> ScanOutcome | None:
+    """Ответ на повторно присланную попытку — тот же, что и на первую.
+
+    Вторая запись не появляется: её не пускает частичный уникальный
+    индекс по паре «сотрудник + идентификатор попытки». Но отдавать в
+    ответ ошибку целостности нельзя. Человек у двери увидел бы отказ на
+    отметке, которая уже прошла, и приложил бы пропуск ещё раз — а вот
+    там его встретил бы `QR_ALREADY_USED`, потому что код одноразовый.
+
+    Возвращается `None`, если нарушено какое-то другое ограничение: тогда
+    исключение должно идти дальше, а не превращаться в чужой ответ.
+    """
+    if constraint_name_of(error) != CLIENT_EVENT_CONSTRAINT or not client_event_id:
+        return None
+
+    # Транзакция `register_scan` откатилась целиком, и читать нужно уже
+    # в новой: первая попытка сохранена своей, до этого запроса.
+    first = (
+        AttendanceEvent.objects.filter(
+            employee_id=employee_id, client_event_id=client_event_id
+        )
+        .order_by("received_at")
+        .first()
+    )
+    if first is None:
+        # Строка есть по мнению индекса, но не читается: гоняться за этим
+        # состоянием не следует, пусть ошибка идёт дальше как есть.
+        return None
+
+    logger.info(
+        "qr scan replayed: same attempt sent twice",
+        extra={"employee_id": str(employee_id)},
+    )
+
+    if first.verification_status != "ACCEPTED":
+        return ScanOutcome(
+            status=_REJECTION_TO_STATUS.get(
+                first.rejection_reason, ScanStatus.QR_INVALID
+            ),
+            office_name=point.office.name,
+            point_name=point.name,
+        )
+
+    session = AttendanceSession.objects.filter(
+        entry_event_id=first.id
+    ).first() or AttendanceSession.objects.filter(exit_event_id=first.id).first()
+
+    return ScanOutcome(
+        status=(
+            ScanStatus.ENTERED if first.event_type == "ENTRY" else ScanStatus.EXITED
+        ),
+        session=session,
+        office_name=point.office.name,
+        point_name=point.name,
+        occurred_at=first.occurred_at,
     )
 
 

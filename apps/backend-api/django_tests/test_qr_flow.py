@@ -495,3 +495,89 @@ def test_cabinet_and_scan_have_separate_limits():
     assert cabinet.scope != scanning.scope
     assert cabinet.rate and scanning.rate
     assert scanning.num_requests < cabinet.num_requests
+
+
+# --- повтор одной попытки ---------------------------------------------------
+
+def test_the_same_attempt_sent_twice_answers_the_same_thing(
+    context, display, qr_settings
+):
+    """Автоповтор сети не должен превращаться в ошибку у двери.
+
+    Ответ на первый запрос теряется по дороге, телефон отправляет его
+    заново — сотрудник при этом не нажимал ничего. До этой правки вторая
+    отправка роняла целостность и приходила отказом на отметке, которая
+    уже прошла: человек прикладывал пропуск ещё раз, а там его встречал
+    «код уже использован», потому что код одноразовый.
+    """
+    token = fresh_token(display)
+    attempt = "one-and-the-same"
+
+    first = scan(context, token=token, client_event_id=attempt)
+    second = scan(context, token=token, client_event_id=attempt)
+
+    assert first.status == ScanStatus.ENTERED
+    assert second.status == ScanStatus.ENTERED
+    assert second.accepted
+    # Тот же самый момент времени, а не «сейчас»: это тот же скан.
+    assert second.occurred_at == first.occurred_at
+    assert second.session is not None
+    assert second.session.id == first.session.id
+    assert second.office_name == first.office_name
+
+
+def test_the_same_attempt_twice_leaves_one_event_and_one_session(
+    context, display, qr_settings
+):
+    token = fresh_token(display)
+
+    scan(context, token=token, client_event_id="attempt-1")
+    scan(context, token=token, client_event_id="attempt-1")
+
+    assert AttendanceEvent.objects.filter(employee=context.employee).count() == 1
+    assert (
+        AttendanceSession.objects.filter(
+            employee=context.employee, status="OPEN"
+        ).count()
+        == 1
+    )
+
+
+def test_replayed_exit_returns_the_closed_session(context, display, qr_settings):
+    """У выхода в ответе есть длительность — она должна вернуться и на повторе."""
+    scan(context, token=fresh_token(display), client_event_id="in")
+
+    token = fresh_token(display)
+    first = scan(context, token=token, client_event_id="out")
+    second = scan(context, token=token, client_event_id="out")
+
+    assert first.status == ScanStatus.EXITED
+    assert second.status == ScanStatus.EXITED
+    assert second.session is not None
+    assert second.session.id == first.session.id
+    assert second.session.status == "CLOSED"
+    assert second.session.duration_seconds == first.session.duration_seconds
+
+
+def test_a_different_attempt_on_a_used_code_is_still_refused(
+    context, display, qr_settings
+):
+    """Повтор — это про ОДНУ попытку, а не про повторное использование кода.
+
+    Другой идентификатор попытки с тем же кодом обязан получить отказ:
+    иначе сфотографированный код работал бы дважды.
+    """
+    token = fresh_token(display)
+    scan(context, token=token, client_event_id="attempt-1")
+
+    other = scan(context, token=token, client_event_id="attempt-2")
+
+    assert not other.accepted
+    assert other.status == ScanStatus.QR_ALREADY_USED
+
+
+def test_scanning_without_an_attempt_id_still_works(context, display, qr_settings):
+    """Ключ повтора необязателен: старые клиенты его не присылают."""
+    entered = scan(context, token=fresh_token(display))
+
+    assert entered.status == ScanStatus.ENTERED
