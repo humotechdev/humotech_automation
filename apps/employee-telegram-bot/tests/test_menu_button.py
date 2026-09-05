@@ -165,11 +165,6 @@ def test_no_domain_is_hardcoded_in_the_module():
     assert "ngrok" not in code
 
 
-def test_scan_url_tolerates_a_trailing_slash():
-    assert mb.scan_url("https://example.test/") == "https://example.test/scan"
-    assert mb.scan_url("https://example.test") == "https://example.test/scan"
-
-
 def test_a_button_left_pointing_at_the_scanner_is_moved_back(url):
     """Промежуточное состояние: кнопка успела съездить на /scan."""
     bot = FakeBot(

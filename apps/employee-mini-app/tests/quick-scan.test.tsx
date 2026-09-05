@@ -116,6 +116,9 @@ describe('без подписи Telegram ничего не происходит'
 
     await screen.findByText('Не получилось');
     expect(scanner.show).not.toHaveBeenCalled();
+    // Отказов у входа два, и подсказка нужна на обоих: по документации
+    // Telegram кнопка нижней клавиатуры подписи не приносит вовсе.
+    expect(screen.getByText('/scan')).toBeTruthy();
   });
 
   it('непривязанный Telegram не сканирует', async () => {

@@ -38,21 +38,6 @@ logger = logging.getLogger(__name__)
 #: обрезанная подпись выглядит как ошибка вёрстки.
 BUTTON_TEXT = "Кабинет"
 
-#: Путь быстрой отметки внутри Mini App. Домен сюда не пишется: он
-#: приходит из MINI_APP_URL и меняется вместе с туннелем. Сама синяя
-#: кнопка на него больше не смотрит — путь нужен нижней клавиатуре.
-SCAN_PATH = "/scan"
-
-
-def scan_url(base: str) -> str:
-    """Адрес быстрой отметки из адреса Mini App.
-
-    Хвостовая косая черта у базы допустима: Telegram нормализует адреса
-    и дописывает её к корню, поэтому в настройке она встречается.
-    """
-    return base.rstrip("/") + SCAN_PATH
-
-
 def _same_address(left: str | None, right: str | None) -> bool:
     """Сравнение адресов без учёта хвостовой косой черты.
 
@@ -127,10 +112,4 @@ async def drop_chat_override(bot: Bot | None, chat_id: int) -> None:
         logger.exception("menu button: не удалось снять персональную кнопку")
 
 
-__all__ = [
-    "BUTTON_TEXT",
-    "SCAN_PATH",
-    "drop_chat_override",
-    "ensure_menu_button",
-    "scan_url",
-]
+__all__ = ["BUTTON_TEXT", "drop_chat_override", "ensure_menu_button"]
