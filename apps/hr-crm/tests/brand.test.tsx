@@ -4,6 +4,7 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
 
 import { BrandPanel } from '../src/components/BrandPanel';
+import { RATIO } from '../src/components/DecorChart';
 import { Logo, Wordmark } from '../src/components/Logo';
 
 describe('знак', () => {
@@ -46,6 +47,19 @@ describe('левая панель', () => {
     expect(text).not.toMatch(/\d+\s*%/);
     expect(text).not.toMatch(/\d+\+/);
     expect(text).not.toMatch(/Вовлечённость|Сотрудников:|Отделов:/);
+  });
+
+  test('график сохраняет пропорции, а не растягивается по панели', () => {
+    // `preserveAspectRatio="none"` растягивал рисунок под контейнер:
+    // на высоком мониторе круглые точки становились овалами, а столбцы
+    // тянулись вверх. Пропорции держит `viewBox` вместе с отношением
+    // сторон контейнера в CSS.
+    const { container } = render(<BrandPanel />);
+    const svg = container.querySelector('svg');
+
+    expect(svg?.getAttribute('preserveAspectRatio')).toBeNull();
+    expect(svg?.getAttribute('viewBox')).toBe('0 0 340 190');
+    expect(Math.round(RATIO * 100) / 100).toBe(1.79);
   });
 
   test('график не объявляет себя данными для читалки экрана', () => {

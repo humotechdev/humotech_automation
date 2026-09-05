@@ -34,7 +34,7 @@ body {
 }
 
 body {
-  background: #ffffff;
+  background: var(--page);
   color: var(--ink);
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   font-size: 15px;
@@ -71,28 +71,35 @@ input {
 
 /* --- каркас страницы ---------------------------------------------------- */
 
+/* Фон занимает окно, карточка — нет. Это два независимых размера:
+   лишняя высота монитора и полноэкранный режим добавляют поля ВОКРУГ
+   карточки, а не растягивают её содержимое. */
 .page {
   min-height: 100dvh;
   display: flex;
-  align-items: stretch;
-  justify-content: center;
+  padding: clamp(16px, 2.5vw, 48px);
 }
 
-/* Экран входа занимает окно целиком. Карточка, плавающая на сером
-   поле, — это макет на подложке, а не интерфейс: в работе поле вокруг
-   ничего не сообщает и только отнимает место у формы. */
 .page--plain {
-  background: #ffffff;
-  align-items: center;
-  padding: 32px 24px;
+  padding: clamp(16px, 3vw, 48px);
 }
 
+/* Центрирование именно через `margin: auto`, а не `align-items: center`:
+   при нехватке высоты центрированный флекс-элемент уезжает вверх за
+   край окна, и до верха формы уже не долистать. С автополями он просто
+   прижимается к началу и страница прокручивается. */
 .card {
+  margin: auto;
   width: 100%;
-  min-height: 100dvh;
+  max-width: 1400px;
   display: grid;
-  grid-template-columns: 38.7% 1fr;
+  grid-template-columns: 39% 1fr;
   background: #ffffff;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow:
+    0 24px 64px rgba(0, 0, 0, 0.08),
+    0 2px 8px rgba(0, 0, 0, 0.04);
 }
 
 /* --- знак --------------------------------------------------------------- */
@@ -146,15 +153,15 @@ input {
 .brand {
   background: var(--panel);
   color: #ffffff;
-  padding: clamp(32px, 4vw, 64px);
+  padding: clamp(32px, 3.2vw, 56px);
   display: flex;
   flex-direction: column;
-  gap: clamp(20px, 2.4vw, 32px);
+  gap: clamp(24px, 2.4vw, 36px);
 }
 
 .brand .wordmark__name {
   color: #ffffff;
-  font-size: clamp(24px, 2.1vw, 30px);
+  font-size: clamp(24px, 2.2vw, 34px);
 }
 
 .brand .wordmark__tagline {
@@ -169,7 +176,7 @@ input {
 
 .brand__tagline {
   margin: 0;
-  font-size: 15px;
+  font-size: clamp(15px, 1.1vw, 17px);
   color: var(--panel-text);
 }
 
@@ -195,24 +202,29 @@ input {
 }
 
 .brand__column-title {
-  font-size: 13.5px;
+  font-size: clamp(13px, 1vw, 15px);
   font-weight: 600;
   color: #ffffff;
   letter-spacing: 0.01em;
 }
 
 .brand__column-hint {
-  font-size: 11px;
+  font-size: clamp(11px, 0.85vw, 12.5px);
   color: #8f8f8f;
   line-height: 1.35;
 }
 
 /* --- декоративный график ------------------------------------------------ */
 
+/* Иллюстрация, а не заполнитель пустоты. Прежде здесь стоял
+   `flex: 1 1 auto` без потолка: график съедал всю высоту, оставшуюся от
+   панели, и на высоком мониторе становился вертикальным. Форму держит
+   отношение сторон — то же, что у `viewBox`. */
 .chart {
   position: relative;
-  flex: 1 1 auto;
-  min-height: clamp(140px, 16vw, 280px);
+  flex: none;
+  width: 100%;
+  aspect-ratio: 340 / 190;
 }
 
 .chart__canvas {
@@ -250,7 +262,7 @@ input {
 
 .chart__note {
   position: absolute;
-  top: 4%;
+  top: 0;
   right: 0;
   display: flex;
   flex-direction: column;
@@ -267,7 +279,7 @@ input {
 
 .form-side {
   background: #ffffff;
-  padding: clamp(20px, 2.4vw, 36px) clamp(28px, 5vw, 88px) clamp(28px, 3vw, 48px);
+  padding: clamp(20px, 2.2vw, 34px) clamp(24px, 4vw, 80px) clamp(28px, 3vw, 52px);
   display: flex;
   flex-direction: column;
 }
@@ -278,9 +290,9 @@ input {
 }
 
 .form-side__body {
-  width: min(480px, 100%);
+  width: min(540px, 100%);
   margin: auto;
-  padding: clamp(8px, 2vw, 24px) 0 0;
+  padding: clamp(8px, 1.6vw, 20px) 0 0;
 }
 
 /* Знак над формой нужен только там, где чёрной панели нет. */
@@ -291,14 +303,14 @@ input {
 
 .form-side__title {
   margin: 0;
-  font-size: clamp(28px, 2.6vw, 36px);
+  font-size: clamp(30px, 2.5vw, 40px);
   font-weight: 700;
   letter-spacing: -0.01em;
 }
 
 .form-side__subtitle {
-  margin: 6px 0 0;
-  font-size: 16px;
+  margin: 8px 0 0;
+  font-size: clamp(16px, 1.15vw, 18px);
   color: var(--muted);
 }
 
@@ -312,11 +324,11 @@ input {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 14px;
+  padding: 11px 16px;
   background: #ffffff;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  font-size: 14px;
+  font-size: clamp(14px, 1.05vw, 15px);
   font-weight: 500;
   cursor: pointer;
 }
@@ -367,10 +379,10 @@ input {
 /* --- форма -------------------------------------------------------------- */
 
 .form {
-  margin-top: 30px;
+  margin-top: clamp(26px, 2.2vw, 34px);
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: clamp(18px, 1.5vw, 22px);
 }
 
 .field {
@@ -380,7 +392,7 @@ input {
 }
 
 .field__label {
-  font-size: 13.5px;
+  font-size: clamp(14px, 1vw, 16px);
   font-weight: 500;
   color: var(--ink-soft);
 }
@@ -388,9 +400,9 @@ input {
 .field__box {
   display: flex;
   align-items: center;
-  gap: 10px;
-  height: 50px;
-  padding: 0 14px;
+  gap: 12px;
+  height: clamp(52px, 4vw, 58px);
+  padding: 0 18px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: #ffffff;
@@ -412,7 +424,7 @@ input {
   border: 0;
   outline: none;
   background: none;
-  font-size: 15px;
+  font-size: clamp(15px, 1.15vw, 17px);
 }
 
 .field__input::placeholder {
@@ -455,15 +467,15 @@ input {
 .remember {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  font-size: 14px;
+  gap: 12px;
+  font-size: clamp(14px, 1.05vw, 16px);
   cursor: pointer;
   user-select: none;
 }
 
 .remember input {
-  width: 17px;
-  height: 17px;
+  width: 19px;
+  height: 19px;
   margin: 0;
   accent-color: #111111;
   cursor: pointer;
@@ -471,21 +483,21 @@ input {
 
 .form__alert {
   margin: 0;
-  padding: 11px 14px;
+  padding: 13px 16px;
   border: 1px solid #d8d8d8;
   border-left: 3px solid var(--ink);
   border-radius: 8px;
   background: #f7f7f7;
-  font-size: 13.5px;
+  font-size: clamp(14px, 1.05vw, 15px);
 }
 
 .submit {
-  height: 56px;
+  height: clamp(54px, 4.2vw, 60px);
   border: 0;
   border-radius: var(--radius);
   background: var(--ink);
   color: #ffffff;
-  font-size: 15.5px;
+  font-size: clamp(16px, 1.2vw, 18px);
   font-weight: 600;
   cursor: pointer;
   transition: background-color 0.15s ease;
@@ -504,11 +516,11 @@ input {
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  margin-top: 26px;
-  padding-top: 22px;
+  margin-top: clamp(26px, 2.2vw, 34px);
+  padding-top: clamp(20px, 1.8vw, 26px);
   border-top: 1px solid var(--line);
   color: var(--muted);
-  font-size: 13px;
+  font-size: clamp(13.5px, 1vw, 15px);
 }
 
 .form-side__footer p {
@@ -584,6 +596,7 @@ input {
 @media (max-width: 900px) {
   .card {
     grid-template-columns: 1fr;
+    max-width: 560px;
   }
 
   /* Чёрная панель декоративна. Порог именно здесь: на 1024×768 обе
@@ -603,6 +616,14 @@ input {
 }
 
 @media (max-width: 560px) {
+  .page {
+    padding: 12px;
+  }
+
+  .card {
+    border-radius: 14px;
+  }
+
   .form-side {
     padding: 16px 20px 28px;
   }
