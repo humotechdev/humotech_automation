@@ -27,7 +27,7 @@ from typing import Any, Awaitable, Callable
 from aiogram import BaseMiddleware
 from aiogram.types import TelegramObject
 
-from src.api.errors import ApiError, Unauthorized
+from src.api.errors import ApiError, Forbidden, Unauthorized
 from src.api.selfservice import SelfServiceClient
 
 logger = logging.getLogger(__name__)
@@ -55,19 +55,24 @@ class EmployeeMiddleware(BaseMiddleware):
         if user is not None:
             try:
                 data["employee"] = await self.client.profile(user.id)
-            except Unauthorized as error:
+                logger.info("access for %s: granted", user.id)
+            except (Unauthorized, Forbidden) as error:
+                # 403 разбирается наравне с 401: причина отказа лежит в теле
+                # ответа, и без этой ветки «привязка отозвана» доезжала бы
+                # сюда как «сервер недоступен».
                 data["denial"] = _reason(error)
+                logger.info("access for %s: refused (%s)", user.id, data["denial"])
             except ApiError as error:
                 # Сеть или сервер. Это НЕ отказ в доступе: сказать человеку
                 # «нет доступа» из-за упавшего backend значит отправить его
                 # в отдел кадров разбираться с тем, чего не происходило.
-                logger.warning("backend unavailable: %s", error)
+                logger.warning("backend unavailable for %s: %s", user.id, error)
                 data["denial"] = REASON_UNAVAILABLE
 
         return await handler(event, data)
 
 
-def _reason(error: Unauthorized) -> str:
+def _reason(error: ApiError) -> str:
     """Причина отказа из тела ответа.
 
     Backend отдаёт её боту точно — бот предъявил общий секрет, то есть он

@@ -18,8 +18,8 @@ from __future__ import annotations
 import logging
 
 from aiogram import F, Router
-from aiogram.filters import Command, CommandStart
-from aiogram.types import Message
+from aiogram.filters import Command, CommandObject, CommandStart
+from aiogram.types import Message, ReplyKeyboardMarkup
 
 from src.api.errors import ApiError
 from src.api.selfservice import SelfServiceClient
@@ -35,6 +35,9 @@ router = Router(name="employee-menu")
 
 # Причина отказа -> что показать. Три разных ответа, потому что человеку
 # в них надо делать разное: подождать, попросить ссылку, идти в кадры.
+#: Слово-переключатель у `/keyboard`: прислать меню без кнопок запуска.
+PLAIN_WORDS = {"plain", "текст", "text", "без"}
+
 DENIAL_TEXT = {
     "pending_confirmation": text.PENDING,
     "not_linked": text.NOT_LINKED,
@@ -42,7 +45,9 @@ DENIAL_TEXT = {
 }
 
 
-def _menu(employee, message: Message | None = None):
+def build_menu(
+    employee, message: Message | None = None, *, launch_apps: bool | None = None
+) -> ReplyKeyboardMarkup:
     """Нижняя клавиатура. Один сборщик на бота, здесь только выбор набора.
 
     Тип чата важен: `web_app` у кнопки нижней клавиатуры Telegram
@@ -52,7 +57,44 @@ def _menu(employee, message: Message | None = None):
     if not employee:
         return kb.help_only_menu()
     private = message is None or getattr(message.chat, "type", "private") == "private"
-    return kb.employee_menu(settings.mini_app_url, private=private)
+    if launch_apps is None:
+        launch_apps = settings.keyboard_launch_buttons
+    markup = kb.employee_menu(
+        settings.mini_app_url, private=private, launch_apps=launch_apps
+    )
+    describe(markup, who=message)
+    return markup
+
+
+#: Прежнее имя. Осталось, чтобы не разошлись вызовы внутри модуля.
+_menu = build_menu
+
+
+def describe(markup: ReplyKeyboardMarkup, *, who: Message | None = None) -> None:
+    """Что именно уходит в Telegram — в журнал, одной строкой.
+
+    По жалобе «кнопок нет» иначе нечего смотреть: конструктор в коде и
+    разметка в запросе — разные вещи, и расходятся они молча. Ни токенов,
+    ни строк запуска, ни персональных данных здесь нет — только подписи
+    кнопок и флаги разметки.
+    """
+    labels = [button.text for row in markup.keyboard for button in row]
+    web_apps = sum(
+        1 for row in markup.keyboard for button in row if button.web_app is not None
+    )
+    logger.info(
+        "keyboard -> %s: rows=%d buttons=%d web_app=%d persistent=%s resize=%s "
+        "one_time=%s selective=%s labels=%s",
+        getattr(getattr(who, "from_user", None), "id", "?"),
+        len(markup.keyboard),
+        len(labels),
+        web_apps,
+        markup.is_persistent,
+        markup.resize_keyboard,
+        markup.one_time_keyboard,
+        markup.selective,
+        labels,
+    )
 
 
 async def _guard(message: Message, employee, denial) -> bool:
@@ -61,9 +103,21 @@ async def _guard(message: Message, employee, denial) -> bool:
     Неудача backend отделена от отказа в доступе намеренно: сказать
     «нет доступа» из-за упавшего сервера значит отправить человека
     в отдел кадров разбираться с тем, чего не происходило.
+
+    И клавиатуру в этом случае НЕ трогаем. Прежде здесь уходила
+    «Помощь» — одна кнопка вместо одиннадцати, — и сетевой сбой на
+    секунду отбирал у человека меню до следующего `/start`. Состояние
+    неизвестно: правильный ответ — не менять то, что у него уже есть.
     """
     if employee is not None:
         return True
+    if denial == REASON_UNAVAILABLE:
+        logger.info(
+            "menu skipped for %s: backend unavailable, keyboard left as is",
+            getattr(message.from_user, "id", "?"),
+        )
+        await message.answer(text.BACKEND_DOWN)
+        return False
     await message.answer(
         DENIAL_TEXT.get(denial, text.NO_ACCESS),
         reply_markup=kb.help_only_menu(),
@@ -116,15 +170,31 @@ async def cabinet(message: Message, employee, denial) -> None:
 
 @router.message(Command("menu"))
 @router.message(Command("keyboard"))
-async def menu(message: Message, employee, denial) -> None:
+async def menu(
+    message: Message, command: CommandObject, employee, denial
+) -> None:
     """Вернуть нижнюю клавиатуру, если её свернули или удалили.
 
     `/keyboard` — то же самое под именем, которое ищут, когда кнопки
     пропали: «меню» в этот момент звучит как список команд.
+
+    `/keyboard текст` — тот же набор без кнопок запуска приложения.
+    Нужен, когда кнопок не видно вовсе: если этот вариант появился, а
+    обычный нет, дело в клиенте и его отношении к `web_app` в нижней
+    клавиатуре, а не в том, что бот ничего не прислал.
     """
     if not await _guard(message, employee, denial):
         return
-    await message.answer("Меню", reply_markup=_menu(employee, message))
+    plain = (command.args or "").strip().lower() in PLAIN_WORDS
+    markup = build_menu(employee, message, launch_apps=not plain)
+    body = "Меню без кнопок запуска приложения" if plain else "Меню"
+    sent = await message.answer(body, reply_markup=markup)
+    logger.info(
+        "menu delivered to %s: message_id=%s plain=%s",
+        getattr(message.from_user, "id", "?"),
+        getattr(sent, "message_id", None),
+        plain,
+    )
 
 
 @router.message(F.text == kb.BTN_SCAN)

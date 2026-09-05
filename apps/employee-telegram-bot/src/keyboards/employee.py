@@ -100,7 +100,10 @@ def cabinet_url(mini_app_url: str) -> str:
 
 
 def employee_menu(
-    mini_app_url: str | None, *, private: bool = True
+    mini_app_url: str | None,
+    *,
+    private: bool = True,
+    launch_apps: bool = True,
 ) -> ReplyKeyboardMarkup:
     """Меню сотрудника с рабочей привязкой. Единственный сборщик на бота.
 
@@ -115,10 +118,17 @@ def employee_menu(
     `is_persistent` — чтобы клавиатура не сворачивалась в значок после
     первого же ответа: она здесь постоянный инструмент, а не разовый
     вопрос. `one_time_keyboard` по той же причине выключен явно.
+
+    `launch_apps=False` — те же две подписи, но обычными текстовыми
+    кнопками. Нужно там, где клиент не показал клавиатуру с `web_app`:
+    подписи и обработчики остаются прежними, путь становится на одно
+    нажатие длиннее, но кнопки есть.
     """
     rows = []
     if mini_app_url:
-        rows.append(_launch_row(mini_app_url, private=private))
+        rows.append(
+            _launch_row(mini_app_url, private=private, launch_apps=launch_apps)
+        )
     rows.extend(
         [
             [KeyboardButton(text=BTN_WHERE_AM_I)],
@@ -138,10 +148,16 @@ def employee_menu(
     )
 
 
-def _launch_row(mini_app_url: str, *, private: bool) -> list[KeyboardButton]:
+def _launch_row(
+    mini_app_url: str, *, private: bool, launch_apps: bool = True
+) -> list[KeyboardButton]:
     """Верхний ряд: отметка и кабинет одним нажатием."""
     if not private:
         return [KeyboardButton(text=BTN_CABINET)]
+    if not launch_apps:
+        # Тот же ряд без `web_app`. По этим подписям уже есть обработчики:
+        # человек получит inline-кнопку вместо мгновенного запуска.
+        return [KeyboardButton(text=BTN_SCAN), KeyboardButton(text=BTN_OPEN)]
     return [
         KeyboardButton(
             text=BTN_SCAN,

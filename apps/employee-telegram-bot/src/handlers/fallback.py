@@ -15,9 +15,10 @@ from aiogram import Router
 from aiogram.filters import StateFilter
 from aiogram.types import CallbackQuery, Message
 
-from src.config.settings import settings
+from src.handlers.menu.router import build_menu
 from src.keyboards import employee as kb
 from src.messages import employee as text
+from src.middlewares.employee import REASON_UNAVAILABLE
 
 router = Router(name="fallback")
 
@@ -26,13 +27,18 @@ STALE_BUTTON = "Кнопка устарела. Откройте меню зан�
 
 
 @router.message(StateFilter(None))
-async def anything_else(message: Message, employee) -> None:
+async def anything_else(message: Message, employee, denial) -> None:
     if employee is None:
+        if denial == REASON_UNAVAILABLE:
+            # Backend не ответил. Прежде здесь уходило «вы не привязаны»
+            # вместе с клавиатурой «Помощь»: сетевой сбой на секунду
+            # превращался в отказ в доступе, а меню человека — в одну
+            # кнопку. Ни того, ни другого не происходило.
+            await message.answer(text.BACKEND_DOWN)
+            return
         await message.answer(text.NOT_LINKED, reply_markup=kb.help_only_menu())
         return
-    await message.answer(
-        UNKNOWN, reply_markup=kb.employee_menu(settings.mini_app_url)
-    )
+    await message.answer(UNKNOWN, reply_markup=build_menu(employee, message))
 
 
 @router.callback_query()
