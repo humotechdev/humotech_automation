@@ -19,6 +19,10 @@ logger = logging.getLogger(__name__)
 
 COMMANDS = [
     BotCommand(command="menu", description="Главное меню"),
+    # Кабинет стоит списком с тех пор, как синюю кнопку занял сканер:
+    # иначе полный кабинет открывался бы только кнопкой снизу, а её
+    # не видно, пока не развернёшь клавиатуру.
+    BotCommand(command="cabinet", description="Личный кабинет"),
     BotCommand(command="status", description="Я сейчас в офисе?"),
     BotCommand(command="today", description="Сегодня"),
     BotCommand(command="week", description="За неделю"),

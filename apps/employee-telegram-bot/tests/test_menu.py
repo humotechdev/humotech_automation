@@ -283,6 +283,57 @@ def test_cabinet_without_an_address_says_so_instead_of_opening_nothing(
     assert markup is None
 
 
+def test_start_explains_both_ways_in(monkeypatch):
+    """Синяя кнопка теперь сканер, и это надо сказать словами.
+
+    Человек, привыкший открывать кабинет синей кнопкой, иначе решит,
+    что кабинет пропал: место у поля ввода одно, и его занял сканер.
+    """
+    from src.config import settings as settings_module
+
+    monkeypatch.setattr(
+        settings_module.settings, "mini_app_url", "https://mini.example", False
+    )
+    message, _ = run(start, needs_client=False)
+
+    answer, _ = message.answers[-1]
+    assert "Отметиться" in answer
+    assert "/cabinet" in answer
+
+
+def test_start_names_what_each_way_is_for(monkeypatch):
+    from src.config import settings as settings_module
+
+    monkeypatch.setattr(
+        settings_module.settings, "mini_app_url", "https://mini.example", False
+    )
+    message, _ = run(start, needs_client=False)
+
+    answer, _ = message.answers[-1]
+    # Быстрый путь — про приход и уход; полный — про то, чего в нём нет.
+    assert "QR" in answer
+    for word in ("статистика", "история", "больничный", "отпуск"):
+        assert word.lower() in answer.lower()
+
+
+def test_cabinet_is_still_reachable_by_command():
+    """Кабинет не должен исчезнуть вместе с синей кнопкой."""
+    from src.handlers.menu.router import cabinet as handler
+
+    assert handler is cabinet
+
+
+def test_cabinet_is_listed_among_the_commands():
+    """Кнопка снизу не видна, пока не развернёшь клавиатуру.
+
+    Раз синюю кнопку занял сканер, полный кабинет должен открываться
+    хотя бы командой из списка — иначе до него нужно ещё догадаться.
+    """
+    from src.utils.commands import COMMANDS
+
+    assert any(item.command == "cabinet" for item in COMMANDS)
+
+
 # --- числа приходят с сервера ---------------------------------------------
 
 def test_the_bot_computes_nothing_itself():

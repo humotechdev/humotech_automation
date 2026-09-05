@@ -52,7 +52,7 @@ def test_button_is_set_when_it_points_at_commands(url):
 
     assert len(bot.writes) == 1
     assert isinstance(bot.writes[0], MenuButtonWebApp)
-    assert bot.writes[0].web_app.url == url
+    assert bot.writes[0].web_app.url == url + "/scan"
     assert bot.writes[0].text == mb.BUTTON_TEXT
 
 
@@ -74,7 +74,7 @@ def test_trailing_slash_is_not_a_change(url):
     """
     bot = FakeBot(
         MenuButtonWebApp(
-            text=mb.BUTTON_TEXT, web_app=WebAppInfo(url=url + "/")
+            text=mb.BUTTON_TEXT, web_app=WebAppInfo(url=url + "/scan/")
         )
     )
 
@@ -94,7 +94,7 @@ def test_different_address_is_rewritten(url):
     run(mb.ensure_menu_button(bot))
 
     assert len(bot.writes) == 1
-    assert bot.writes[0].web_app.url == url
+    assert bot.writes[0].web_app.url == url + "/scan"
 
 
 def test_without_address_nothing_is_touched(monkeypatch):
@@ -113,3 +113,76 @@ def test_telegram_failure_does_not_stop_the_bot(url):
     run(mb.ensure_menu_button(bot))
 
     assert bot.writes == []
+
+
+# --- быстрая отметка --------------------------------------------------------
+
+def test_button_opens_the_scan_route(url):
+    """Синяя кнопка ведёт на отметку, а не в кабинет целиком.
+
+    Место у поля ввода одно на бота, и занимает его то, что делают
+    чаще: отмечаются дважды в день, кабинет открывают изредка.
+    """
+    bot = FakeBot()
+
+    run(mb.ensure_menu_button(bot))
+
+    assert bot.writes[0].web_app.url.endswith("/scan")
+    assert bot.writes[0].text == "Отметиться"
+
+
+def test_address_is_built_from_the_setting_not_written_in_code(monkeypatch):
+    """Домен приходит из MINI_APP_URL и нигде в коде не повторяется.
+
+    Туннель переезжает, и зашитый адрес означал бы кнопку, ведущую
+    в никуда, при живой настройке.
+    """
+    monkeypatch.setattr(
+        mb.settings, "mini_app_url", "https://another-stand.example", raising=False
+    )
+    bot = FakeBot()
+
+    run(mb.ensure_menu_button(bot))
+
+    assert bot.writes[0].web_app.url == "https://another-stand.example/scan"
+
+
+def test_no_domain_is_hardcoded_in_the_module():
+    import inspect
+
+    text = inspect.getsource(mb)
+    # Ищется схема, а не конкретный адрес: так проверка переживёт
+    # переезд туннеля и поймает любой вписанный домен.
+    code = text.split('"""', 2)[-1]
+    assert "https://" not in code
+    assert "ngrok" not in code
+
+
+def test_scan_url_tolerates_a_trailing_slash():
+    assert mb.scan_url("https://example.test/") == "https://example.test/scan"
+    assert mb.scan_url("https://example.test") == "https://example.test/scan"
+
+
+def test_restart_does_not_leave_the_old_cabinet_button(url):
+    """Прежняя кнопка вела в корень кабинета — её надо переписать."""
+    bot = FakeBot(
+        MenuButtonWebApp(text="Кабинет", web_app=WebAppInfo(url=url))
+    )
+
+    run(mb.ensure_menu_button(bot))
+
+    assert len(bot.writes) == 1
+    assert bot.writes[0].web_app.url == url + "/scan"
+    assert bot.writes[0].text == "Отметиться"
+
+
+def test_same_address_but_old_caption_is_rewritten(url):
+    """Адрес верный, подпись прежняя — кнопку всё равно надо поправить."""
+    bot = FakeBot(
+        MenuButtonWebApp(text="Кабинет", web_app=WebAppInfo(url=url + "/scan"))
+    )
+
+    run(mb.ensure_menu_button(bot))
+
+    assert len(bot.writes) == 1
+    assert bot.writes[0].text == "Отметиться"
