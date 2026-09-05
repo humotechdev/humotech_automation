@@ -1322,3 +1322,139 @@ body,
     border-left: 0;
   }
 }
+
+/* --- страница «Заявки» ------------------------------------------------------
+ *
+ * Список и подробности рядом: очередь не должна пропадать из виду на
+ * каждой заявке. Затемнения всей страницы здесь нет — оно уместно для
+ * модального окна, а не для рабочей очереди.
+ */
+
+.queue-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 420px;
+  gap: 14px;
+  align-items: start;
+}
+
+.toolbar__note {
+  margin: -6px 0 0;
+  padding: 0 16px 12px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.people tbody tr.is-picked {
+  background: var(--soft);
+  box-shadow: inset 3px 0 0 var(--ink-1);
+}
+
+.side-panel {
+  position: sticky;
+  top: 14px;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - 120px);
+  padding: 0;
+  overflow: hidden;
+}
+
+.side-panel__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--edge);
+}
+
+.side-panel__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.side-panel__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.side-panel__label {
+  margin: 4px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.side-panel__text {
+  margin: 0;
+  font-size: 13.5px;
+}
+
+.side-panel__actions {
+  display: flex;
+  gap: 10px;
+}
+
+.side-panel__actions .btn {
+  flex: 1;
+  justify-content: center;
+}
+
+.doc {
+  border: 1px solid var(--edge);
+  border-radius: 9px;
+  padding: 12px 14px;
+}
+
+.doc__name {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.doc__meta,
+.doc__state {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.doc__state {
+  color: var(--ink-1);
+  font-weight: 500;
+}
+
+.area {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--edge);
+  border-radius: 9px;
+  font: inherit;
+  font-size: 13.5px;
+  resize: vertical;
+}
+
+.area:focus-visible {
+  outline: 2px solid var(--ink-1);
+  outline-offset: 1px;
+}
+
+@media (max-width: 1280px) {
+  .queue-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .side-panel {
+    position: static;
+    max-height: none;
+  }
+}

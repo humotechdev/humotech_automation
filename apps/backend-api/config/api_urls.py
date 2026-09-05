@@ -18,6 +18,7 @@ from humotech.accounts.rbac_views import (
     UserGrantsView,
 )
 from humotech.audit.views import AuditLogView
+from humotech.core.queue_views import RequestQueueView
 from humotech.analytics.views import (
     AnalyticsView,
     ComparisonView,
@@ -171,6 +172,10 @@ urlpatterns = [
     # карточка несёт адрес, по которому виден её состав, — число без
     # такого адреса кадровику бесполезно.
     path("dashboard", DashboardView.as_view(), name="dashboard"),
+    # Общая очередь заявок: отсутствия и исправления отметок одним
+    # списком. Склеить две страницы на клиенте нельзя — получилась бы
+    # не очередь, а произвольная смесь двух её половин.
+    path("requests", RequestQueueView.as_view(), name="requests-queue"),
     # Аналитика. Каждая доля приходит с числителем, знаменателем и
     # словесным определением формулы: процент без них проверить нечем.
     path("analytics", AnalyticsView.as_view(), name="analytics"),

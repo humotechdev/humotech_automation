@@ -262,3 +262,79 @@ export type Department = { id: string; name: string; office_id?: string | null }
 
 export const departments = (signal?: AbortSignal) =>
   request<Items<Department>>('/departments/', signal ? { signal } : {});
+
+// --- очередь заявок --------------------------------------------------------
+
+export type DocumentRow = {
+  id: string;
+  document_type: string;
+  verification_status: 'PENDING' | 'VERIFIED' | 'REJECTED' | string;
+  verified_at: string | null;
+  file: {
+    id: string;
+    name: string;
+    mime_type: string;
+    size_bytes: number;
+    uploaded_at: string;
+    scan_status: string;
+  };
+};
+
+export type AbsenceRow = AbsenceRequestRow & {
+  documents: DocumentRow[];
+  requires_document: boolean;
+  /** Что написал сам сотрудник. Диагноза здесь быть не должно. */
+  comment: string | null;
+  review_comment: string | null;
+};
+
+export type CorrectionRow = {
+  id: string;
+  status: string;
+  employee?: { id: string; full_name: string; employee_number: string | null };
+  employee_id?: string;
+  reason?: string | null;
+  requested_change?: Record<string, unknown> | null;
+  created_at?: string;
+};
+
+export type QueueItem = {
+  kind: 'absence' | 'correction';
+  id: string;
+  created_at: string;
+  absence?: AbsenceRow;
+  correction?: CorrectionRow;
+};
+
+export type QueueQuery = {
+  kind?: string;
+  status?: string;
+  type?: string;
+  region_id?: string;
+  office_id?: string;
+  search?: string;
+  date_from?: string;
+  date_to?: string;
+  limit?: string;
+  cursor?: string;
+};
+
+export const queue = (params: QueueQuery, signal?: AbortSignal) =>
+  request<Cursored<QueueItem>>(`/requests${query(params)}`, signal ? { signal } : {});
+
+/** Решение по заявке на отсутствие. `decision` — часть адреса, как у backend. */
+export const decideAbsence = (id: string, decision: 'approve' | 'reject', comment: string) =>
+  request<unknown>(`/absence-requests/${id}/${decision}`, {
+    method: 'POST',
+    body: comment ? { comment } : {},
+  });
+
+export const decideCorrection = (
+  id: string,
+  decision: 'approve' | 'reject',
+  comment: string,
+) =>
+  request<unknown>(`/attendance/corrections/${id}/${decision}`, {
+    method: 'POST',
+    body: comment ? { comment } : {},
+  });

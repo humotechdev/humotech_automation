@@ -108,6 +108,29 @@ def hr_request_json(request) -> dict:
             request.requested_end_at.date().isoformat()
             if request.requested_end_at else None
         ),
+        # Документы отдельно от самой заявки: «справка загружена» и
+        # «справка проверена» — разные состояния, и слить их значило бы
+        # считать документ проверенным по факту загрузки.
+        "documents": [
+            {
+                "id": str(document.id),
+                "document_type": document.document_type,
+                "verification_status": document.verification_status,
+                "verified_at": (
+                    document.verified_at.isoformat() if document.verified_at else None
+                ),
+                "file": {
+                    "id": str(document.file_id),
+                    "name": document.file.original_filename,
+                    "mime_type": document.file.mime_type,
+                    "size_bytes": document.file.size_bytes,
+                    "uploaded_at": document.file.created_at.isoformat(),
+                    "scan_status": document.file.scan_status,
+                },
+            }
+            for document in request.documents.all()
+        ],
+        "requires_document": request.absence_type.requires_document,
         "comment": request.employee_comment,
         "review_comment": request.review_comment,
         "submitted_at": (

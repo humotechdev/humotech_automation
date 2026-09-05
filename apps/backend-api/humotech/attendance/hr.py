@@ -296,6 +296,43 @@ class AttendanceHrService(BaseService):
 
     # ------------------------------------------------------------ исправления
 
+    def correction_queue(
+        self,
+        actor: Actor,
+        *,
+        status: str | None = None,
+        office_id=None,
+        region_id=None,
+        search: str | None = None,
+    ):
+        """Заявки на исправление отметок без страницы.
+
+        Нужна общей очереди HR: она сама сливает два потока и режет их
+        одним курсором. Правила доступа те же, что у `corrections`.
+        """
+        self.access.require(actor, "attendance.read")
+
+        queryset = AttendanceCorrectionRequest.objects.filter(
+            organization_id=actor.organization_id
+        ).select_related("employee")
+
+        if status:
+            queryset = queryset.filter(status__in=[s for s in status.split(",") if s])
+        if search:
+            pattern = search.strip()
+            queryset = queryset.filter(
+                Q(employee__first_name__icontains=pattern)
+                | Q(employee__last_name__icontains=pattern)
+                | Q(employee__employee_number__icontains=pattern)
+            )
+
+        visible = self._employee_scope_ids(
+            actor, office_id=office_id, region_id=region_id
+        )
+        if visible is not None:
+            queryset = queryset.filter(employee_id__in=visible)
+        return queryset
+
     def corrections(
         self,
         actor: Actor,

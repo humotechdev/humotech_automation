@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from humotech.absences.models import (
@@ -525,6 +526,90 @@ class AbsenceService(BaseService):
             )
         request.refresh_from_db()
         return request
+
+    def queue(
+        self,
+        actor: Actor,
+        *,
+        status: str | None = None,
+        type_code: str | None = None,
+        office_id=None,
+        region_id=None,
+        search: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ):
+        """Заявки на отсутствие под фильтрами очереди HR.
+
+        Область видимости — та же, что у списка сотрудников: заявка видна,
+        если виден сам сотрудник. Фильтр не расширяет доступ: он сужает
+        уже разрешённое.
+
+        Период фильтруется по датам САМОГО ОТСУТСТВИЯ, а не по дате
+        подачи: кадровик ищет «кто отсутствует в сентябре», а не «кто
+        подал заявление в сентябре». Смешивать эти два значения нельзя,
+        и в интерфейсе подпись говорит, какое из них выбрано.
+        """
+        self.access.require(actor, "absences.read")
+
+        queryset = AbsenceRequest.objects.filter(
+            organization_id=actor.organization_id
+        ).select_related("absence_type", "employee", "parent_request").prefetch_related(
+            # Документы страницей, а не по запросу на строку.
+            "documents__file"
+        )
+
+        if status:
+            queryset = queryset.filter(status__in=[s for s in status.split(",") if s])
+        if type_code:
+            codes = [c for c in type_code.split(",") if c]
+            queryset = queryset.filter(absence_type__code__in=codes)
+        if search:
+            pattern = search.strip()
+            queryset = queryset.filter(
+                Q(employee__first_name__icontains=pattern)
+                | Q(employee__last_name__icontains=pattern)
+                | Q(employee__employee_number__icontains=pattern)
+            )
+        if date_from:
+            queryset = queryset.filter(requested_end_at__date__gte=date_from)
+        if date_to:
+            queryset = queryset.filter(requested_start_at__date__lte=date_to)
+
+        visible = self._scope_ids(actor, office_id=office_id, region_id=region_id)
+        if visible is not None:
+            queryset = queryset.filter(employee_id__in=visible)
+        return queryset
+
+    def _scope_ids(self, actor: Actor, *, office_id=None, region_id=None):
+        """Сотрудники в области видимости. `None` — вся организация.
+
+        Именно `None` для «всех» и ПУСТОЙ набор для «ничего не видно»:
+        слить эти случаи проверкой `if ids:` значит молча показать всю
+        организацию тому, у кого прав нет.
+        """
+        from datetime import date
+
+        from humotech.employees.models import EmployeeAssignment
+        from humotech.employees.services import current_primary_assignment_filter
+
+        condition = None
+        if office_id:
+            self.access.require_office(actor, office_id)
+            condition = Q(office_id=office_id)
+        elif region_id:
+            self.access.require_region(actor, region_id)
+            condition = Q(office__region_id=region_id)
+        else:
+            visible = self.access.visible_office_ids(actor)
+            if visible is not None:
+                condition = Q(office_id__in=visible)
+
+        if condition is None:
+            return None
+        return EmployeeAssignment.objects.filter(
+            current_primary_assignment_filter(date.today()) & condition
+        ).values_list("employee_id", flat=True)
 
     def pending(self, actor: Actor):
         """Заявки, ждущие решения. Для будущего интерфейса HR."""
