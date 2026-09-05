@@ -88,7 +88,10 @@ describe('без подписи Telegram ничего не происходит'
     render(<App />);
 
     await screen.findByText('Откройте кнопкой в чате');
-    expect(screen.getByText(/кнопкой «Отметиться»/)).toBeTruthy();
+    expect(screen.getByText(/кнопкой «📷 Отметиться»/)).toBeTruthy();
+    // Не тупик: кнопка нижней клавиатуры по документации Telegram
+    // подписи не приносит, и на этот случай нужен путь вперёд.
+    expect(screen.getByText('/scan')).toBeTruthy();
     // Запрос не уходит вовсе: отправлять нечего.
     expect(fetchImpl).not.toHaveBeenCalled();
   });
