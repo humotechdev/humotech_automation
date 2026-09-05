@@ -46,6 +46,8 @@ class EmployeeListItemSerializer(serializers.ModelSerializer):
 
     full_name = serializers.SerializerMethodField()
     current_assignment = AssignmentSerializer(read_only=True, default=None)
+    current_schedule = serializers.SerializerMethodField()
+    telegram_state = serializers.SerializerMethodField()
 
     class Meta:
         model = Employee
@@ -54,13 +56,40 @@ class EmployeeListItemSerializer(serializers.ModelSerializer):
             "first_name", "last_name", "middle_name", "full_name",
             "phone", "corporate_email", "employment_status",
             "hire_date", "termination_date", "telegram_connected",
-            "created_at", "current_assignment",
+            "created_at", "current_assignment", "current_schedule",
+            "telegram_state",
         )
         read_only_fields = fields
 
     def get_full_name(self, employee: Employee) -> str:
         parts = [employee.last_name, employee.first_name, employee.middle_name]
         return " ".join(part for part in parts if part)
+
+    def get_telegram_state(self, employee: Employee) -> str | None:
+        """Состояние привязки или `null`, если её нет вовсе.
+
+        Берётся из самих привязок: поле `telegram_connected` рядом —
+        денормализованный флаг, который ни одна операция не обновляет.
+        """
+        return getattr(employee, "telegram_state", None)
+
+    def get_current_schedule(self, employee: Employee) -> dict | None:
+        """Действующий график или `null`.
+
+        `null` означает «график не назначен», а не «работает как все»:
+        подставить сюда общее расписание значило бы придумать сотруднику
+        рабочее время, которого ему никто не назначал.
+        """
+        schedule = getattr(employee, "current_schedule", None)
+        if schedule is None:
+            return None
+        return {
+            "id": str(schedule.id),
+            "name": schedule.name,
+            "timezone": schedule.timezone,
+            "weekly_minutes": schedule.weekly_minutes,
+            "is_flexible": schedule.is_flexible,
+        }
 
 
 class TelegramBindingSerializer(serializers.Serializer):

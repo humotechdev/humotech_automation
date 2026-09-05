@@ -27,17 +27,38 @@ class EmployeeViewSet(ServiceViewSet):
 
     # ------------------------------------------------------------------ чтение
 
+    #: Фильтры списка, которые приходят из строки запроса как есть.
+    SCOPE_PARAMS = ("office_id", "region_id", "department_id")
+
     def list(self, request):
         params = self.list_params()
-        for name in ("office_id", "region_id"):
-            value = request.query_params.get(name)
-            if value:
-                params[name] = value
+        params.update(self._scope(request))
         params["at"] = self._at()
         return self.page_response(
             self.service.list(self.actor, **params),
             serializer_class=EmployeeListItemSerializer,
         )
+
+    @action(detail=False, methods=["get"])
+    def counts(self, request):
+        """Сколько сотрудников в каждом состоянии при текущих фильтрах.
+
+        Отдельный адрес, а не поле страницы: страница приходит курсором,
+        и посчитать по ней всё множество нельзя — там десять строк из
+        скольких угодно.
+        """
+        params = self._scope(request)
+        params["search"] = request.query_params.get("search") or None
+        params["at"] = self._at()
+        return Response(self.service.counts(self.actor, **params))
+
+    def _scope(self, request) -> dict:
+        found = {}
+        for name in self.SCOPE_PARAMS:
+            value = request.query_params.get(name)
+            if value:
+                found[name] = value
+        return found
 
     def retrieve(self, request, pk=None):
         return self.item_response(self.service.get(self.actor, pk, at=self._at()))

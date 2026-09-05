@@ -11,6 +11,7 @@
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 
 import { Logo } from './Logo';
 import { Icon, type IconName } from './nav-icons';
@@ -20,13 +21,13 @@ type Item = {
   key: string;
   title: string;
   icon: IconName;
-  /** Раздел реализован. Пока только «Главная». */
-  ready?: boolean;
+  /** Адрес готового раздела. Без него пункт показан недоступным. */
+  to?: string;
 };
 
 const WORKSPACE: Item[] = [
-  { key: 'home', title: 'Главная', icon: 'home', ready: true },
-  { key: 'employees', title: 'Сотрудники', icon: 'users' },
+  { key: 'home', title: 'Главная', icon: 'home', to: '/' },
+  { key: 'employees', title: 'Сотрудники', icon: 'users', to: '/employees' },
   { key: 'attendance', title: 'Посещаемость', icon: 'clock' },
   { key: 'requests', title: 'Заявки', icon: 'doc' },
   { key: 'offices', title: 'Офисы и регионы', icon: 'pin' },
@@ -55,9 +56,11 @@ type Props = {
   /** Счётчики у разделов. Только настоящие, только пришедшие с сервера. */
   badges?: Record<string, number>;
   breadcrumb: string;
+  /** Какой пункт навигации подсвечен. */
+  section?: string;
 };
 
-export function AppShell({ children, badges = {}, breadcrumb }: Props) {
+export function AppShell({ children, badges = {}, breadcrumb, section = 'home' }: Props) {
   const session = useSession();
   const user = session.status === 'authenticated' ? session.user : null;
 
@@ -73,9 +76,10 @@ export function AppShell({ children, badges = {}, breadcrumb }: Props) {
         </div>
 
         <div className="side__scroll">
-          <Group title="Рабочее пространство" items={WORKSPACE} badges={badges} />
+          <Group title="Рабочее пространство" items={WORKSPACE} badges={badges}
+                 active={section} />
           <div className="side__rule" />
-          <Group title="Управление" items={MANAGEMENT} badges={badges} />
+          <Group title="Управление" items={MANAGEMENT} badges={badges} active={section} />
         </div>
 
         <div className="side__user">
@@ -113,29 +117,45 @@ export function AppShell({ children, badges = {}, breadcrumb }: Props) {
   );
 }
 
-function Group({ title, items, badges }: { title: string; items: Item[]; badges: Record<string, number> }) {
+function Group({ title, items, badges, active }: {
+  title: string; items: Item[]; badges: Record<string, number>; active: string;
+}) {
   return (
     <>
       <p className="side__group">{title}</p>
       <ul className="side__list">
         {items.map((item) => {
           const count = badges[item.key];
+          const inside = (
+            <>
+              <Icon name={item.icon} />
+              <span>{item.title}</span>
+              {count !== undefined && count > 0 && (
+                <span className="nav__badge">{count}</span>
+              )}
+            </>
+          );
           return (
             <li key={item.key}>
-              <button
-                type="button"
-                className={item.ready ? 'nav nav--active' : 'nav'}
-                aria-current={item.ready ? 'page' : undefined}
-                aria-disabled={item.ready ? undefined : true}
-                disabled={!item.ready}
-                title={item.ready ? undefined : 'Раздел будет добавлен следующим этапом'}
-              >
-                <Icon name={item.icon} />
-                <span>{item.title}</span>
-                {count !== undefined && count > 0 && (
-                  <span className="nav__badge">{count}</span>
-                )}
-              </button>
+              {item.to ? (
+                <Link
+                  to={item.to}
+                  className={item.key === active ? 'nav nav--active' : 'nav'}
+                  aria-current={item.key === active ? 'page' : undefined}
+                >
+                  {inside}
+                </Link>
+              ) : (
+                <button
+                  type="button"
+                  className="nav"
+                  aria-disabled
+                  disabled
+                  title="Раздел будет добавлен следующим этапом"
+                >
+                  {inside}
+                </button>
+              )}
             </li>
           );
         })}
@@ -217,10 +237,16 @@ function Language() {
   );
 }
 
-export function initials(email: string | undefined): string {
-  if (!email) return '—';
-  const name = email.split('@')[0] ?? '';
-  const parts = name.split(/[.\-_]/).filter(Boolean);
+/**
+ * Инициалы из почты или из ФИО.
+ *
+ * Два слова дают две буквы, одно — первые две: «СН» узнаётся в списке,
+ * «СО» из одного слова — нет.
+ */
+export function initials(source: string | undefined): string {
+  if (!source) return '—';
+  const name = source.includes('@') ? (source.split('@')[0] ?? '') : source;
+  const parts = name.split(/[\s.\-_]+/).filter(Boolean);
   const letters = parts.length > 1
     ? `${parts[0]?.[0] ?? ''}${parts[1]?.[0] ?? ''}`
     : name.slice(0, 2);

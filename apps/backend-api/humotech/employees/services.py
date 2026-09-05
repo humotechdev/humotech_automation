@@ -17,7 +17,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
-from django.db.models import Q
+from django.db.models import Count, Q
 
 from humotech.core.errors import Conflict, NotFound, ValidationFailed
 from humotech.core.pagination import Page, paginate
@@ -32,6 +32,8 @@ from humotech.core.validation import (
 )
 from humotech.departments.models import Department
 from humotech.employees.models import Employee, EmployeeAssignment
+from humotech.schedules.models import EmployeeScheduleAssignment
+from humotech.telegram.models import TelegramAccount
 from humotech.employees.selectors import require_visible_employee
 from humotech.offices.models import Office
 from humotech.positions.models import Position
@@ -111,24 +113,60 @@ class EmployeeService(BaseService):
 
     # ------------------------------------------------------------------ чтение
 
-    def list(
+    def counts(
         self,
         actor: Actor,
         *,
         search: str | None = None,
+        office_id: uuid.UUID | None = None,
+        region_id: uuid.UUID | None = None,
+        department_id: uuid.UUID | None = None,
+        at: date | None = None,
+    ) -> dict[str, int]:
+        """Сколько сотрудников в каждом состоянии — по ТЕКУЩИМ фильтрам.
+
+        Нужно вкладкам списка. Считать это на клиенте нельзя: страница
+        приходит курсором, и по ней видно только десять строк из скольких
+        угодно. Состояние в счёт не входит намеренно — иначе, выбрав
+        «Активные», человек видел бы нули у остальных вкладок.
+        """
+        self.access.require(actor, "employees.read")
+        queryset = self._visible(
+            actor,
+            search=search,
+            office_id=office_id,
+            region_id=region_id,
+            department_id=department_id,
+            at=at or date.today(),
+        )
+        rows = queryset.values("employment_status").annotate(n=Count("id"))
+        by_status = {row["employment_status"]: row["n"] for row in rows}
+        return {"total": sum(by_status.values()), **by_status}
+
+    def _visible(
+        self,
+        actor: Actor,
+        *,
+        at: date,
+        search: str | None = None,
         status: str | None = None,
         office_id: uuid.UUID | None = None,
         region_id: uuid.UUID | None = None,
-        at: date | None = None,
-        limit: int | None = None,
-        cursor: str | None = None,
-    ) -> Page:
-        self.access.require(actor, "employees.read")
-        at = at or date.today()
+        department_id: uuid.UUID | None = None,
+    ):
+        """Набор сотрудников под фильтрами и областью видимости.
 
+        Один источник и для страницы, и для счётчиков: разойдись они —
+        число на вкладке перестало бы совпадать со списком под ней.
+        """
         queryset = Employee.objects.filter(organization_id=actor.organization_id)
+
         if status:
-            queryset = queryset.filter(employment_status=status)
+            # Вкладка «Уволенные» покрывает два состояния сразу, поэтому
+            # список, а не одно значение.
+            values = [part for part in str(status).split(",") if part]
+            queryset = queryset.filter(employment_status__in=values)
+
         if search:
             pattern = search.strip()
             queryset = queryset.filter(
@@ -140,18 +178,49 @@ class EmployeeService(BaseService):
                 | Q(phone__icontains=pattern)
             )
 
-        office_condition = self._office_scope_condition(
+        condition = self._office_scope_condition(
             actor, office_id=office_id, region_id=region_id
         )
-        if office_condition is not None:
+        if department_id:
+            clause = Q(department_id=department_id)
+            condition = clause if condition is None else (condition & clause)
+
+        if condition is not None:
             # Сотрудник виден по офису своего ТЕКУЩЕГО основного назначения.
             # Подзапрос, а не JOIN: соединение размножило бы строки, если
             # у сотрудника найдётся второе назначение, и пагинация поехала бы.
             visible_ids = EmployeeAssignment.objects.filter(
-                current_primary_assignment_filter(at) & office_condition
+                current_primary_assignment_filter(at) & condition
             ).values_list("employee_id", flat=True)
             queryset = queryset.filter(id__in=visible_ids)
 
+        return queryset
+
+    def list(
+        self,
+        actor: Actor,
+        *,
+        search: str | None = None,
+        status: str | None = None,
+        office_id: uuid.UUID | None = None,
+        region_id: uuid.UUID | None = None,
+        department_id: uuid.UUID | None = None,
+        at: date | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> Page:
+        self.access.require(actor, "employees.read")
+        at = at or date.today()
+
+        queryset = self._visible(
+            actor,
+            search=search,
+            status=status,
+            office_id=office_id,
+            region_id=region_id,
+            department_id=department_id,
+            at=at,
+        )
         page = paginate(queryset, limit=limit, cursor=cursor)
 
         # Справочники всей страницы — ОДНИМ запросом. Именно это отделяет
@@ -163,8 +232,31 @@ class EmployeeService(BaseService):
                 employee_id__in=[e.id for e in page.items],
             ).select_related("office", "office__region", "department", "position")
         }
+        # Действующий график — тем же приёмом: один оператор на страницу.
+        # В колонке списка он нужен всем строкам, и запрос на строку
+        # превратил бы десять строк в одиннадцать обращений к базе.
+        schedules = {
+            row.employee_id: row.schedule
+            for row in EmployeeScheduleAssignment.objects.filter(
+                Q(valid_from__lte=at)
+                & (Q(valid_to__isnull=True) | Q(valid_to__gte=at)),
+                employee_id__in=[e.id for e in page.items],
+            ).select_related("schedule")
+        }
+        # Состояние Telegram — из самих привязок, а не из флага
+        # `telegram_connected`: этот флаг задумывался денормализованным,
+        # но не обновляется ни одной операцией и всегда остаётся `false`.
+        # Показывать по нему «не привязан» человеку с рабочей привязкой
+        # значит врать в списке.
+        accounts = dict(
+            TelegramAccount.objects.filter(
+                employee_id__in=[e.id for e in page.items]
+            ).values_list("employee_id", "status")
+        )
         for employee in page.items:
             employee.current_assignment = assignments.get(employee.id)
+            employee.current_schedule = schedules.get(employee.id)
+            employee.telegram_state = accounts.get(employee.id)
         return page
 
     def get(

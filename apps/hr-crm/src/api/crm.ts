@@ -84,7 +84,7 @@ export type Office = {
   status: string;
 };
 
-type Items<T> = { items: T[]; has_more?: boolean };
+export type Items<T> = { items: T[]; has_more?: boolean };
 
 export const regions = (signal?: AbortSignal) =>
   request<Items<Region>>('/regions/', signal ? { signal } : {});
@@ -161,3 +161,104 @@ export const sessions = (filters: Filters, signal?: AbortSignal) =>
     `/attendance/sessions${query({ ...filters, date: undefined, open: 'true' })}`,
     signal ? { signal } : {},
   );
+
+// --- сотрудники ------------------------------------------------------------
+
+export type Assignment = {
+  id: string;
+  office_id: string | null;
+  office_name: string | null;
+  region_id: string | null;
+  region_name: string | null;
+  department_id: string | null;
+  department_name: string | null;
+  position_id: string | null;
+  position_name: string | null;
+  employment_type: string | null;
+  work_mode: string | null;
+  is_primary: boolean;
+  valid_from: string | null;
+  valid_to: string | null;
+};
+
+export type Schedule = {
+  id: string;
+  name: string;
+  timezone: string;
+  weekly_minutes: number;
+  is_flexible: boolean;
+};
+
+export type EmployeeRow = {
+  id: string;
+  employee_number: string | null;
+  full_name: string;
+  first_name: string;
+  last_name: string;
+  phone: string | null;
+  corporate_email: string | null;
+  employment_status: string;
+  hire_date: string | null;
+  termination_date: string | null;
+  telegram_connected: boolean;
+  /** Состояние привязки из самих привязок, а не из денормализованного флага. */
+  telegram_state: string | null;
+  current_assignment: Assignment | null;
+  current_schedule: Schedule | null;
+};
+
+export type Cursored<T> = { items: T[]; next_cursor: string | null; has_more: boolean };
+
+export type EmployeeQuery = {
+  search?: string;
+  status?: string;
+  region_id?: string;
+  office_id?: string;
+  department_id?: string;
+  limit?: string;
+  cursor?: string;
+};
+
+export const employees = (params: EmployeeQuery, signal?: AbortSignal) =>
+  request<Cursored<EmployeeRow>>(`/employees/${query(params)}`, signal ? { signal } : {});
+
+/** Счётчики вкладок. Состояние в параметры НЕ входит: иначе, выбрав
+ *  «Активные», человек видел бы нули у остальных вкладок. */
+export const employeeCounts = (params: EmployeeQuery, signal?: AbortSignal) =>
+  request<Record<string, number>>(
+    `/employees/counts/${query({ ...params, status: undefined, cursor: undefined, limit: undefined })}`,
+    signal ? { signal } : {},
+  );
+
+export const employee = (id: string, signal?: AbortSignal) =>
+  request<Record<string, unknown>>(`/employees/${id}/`, signal ? { signal } : {});
+
+export const employeeAssignments = (id: string, signal?: AbortSignal) =>
+  request<Items<Assignment>>(`/employees/${id}/assignments/`, signal ? { signal } : {});
+
+export const employeeSchedules = (id: string, signal?: AbortSignal) =>
+  request<Items<Record<string, unknown>>>(
+    `/employees/${id}/schedules`,
+    signal ? { signal } : {},
+  );
+
+export type TelegramLink = {
+  state: string;
+  account: { status: string; telegram_username: string | null; connected_at: string | null } | null;
+  invitation?: { id: string; status: string; expires_at: string | null } | null;
+};
+
+export const employeeTelegram = (id: string, signal?: AbortSignal) =>
+  request<TelegramLink>(`/employees/${id}/telegram`, signal ? { signal } : {});
+
+/** Приглашение создаётся ТОЛЬКО по нажатию — не при открытии страницы. */
+export const inviteToTelegram = (employee_id: string) =>
+  request<{ id: string; link?: string; url?: string; token?: string; expires_at?: string }>(
+    '/telegram/invitations/',
+    { method: 'POST', body: { employee_id } },
+  );
+
+export type Department = { id: string; name: string; office_id?: string | null };
+
+export const departments = (signal?: AbortSignal) =>
+  request<Items<Department>>('/departments/', signal ? { signal } : {});

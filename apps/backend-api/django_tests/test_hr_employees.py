@@ -285,7 +285,12 @@ def test_employee_list_does_not_grow_queries_with_page_size(office, hr_actor):
     assert for_three == for_fifteen, (
         f"запросов на 3 сотрудника: {for_three}, на 15: {for_fifteen} — это N+1"
     )
-    assert for_fifteen <= 3, f"на список уходит {for_fifteen} запросов"
+    # Пять операторов: сотрудники, назначения, графики, привязки Telegram
+    # и проверка прав. Важно не само число, а что оно НЕ зависит от размера
+    # страницы — это и проверяет сравнение выше. Растёт этот предел только
+    # вместе с новой колонкой списка, и каждый раз одним запросом на всю
+    # страницу, а не одним на строку.
+    assert for_fifteen <= 5, f"на список уходит {for_fifteen} запросов"
 
 
 class _Counter:
