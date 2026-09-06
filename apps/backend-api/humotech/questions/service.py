@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import uuid
 
-from django.db.models import Q
+from django.db.models import Count, Q
 from django.utils import timezone
 
 from humotech.ai_assistant.models import UnansweredQuestion
@@ -134,6 +134,7 @@ class QuestionService(BaseService):
         *,
         status: str | None = None,
         employee_id: uuid.UUID | None = None,
+        office_id: uuid.UUID | None = None,
         assigned_to_me: bool = False,
         search: str | None = None,
         limit: int | None = None,
@@ -152,7 +153,11 @@ class QuestionService(BaseService):
 
         if status is not None:
             queryset = queryset.filter(
-                status=_known(status, "status", QUESTION_STATUSES)
+                status__in=[
+                    _known(one, "status", QUESTION_STATUSES)
+                    for one in status.split(",")
+                    if one
+                ]
             )
         else:
             # Умолчание — именно ожидающие. Список «всех вопросов за год»
@@ -160,6 +165,8 @@ class QuestionService(BaseService):
             queryset = queryset.filter(status="ESCALATED_TO_HR")
         if assigned_to_me:
             queryset = queryset.filter(assigned_to_user_id=actor.user_id)
+        if office_id is not None:
+            queryset = self._limit_to_office(actor, queryset, office_id)
         if search:
             needle = search.strip()
             queryset = queryset.filter(
@@ -167,6 +174,49 @@ class QuestionService(BaseService):
                 | Q(normalized_topic__icontains=needle)
             )
         return paginate(queryset, limit=limit, cursor=cursor)
+
+    def escalation_counts(
+        self,
+        actor: Actor,
+        *,
+        office_id: uuid.UUID | None = None,
+        search: str | None = None,
+    ) -> dict[str, int]:
+        """Сколько обращений в каждом состоянии при текущих фильтрах.
+
+        Нужно вкладкам списка. Состояние в счёт не входит намеренно:
+        иначе, выбрав «Новые», кадровик видел бы нули у остальных
+        вкладок и решил, что работы больше нет.
+        """
+        self.access.require(actor, "questions.read")
+        queryset = self._limit_to_scope(
+            actor,
+            EmployeeQuestion.objects.filter(organization_id=actor.organization_id),
+        )
+        if office_id is not None:
+            queryset = self._limit_to_office(actor, queryset, office_id)
+        if search:
+            needle = search.strip()
+            queryset = queryset.filter(
+                Q(question_text__icontains=needle)
+                | Q(normalized_topic__icontains=needle)
+            )
+        rows = queryset.values("status").annotate(n=Count("id"))
+        by_status = {row["status"]: row["n"] for row in rows}
+        return {"total": sum(by_status.values()), **by_status}
+
+    def _limit_to_office(self, actor: Actor, queryset, office_id: uuid.UUID):
+        """Обращения сотрудников одного офиса.
+
+        Право на офис проверяется до фильтра: чужой офис не должен давать
+        ни строк, ни подсказок о том, что он существует.
+        """
+        self.access.require_office(actor, office_id)
+        return queryset.filter(
+            employee_id__in=EmployeeAssignment.objects.filter(
+                office_id=office_id
+            ).values_list("employee_id", flat=True)
+        )
 
     def get_escalation(
         self, actor: Actor, question_id: uuid.UUID

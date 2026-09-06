@@ -508,3 +508,67 @@ export type QrDevice = {
 /** Отдаётся голым массивом, без обёртки `items`. */
 export const qrDevices = (signal?: AbortSignal) =>
   request<QrDevice[]>('/qr/devices', signal ? { signal } : {});
+
+// --- обращения -------------------------------------------------------------
+
+export type EscalationRow = {
+  id: string;
+  employee: { id: string; full_name: string; employee_number: string | null };
+  question_text: string;
+  normalized_topic: string | null;
+  status: string;
+  ai_answer_text: string | null;
+  hr_answer_text: string | null;
+  assigned_to_user_id: string | null;
+  answered_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type EscalationQuery = {
+  status?: string;
+  employee_id?: string;
+  office_id?: string;
+  assigned_to_me?: string;
+  search?: string;
+  limit?: string;
+  cursor?: string;
+};
+
+export const escalationList = (params: EscalationQuery, signal?: AbortSignal) =>
+  request<Cursored<EscalationRow>>(
+    `/knowledge/escalations/${query(params)}`,
+    signal ? { signal } : {},
+  );
+
+/** Счётчики вкладок. Состояние в параметры не входит намеренно. */
+export const escalationCounts = (
+  params: { office_id?: string; search?: string },
+  signal?: AbortSignal,
+) =>
+  request<Record<string, number>>(
+    `/knowledge/escalations/counts/${query(params)}`,
+    signal ? { signal } : {},
+  );
+
+export const escalation = (id: string, signal?: AbortSignal) =>
+  request<EscalationRow>(`/knowledge/escalations/${id}/`, signal ? { signal } : {});
+
+/** Ответ уходит сотруднику в чат той же транзакцией, что и сохранение. */
+export const answerEscalation = (id: string, answer: string) =>
+  request<EscalationRow>(`/knowledge/escalations/${id}/answer/`, {
+    method: 'POST',
+    body: { answer },
+  });
+
+export const assignEscalation = (id: string, user_id?: string) =>
+  request<EscalationRow>(`/knowledge/escalations/${id}/assign/`, {
+    method: 'POST',
+    body: user_id ? { user_id } : {},
+  });
+
+export const closeEscalation = (id: string) =>
+  request<EscalationRow>(`/knowledge/escalations/${id}/close/`, {
+    method: 'POST',
+    body: {},
+  });

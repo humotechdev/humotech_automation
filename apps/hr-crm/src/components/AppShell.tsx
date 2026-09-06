@@ -32,7 +32,7 @@ const WORKSPACE: Item[] = [
   { key: 'requests', title: 'Заявки', icon: 'doc', to: '/requests' },
   { key: 'offices', title: 'Офисы и регионы', icon: 'pin', to: '/offices' },
   { key: 'analytics', title: 'Аналитика', icon: 'chart' },
-  { key: 'questions', title: 'Обращения', icon: 'chat' },
+  { key: 'questions', title: 'Обращения', icon: 'chat', to: '/questions' },
 ];
 
 const MANAGEMENT: Item[] = [

@@ -14,6 +14,7 @@ from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import serializers
 from rest_framework.decorators import action
+from rest_framework.response import Response
 
 from humotech.attendance.serializers import EmployeeBriefSerializer
 from humotech.core.api import ServiceViewSet, validated
@@ -186,6 +187,17 @@ class EscalationSerializer(serializers.Serializer):
     updated_at = serializers.DateTimeField()
 
 
+class EscalationCountsSerializer(serializers.Serializer):
+    """Счётчики вкладок: `total` и по одному полю на состояние."""
+
+    total = serializers.IntegerField()
+    NEW = serializers.IntegerField(required=False)
+    AI_ANSWERED = serializers.IntegerField(required=False)
+    ESCALATED_TO_HR = serializers.IntegerField(required=False)
+    HR_ANSWERED = serializers.IntegerField(required=False)
+    CLOSED = serializers.IntegerField(required=False)
+
+
 class EscalationPageSerializer(serializers.Serializer):
     items = EscalationSerializer(many=True)
     next_cursor = serializers.CharField(allow_null=True)
@@ -213,6 +225,28 @@ class EscalationViewSet(ServiceViewSet):
     read_serializer_class = EscalationSerializer
 
     @extend_schema(
+        summary="Сколько обращений в каждом состоянии",
+        description=(
+            "Для вкладок списка. Состояние в счёт не входит: иначе, "
+            "выбрав «Новые», кадровик видел бы нули у остальных вкладок."
+        ),
+        parameters=[
+            OpenApiParameter("office_id", OpenApiTypes.UUID),
+            OpenApiParameter("search", str),
+        ],
+        responses={200: EscalationCountsSerializer},
+    )
+    @action(detail=False, methods=["get"])
+    def counts(self, request):
+        return Response(
+            self.service.escalation_counts(
+                self.actor,
+                office_id=_uuid(request, "office_id"),
+                search=request.query_params.get("search") or None,
+            )
+        )
+
+    @extend_schema(
         summary="Кто ждёт ответа",
         description=(
             "Без параметра `status` показывает только ожидающие "
@@ -222,6 +256,7 @@ class EscalationViewSet(ServiceViewSet):
         parameters=[
             OpenApiParameter("status", str, enum=list(QUESTION_STATUSES)),
             OpenApiParameter("employee_id", OpenApiTypes.UUID),
+            OpenApiParameter("office_id", OpenApiTypes.UUID),
             OpenApiParameter(
                 "assigned_to_me", OpenApiTypes.BOOL,
                 description="true — только назначенные на меня",
@@ -238,6 +273,7 @@ class EscalationViewSet(ServiceViewSet):
                 self.actor,
                 **self.list_params(),
                 employee_id=_uuid(request, "employee_id"),
+                office_id=_uuid(request, "office_id"),
                 assigned_to_me=(
                     request.query_params.get("assigned_to_me") == "true"
                 ),
