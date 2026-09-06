@@ -31,7 +31,7 @@ const WORKSPACE: Item[] = [
   { key: 'attendance', title: 'Посещаемость', icon: 'clock', to: '/attendance' },
   { key: 'requests', title: 'Заявки', icon: 'doc', to: '/requests' },
   { key: 'offices', title: 'Офисы и регионы', icon: 'pin', to: '/offices' },
-  { key: 'analytics', title: 'Аналитика', icon: 'chart' },
+  { key: 'analytics', title: 'Аналитика', icon: 'chart', to: '/analytics' },
   { key: 'questions', title: 'Обращения', icon: 'chat', to: '/questions' },
 ];
 

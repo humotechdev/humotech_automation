@@ -572,3 +572,62 @@ export const closeEscalation = (id: string) =>
     method: 'POST',
     body: {},
   });
+
+// --- аналитика: доли с числителем и знаменателем ---------------------------
+
+export type Ratio = {
+  key: string;
+  title: string;
+  /** `null` — знаменатель нулевой. Это НЕ ноль процентов. */
+  percent: number | null;
+  numerator: number;
+  denominator: number;
+  formula: string;
+  unit: 'days' | 'hours' | 'people' | string;
+};
+
+export type Report = {
+  scope: { kind: string; id: string | null; name: string };
+  period: { first: string; last: string; timezone: string };
+  generated_at: string;
+  headcount: number;
+  coverage: { employees_total: number; employees_with_schedule: number; percent: number | null; note: string };
+  totals: Record<string, number>;
+  ratios: Ratio[];
+  series: DayPoint[];
+};
+
+export const report = (
+  params: { date_from: string; date_to: string; office_id?: string; region_id?: string },
+  signal?: AbortSignal,
+) => request<Report>(`/analytics${query(params)}`, signal ? { signal } : {});
+
+export type Difference = {
+  key: string;
+  title: string;
+  left: Ratio;
+  right: Ratio;
+  /** Разница в процентных ПУНКТАХ, а не в процентах. */
+  points: number | null;
+  comparable: boolean;
+};
+
+export type Comparison = {
+  kind: string;
+  left: Report;
+  right: Report;
+  differences: Difference[];
+};
+
+export const compare = (
+  params: {
+    kind: 'office' | 'region' | 'period';
+    date_from: string;
+    date_to: string;
+    left_id?: string;
+    right_id?: string;
+    right_first?: string;
+    right_last?: string;
+  },
+  signal?: AbortSignal,
+) => request<Comparison>(`/analytics/compare${query(params)}`, signal ? { signal } : {});

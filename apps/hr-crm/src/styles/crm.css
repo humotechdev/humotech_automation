@@ -1954,3 +1954,93 @@ body,
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* --- раздел «Аналитика» ------------------------------------------------------ */
+
+.cards--four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.grid--analytics {
+  grid-template-columns: minmax(0, 1fr) 340px;
+}
+
+.toolbar--flat {
+  align-items: center;
+  padding: 0 0 14px;
+}
+
+.formula {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.formula--result {
+  margin-top: 4px;
+  font-size: 30px;
+}
+
+.versus {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 36px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 14px 0 18px;
+}
+
+.versus__side {
+  padding: 12px 14px;
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+}
+
+.versus__mid {
+  display: flex;
+  justify-content: center;
+  color: var(--ink-2);
+}
+
+.versus__name {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.versus__period,
+.versus__note {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.people .num .who__id {
+  display: block;
+  font-weight: 400;
+}
+
+@media (max-width: 1400px) {
+  .cards--four {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .grid--analytics {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 720px) {
+  .cards--four {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .versus {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .versus__mid {
+    transform: rotate(90deg);
+  }
+}
