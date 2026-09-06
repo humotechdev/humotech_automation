@@ -338,3 +338,101 @@ export const decideCorrection = (
     method: 'POST',
     body: comment ? { comment } : {},
   });
+
+// --- посещаемость ----------------------------------------------------------
+
+export type PresenceRow = {
+  employee_id: string;
+  full_name: string;
+  employee_number: string | null;
+  office_id: string | null;
+  office_name: string | null;
+  state: string;
+  first_entry_at: string | null;
+  last_exit_at: string | null;
+  seconds: number;
+  open_session_id: string | null;
+  /** `null` — сравнивать не с чем, а не «не опоздал». */
+  late_minutes: number | null;
+  scheduled_start: string | null;
+  absence_code: string | null;
+  absence_name: string | null;
+  conflicting_marks: boolean;
+};
+
+export type PresencePage = {
+  date: string;
+  timezone: string;
+  counts: Record<string, number>;
+  total: number;
+  /** Строк отдано меньше, чем есть: выдавать их за весь состав нельзя. */
+  truncated: boolean;
+  items: PresenceRow[];
+};
+
+export const presenceDay = (
+  params: { date?: string; region_id?: string; office_id?: string; state?: string; search?: string },
+  signal?: AbortSignal,
+) => request<PresencePage>(`/attendance/presence${query(params)}`, signal ? { signal } : {});
+
+export type EventRow = {
+  id: string;
+  employee_id: string;
+  office_id: string | null;
+  office_name: string | null;
+  qr_point_id: string | null;
+  qr_point_name: string | null;
+  event_type: 'ENTRY' | 'EXIT' | string;
+  source: string;
+  verification_status: string;
+  occurred_at: string;
+  received_at: string;
+  rejection_reason: string | null;
+};
+
+export type EventQuery = {
+  employee_id?: string;
+  office_id?: string;
+  region_id?: string;
+  date_from?: string;
+  date_to?: string;
+  event_type?: string;
+  source?: string;
+  verification_status?: string;
+  limit?: string;
+  cursor?: string;
+};
+
+export const events = (params: EventQuery, signal?: AbortSignal) =>
+  request<Cursored<EventRow>>(`/attendance/events${query(params)}`, signal ? { signal } : {});
+
+export type SessionRow = {
+  id: string;
+  employee_id: string;
+  office_id: string | null;
+  office_name: string | null;
+  started_at: string;
+  ended_at: string | null;
+  duration_seconds: number | null;
+  status: string;
+  is_open: boolean;
+};
+
+export const attendanceSessions = (
+  params: { employee_id?: string; date_from?: string; date_to?: string; limit?: string },
+  signal?: AbortSignal,
+) => request<Cursored<SessionRow>>(`/attendance/sessions${query(params)}`, signal ? { signal } : {});
+
+/**
+ * Ручная отметка кадровика.
+ *
+ * Это ДОБАВЛЕНИЕ события, а не правка существующего: `source = MANUAL`
+ * отличает её от сканирования навсегда, а причина обязательна.
+ */
+export const addManualEvent = (body: {
+  employee_id: string;
+  office_id: string;
+  event_type: 'ENTRY' | 'EXIT';
+  occurred_at: string;
+  reason: string;
+}) => request<EventRow>('/attendance/manual', { method: 'POST', body });

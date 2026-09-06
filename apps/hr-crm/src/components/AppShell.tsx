@@ -28,7 +28,7 @@ type Item = {
 const WORKSPACE: Item[] = [
   { key: 'home', title: 'Главная', icon: 'home', to: '/' },
   { key: 'employees', title: 'Сотрудники', icon: 'users', to: '/employees' },
-  { key: 'attendance', title: 'Посещаемость', icon: 'clock' },
+  { key: 'attendance', title: 'Посещаемость', icon: 'clock', to: '/attendance' },
   { key: 'requests', title: 'Заявки', icon: 'doc', to: '/requests' },
   { key: 'offices', title: 'Офисы и регионы', icon: 'pin' },
   { key: 'analytics', title: 'Аналитика', icon: 'chart' },

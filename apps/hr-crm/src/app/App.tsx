@@ -13,6 +13,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { DashboardPage } from '../pages/DashboardPage';
 import { EmployeesPage } from '../pages/EmployeesPage';
 import { RequestsPage } from '../pages/RequestsPage';
+import { AttendancePage } from '../pages/AttendancePage';
 import { LoginPage } from '../pages/LoginPage';
 import { useSession } from '../features/auth/session';
 
@@ -23,18 +24,20 @@ export function App() {
       <Route path="/" element={<Protected />} />
       <Route path="/employees" element={<Protected page="employees" />} />
       <Route path="/requests" element={<Protected page="requests" />} />
+      <Route path="/attendance" element={<Protected page="attendance" />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }
 
 /** Кабинет: без сессии сюда нельзя. */
-function Protected({ page }: { page?: 'employees' | 'requests' }) {
+function Protected({ page }: { page?: 'employees' | 'requests' | 'attendance' }) {
   const session = useSession();
   if (session.status === 'checking') return <Checking />;
   if (session.status === 'anonymous') return <Navigate to="/login" replace />;
   if (page === 'employees') return <EmployeesPage />;
   if (page === 'requests') return <RequestsPage />;
+  if (page === 'attendance') return <AttendancePage />;
   return <DashboardPage />;
 }
 
