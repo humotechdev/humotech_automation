@@ -22,7 +22,7 @@ export function csrfToken(source: string = document.cookie): string | null {
 }
 
 type Options = {
-  method?: 'GET' | 'POST';
+  method?: 'GET' | 'POST' | 'PATCH';
   body?: unknown;
   signal?: AbortSignal;
 };

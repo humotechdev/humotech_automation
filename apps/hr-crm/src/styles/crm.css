@@ -1551,3 +1551,187 @@ body,
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/* --- раздел «Офисы и регионы» ----------------------------------------------- */
+
+.strip {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-bottom: 1px solid var(--edge);
+}
+
+.strip li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 16px;
+  border-left: 1px solid var(--edge);
+}
+
+.strip li:first-child {
+  border-left: 0;
+}
+
+.strip__label {
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.strip__value {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.strip__note {
+  font-size: 11.5px;
+  color: var(--ink-2);
+}
+
+.toolbar--thin {
+  padding-top: 0;
+}
+
+.chip-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--edge);
+  border-radius: 9px;
+  background: var(--surface);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.chip-btn--on {
+  background: var(--ink-1);
+  border-color: var(--ink-1);
+  color: #ffffff;
+}
+
+.avatar--square {
+  border-radius: 8px;
+  width: 30px;
+  height: 30px;
+  color: var(--ink-1);
+}
+
+.linky {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink-1);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.side-panel__title--stack {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.side-panel__meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px 10px;
+}
+
+.trio {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.trio li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.trio__label {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.trio__value {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.geo {
+  display: flex;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  background: var(--soft);
+}
+
+.geo__text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.geo__head {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.geo__note {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.form-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.form-grid__field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.form-grid__label {
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.form-grid__input {
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--edge);
+  border-radius: 9px;
+  font-size: 13.5px;
+}
+
+.form-grid__input[aria-invalid='true'] {
+  border-color: #6b6b6b;
+}
+
+.form-grid__error {
+  font-size: 12px;
+}

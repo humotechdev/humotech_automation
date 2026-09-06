@@ -436,3 +436,75 @@ export const addManualEvent = (body: {
   occurred_at: string;
   reason: string;
 }) => request<EventRow>('/attendance/manual', { method: 'POST', body });
+
+// --- офисы, регионы и QR-точки ---------------------------------------------
+
+export type OfficeFull = Office & {
+  address: string | null;
+  timezone: string;
+  latitude: string | number | null;
+  longitude: string | number | null;
+  geofence_radius_m: number | null;
+  opened_at: string | null;
+  closed_at: string | null;
+};
+
+export const officesPage = (
+  params: { search?: string; status?: string; region_id?: string; limit?: string; cursor?: string },
+  signal?: AbortSignal,
+) => request<Cursored<OfficeFull>>(`/offices/${query(params)}`, signal ? { signal } : {});
+
+export const updateOffice = (id: string, changes: Record<string, unknown>) =>
+  request<OfficeFull>(`/offices/${id}/`, { method: 'PATCH', body: changes });
+
+export const setOfficeActive = (id: string, active: boolean) =>
+  request<OfficeFull>(`/offices/${id}/${active ? 'reactivate' : 'deactivate'}/`, {
+    method: 'POST',
+    body: {},
+  });
+
+export type RegionFull = Region & { timezone: string | null };
+
+export const regionsPage = (
+  params: { search?: string; status?: string; limit?: string; cursor?: string },
+  signal?: AbortSignal,
+) => request<Cursored<RegionFull>>(`/regions/${query(params)}`, signal ? { signal } : {});
+
+export const setRegionActive = (id: string, active: boolean) =>
+  request<RegionFull>(`/regions/${id}/${active ? 'reactivate' : 'deactivate'}/`, {
+    method: 'POST',
+    body: {},
+  });
+
+export type QrPoint = {
+  id: string;
+  office_id: string;
+  office_name: string | null;
+  code: string;
+  name: string;
+  direction_mode: 'ENTRY' | 'EXIT' | 'BOTH' | string;
+  qr_mode: string;
+  rotation_seconds: number | null;
+  require_geolocation: boolean;
+  require_office_network: boolean;
+  is_active: boolean;
+};
+
+export const qrPoints = (params: { office_id?: string }, signal?: AbortSignal) =>
+  request<Items<QrPoint>>(`/qr-points/${query(params)}`, signal ? { signal } : {});
+
+export type QrDevice = {
+  id: string;
+  qr_point_id: string | null;
+  qr_point_name?: string | null;
+  office_name?: string | null;
+  name: string;
+  status: string;
+  /** Когда экран последний раз о себе сообщал. `null` — не сообщал вовсе. */
+  last_seen_at: string | null;
+  paired_at: string | null;
+};
+
+/** Отдаётся голым массивом, без обёртки `items`. */
+export const qrDevices = (signal?: AbortSignal) =>
+  request<QrDevice[]>('/qr/devices', signal ? { signal } : {});
