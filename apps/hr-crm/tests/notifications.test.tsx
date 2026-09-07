@@ -187,10 +187,12 @@ describe('подписи', () => {
     expect(shownLine(20, false, null)).toBe('Показано 20 уведомлений');
   });
 
-  test('«попыток 0» не пишется: это ничего не значит', () => {
-    expect(historyNotKept(0)).not.toMatch(/0/);
-    expect(historyNotKept(0)).toContain('старше самой истории');
-    expect(historyNotKept(3)).toContain('3');
+  test('число попыток в предупреждении не называется: оно про другой цикл', () => {
+    expect(historyNotKept(false)).not.toMatch(/\d/);
+    expect(historyNotKept(true)).not.toMatch(/\d/);
+    expect(historyNotKept(false)).toContain('старше самой истории');
+    // Записанные попытки есть — но сказано, что записаны НЕ ВСЕ.
+    expect(historyNotKept(true)).toContain('не все попытки');
   });
 
   test('название события берётся из заголовка, а не из кода', () => {

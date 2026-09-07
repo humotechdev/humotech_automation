@@ -124,9 +124,12 @@ class NotificationAttemptsSerializer(serializers.Serializer):
     items = NotificationAttemptSerializer(many=True)
     kept = serializers.BooleanField(
         help_text=(
-            "Велась ли история для этой строки. false означает, что "
-            "уведомление старше самой истории: попытки были, но их "
-            "времена не сохранялись и восстановить их неоткуда"
+            "Полна ли история этой строки. Постоянное свойство: ручной "
+            "повтор его не меняет, и новые записанные попытки тоже. "
+            "false означает, что уведомление старше самой истории — "
+            "ранние попытки были, но их времена не сохранялись и "
+            "восстановить их неоткуда; при этом items может быть "
+            "непустым, если после того попытки уже записывались"
         )
     )
 
@@ -266,21 +269,23 @@ class NotificationViewSet(ServiceViewSet):
             "попадает — он не попытка отправки, а решение человека, "
             "и остаётся в журнале действий.\n\n"
             "У уведомлений старше самой истории записей нет: `kept` "
-            "равно false, и придумывать им времена попыток нельзя."
+            "равно false, и придумывать им времена попыток нельзя.\n\n"
+            "`kept` — постоянное свойство строки, а не вывод по числу "
+            "записей. Ручной повтор его не меняет, и появление новых "
+            "записанных попыток тоже: утраченное прошлое от них не "
+            "становится известным. Поэтому `kept: false` может прийти "
+            "вместе с непустым `items` — это значит «вот что записано, "
+            "но записано не всё»."
         ),
         responses={200: NotificationAttemptsSerializer},
     )
     @action(detail=True)
     def attempts(self, request, pk=None):
-        rows = self.service.attempts(self.actor, pk)
-        row = self.service.get(self.actor, pk)
+        rows, kept = self.service.attempts(self.actor, pk)
         return Response(
             {
                 "items": NotificationAttemptSerializer(rows, many=True).data,
-                # Пусто при ненулевом счётчике означает не «попыток не
-                # было», а «их не записывали»: разница для разбора
-                # существенная, и решать её должен сервер.
-                "kept": bool(rows) or (row.attempts == 0 and row.sent_at is None),
+                "kept": kept,
             }
         )
 

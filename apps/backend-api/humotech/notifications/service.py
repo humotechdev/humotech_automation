@@ -147,19 +147,25 @@ class NotificationService(BaseService):
 
     def attempts(
         self, actor: Actor, notification_id: uuid.UUID
-    ) -> list[NotificationAttempt]:
-        """История попыток одного уведомления.
+    ) -> tuple[list[NotificationAttempt], bool]:
+        """История попыток одного уведомления и признак её полноты.
 
         Права те же, что на само уведомление: историю попыток нельзя
         прочитать в обход проверки области видимости.
+
+        Полнота берётся из строки, а не выводится из того, сколько
+        записей нашлось. Вывести её по данным нельзя: у строки, чья
+        история потеряна, после ручного повтора и счётчик нулевой, и
+        записей нет — ровно как у только что заведённой.
         """
         self.access.require(actor, "notifications.read")
         row = self._require(actor, notification_id)
-        return list(
+        rows = list(
             NotificationAttempt.objects.filter(notification_id=row.id).order_by(
                 "attempted_at", "number"
             )
         )
+        return rows, row.attempt_history_complete
 
     # -------------------------------------------------------------- изменение
 

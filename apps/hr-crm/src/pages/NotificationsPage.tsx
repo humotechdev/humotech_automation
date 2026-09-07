@@ -32,6 +32,7 @@ import {
 } from '../features/notifications/model';
 import { useBlock, type Block } from '../features/dashboard/data';
 import { useSession } from '../features/auth/session';
+import { clock, moment } from '../features/time/zone';
 
 const PAGE = '20';
 
@@ -501,7 +502,7 @@ function Card({
         ) : null}
 
         <h3 className="doc__h1">Попытки отправки</h3>
-        <Attempts block={attempts} zone={zone} row={row} />
+        <Attempts block={attempts} zone={zone} />
 
         {reason && (
           <p className="note note--dim" role="status">
@@ -545,10 +546,9 @@ function Card({
   );
 }
 
-function Attempts({ block, zone, row }: {
+function Attempts({ block, zone }: {
   block: Block<api.Attempts>;
   zone: string;
-  row: api.Notification;
 }) {
   if (block.state === 'loading') return <p className="empty">Читаем историю…</p>;
   if (block.state === 'error') {
@@ -558,26 +558,32 @@ function Attempts({ block, zone, row }: {
 
   const { items, kept } = block.data;
 
+  // Предупреждение о неполноте живёт РЯДОМ со списком, а не вместо него.
+  // Записанные попытки — настоящие и их надо показать; то, что до них
+  // были другие, от этого не перестаёт быть правдой.
+  const note = kept ? null : (
+    <p className="muted">{historyNotKept(items.length > 0)}</p>
+  );
+
   if (items.length === 0) {
-    return (
-      <p className="muted">
-        {kept
-          ? 'Попыток ещё не было — уведомление ждёт очереди.'
-          : historyNotKept(row.attempts)}
-      </p>
+    return note ?? (
+      <p className="muted">Попыток ещё не было — уведомление ждёт очереди.</p>
     );
   }
 
   return (
-    <ol className="attempts">
-      {items.map((item) => (
-        <li key={item.number}>
-          <Icon name={item.outcome === 'SENT' ? 'check' : 'alert'} size={16} />
-          <span className="attempts__time">{moment(item.attempted_at, zone, false)}</span>
-          <span className="attempts__what">{attemptTitle(item)}</span>
-        </li>
-      ))}
-    </ol>
+    <>
+      {note}
+      <ol className="attempts">
+        {items.map((item) => (
+          <li key={item.number}>
+            <Icon name={item.outcome === 'SENT' ? 'check' : 'alert'} size={16} />
+            <span className="attempts__time">{moment(item.attempted_at, zone, false)}</span>
+            <span className="attempts__what">{attemptTitle(item)}</span>
+          </li>
+        ))}
+      </ol>
+    </>
   );
 }
 
@@ -632,22 +638,11 @@ function eventIcon(type: string): Parameters<typeof Icon>[0]['name'] {
  * сервер режет период. Для одного дня достаточно времени; для периода
  * дата обязательна, иначе «10:32» ничего не значит.
  */
-export function moment(at: string, zone: string, sameDay: boolean): string {
-  if (!at) return '—';
-  const date = new Date(at);
-  if (Number.isNaN(date.getTime())) return '—';
-  const options: Intl.DateTimeFormatOptions = {
-    hour: '2-digit',
-    minute: '2-digit',
-    ...(sameDay ? {} : { day: '2-digit', month: 'short' }),
-    ...(zone ? { timeZone: zone } : {}),
-  };
-  return new Intl.DateTimeFormat('ru-RU', options).format(date);
-}
-
-export function clock(at: string, zone: string): string {
-  return moment(at, zone, true);
-}
+// Формат времени общий на всю CRM: `features/time/zone`. Своя копия
+// здесь означала бы, что «Уведомления» и «Посещаемость» однажды покажут
+// один и тот же момент по-разному — а разбираться в этом будет человек,
+// у которого и так не сходятся отметки.
+export { clock, moment };
 
 /** Честная подпись под списком. */
 export function shownLine(
@@ -674,16 +669,22 @@ function plural(n: number, one: string, few: string, many: string): string {
 /**
  * Что сказать про уведомление старше самой истории.
  *
- * Пустой список у отправленного читался бы как «попыток не было» —
- * это неправда. Число попыток называется, только если оно есть:
- * «известно, что попыток 0» не значит ничего.
+ * Пустой список у отправленного читался бы как «попыток не было» — это
+ * неправда, и предупреждение обязано остаться на месте, сколько бы раз
+ * строку ни повторяли и сколько бы новых попыток ни записалось потом.
+ *
+ * Счётчик попыток здесь не называется намеренно. Он относится к ТЕКУЩЕМУ
+ * циклу повторов и обнуляется при нажатии «Повторить»: выдать его за
+ * число утраченных попыток значило бы назвать число, которого никто не
+ * знает.
  */
-export function historyNotKept(attempts: number): string {
-  const start = 'История попыток по этому уведомлению не велась';
-  if (attempts === 0) {
-    return `${start}: оно старше самой истории, и восстановить её неоткуда.`;
+export function historyNotKept(hasRecorded: boolean): string {
+  if (hasRecorded) {
+    return 'Записаны не все попытки: те, что были до появления истории, '
+      + 'не сохранялись, и восстановить их неоткуда.';
   }
-  return `${start}: известно только их число — ${attempts}.`;
+  return 'История попыток по этому уведомлению не велась: оно старше '
+    + 'самой истории, и восстановить её неоткуда.';
 }
 
 export function emptyText(search: string, tab: Tab, period: boolean): string {

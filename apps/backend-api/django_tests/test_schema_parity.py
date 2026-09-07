@@ -85,6 +85,10 @@ KNOWN_DIVERGENCES = {
     "public.qr_display_sessions using btree (device_id)",
     # --- очередь отправки уведомлений ---
     "notifications.attempts: лишняя колонка",
+    # Полна ли история попыток. Постоянный признак, а не вывод по данным:
+    # счётчик выше обнуляется при ручном повторе, и по нему утраченную
+    # историю от только что заведённой строки не отличить.
+    "notifications.attempt_history_complete: лишняя колонка",
     "notifications.idempotency_key: лишняя колонка",
     "notifications.locked_at: лишняя колонка",
     "notifications.next_attempt_at: лишняя колонка",
@@ -97,6 +101,7 @@ KNOWN_DIVERGENCES = {
     "'read'])[])))",
     "notifications: лишнее ограничение: check ((attempts >= 0))",
     "notifications: лишнее ограничение: not null attempts",
+    "notifications: лишнее ограничение: not null attempt_history_complete",
     "notifications: лишний индекс: public.notifications using btree "
     "(next_attempt_at) where ((status) = 'pending')",
     "notifications: лишний индекс: public.notifications using btree "

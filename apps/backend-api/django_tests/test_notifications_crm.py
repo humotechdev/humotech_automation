@@ -49,6 +49,21 @@ def make(organization, employee, *, status="PENDING", **kwargs) -> Notification:
     )
 
 
+def old_row(organization, employee, **kwargs) -> Notification:
+    """Строка, заведённая ДО появления истории попыток.
+
+    Отличается ровно одним: признаком полноты. Подделывать её иначе —
+    например, удаляя записи попыток — значило бы проверять не тот случай:
+    у настоящей старой строки записей не удаляли, их никогда не было.
+    """
+    row = make(organization, employee, **kwargs)
+    Notification.objects.filter(id=row.id).update(
+        attempt_history_complete=False
+    )
+    row.refresh_from_db()
+    return row
+
+
 @pytest.fixture()
 def hr(api_client, make_user, organization):
     api_client.force_authenticate(user=make_user(organization, permissions=MANAGE))
@@ -385,12 +400,70 @@ class TestAttempts:
         self, hr, organization, employee
     ):
         """Пустой список у отправленного значил бы «попыток не было»."""
-        row = make(organization, employee, status="SENT", attempts=3,
-                   sent_at=timezone.now())
+        row = old_row(organization, employee, status="SENT", attempts=3,
+                      sent_at=timezone.now())
 
         answer = hr.get(f"{API}/notifications/{row.id}/attempts/").json()
 
         assert answer["items"] == []
+        assert answer["kept"] is False
+
+    def test_a_manual_retry_does_not_make_a_lost_history_complete(
+        self, hr, organization, employee
+    ):
+        """Прежняя ошибка: `attempts` обнулялся, и строка объявлялась полной.
+
+        Признак полноты выводился выражением «попыток 0 и не отправлено».
+        Ручной повтор обнуляет счётчик и снимает `sent_at`-условие —
+        и уведомление, чья история не сохранялась НИКОГДА, после одного
+        нажатия начинало утверждать, что попыток у него не было вовсе.
+
+        Этот тест на прежнем коде проходил бы только до `retry`.
+        """
+        row = old_row(organization, employee, status="FAILED", attempts=3)
+
+        before = hr.get(f"{API}/notifications/{row.id}/attempts/").json()
+        assert before["kept"] is False
+
+        assert hr.post(f"{API}/notifications/{row.id}/retry/").status_code == 200
+
+        after = hr.get(f"{API}/notifications/{row.id}/attempts/").json()
+        assert after["items"] == []
+        assert after["kept"] is False, (
+            "повтор не делает утраченную историю известной"
+        )
+
+    def test_new_attempts_do_not_hide_the_missing_older_ones(
+        self, hr, organization, employee
+    ):
+        """Записанные попытки настоящие — но записаны не все, и это видно."""
+        row = old_row(organization, employee, status="FAILED", attempts=3)
+        hr.post(f"{API}/notifications/{row.id}/retry/")
+        Notification.objects.filter(id=row.id).update(
+            status="RUNNING", locked_at=timezone.now()
+        )
+        outbox.mark_sent(row.id)
+
+        answer = hr.get(f"{API}/notifications/{row.id}/attempts/").json()
+
+        assert len(answer["items"]) == 1
+        assert answer["kept"] is False
+
+    def test_several_retries_do_not_wear_the_warning_down(
+        self, hr, organization, employee
+    ):
+        row = old_row(organization, employee, status="FAILED", attempts=3)
+        for _ in range(3):
+            hr.post(f"{API}/notifications/{row.id}/retry/")
+            Notification.objects.filter(id=row.id).update(
+                status="RUNNING", locked_at=timezone.now()
+            )
+            outbox.mark_failed(row.id, error="TelegramNetworkError")
+            Notification.objects.filter(id=row.id).update(status="FAILED")
+
+        answer = hr.get(f"{API}/notifications/{row.id}/attempts/").json()
+
+        assert [item["number"] for item in answer["items"]] == [1, 2, 3]
         assert answer["kept"] is False
 
     def test_a_fresh_row_without_attempts_is_not_called_old(
@@ -402,6 +475,58 @@ class TestAttempts:
 
         assert answer["items"] == []
         assert answer["kept"] is True
+
+    def test_the_backfill_marks_only_demonstrably_incomplete_rows(
+        self, organization, employee, db
+    ):
+        """Правило обратного заполнения — на всех формах строк сразу.
+
+        Проверяется тот же SQL, что выполняет миграция: переписанный в
+        тесте своими словами, он проверял бы формулировку теста.
+        """
+        import importlib
+
+        from django.db import connection
+
+        # Модуль миграции берётся по имени: цифры в начале делают его
+        # неимпортируемым обычным `import`.
+        migration = importlib.import_module(
+            "humotech.notifications.migrations.0005_attempt_history_complete"
+        )
+
+        sent_with_history = make(organization, employee, status="SENT",
+                                 sent_at=timezone.now())
+        NotificationAttempt.objects.create(
+            notification_id=sent_with_history.id, number=1,
+            attempted_at=timezone.now(), outcome="SENT",
+        )
+        sent_without_history = make(organization, employee, status="SENT",
+                                    sent_at=timezone.now())
+        failed_with_counter = make(organization, employee, status="FAILED",
+                                   attempts=3)
+        cancelled_by_queue = make(organization, employee, status="CANCELLED",
+                                  error_message="not_linked")
+        cancelled_by_operator = make(
+            organization, employee, status="CANCELLED",
+            error_message="cancelled_by_operator",
+        )
+        waiting = make(organization, employee, status="PENDING")
+
+        with connection.cursor() as cursor:
+            cursor.execute(migration.BACKFILL)
+
+        def complete(row) -> bool:
+            row.refresh_from_db()
+            return row.attempt_history_complete
+
+        assert complete(sent_with_history) is True
+        assert complete(sent_without_history) is False
+        assert complete(failed_with_counter) is False
+        assert complete(cancelled_by_queue) is False
+        # Снятие оператором попыткой не является и записи не оставляет:
+        # её отсутствие ничего не теряет.
+        assert complete(cancelled_by_operator) is True
+        assert complete(waiting) is True
 
     def test_history_of_a_foreign_notification_is_not_readable(
         self, hr, other_organization, db
