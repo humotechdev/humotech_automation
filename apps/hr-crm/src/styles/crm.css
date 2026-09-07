@@ -3057,3 +3057,305 @@ body,
   text-decoration: underline;
   text-underline-offset: 3px;
 }
+
+/* --- администрирование ------------------------------------------------------
+ *
+ * Ни одного цветного состояния: активность, системность роли и стадия
+ * назначения различаются словом и иконкой. Цветная заливка на статусе
+ * читается как «тревога» там, где её нет, и теряется у тех, кто цвет
+ * различает хуже.
+ */
+
+.chip--demo {
+  margin-left: 12px;
+  vertical-align: middle;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.tile__note {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+/* строка таблицы, открытая в карточке */
+.row--on td {
+  background: var(--soft);
+}
+
+.who--go {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.who--go:focus-visible {
+  outline: 2px solid var(--ink-1);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+.tool--ghost {
+  border-color: transparent;
+  background: none;
+}
+
+/* Список ролей.
+ *
+ * Собственные классы, а не `.people`: та в этом проекте — ТАБЛИЦА,
+ * и `.people__go` там кнопка-стрелка шириной 44 px. Переиспользовать
+ * её имена для списка означало бы получить колонку в шестьдесят
+ * пикселей вместо строки во всю панель. */
+.roster {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.roster__go {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  padding: 11px 16px;
+  border: 0;
+  border-bottom: 1px solid var(--edge);
+  background: none;
+  font: inherit;
+  font-size: 13.5px;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.roster__go:hover {
+  background: #fafafa;
+}
+
+.roster__go:focus-visible {
+  outline: 2px solid var(--ink-1);
+  outline-offset: -2px;
+}
+
+.roster__go--on {
+  background: var(--soft);
+  box-shadow: inset 3px 0 0 var(--ink-1);
+}
+
+.role-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+/* --- назначения роли -------------------------------------------------------- */
+
+.grants {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0 0 16px;
+  padding: 0;
+  list-style: none;
+}
+
+.grant {
+  padding: 14px;
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.grants--dim .grant {
+  background: var(--canvas);
+}
+
+.grant__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.grant__name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.grant__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.facts--tight .facts__row {
+  padding: 4px 0;
+}
+
+/* --- разрешения ------------------------------------------------------------- */
+
+.perms {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 0 0 16px;
+  padding: 0;
+  list-style: none;
+}
+
+.perms__group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.perms__title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.perms__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.perms__row,
+.perms__pick {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px;
+  border-radius: 10px;
+}
+
+.perms__pick {
+  cursor: pointer;
+}
+
+.perms__pick:hover {
+  background: var(--soft);
+}
+
+/* Недоступное право видно, но не выбирается: спрятать его значило бы
+   не ответить на вопрос «почему этого нельзя выдать». */
+.perms__pick--off {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.perms__text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.perms__name {
+  font-size: 13px;
+  color: var(--ink-1);
+}
+
+.perms__code {
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+.perms--pick {
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+/* --- было → стало ----------------------------------------------------------- */
+
+.diff {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.diff__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.diff__field {
+  font-weight: 600;
+  color: var(--ink-1);
+}
+
+.diff__was {
+  text-decoration: line-through;
+}
+
+.diff__now {
+  color: var(--ink-1);
+}
+
+/* --- окно формы ------------------------------------------------------------- */
+
+/* Затемнение общее с остальной CRM; центрирование — только у форм этого
+   раздела, чтобы не менять поведение выезжающих панелей. */
+.veil--center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 100%);
+  max-height: min(760px, calc(100dvh - 48px));
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12);
+  overflow: hidden;
+}
+
+.dialog__body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+  overflow-y: auto;
+}
+
+.dialog__body .side-panel__actions {
+  position: sticky;
+  bottom: -18px;
+  margin: 4px -18px -18px;
+  padding: 14px 18px;
+  background: var(--surface);
+  border-top: 1px solid var(--edge);
+}

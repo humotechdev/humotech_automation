@@ -14,6 +14,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from humotech.accounts.selectors import active_role_codes, permission_codes
+from humotech.core.timeframes import organization_zone
 
 
 class LoginSerializer(serializers.Serializer):
@@ -39,6 +40,13 @@ class CurrentUserSerializer(serializers.Serializer):
         help_text="null у технической учётной записи без сотрудника",
     )
     status = serializers.CharField()
+    timezone = serializers.CharField(
+        help_text=(
+            "Пояс организации. В нём интерфейс печатает время там, где "
+            "у строки нет своего офиса: журнал действий, карточка "
+            "учётной записи, сроки назначений"
+        ),
+    )
     roles = serializers.ListField(child=serializers.CharField())
     permissions = serializers.ListField(
         child=serializers.CharField(),
@@ -167,6 +175,10 @@ def _describe(user) -> dict:
         "organization_code": user.organization.code,
         "employee_id": str(user.employee_id) if user.employee_id else None,
         "status": user.status,
+        # Пояс организации, а не сервера и не браузера: иначе журнал
+        # действий у двух администраторов из разных городов утверждает
+        # разное время про одно и то же событие.
+        "timezone": str(organization_zone(user.organization_id)),
         "roles": sorted(active_role_codes(user)),
         "permissions": sorted(permission_codes(user)),
     }

@@ -30,6 +30,7 @@ export const USER = {
   organization_code: 'DEMO',
   employee_id: null,
   status: 'ACTIVE',
+  timezone: 'Asia/Dushanbe',
   roles: ['HR'],
   permissions: ['employees.view'],
 };

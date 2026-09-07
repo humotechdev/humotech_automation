@@ -20,7 +20,25 @@ from rest_framework.views import APIView
 from humotech.accounts.rbac_service import RoleAdminService, UserAdminService
 from humotech.core.api import ServiceViewSet, validated
 from humotech.core.enums import USER_STATUSES
+from humotech.core.errors import ValidationFailed
 from humotech.core.rbac import Actor
+
+
+class ShortGrantSerializer(serializers.Serializer):
+    """Назначение в строке списка: сколько их и какие, без подробностей."""
+
+    id = serializers.UUIDField()
+    role_id = serializers.UUIDField()
+    role_name = serializers.CharField(source="role.name")
+    role_code = serializers.CharField(source="role.code")
+    region_id = serializers.UUIDField(allow_null=True)
+    region_name = serializers.CharField(
+        source="region.name", allow_null=True, default=None
+    )
+    office_id = serializers.UUIDField(allow_null=True)
+    office_name = serializers.CharField(
+        source="office.name", allow_null=True, default=None
+    )
 
 
 class CrmUserSerializer(serializers.Serializer):
@@ -29,9 +47,39 @@ class CrmUserSerializer(serializers.Serializer):
     status = serializers.ChoiceField(choices=USER_STATUSES)
     mfa_enabled = serializers.BooleanField()
     employee_id = serializers.UUIDField(allow_null=True)
+    # Имени у учётной записи нет: она опознаётся адресом. Человеческое
+    # имя есть у СОТРУДНИКА, и появляется здесь только если запись к нему
+    # привязана. У технической учётки его нет вовсе — и подставлять туда
+    # адрес вместо имени значит выдавать одно за другое.
+    full_name = serializers.SerializerMethodField()
     last_login = serializers.DateTimeField(allow_null=True)
     created_at = serializers.DateTimeField()
     updated_at = serializers.DateTimeField()
+    active_grants = ShortGrantSerializer(many=True, required=False)
+    grants_visible = serializers.BooleanField(
+        required=False,
+        help_text="false — назначения не показаны, потому что у "
+                  "смотрящего нет roles.manage. Пустой список при этом "
+                  "не означает отсутствие назначений",
+    )
+
+    def get_full_name(self, user) -> str | None:
+        employee = getattr(user, "employee", None)
+        if employee is None:
+            return None
+        parts = [employee.last_name, employee.first_name, employee.middle_name]
+        return " ".join(part for part in parts if part) or None
+
+
+class CrmUserCountsSerializer(serializers.Serializer):
+    active = serializers.IntegerField()
+    inactive = serializers.IntegerField()
+    total = serializers.IntegerField()
+    roles = serializers.IntegerField(
+        allow_null=True,
+        help_text="Число ролей в каталоге. null — у смотрящего нет "
+                  "roles.manage, и каталог ему не показывают",
+    )
 
 
 class CrmUserCreateSerializer(serializers.Serializer):
@@ -84,6 +132,11 @@ class RoleWriteSerializer(serializers.Serializer):
 
 
 class RoleUpdateSerializer(serializers.Serializer):
+    expected_updated_at = serializers.DateTimeField(
+        required=False, allow_null=True,
+        help_text="Редакция, которую вы правите. Не совпала с текущей — "
+                  "409: кто-то изменил роль, пока форма была открыта",
+    )
     name = serializers.CharField(max_length=100, required=False)
     description = serializers.CharField(
         required=False, allow_blank=True, allow_null=True,
@@ -108,6 +161,10 @@ class RoleSerializer(serializers.Serializer):
     missing_permissions = serializers.ListField(
         child=serializers.CharField(),
         help_text="Чего не хватает выдающему, если роль недоступна",
+    )
+    updated_at = serializers.DateTimeField(
+        help_text="Редакция роли. Отправьте её обратно в PATCH, чтобы "
+                  "правка не затёрла чужую, сделанную тем временем",
     )
 
 
@@ -154,6 +211,17 @@ class GrantValiditySerializer(serializers.Serializer):
     valid_to = serializers.DateTimeField(
         allow_null=True, help_text="null — бессрочно"
     )
+    expected_valid_to = serializers.DateTimeField(
+        required=False, allow_null=True,
+        help_text="Срок, который вы видели на экране. Передан вместе с "
+                  "check_expected — не совпал с текущим, 409",
+    )
+    check_expected = serializers.BooleanField(
+        required=False, default=False,
+        help_text="true — сверять expected_valid_to. Отдельный признак "
+                  "нужен потому, что null — законное «бессрочно», а не "
+                  "«не передали»",
+    )
 
 
 @extend_schema(tags=["Пользователи"])
@@ -170,15 +238,73 @@ class CrmUserViewSet(ServiceViewSet):
 
     @extend_schema(
         summary="Список учётных записей",
+        description=(
+            "Строка несёт ДЕЙСТВУЮЩИЕ назначения (`active_grants`) — все, "
+            "а не первое: у человека их может быть несколько и в разных "
+            "областях. Истёкшие и отозванные сюда не попадают: активная "
+            "запись без действующих назначений — это запись без доступа, "
+            "и выглядеть она должна именно так."
+        ),
         parameters=[
-            OpenApiParameter("search", str, description="Подстрока адреса"),
+            OpenApiParameter(
+                "search", str,
+                description="Подстрока адреса или имени сотрудника",
+            ),
             OpenApiParameter("status", str, enum=list(USER_STATUSES)),
+            OpenApiParameter(
+                "role_id", OpenApiTypes.UUID,
+                description="Только с ДЕЙСТВУЮЩИМ назначением этой роли",
+            ),
             OpenApiParameter("cursor", str),
             OpenApiParameter("limit", int),
         ],
     )
     def list(self, request):
-        return self.page_response(self.service.list(self.actor, **self.list_params()))
+        return self.page_response(
+            self.service.list(
+                self.actor, **self.list_params(), **self._filters(request)
+            )
+        )
+
+    @extend_schema(
+        summary="Сводка по учётным записям",
+        description=(
+            "Считается по всему отобранному набору, а не по показанной "
+            "странице. Фильтр статуса сюда не передаётся: он и есть то, "
+            "что считают."
+        ),
+        parameters=[
+            OpenApiParameter("search", str),
+            OpenApiParameter("role_id", OpenApiTypes.UUID),
+        ],
+        responses={200: CrmUserCountsSerializer},
+    )
+    @action(detail=False)
+    def counts(self, request):
+        # Поиск сюда идёт, статус — нет. Сводка обязана описывать ТОТ ЖЕ
+        # набор, что и таблица под ней: иначе «найдено 3» соседствует
+        # с «всего 47». Статус — единственное исключение, и по той же
+        # причине: он и есть то, что считают.
+        return Response(
+            self.service.counts(
+                self.actor,
+                search=request.query_params.get("search") or None,
+                **self._filters(request),
+            )
+        )
+
+    @staticmethod
+    def _filters(request) -> dict:
+        raw = request.query_params.get("role_id")
+        role_id = None
+        if raw:
+            try:
+                role_id = uuid.UUID(raw)
+            except ValueError as exc:
+                raise ValidationFailed(
+                    "role_id должен быть UUID", details={"role_id": raw}
+                ) from exc
+        return {"role_id": role_id}
 
     @extend_schema(summary="Одна учётная запись")
     def retrieve(self, request, pk=None):
@@ -440,6 +566,12 @@ class GrantDetailView(APIView):
 
     @extend_schema(
         summary="Изменить срок назначения",
+        description=(
+            "Сверка редакции необязательна и включается признаком "
+            "`check_expected`: у назначения нет `updated_at`, редакцией "
+            "служит прежний срок, а `null` — законное «бессрочно», а не "
+            "«не передали»."
+        ),
         request=GrantValiditySerializer,
         responses={200: GrantSerializer},
     )
@@ -447,7 +579,11 @@ class GrantDetailView(APIView):
         actor = Actor.from_user(request.user)
         payload = validated(GrantValiditySerializer, request.data)
         grant = RoleAdminService().set_validity(
-            actor, grant_id, valid_to=payload["valid_to"]
+            actor,
+            grant_id,
+            valid_to=payload["valid_to"],
+            expected_valid_to=payload.get("expected_valid_to"),
+            check_expected=payload.get("check_expected", False),
         )
         return Response(GrantSerializer(grant).data)
 

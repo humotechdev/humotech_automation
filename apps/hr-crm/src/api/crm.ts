@@ -1020,3 +1020,214 @@ export const cancelNotification = (id: string) =>
     method: 'POST',
     body: {},
   });
+
+// --- администрирование: учётные записи, роли, журнал ------------------------
+
+/** Назначение в строке списка: роль и область, без подробностей. */
+export type ShortGrant = {
+  id: string;
+  role_id: string;
+  role_name: string;
+  role_code: string;
+  region_id: string | null;
+  region_name: string | null;
+  office_id: string | null;
+  office_name: string | null;
+};
+
+export type CrmUser = {
+  id: string;
+  email: string;
+  status: 'ACTIVE' | 'INACTIVE' | 'LOCKED';
+  mfa_enabled: boolean;
+  employee_id: string | null;
+  /** Имя есть у СОТРУДНИКА. У технической записи его нет вовсе. */
+  full_name: string | null;
+  last_login: string | null;
+  created_at: string;
+  updated_at: string;
+  /** Только ДЕЙСТВУЮЩИЕ назначения. Истёкшие и отозванные сюда не идут. */
+  active_grants: ShortGrant[];
+  /** false — назначения не показаны из-за прав, а не отсутствуют. */
+  grants_visible: boolean;
+};
+
+export type CrmUserCounts = {
+  active: number;
+  inactive: number;
+  total: number;
+  /** null — каталог ролей смотрящему не показывают. */
+  roles: number | null;
+};
+
+export type CrmUserQuery = {
+  search?: string;
+  status?: string;
+  role_id?: string;
+  limit?: string;
+  cursor?: string;
+};
+
+export const crmUsers = (params: CrmUserQuery, signal?: AbortSignal) =>
+  request<Cursored<CrmUser>>(`/users/${query(params)}`, signal ? { signal } : {});
+
+export const crmUserCounts = (params: CrmUserQuery, signal?: AbortSignal) =>
+  request<CrmUserCounts>(
+    `/users/counts/${query({ ...params, status: undefined })}`,
+    signal ? { signal } : {},
+  );
+
+export const crmUser = (id: string, signal?: AbortSignal) =>
+  request<CrmUser>(`/users/${id}/`, signal ? { signal } : {});
+
+export const createCrmUser = (body: { email: string; employee_id?: string }) =>
+  request<CrmUser>('/users/', { method: 'POST', body });
+
+export const updateCrmUser = (
+  id: string,
+  body: { email?: string; employee_id?: string; unlink_employee?: boolean },
+) => request<CrmUser>(`/users/${id}/`, { method: 'PATCH', body });
+
+/**
+ * Пароль уходит только сюда и только один раз.
+ *
+ * Обратно он не приходит ни в каком виде: ответ — это учётная запись,
+ * в которой пароля нет и не бывает.
+ */
+export const setCrmUserPassword = (id: string, password: string) =>
+  request<CrmUser>(`/users/${id}/set-password/`, {
+    method: 'POST',
+    body: { password },
+  });
+
+export const activateCrmUser = (id: string) =>
+  request<CrmUser>(`/users/${id}/activate/`, { method: 'POST', body: {} });
+
+export const deactivateCrmUser = (id: string) =>
+  request<CrmUser>(`/users/${id}/deactivate/`, { method: 'POST', body: {} });
+
+export type RoleFull = {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  is_system: boolean;
+  permissions: string[];
+  /** Может ли ЭТОТ пользователь выдать роль. Считает сервер. */
+  grantable: boolean;
+  missing_permissions: string[];
+  /** Редакция: возвращается в PATCH, чтобы не затереть чужую правку. */
+  updated_at: string;
+};
+
+export type PermissionRow = {
+  code: string;
+  name: string;
+  description: string | null;
+};
+
+export const roles = (signal?: AbortSignal) =>
+  request<{ items: RoleFull[] }>('/roles', signal ? { signal } : {});
+
+export const role = (id: string, signal?: AbortSignal) =>
+  request<RoleFull>(`/roles/${id}`, signal ? { signal } : {});
+
+export const permissionCatalog = (signal?: AbortSignal) =>
+  request<{ items: PermissionRow[] }>('/permissions', signal ? { signal } : {});
+
+export const createRole = (body: {
+  code: string;
+  name: string;
+  description?: string;
+  permissions?: string[];
+}) => request<RoleFull>('/roles', { method: 'POST', body });
+
+export const updateRole = (
+  id: string,
+  body: {
+    name?: string;
+    description?: string;
+    permissions?: string[];
+    expected_updated_at?: string;
+  },
+) => request<RoleFull>(`/roles/${id}`, { method: 'PATCH', body });
+
+/** Назначение роли с областью и сроком. */
+export type Grant = {
+  id: string;
+  user_id: string;
+  role_id: string;
+  role_code: string;
+  role_name: string;
+  region_id: string | null;
+  region_name: string | null;
+  office_id: string | null;
+  office_name: string | null;
+  valid_from: string;
+  valid_to: string | null;
+};
+
+export const userGrants = (
+  userId: string,
+  history: boolean,
+  signal?: AbortSignal,
+) =>
+  request<{ items: Grant[] }>(
+    `/users/${userId}/grants${history ? '?history=true' : ''}`,
+    signal ? { signal } : {},
+  );
+
+export const assignRole = (body: {
+  user_id: string;
+  role_id: string;
+  region_id?: string | null;
+  office_id?: string | null;
+  valid_from?: string | null;
+  valid_to?: string | null;
+}) => request<Grant>('/grants', { method: 'POST', body });
+
+export const setGrantValidity = (
+  id: string,
+  body: {
+    valid_to: string | null;
+    expected_valid_to?: string | null;
+    check_expected?: boolean;
+  },
+) => request<Grant>(`/grants/${id}`, { method: 'PATCH', body });
+
+export const revokeGrant = (id: string) =>
+  request<Grant>(`/grants/${id}`, { method: 'DELETE' });
+
+export type AuditEntry = {
+  id: string;
+  action: string;
+  entity_type: string;
+  entity_id: string;
+  occurred_at: string;
+  actor_user_id: string | null;
+  actor_email: string | null;
+  actor_employee_id: string | null;
+  old_values: Record<string, unknown> | null;
+  new_values: Record<string, unknown> | null;
+  ip_address: string | null;
+  user_agent: string | null;
+};
+
+export type AuditQuery = {
+  action?: string;
+  entity_type?: string;
+  entity_id?: string;
+  /** Несколько объектов через запятую: история назначений одного человека. */
+  entity_ids?: string;
+  actor_user_id?: string;
+  date_from?: string;
+  date_to?: string;
+  limit?: string;
+  cursor?: string;
+};
+
+export const auditLogs = (params: AuditQuery, signal?: AbortSignal) =>
+  request<Cursored<AuditEntry>>(
+    `/audit-logs${query(params)}`,
+    signal ? { signal } : {},
+  );

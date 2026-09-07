@@ -15,7 +15,7 @@ export type IconName =
   | 'search' | 'refresh' | 'calendar' | 'arrow' | 'logout' | 'chevron'
   | 'inbox' | 'alert' | 'database' | 'globe' | 'send' | 'building'
   | 'download' | 'check' | 'cross' | 'lock' | 'late' | 'sheet'
-  | 'plus' | 'pencil' | 'archive' | 'half';
+  | 'plus' | 'pencil' | 'archive' | 'half' | 'key';
 
 const PATHS: Record<IconName, string> = {
   home: 'M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4v-5H9v5H5a1 1 0 0 1-1-1z',
@@ -52,6 +52,7 @@ const PATHS: Record<IconName, string> = {
   pencil: 'M4.8 19.2h3.4L18.6 8.8a1.7 1.7 0 0 0 0-2.4l-1-1a1.7 1.7 0 0 0-2.4 0L4.8 15.8Z M14.2 7.2l2.6 2.6',
   archive: 'M4.4 5.6h15.2a.6.6 0 0 1 .6.6v2.6a.6.6 0 0 1-.6.6H4.4a.6.6 0 0 1-.6-.6V6.2a.6.6 0 0 1 .6-.6ZM5.6 9.4v9a.8.8 0 0 0 .8.8h11.2a.8.8 0 0 0 .8-.8v-9M9.8 13.2h4.4',
   half: 'M12 20.2a8.2 8.2 0 1 0 0-16.4 8.2 8.2 0 0 0 0 16.4ZM12 3.8v16.4a8.2 8.2 0 0 0 0-16.4Z',
+  key: 'M15.4 4.6a4.6 4.6 0 1 0-4.2 6.4c.4 0 .8 0 1.1-.1L14 12.6h2v2h2v2h3v-3.4l-5.4-5.4c.4-.9.5-1.9.3-2.9M9.6 8.4h.01',
 };
 
 type Props = { name: IconName; size?: number; className?: string };

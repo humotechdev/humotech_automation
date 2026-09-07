@@ -44,7 +44,7 @@ from datetime import datetime, timedelta
 
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db.models import Q
+from django.db.models import Count, Q
 from django.utils import timezone
 
 from humotech.accounts.models import User, UserRoleScope
@@ -90,19 +90,135 @@ class UserAdminService(BaseService):
         *,
         search: str | None = None,
         status: str | None = None,
+        role_id: uuid.UUID | None = None,
         limit: int | None = None,
         cursor: str | None = None,
     ) -> Page:
         self.access.require(actor, "users.manage")
+        page = paginate(
+            self._visible(actor, search=search, status=status, role_id=role_id),
+            limit=limit,
+            cursor=cursor,
+        )
+        self.attach_grants(actor, page.items)
+        return page
+
+    def counts(
+        self,
+        actor: Actor,
+        *,
+        search: str | None = None,
+        role_id: uuid.UUID | None = None,
+    ) -> dict:
+        """Сводка по ВСЕМУ отобранному набору, а не по показанной странице.
+
+        Статус сюда не передаётся намеренно: он и есть то, что считают.
+        Фильтр вкладки, изменяющий собственные числа, отвечает не на тот
+        вопрос — «сколько всего неактивных» превратилось бы в «сколько
+        неактивных среди неактивных».
+
+        Каталог ролей считается отдельно и только тем, кому он вообще
+        виден: число ролей — сведение о настройке доступа, а не о людях.
+        """
+        self.access.require(actor, "users.manage")
+        rows = self._visible(actor, search=search, role_id=role_id)
+        by_status = dict(
+            rows.values_list("status").annotate(n=Count("id"))
+        )
+        total = sum(by_status.values())
+        roles = None
+        if self.access.has(actor, "roles.manage"):
+            roles = Role.objects.filter(
+                Q(organization_id=actor.organization_id)
+                | Q(organization__isnull=True)
+            ).count()
+        return {
+            "active": by_status.get("ACTIVE", 0),
+            "inactive": total - by_status.get("ACTIVE", 0),
+            "total": total,
+            "roles": roles,
+        }
+
+    def attach_grants(self, actor: Actor, users: list[User]) -> None:
+        """Действующие назначения — одним запросом на страницу.
+
+        Строка списка обязана показывать РОЛИ, а не одну роль: у человека
+        их может быть несколько, и в разных областях. Тянуть их запросом
+        на строку значило бы двадцать обращений на страницу из двадцати
+        человек.
+
+        Кто не управляет ролями, тот их и не видит: `users.manage`
+        разрешает вести учётные записи, а не читать чужие назначения.
+        Признак `grants_visible` говорит интерфейсу, что список пуст
+        не потому, что назначений нет.
+        """
+        visible = self.access.has(actor, "roles.manage")
+        for user in users:
+            user.grants_visible = visible
+            user.active_grants = []
+        if not visible or not users:
+            return
+
+        moment = timezone.now()
+        rows = (
+            UserRoleScope.objects.filter(
+                organization_id=actor.organization_id,
+                user_id__in=[user.id for user in users],
+                valid_from__lte=moment,
+            )
+            .filter(Q(valid_to__isnull=True) | Q(valid_to__gte=moment))
+            .select_related("role", "region", "office")
+            .order_by("valid_from", "id")
+        )
+        found: dict[uuid.UUID, list[UserRoleScope]] = {}
+        for row in rows:
+            found.setdefault(row.user_id, []).append(row)
+        for user in users:
+            user.active_grants = found.get(user.id, [])
+
+    def _visible(
+        self,
+        actor: Actor,
+        *,
+        search: str | None = None,
+        status: str | None = None,
+        role_id: uuid.UUID | None = None,
+    ):
         queryset = User.objects.filter(
             organization_id=actor.organization_id
         ).select_related("employee")
         if status:
+            if status not in USER_STATUSES:
+                raise ValidationFailed(
+                    "Неизвестный статус учётной записи",
+                    details={"status": status, "allowed": list(USER_STATUSES)},
+                )
             queryset = queryset.filter(status=status)
+        if role_id:
+            # Только по ДЕЙСТВУЮЩЕМУ назначению: истёкшее и отозванное не
+            # делает человека обладателем роли, и находиться по ней он
+            # не должен.
+            moment = timezone.now()
+            queryset = queryset.filter(
+                id__in=UserRoleScope.objects.filter(
+                    organization_id=actor.organization_id,
+                    role_id=role_id,
+                    valid_from__lte=moment,
+                )
+                .filter(Q(valid_to__isnull=True) | Q(valid_to__gte=moment))
+                .values("user_id")
+            )
         if search:
             pattern = search.strip()
-            queryset = queryset.filter(email__icontains=pattern)
-        return paginate(queryset, limit=limit, cursor=cursor)
+            # Ищется и по адресу, и по имени сотрудника: в списке видно
+            # имя, и искать по невидимому полю человек не догадается.
+            queryset = queryset.filter(
+                Q(email__icontains=pattern)
+                | Q(employee__first_name__icontains=pattern)
+                | Q(employee__last_name__icontains=pattern)
+                | Q(employee__middle_name__icontains=pattern)
+            )
+        return queryset
 
     def get(self, actor: Actor, user_id: uuid.UUID) -> User:
         self.access.require(actor, "users.manage")
@@ -289,7 +405,30 @@ class UserAdminService(BaseService):
         if user is None:
             # Чужая организация отвечает как отсутствие записи.
             raise NotFound("Учётная запись не найдена")
+        # И карточка, и ответ на действие показывают те же назначения,
+        # что строка списка: иначе после отзыва роли карточка осталась бы
+        # с прежним набором до следующей загрузки страницы.
+        self.attach_grants(actor, [user])
         return user
+
+
+def _refuse_stale(current, expected, *, enabled: bool = True) -> None:
+    """Отказать, если правят не ту редакцию, которую видели.
+
+    `enabled` отделяет «не передали редакцию» от «передали пустую».
+    У срока назначения `None` — законное значение «бессрочно», и без
+    этого признака проверка молча пропускала бы ровно тот случай, ради
+    которого её ставили.
+    """
+    if enabled and current != expected:
+        raise Conflict(
+            "Запись изменилась, пока вы её редактировали. Откройте её "
+            "заново и повторите правку.",
+            details={
+                "current": current.isoformat() if current else None,
+                "expected": expected.isoformat() if expected else None,
+            },
+        )
 
 
 class RoleAdminService(BaseService):
@@ -328,6 +467,7 @@ class RoleAdminService(BaseService):
                     # Прямо называется, чего не хватает: «нельзя» без
                     # причины выглядит как поломка.
                     "missing_permissions": missing,
+                    "updated_at": row.updated_at,
                 }
             )
         return result
@@ -396,16 +536,27 @@ class RoleAdminService(BaseService):
         name: str | None = None,
         description: str | None = None,
         permissions: list[str] | None = None,
+        expected_updated_at: datetime | None = None,
     ) -> dict:
         """Изменить название, описание или набор прав роли.
 
         Код не меняется: по нему роль опознают проверки и настройки, и
         переименование кода — это другая роль, а не правка опечатки.
+
+        `expected_updated_at` — редакция, которую правит вызывающий.
+        Права роли задаются полной заменой набора, поэтому два
+        администратора, открывшие одну роль, затрут работу друг друга
+        молча: второе сохранение просто отменит первое, и никто этого
+        не заметит. Несовпадение редакции — отказ конфликтом.
         """
         self.access.require(actor, "roles.manage")
         role = self._require_role(actor, role_id)
         _refuse_system_role(role)
         _refuse_super_admin_code(role.code)
+        _refuse_stale(
+            role.updated_at, expected_updated_at,
+            enabled=expected_updated_at is not None,
+        )
 
         before_codes = _permissions_by_role([role.id]).get(role.id, set())
         before = {"code": role.code, "name": role.name,
@@ -428,7 +579,11 @@ class RoleAdminService(BaseService):
                 # обход, только в два шага.
                 after_codes = self._grantable_codes(actor, permissions)
                 self._replace_permissions(role, after_codes)
-            if fields:
+            if fields or after_codes != before_codes:
+                # `updated_at` двигается и когда менялись только права.
+                # Иначе редакция роли не отражала бы правку набора, и
+                # проверка на устаревшую редакцию пропускала бы ровно тот
+                # случай, ради которого её ставили.
                 role.save(update_fields=[*fields, "updated_at"])
             if fields or permissions is not None:
                 self.audit.record(
@@ -485,6 +640,9 @@ class RoleAdminService(BaseService):
             "permissions": sorted(granted),
             "grantable": not missing,
             "missing_permissions": missing,
+            # Редакция для сравнения при следующей правке: без неё второй
+            # администратор молча отменил бы работу первого.
+            "updated_at": role.updated_at,
         }
 
     # -------------------------------------------------------------- назначения
@@ -601,10 +759,22 @@ class RoleAdminService(BaseService):
         grant_id: uuid.UUID,
         *,
         valid_to: datetime | None,
+        expected_valid_to: datetime | None = None,
+        check_expected: bool = False,
     ) -> UserRoleScope:
-        """Сдвинуть срок назначения — например, продлить временный доступ."""
+        """Сдвинуть срок назначения — например, продлить временный доступ.
+
+        `expected_valid_to` — срок, который вызывающий видел на экране.
+        У назначения нет `updated_at`, и сравнивать редакции не по чему;
+        но правится здесь ровно одно поле, поэтому его прежнее значение
+        и есть редакция. Сравнение включается отдельным признаком:
+        `None` — это законный «бессрочно», а не «не передали».
+        """
         self.access.require(actor, "roles.manage")
         grant = self._require_grant(actor, grant_id)
+        _refuse_stale(
+            grant.valid_to, expected_valid_to, enabled=check_expected
+        )
         self._require_period(grant.valid_from, valid_to)
 
         before = _grant_snapshot(grant)
@@ -805,24 +975,31 @@ def _refuse_if_last_super_admin(
 
     Считаются АКТИВНЫЕ записи: заблокированный админ доступа не даёт, и
     записывать его в живые значило бы разрешить закрыть организацию.
+
+    Проверка сравнивает «до» и «после», а не смотрит только на «после».
+    Организация, в которой суперадминистратора нет ВООБЩЕ, ничего не
+    теряет от отключения постороннего человека, и отказывать там значило
+    бы запретить отключать кого угодно — защита превратилась бы в замок
+    на всей организации.
     """
     if without_user is None and without_grant is None:
         raise ValueError("нечего исключать из подсчёта")
 
     moment = timezone.now()
-    queryset = UserRoleScope.objects.filter(
+    live = UserRoleScope.objects.filter(
         organization_id=actor.organization_id,
         role__code=SUPER_ADMIN,
         user__status="ACTIVE",
         valid_from__lte=moment,
     ).filter(Q(valid_to__isnull=True) | Q(valid_to__gte=moment))
 
+    queryset = live
     if without_user is not None:
         queryset = queryset.exclude(user_id=without_user)
     if without_grant is not None:
         queryset = queryset.exclude(id=without_grant)
 
-    if not queryset.exists():
+    if not queryset.exists() and live.exists():
         raise Conflict(
             "Это последний суперадминистратор организации. "
             "Назначьте другого, прежде чем снимать этого.",

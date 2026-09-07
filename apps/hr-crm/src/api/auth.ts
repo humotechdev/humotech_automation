@@ -15,6 +15,12 @@ export type CurrentUser = {
   organization_code: string;
   employee_id: string | null;
   status: string;
+  /**
+   * Пояс организации. В нём показывается время там, где у строки нет
+   * своего офиса: журнал действий, карточка учётной записи, сроки
+   * назначений. Своей арифметики над поясами в интерфейсе нет.
+   */
+  timezone: string;
   roles: string[];
   permissions: string[];
 };

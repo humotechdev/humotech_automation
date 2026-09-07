@@ -22,7 +22,10 @@ export function csrfToken(source: string = document.cookie): string | null {
 }
 
 type Options = {
-  method?: 'GET' | 'POST' | 'PATCH';
+  // DELETE есть ровно у одной операции — отзыва назначения роли. Строку
+  // он при этом не удаляет: сервер закрывает срок, чтобы в истории
+  // осталось, кто и когда дал человеку этот доступ.
+  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
   body?: unknown;
   signal?: AbortSignal;
 };

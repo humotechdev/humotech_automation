@@ -20,6 +20,7 @@ import { AnalyticsPage } from '../pages/AnalyticsPage';
 import { ReportsPage } from '../pages/ReportsPage';
 import { KnowledgePage } from '../pages/KnowledgePage';
 import { NotificationsPage } from '../pages/NotificationsPage';
+import { AdminPage } from '../pages/AdminPage';
 import { LoginPage } from '../pages/LoginPage';
 import { useSession } from '../features/auth/session';
 
@@ -37,6 +38,7 @@ export function App() {
       <Route path="/reports" element={<Protected page="reports" />} />
       <Route path="/knowledge" element={<Protected page="knowledge" />} />
       <Route path="/notifications" element={<Protected page="notifications" />} />
+      <Route path="/admin" element={<Protected page="admin" />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
@@ -45,7 +47,7 @@ export function App() {
 /** Кабинет: без сессии сюда нельзя. */
 function Protected({ page }: {
   page?: 'employees' | 'requests' | 'attendance' | 'offices' | 'questions'
-       | 'analytics' | 'reports' | 'knowledge' | 'notifications';
+       | 'analytics' | 'reports' | 'knowledge' | 'notifications' | 'admin';
 }) {
   const session = useSession();
   if (session.status === 'checking') return <Checking />;
@@ -59,6 +61,7 @@ function Protected({ page }: {
   if (page === 'reports') return <ReportsPage />;
   if (page === 'knowledge') return <KnowledgePage />;
   if (page === 'notifications') return <NotificationsPage />;
+  if (page === 'admin') return <AdminPage />;
   return <DashboardPage />;
 }
 

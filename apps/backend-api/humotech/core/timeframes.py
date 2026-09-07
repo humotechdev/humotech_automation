@@ -64,6 +64,34 @@ def office_zone(office) -> ZoneInfo:
     return zone(getattr(organization, "default_timezone", None))
 
 
+def organization_zone(organization_id) -> ZoneInfo:
+    """Один пояс на организацию — для экранов, у которых нет своего офиса.
+
+    Список учётных записей, каталог ролей и журнал действий охватывают всю
+    организацию сразу, и «свой» офис у строки не определён. Час при этом
+    показать надо один и тот же для всех, кто смотрит: иначе один и тот же
+    вход в систему выглядит произошедшим в разное время у двух людей,
+    открывших журнал из разных городов.
+
+    Берётся пояс первого заведённого офиса — то же правило, по которому
+    считает сутки список уведомлений, — и только если офисов нет,
+    подставляется `Organization.default_timezone`.
+    """
+    from humotech.offices.models import Office
+    from humotech.organizations.models import Organization
+
+    office = (
+        Office.objects.filter(organization_id=organization_id)
+        .exclude(timezone="")
+        .order_by("created_at")
+        .first()
+    )
+    if office is not None:
+        return office_zone(office)
+    organization = Organization.objects.filter(id=organization_id).first()
+    return zone(getattr(organization, "default_timezone", None))
+
+
 def local_date(moment: datetime, tz: ZoneInfo) -> date:
     """Какое число было в этом поясе в указанный момент."""
     return moment.astimezone(tz).date()

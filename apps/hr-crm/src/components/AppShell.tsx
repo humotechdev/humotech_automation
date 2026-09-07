@@ -39,7 +39,7 @@ const MANAGEMENT: Item[] = [
   { key: 'reports', title: 'Отчёты', icon: 'report', to: '/reports' },
   { key: 'knowledge', title: 'База знаний', icon: 'book', to: '/knowledge' },
   { key: 'notifications', title: 'Уведомления', icon: 'bell', to: '/notifications' },
-  { key: 'admin', title: 'Администрирование', icon: 'admin' },
+  { key: 'admin', title: 'Администрирование', icon: 'admin', to: '/admin' },
   { key: 'settings', title: 'Настройки', icon: 'settings' },
 ];
 

@@ -32,6 +32,11 @@ from humotech.core.pagination import MAX_PAGE_SIZE, normalize_limit
 from humotech.core.rbac import AccessControl, Actor
 from humotech.core.timeframes import office_zone, range_bounds
 
+#: Потолок на список идентификаторов в одном запросе. Не техническое
+#: ограничение, а защита от запроса длиной в адресную строку: длинный
+#: `IN` перестаёт пользоваться индексом и превращается в перебор.
+MAX_ENTITY_IDS = 100
+
 
 class AuditLogSerializer(serializers.Serializer):
     id = serializers.UUIDField()
@@ -92,6 +97,16 @@ class AuditLogView(APIView):
                 description="Имя таблицы: regions, employees, offices…",
             ),
             OpenApiParameter("entity_id", str),
+            OpenApiParameter(
+                "entity_ids", str,
+                description=(
+                    "Несколько идентификаторов через запятую. Нужен там, где "
+                    "история одного человека записана под разными "
+                    "объектами: назначения роли — отдельные строки, и "
+                    "каждое со своим id. Не более "
+                    f"{MAX_ENTITY_IDS} за запрос."
+                ),
+            ),
             OpenApiParameter("actor_user_id", str),
             OpenApiParameter("date_from", str),
             OpenApiParameter("date_to", str),
@@ -123,6 +138,13 @@ class AuditLogView(APIView):
         entity_id = _uuid_param(request, "entity_id")
         if entity_id:
             queryset = queryset.filter(entity_id=entity_id)
+
+        entity_ids = _uuid_list(request, "entity_ids")
+        if entity_ids is not None:
+            # Пустой список — это «ни одного объекта», а не «фильтра нет».
+            # Иначе запрос истории человека без назначений вернул бы
+            # чужие записи по всей организации.
+            queryset = queryset.filter(entity_id__in=entity_ids)
 
         actor_user_id = _uuid_param(request, "actor_user_id")
         if actor_user_id:
@@ -176,6 +198,27 @@ class AuditLogView(APIView):
         )
         start, end = range_bounds(first or last, last or first, office_zone(office))
         return queryset.filter(occurred_at__gte=start, occurred_at__lt=end)
+
+
+def _uuid_list(request, name: str) -> list[uuid.UUID] | None:
+    """Список идентификаторов через запятую. Отсутствие ≠ пустой список."""
+    raw = request.query_params.get(name)
+    if raw is None:
+        return None
+    parts = [part.strip() for part in raw.split(",") if part.strip()]
+    if len(parts) > MAX_ENTITY_IDS:
+        raise ValidationFailed(
+            f"Параметр «{name}» принимает не более {MAX_ENTITY_IDS} "
+            "идентификаторов",
+            details={"field": name, "count": len(parts)},
+        )
+    try:
+        return [uuid.UUID(part) for part in parts]
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise ValidationFailed(
+            f"Параметр «{name}» должен быть списком UUID через запятую",
+            details={"field": name, "value": raw},
+        ) from exc
 
 
 def _limit(request) -> int | None:

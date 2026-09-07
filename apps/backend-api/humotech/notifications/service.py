@@ -37,11 +37,10 @@ from humotech.core.errors import Conflict, NotFound, ValidationFailed
 from humotech.core.pagination import Page, paginate
 from humotech.core.rbac import Actor, snapshot
 from humotech.core.service import BaseService
-from humotech.core.timeframes import office_zone, range_bounds
+from humotech.core.timeframes import organization_zone, range_bounds
 from humotech.employees.models import EmployeeAssignment
 from humotech.employees.selectors import require_visible_employee
 from humotech.notifications.models import Notification, NotificationAttempt
-from humotech.offices.models import Office
 
 NOTIFICATION_FIELDS = (
     "status", "attempts", "next_attempt_at", "error_message", "sent_at",
@@ -423,13 +422,7 @@ class NotificationService(BaseService):
 
     def _zone(self, actor: Actor):
         """Пояс организации: у списка нет одного офиса, а сутки нужны одни."""
-        office = (
-            Office.objects.filter(organization_id=actor.organization_id)
-            .exclude(timezone="")
-            .order_by("created_at")
-            .first()
-        )
-        return office_zone(office)
+        return organization_zone(actor.organization_id)
 
     def _statuses(self, raw: str) -> list[str]:
         """Одно состояние или несколько через запятую.
