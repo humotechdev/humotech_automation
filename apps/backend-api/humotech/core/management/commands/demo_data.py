@@ -38,6 +38,29 @@ from humotech.schedules.models import (
 MINUTES_PER_WORKING_DAY = 480
 ANNUAL_LEAVE_DAYS = 28
 
+# Разрешения, которые демонстрационная роль обязана иметь СВЕРХ уже
+# согласованного набора, чтобы работали готовые разделы CRM.
+#
+# Список короткий и явный намеренно. Он добавляется УЖЕ СУЩЕСТВУЮЩЕЙ роли
+# на живом стенде, поэтому каждая новая строка здесь — это расширение
+# доступа у всех, кто обновится. Кадровые разрешения такому расширению
+# подлежат, управление доступом — нет.
+DEMO_ROLE_REQUIRED = ("notifications.read", "notifications.manage")
+
+# Разрешения, которые этой командой не выдаются никогда. Проверка стоит
+# не ради красоты: правка списка выше — это одна строка, и без неё
+# «заодно добавить audit.read» выглядело бы безобидно.
+NEVER_GRANTED_BY_DEMO = (
+    "users.manage", "roles.manage", "settings.manage", "audit.read",
+)
+
+_overreach = set(DEMO_ROLE_REQUIRED) & set(NEVER_GRANTED_BY_DEMO)
+if _overreach:
+    raise AssertionError(
+        "demo_data не выдаёт административные разрешения существующей "
+        f"роли: {sorted(_overreach)}"
+    )
+
 
 class Command(BaseCommand):
     help = "Заводит пример организации, офиса, точки QR, сотрудника и кадровика"
@@ -258,21 +281,65 @@ class Command(BaseCommand):
             )
         return employee
 
+    def _demo_role_permissions(self, role, created: bool) -> None:
+        """Права демонстрационной роли — воспроизводимо, а не «при создании».
+
+        Раньше набор раздавался только внутри `if created`. Роль, заведённая
+        однажды, больше не получала ничего: разрешение, появившееся в
+        каталоге позже, на стенде просто отсутствовало, и раздел CRM,
+        который на него опирался, не открывался. Чинилось это разовой
+        вставкой в базу — то есть шагом, о котором знал один человек.
+
+        Теперь у команды два разных поведения, и разница принципиальная:
+
+          * НОВОЙ роли выдаётся весь набор HR_ADMIN. Роли ещё нет, решать
+            нечего;
+          * СУЩЕСТВУЮЩЕЙ роли добавляются только те разрешения, которые
+            нужны уже готовым разделам стенда, — короткий явный список.
+            Синхронизировать её с каталогом целиком нельзя: это тихо
+            повысило бы права на всех стендах разом, а «стенд обновили»
+            не значит «решили выдать больше доступа».
+
+        Права ни у одной другой роли команда не трогает.
+        """
+        from humotech.core.permissions_catalog import ROLE_PERMISSIONS
+        from humotech.rbac.models import Permission, RolePermission
+
+        codes = (
+            tuple(ROLE_PERMISSIONS.get("HR_ADMIN", ()))
+            if created
+            else DEMO_ROLE_REQUIRED
+        )
+        found = {
+            permission.code: permission
+            for permission in Permission.objects.filter(code__in=codes)
+        }
+        missing = [code for code in codes if code not in found]
+        if missing:
+            # Молчать нельзя: разрешения нет в каталоге, роль его не
+            # получит, и раздел не откроется — но выглядеть это будет
+            # как успешный запуск.
+            self.stdout.write(self.style.WARNING(
+                "В каталоге разрешений нет: " + ", ".join(sorted(missing))
+                + ". Сначала `manage.py seed`."
+            ))
+
+        added = 0
+        for permission in found.values():
+            _, made = RolePermission.objects.get_or_create(
+                role=role, permission=permission
+            )
+            added += int(made)
+        if added:
+            self.stdout.write(f"  прав добавлено роли {role.code}: {added}")
+
     def _hr_user(self, org, options) -> str | None:
         """Кадровик с полными правами по своей организации."""
         role, created = Role.objects.get_or_create(
             organization=org, code="HR_ADMIN_LOCAL",
             defaults={"name": "Кадровик организации"},
         )
-        if created:
-            from humotech.core.permissions_catalog import ROLE_PERMISSIONS
-            from humotech.rbac.models import Permission, RolePermission
-
-            codes = ROLE_PERMISSIONS.get("HR_ADMIN", ())
-            for permission in Permission.objects.filter(code__in=codes):
-                RolePermission.objects.get_or_create(
-                    role=role, permission=permission
-                )
+        self._demo_role_permissions(role, created)
 
         user = User.objects.filter(
             organization=org, email=options["hr_email"]
