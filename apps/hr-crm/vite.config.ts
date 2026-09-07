@@ -1,6 +1,10 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
+/** Адрес, который стенд считает доверенным источником запросов. */
+const TRUSTED_ORIGIN =
+  process.env.VITE_TRUSTED_ORIGIN ?? 'https://uncanny-superman-obedience.ngrok-free.dev';
+
 export default defineConfig({
   plugins: [react()],
   server: {
@@ -11,6 +15,22 @@ export default defineConfig({
         target: process.env.VITE_BACKEND_ORIGIN ?? 'http://127.0.0.1:8000',
         changeOrigin: true,
         configure: (proxy) => {
+          // Django проверяет заголовок `Origin` по списку
+          // `CSRF_TRUSTED_ORIGINS`, и `http://localhost:5173` в нём нет
+          // и быть не должно: список описывает адрес стенда, а не
+          // машину разработчика. `changeOrigin` переписывает только
+          // `Host`, поэтому изменяющие запросы отсюда получали
+          // «CSRF Failed: Origin checking failed».
+          //
+          // Подменяем `Origin` и `Referer` на доверенный адрес. Это
+          // настройка dev-сервера: в сборку она не попадает, backend
+          // и его список доверенных адресов не меняются.
+          proxy.on('proxyReq', (proxyReq) => {
+            if (!proxyReq.getHeader('origin')) return;
+            proxyReq.setHeader('origin', TRUSTED_ORIGIN);
+            proxyReq.setHeader('referer', `${TRUSTED_ORIGIN}/`);
+          });
+
           // Стенд работает по production-настройкам, где cookie сессии
           // помечена `Secure`. Браузер молча выбрасывает такую cookie
           // на `http://localhost`, и вход выглядит как «200, а сессии

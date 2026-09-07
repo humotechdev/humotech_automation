@@ -13,7 +13,8 @@ export type IconName =
   | 'home' | 'users' | 'clock' | 'doc' | 'pin' | 'chart' | 'chat'
   | 'report' | 'book' | 'bell' | 'admin' | 'settings'
   | 'search' | 'refresh' | 'calendar' | 'arrow' | 'logout' | 'chevron'
-  | 'inbox' | 'alert' | 'database' | 'globe' | 'send' | 'building';
+  | 'inbox' | 'alert' | 'database' | 'globe' | 'send' | 'building'
+  | 'download' | 'check' | 'cross' | 'lock' | 'late' | 'sheet';
 
 const PATHS: Record<IconName, string> = {
   home: 'M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4v-5H9v5H5a1 1 0 0 1-1-1z',
@@ -40,6 +41,12 @@ const PATHS: Record<IconName, string> = {
   globe: 'M12 20.4a8.4 8.4 0 1 0 0-16.8 8.4 8.4 0 0 0 0 16.8ZM3.6 12h16.8M12 3.6c2.1 2.3 3.2 5.3 3.2 8.4s-1.1 6.1-3.2 8.4c-2.1-2.3-3.2-5.3-3.2-8.4S9.9 5.9 12 3.6Z',
   send: 'M20.4 4 3.9 10.6l6.3 2.6 2.6 6.3Z M10.2 13.2 20.4 4',
   building: 'M6.4 20.2V5.4a.8.8 0 0 1 .8-.8h6.4a.8.8 0 0 1 .8.8v14.8M14.4 9.8h2.8a.8.8 0 0 1 .8.8v9.6M9.2 8.4h2.4M9.2 12h2.4M9.2 15.6h2.4M4 20.2h16',
+  download: 'M12 4v10.4M8.2 10.8 12 14.6l3.8-3.8M5 16.6v2.6a.8.8 0 0 0 .8.8h12.4a.8.8 0 0 0 .8-.8v-2.6',
+  check: 'M12 20.2a8.2 8.2 0 1 0 0-16.4 8.2 8.2 0 0 0 0 16.4ZM8.4 12.1l2.5 2.5 4.7-5',
+  cross: 'M12 20.2a8.2 8.2 0 1 0 0-16.4 8.2 8.2 0 0 0 0 16.4ZM9.2 9.2l5.6 5.6M14.8 9.2l-5.6 5.6',
+  lock: 'M6.6 10.6h10.8a.8.8 0 0 1 .8.8v7.4a.8.8 0 0 1-.8.8H6.6a.8.8 0 0 1-.8-.8v-7.4a.8.8 0 0 1 .8-.8ZM8.6 10.6V8a3.4 3.4 0 0 1 6.8 0v2.6',
+  late: 'M12 20.2a8.2 8.2 0 1 0-8.2-8.2M12 7.6V12l3.2 1.9M3.2 15.6l1.6 3 2.8-1.6',
+  sheet: 'M6 3.8h12a.8.8 0 0 1 .8.8v14.8a.8.8 0 0 1-.8.8H6a.8.8 0 0 1-.8-.8V4.6a.8.8 0 0 1 .8-.8ZM5.2 9.4h13.6M5.2 14.6h13.6M12 9.4v10.8',
 };
 
 type Props = { name: IconName; size?: number; className?: string };

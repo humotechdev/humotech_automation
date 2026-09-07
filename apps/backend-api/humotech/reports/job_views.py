@@ -12,11 +12,12 @@ from drf_spectacular.utils import OpenApiExample, OpenApiParameter, OpenApiRespo
 from drf_spectacular.utils import extend_schema
 from rest_framework import serializers
 from rest_framework.decorators import action
+from rest_framework.response import Response
 
 from humotech.core.api import ServiceViewSet, validated
 from humotech.core.enums import EXPORT_JOB_STATUSES
 from humotech.reports.service import ExportJobService
-from humotech.reports.sheets import EXPORT_KINDS
+from humotech.reports.sheets import MAX_PERIOD_DAYS, EXPORT_KINDS, check_period
 from humotech.reports.views import FORMATS
 
 
@@ -33,6 +34,11 @@ class ExportJobSerializer(serializers.Serializer):
     status = serializers.ChoiceField(choices=EXPORT_JOB_STATUSES)
     filters = serializers.JSONField(allow_null=True)
     requested_by_user_id = serializers.UUIDField()
+    requested_by = serializers.SerializerMethodField(
+        help_text="Кто заказал: почта учётной записи. Нужна списку, где "
+                  "видны чужие выгрузки — один идентификатор там ничего "
+                  "не говорит",
+    )
     attempts = serializers.IntegerField()
     progress_rows = serializers.IntegerField(
         help_text="Сколько строк уже записано. «Идёт» без числа "
@@ -54,6 +60,27 @@ class ExportJobSerializer(serializers.Serializer):
     created_at = serializers.DateTimeField()
     updated_at = serializers.DateTimeField()
 
+    def get_requested_by(self, job) -> str | None:
+        # Строка уже пришла со `select_related`: запроса на каждую
+        # выгрузку здесь нет и быть не должно.
+        user = getattr(job, "requested_by_user", None)
+        return getattr(user, "email", None) if user else None
+
+
+class ExportJobCountsSerializer(serializers.Serializer):
+    """Сколько заданий в каждом состоянии.
+
+    Отдельный сериализатор, а не `DictField`: словарь без описания полей
+    оставляет в схеме дыру, а по схеме генерируются клиенты.
+    """
+
+    total = serializers.IntegerField()
+    QUEUED = serializers.IntegerField()
+    RUNNING = serializers.IntegerField()
+    SUCCEEDED = serializers.IntegerField()
+    FAILED = serializers.IntegerField()
+    CANCELLED = serializers.IntegerField()
+
 
 class ExportJobPageSerializer(serializers.Serializer):
     items = ExportJobSerializer(many=True)
@@ -62,15 +89,41 @@ class ExportJobPageSerializer(serializers.Serializer):
 
 
 class ExportJobCreateSerializer(serializers.Serializer):
+    """Заказ выгрузки.
+
+    Период проверяется здесь, а не в исполнителе. Иначе перепутанные
+    местами даты превращаются в задание, которое выглядит принятым и
+    через минуту становится FAILED, — а человек к тому моменту уже ушёл
+    с экрана и решил, что отчёт готовится.
+    """
+
     kind = serializers.ChoiceField(choices=EXPORT_KINDS)
     fmt = serializers.ChoiceField(choices=FORMATS, default="csv")
     date = serializers.DateField(
         required=False, allow_null=True, help_text="Для отчёта attendance",
     )
     date_from = serializers.DateField(required=False, allow_null=True)
-    date_to = serializers.DateField(required=False, allow_null=True)
+    date_to = serializers.DateField(
+        required=False, allow_null=True,
+        help_text=f"Вместе с date_from задаёт период, не длиннее "
+                  f"{MAX_PERIOD_DAYS} дней",
+    )
     office_id = serializers.UUIDField(required=False, allow_null=True)
     region_id = serializers.UUIDField(required=False, allow_null=True)
+
+    def validate(self, attrs):
+        first, last = attrs.get("date_from"), attrs.get("date_to")
+        if first and last:
+            # Тот же предел, что и у построителя: одна проверка на два
+            # пути, чтобы заказ и сборка не расходились в том, что
+            # считается допустимым периодом.
+            check_period(first, last)
+        elif first or last:
+            missing = "date_to" if first else "date_from"
+            raise serializers.ValidationError(
+                {missing: ["Укажите обе даты периода"]}
+            )
+        return attrs
 
 
 @extend_schema(tags=["Отчёты"])
@@ -88,7 +141,11 @@ class ExportJobViewSet(ServiceViewSet):
     @extend_schema(
         summary="Мои выгрузки",
         parameters=[
-            OpenApiParameter("status", str, enum=list(EXPORT_JOB_STATUSES)),
+            OpenApiParameter(
+                "status", str,
+                description="Одно состояние или несколько через запятую: "
+                            "вкладка «в работе» — это QUEUED,RUNNING",
+            ),
             OpenApiParameter("kind", str, enum=list(EXPORT_KINDS)),
             OpenApiParameter(
                 "mine_only", bool,
@@ -115,6 +172,32 @@ class ExportJobViewSet(ServiceViewSet):
     @extend_schema(summary="Состояние выгрузки")
     def retrieve(self, request, pk=None):
         return self.item_response(self.service.get(self.actor, pk))
+
+    @extend_schema(
+        summary="Сколько выгрузок в каждом состоянии",
+        description=(
+            "Считается по всему доступному набору, а не по загруженной "
+            "странице: длина страницы — это длина страницы. "
+            "Фильтр состояния сюда не передаётся: числа рядом с вкладками "
+            "не должны меняться от того, какая вкладка открыта."
+        ),
+        parameters=[
+            # `list` в теле класса — это уже метод выше, а не встроенная
+            # функция: имя перекрыто, и `list(...)` здесь падает.
+            OpenApiParameter("kind", str, enum=[*EXPORT_KINDS]),
+            OpenApiParameter("mine_only", bool),
+        ],
+        responses={200: ExportJobCountsSerializer},
+    )
+    @action(detail=False)
+    def counts(self, request):
+        return Response(
+            self.service.counts(
+                self.actor,
+                kind=request.query_params.get("kind") or None,
+                mine_only=request.query_params.get("mine_only") != "false",
+            )
+        )
 
     @extend_schema(
         summary="Заказать выгрузку",

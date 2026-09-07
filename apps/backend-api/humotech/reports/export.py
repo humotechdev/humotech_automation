@@ -68,7 +68,7 @@ def to_csv(sheet: Sheet) -> Iterator[str]:
     yield "﻿"
 
     for key, value in sheet.meta:
-        yield writer.writerow([key, value])
+        yield writer.writerow([_cell(key), _cell(value)])
     yield writer.writerow([])
     yield writer.writerow(sheet.columns)
     for row in sheet.rows:
@@ -100,7 +100,7 @@ def to_xlsx(sheet: Sheet) -> bytes:
     page.title = sheet.title[:31] or "Отчёт"  # Excel не берёт длиннее
 
     for key, value in sheet.meta:
-        page.append([key, value])
+        page.append([_cell(key), _cell(value)])
     page.append([])
 
     header_at = page.max_row + 1
@@ -165,12 +165,33 @@ def formula_meta(ratios) -> list[tuple[str, str]]:
     ]
 
 
+#: Символы, с которых Excel и LibreOffice начинают читать клетку как
+#: формулу. Имя сотрудника «=cmd|...» — не выдумка, а известный способ
+#: превратить выгрузку кадровых данных в исполняемую на чужой машине
+#: строку. `openpyxl` подхватывает это сам: строка с «=» становится
+#: формулой без всякого участия с нашей стороны.
+FORMULA_STARTERS = ("=", "+", "-", "@", "\t", "\r")
+
+
+def safe_text(value: str) -> str:
+    """Текст, который таблица покажет как текст.
+
+    Опасное начало гасится апострофом — тем же приёмом, которым это
+    делает сама Excel. Значение остаётся читаемым, но перестаёт быть
+    выражением.
+    """
+    return f"'{value}" if value.startswith(FORMULA_STARTERS) else value
+
+
 def _cell(value):
     """Как значение выглядит в файле.
 
     `None` становится пустой клеткой, а не строкой «None»: пустая клетка
     читается как «нет данных», а «None» — как чей-то недосмотр, и оба
     раза это разные выводы.
+
+    Числа и даты проходят как есть: формулой становится только текст,
+    а отрицательное число — не текст.
     """
     if value is None:
         return ""
@@ -178,6 +199,8 @@ def _cell(value):
         return "да" if value else "нет"
     if isinstance(value, (datetime, date)):
         return value.isoformat()
+    if isinstance(value, str):
+        return safe_text(value)
     return value
 
 
@@ -188,10 +211,12 @@ def _now() -> datetime:
 
 
 __all__ = [
+    "FORMULA_STARTERS",
     "Sheet",
     "XLSX_MAX_ROWS",
     "base_meta",
     "formula_meta",
+    "safe_text",
     "to_csv",
     "to_xlsx",
 ]

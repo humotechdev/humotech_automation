@@ -28,7 +28,7 @@ import uuid
 from datetime import timedelta
 
 from django.conf import settings
-from django.db.models import Q
+from django.db.models import Count, Q
 from django.utils import timezone
 
 from humotech.core.enums import EXPORT_JOB_STATUSES
@@ -71,16 +71,54 @@ class ExportJobService(BaseService):
         Умолчание «только свои» не косметика: в списке видны фильтры
         выгрузки, а по ним читается, кто чем интересовался.
         """
+        return paginate(
+            self._visible(actor, status=status, kind=kind, mine_only=mine_only),
+            limit=limit,
+            cursor=cursor,
+        )
+
+    def counts(self, actor: Actor, *, kind: str | None = None,
+               mine_only: bool = True) -> dict[str, int]:
+        """Сколько заданий в каждом состоянии — по ВСЕМУ доступному набору.
+
+        Считает база, а не страница: длина загруженного списка — это
+        длина загруженного списка, и выдавать её за итог значит показать
+        «3 готовых» там, где их тридцать.
+
+        Фильтр вкладки сюда не передаётся намеренно. Вкладка «Готовы» не
+        должна менять число рядом с вкладкой «С ошибкой» — иначе счётчики
+        показывают не набор, а сами себя.
+        """
+        rows = self._visible(actor, status=None, kind=kind, mine_only=mine_only)
+        totals = {name: 0 for name in EXPORT_JOB_STATUSES}
+        for row in rows.values("status").annotate(number=Count("id")):
+            totals[row["status"]] = row["number"]
+        totals["total"] = sum(totals.values())
+        return totals
+
+    def _visible(self, actor: Actor, *, status, kind, mine_only: bool):
+        """Задания, доступные этому человеку под этими фильтрами."""
         self.access.require(actor, "reports.export")
-        queryset = ExportJobQuerySet(actor)
-        rows = queryset.base()
+        rows = ExportJobQuerySet(actor).base()
+        # Чужие заказы видит только тот, кому положено видеть журнал.
+        # Без права список молча остаётся своим: отказывать в ответ на
+        # флаг, которого человек не выбирал, — плохая замена умолчанию.
         if mine_only or not self.access.has(actor, "audit.read"):
             rows = rows.filter(requested_by_user_id=actor.user_id)
-        if status is not None:
-            rows = rows.filter(status=_known(status, "status", EXPORT_JOB_STATUSES))
+        if status:
+            # Несколько состояний через запятую: вкладка «В работе» —
+            # это QUEUED и RUNNING, и склеивать их на клиенте значило бы
+            # смешивать две страницы в одну.
+            wanted = [
+                _known(part, "status", EXPORT_JOB_STATUSES)
+                for part in status.split(",")
+                if part
+            ]
+            if wanted:
+                rows = rows.filter(status__in=wanted)
         if kind is not None:
             rows = rows.filter(kind=_known(kind, "kind", EXPORT_KINDS))
-        return paginate(rows, limit=limit, cursor=cursor)
+        return rows
 
     def get(self, actor: Actor, job_id: uuid.UUID):
         self.access.require(actor, "reports.export")

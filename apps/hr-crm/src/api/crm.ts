@@ -631,3 +631,98 @@ export const compare = (
   },
   signal?: AbortSignal,
 ) => request<Comparison>(`/analytics/compare${query(params)}`, signal ? { signal } : {});
+
+// --- выгрузки --------------------------------------------------------------
+
+/**
+ * Состояние задания очереди — ровно то, что отдаёт `/export-jobs/`.
+ *
+ * `total_rows` объявлено полем ответа, но исполнитель его нигде не
+ * пишет, а `progress_rows` считается только у CSV. Процента готовности
+ * из этого не получится, и выдумывать его нельзя: «43%» рядом с
+ * неизвестной величиной — это не оценка, а неправда.
+ */
+export type ExportJob = {
+  id: string;
+  kind: string;
+  fmt: 'csv' | 'xlsx';
+  status: 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED';
+  filters: Record<string, string> | null;
+  requested_by_user_id: string;
+  requested_by: string | null;
+  attempts: number;
+  progress_rows: number;
+  total_rows: number | null;
+  file_name: string | null;
+  size_bytes: number | null;
+  expires_at: string | null;
+  error_message: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ExportCounts = {
+  total: number;
+  QUEUED: number;
+  RUNNING: number;
+  SUCCEEDED: number;
+  FAILED: number;
+  CANCELLED: number;
+};
+
+export type ExportQuery = {
+  status?: string;
+  kind?: string;
+  mine_only?: string;
+  limit?: string;
+  cursor?: string;
+};
+
+export const exportJobs = (params: ExportQuery, signal?: AbortSignal) =>
+  request<Cursored<ExportJob>>(`/export-jobs/${query(params)}`, signal ? { signal } : {});
+
+export const exportCounts = (params: ExportQuery, signal?: AbortSignal) =>
+  request<ExportCounts>(
+    `/export-jobs/counts/${query({ kind: params.kind, mine_only: params.mine_only })}`,
+    signal ? { signal } : {},
+  );
+
+export const exportJob = (id: string, signal?: AbortSignal) =>
+  request<ExportJob>(`/export-jobs/${id}/`, signal ? { signal } : {});
+
+export type ExportOrder = {
+  kind: string;
+  fmt: 'csv' | 'xlsx';
+  date?: string;
+  date_from?: string;
+  date_to?: string;
+  office_id?: string;
+  region_id?: string;
+};
+
+export const orderExport = (body: ExportOrder) =>
+  request<ExportJob>('/export-jobs/', { method: 'POST', body });
+
+export const cancelExport = (id: string) =>
+  request<ExportJob>(`/export-jobs/${id}/cancel/`, { method: 'POST', body: {} });
+
+export const retryExport = (id: string) =>
+  request<ExportJob>(`/export-jobs/${id}/retry/`, { method: 'POST', body: {} });
+
+/**
+ * Адрес готового файла.
+ *
+ * Файл забирает сам браузер по обычной ссылке: сессионная cookie уходит
+ * вместе с запросом, а `Content-Disposition: attachment` от сервера сам
+ * открывает сохранение — с тем именем, которое сервер и придумал.
+ * Читать файл в память через `fetch` ради этого незачем: выгрузка за год
+ * весит десятки мегабайт, и держать их в heap вкладки нет причины.
+ */
+export const downloadUrl = (id: string): string =>
+  `${apiBase()}/export-jobs/${id}/download/`;
+
+function apiBase(): string {
+  return (import.meta.env['VITE_API_URL'] as string | undefined) ?? '/api/v1';
+}

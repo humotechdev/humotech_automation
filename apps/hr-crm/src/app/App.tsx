@@ -17,6 +17,7 @@ import { AttendancePage } from '../pages/AttendancePage';
 import { OfficesPage } from '../pages/OfficesPage';
 import { QuestionsPage } from '../pages/QuestionsPage';
 import { AnalyticsPage } from '../pages/AnalyticsPage';
+import { ReportsPage } from '../pages/ReportsPage';
 import { LoginPage } from '../pages/LoginPage';
 import { useSession } from '../features/auth/session';
 
@@ -31,13 +32,17 @@ export function App() {
       <Route path="/offices" element={<Protected page="offices" />} />
       <Route path="/questions" element={<Protected page="questions" />} />
       <Route path="/analytics" element={<Protected page="analytics" />} />
+      <Route path="/reports" element={<Protected page="reports" />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }
 
 /** Кабинет: без сессии сюда нельзя. */
-function Protected({ page }: { page?: 'employees' | 'requests' | 'attendance' | 'offices' | 'questions' | 'analytics' }) {
+function Protected({ page }: {
+  page?: 'employees' | 'requests' | 'attendance' | 'offices' | 'questions'
+       | 'analytics' | 'reports';
+}) {
   const session = useSession();
   if (session.status === 'checking') return <Checking />;
   if (session.status === 'anonymous') return <Navigate to="/login" replace />;
@@ -47,6 +52,7 @@ function Protected({ page }: { page?: 'employees' | 'requests' | 'attendance' | 
   if (page === 'offices') return <OfficesPage />;
   if (page === 'questions') return <QuestionsPage />;
   if (page === 'analytics') return <AnalyticsPage />;
+  if (page === 'reports') return <ReportsPage />;
   return <DashboardPage />;
 }
 
