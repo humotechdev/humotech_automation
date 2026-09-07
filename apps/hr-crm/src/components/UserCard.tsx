@@ -491,7 +491,8 @@ function ValidityForm({ grant, zone, onClose, onDone }: {
     setError(null);
     try {
       await api.setGrantValidity(grant.id, {
-        valid_to: until ? new Date(`${until}T23:59:59`).toISOString() : null,
+        // Пусто — «бессрочно»; иначе дата, а границу суток ставит сервер.
+        ...(until ? { valid_to_date: until } : { valid_to: null }),
         expected_valid_to: grant.valid_to,
         check_expected: true,
       });
@@ -777,7 +778,10 @@ function AssignForm({
         role_id: roleId,
         ...(office ? { office_id: office } : {}),
         ...(!office && region ? { region_id: region } : {}),
-        ...(until ? { valid_to: new Date(`${until}T23:59:59`).toISOString() } : {}),
+        // Дата, а не момент: конец суток ставит сервер в поясе
+        // организации. Собирать момент здесь значило бы считать его по
+        // поясу браузера — и показанная дата разошлась бы с сохранённой.
+        ...(until ? { valid_to_date: until } : {}),
       });
       onDone();
     } catch (failure) {

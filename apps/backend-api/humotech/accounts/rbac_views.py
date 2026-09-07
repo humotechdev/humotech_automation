@@ -205,11 +205,19 @@ class GrantCreateSerializer(serializers.Serializer):
     )
     valid_from = serializers.DateTimeField(required=False, allow_null=True)
     valid_to = serializers.DateTimeField(required=False, allow_null=True)
+    valid_to_date = serializers.DateField(
+        required=False, allow_null=True,
+        help_text="Календарная дата «действует по», включительно. Границу суток ставит сервер в поясе организации: у даты, посчитанной браузером, конец дня зависел бы от того, кто нажимал кнопку",
+    )
 
 
 class GrantValiditySerializer(serializers.Serializer):
     valid_to = serializers.DateTimeField(
-        allow_null=True, help_text="null — бессрочно"
+        required=False, allow_null=True, help_text="null — бессрочно"
+    )
+    valid_to_date = serializers.DateField(
+        required=False, allow_null=True,
+        help_text="Календарная дата «действует по», включительно. Границу суток ставит сервер в поясе организации: у даты, посчитанной браузером, конец дня зависел бы от того, кто нажимал кнопку",
     )
     expected_valid_to = serializers.DateTimeField(
         required=False, allow_null=True,
@@ -578,10 +586,16 @@ class GrantDetailView(APIView):
     def patch(self, request, grant_id: uuid.UUID):
         actor = Actor.from_user(request.user)
         payload = validated(GrantValiditySerializer, request.data)
+        if "valid_to" not in payload and "valid_to_date" not in payload:
+            raise ValidationFailed(
+                "Нужен либо valid_to, либо valid_to_date",
+                details={"fields": ["valid_to", "valid_to_date"]},
+            )
         grant = RoleAdminService().set_validity(
             actor,
             grant_id,
-            valid_to=payload["valid_to"],
+            valid_to=payload.get("valid_to"),
+            valid_to_date=payload.get("valid_to_date"),
             expected_valid_to=payload.get("expected_valid_to"),
             check_expected=payload.get("check_expected", False),
         )

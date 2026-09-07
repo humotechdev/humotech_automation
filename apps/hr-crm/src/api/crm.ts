@@ -1183,13 +1183,25 @@ export const assignRole = (body: {
   region_id?: string | null;
   office_id?: string | null;
   valid_from?: string | null;
+  /**
+   * Календарная дата «действует по», включительно, `YYYY-MM-DD`.
+   *
+   * Конец суток ставит сервер в поясе организации. Считать его здесь
+   * нельзя: `new Date('2026-12-31T23:59:59')` разбирается в поясе
+   * БРАУЗЕРА, и один и тот же выбранный день у двух администраторов из
+   * разных городов дал бы разные моменты.
+   */
+  valid_to_date?: string;
   valid_to?: string | null;
 }) => request<Grant>('/grants', { method: 'POST', body });
 
 export const setGrantValidity = (
   id: string,
   body: {
-    valid_to: string | null;
+    /** Точный момент. Взаимоисключающ с `valid_to_date`. */
+    valid_to?: string | null;
+    /** Календарная дата, `YYYY-MM-DD`: границу суток ставит сервер. */
+    valid_to_date?: string;
     expected_valid_to?: string | null;
     check_expected?: boolean;
   },

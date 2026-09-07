@@ -18,7 +18,7 @@
  */
 
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 
 import {
   accessNote,
@@ -585,6 +585,60 @@ describe('создание учётной записи', () => {
     await waitFor(() => expect(assigned).toBe(2));
     expect(created).toBe(1);
   });
+
+  test('закрытие с введённым, но не сохранённым, предупреждает', async () => {
+    network();
+    const asked: string[] = [];
+    const confirm = vi.spyOn(window, 'confirm')
+      .mockImplementation((text?: string) => { asked.push(text ?? ''); return false; });
+    renderApp('/admin');
+    await opened();
+
+    fireEvent.click(screen.getByRole('button', { name: /Добавить пользователя/ }));
+    const form = screen.getByRole('dialog', { name: /Новая учётная запись/ });
+    fireEvent.change(await screen.findByLabelText('Логин'), {
+      target: { value: 'novyy@humotech.tj' } });
+    fireEvent.click(within(form).getByRole('button', { name: /Отмена/ }));
+
+    expect(asked.length).toBe(1);
+    // Отказались закрывать — форма на месте, введённое цело.
+    expect((screen.getByLabelText('Логин') as HTMLInputElement).value)
+      .toBe('novyy@humotech.tj');
+    confirm.mockRestore();
+  });
+
+  test('срок назначения уходит датой: границу суток ставит сервер',
+    async () => {
+      const calls = network((url, method) =>
+        clean(url).endsWith('/grants') && method === 'POST'
+          ? json(201, { id: 'g-new' })
+          : null,
+      );
+      renderApp('/admin?id=u-1');
+      await screen.findByRole('tab', { name: /Роли и области/ });
+
+      fireEvent.click(screen.getByRole('tab', { name: /Роли и области/ }));
+      fireEvent.click(await screen.findByRole('button', { name: /Назначить роль/ }));
+      const form = await screen.findByRole('dialog', { name: /Назначить роль/ });
+      fireEvent.change(within(form).getByLabelText('Роль'), {
+        target: { value: 'r-1' } });
+      fireEvent.change(within(form).getByLabelText('Действует по'), {
+        target: { value: '2026-12-31' } });
+      fireEvent.click(
+        within(form).getByRole('button', { name: /Назначить|Выдаём/ }),
+      );
+
+      await waitFor(() => {
+        const sent = calls.find(
+          (c) => c.method === 'POST' && clean(c.url).endsWith('/grants'),
+        );
+        expect(sent).toBeTruthy();
+        const body = sent?.body as Record<string, unknown>;
+        // Ровно выбранный день, без часов и без пояса браузера.
+        expect(body['valid_to_date']).toBe('2026-12-31');
+        expect(body['valid_to']).toBeUndefined();
+      });
+    });
 
   test('создание аккаунта не заводит сотрудника и не трогает Telegram',
     async () => {

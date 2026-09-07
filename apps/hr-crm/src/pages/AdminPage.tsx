@@ -15,7 +15,7 @@
  * можно передать.
  */
 
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
 import * as api from '../api/crm';
@@ -624,6 +624,31 @@ function CreateUser({
     role: boolean;
   }>({ id: null, password: false, active: false, role: false });
 
+  // Введённое, но не отправленное. Незавершённый шаг тоже считается:
+  // закрыть форму, когда запись уже создана, а роль ещё нет, значит
+  // оставить человека без роли и не сказать об этом.
+  const dirty =
+    (!done.id && (email !== '' || password !== '' || roleId !== ''))
+    || (done.id !== null && ((password !== '' && !done.password)
+        || (roleId !== '' && mayAssign && !done.role)));
+
+  // Предупреждение при закрытии вкладки с несохранённым.
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty]);
+
+  const close = useCallback(() => {
+    if (dirty && !window.confirm(
+      done.id
+        ? 'Запись создана, но не всё готово. Закрыть форму?'
+        : 'Введённое не сохранено. Закрыть форму?',
+    )) return;
+    onClose();
+  }, [dirty, done.id, onClose]);
+
   const submit = useCallback(async () => {
     if (busy.current) return;
     busy.current = true;
@@ -672,7 +697,7 @@ function CreateUser({
   }, [done, email, mayAssign, office, onDone, password, region, roleId]);
 
   return (
-    <Overlay title="Новая учётная запись" onClose={onClose}>
+    <Overlay title="Новая учётная запись" onClose={close}>
       <p className="muted">
         Учётная запись CRM — это доступ к системе, а не сотрудник. Заведение
         записи не создаёт человека в штате и не привязывает Telegram.
@@ -753,7 +778,7 @@ function CreateUser({
       {error && <p className="form-grid__error" role="alert">{error}</p>}
 
       <div className="side-panel__actions">
-        <button type="button" className="btn" onClick={onClose}>Отмена</button>
+        <button type="button" className="btn" onClick={close}>Отмена</button>
         <button type="button" className="btn btn--dark"
                 disabled={sending || (!email && !done.id)}
                 onClick={() => void submit()}>

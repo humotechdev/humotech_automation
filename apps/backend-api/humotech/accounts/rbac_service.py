@@ -40,7 +40,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -53,6 +53,7 @@ from humotech.core.errors import Conflict, NotFound, PermissionDenied, Validatio
 from humotech.core.pagination import Page, paginate
 from humotech.core.rbac import Actor, snapshot
 from humotech.core.service import BaseService
+from humotech.core.timeframes import closed_range_bounds, organization_zone
 from humotech.core.validation import clean_code, clean_text, validate_email
 from humotech.employees.selectors import require_visible_employee
 from humotech.rbac.models import Permission, Role, RolePermission
@@ -412,6 +413,21 @@ class UserAdminService(BaseService):
         return user
 
 
+def _end_of_day(organization_id, day: date) -> datetime:
+    """Конец указанных суток в поясе организации.
+
+    Граница суток считается ЗДЕСЬ, а не в браузере. Иначе «действует по
+    31 декабря» превращается в момент по поясу того, кто нажимал кнопку:
+    у администратора в Москве и у администратора в Душанбе выйдут разные
+    моменты, а показано будет одно и то же число.
+
+    Правило то же, каким уже режутся периоды в отчётах и уведомлениях
+    (`closed_range_bounds`): последний день входит в срок целиком.
+    """
+    _, end = closed_range_bounds(day, day, organization_zone(organization_id))
+    return end
+
+
 def _refuse_stale(current, expected, *, enabled: bool = True) -> None:
     """Отказать, если правят не ту редакцию, которую видели.
 
@@ -678,8 +694,17 @@ class RoleAdminService(BaseService):
         office_id: uuid.UUID | None = None,
         valid_from: datetime | None = None,
         valid_to: datetime | None = None,
+        valid_to_date: date | None = None,
     ) -> UserRoleScope:
         self.access.require(actor, "roles.manage")
+        if valid_to is not None and valid_to_date is not None:
+            raise ValidationFailed(
+                "Срок задают либо моментом, либо датой, но не обоими",
+                details={"valid_to": valid_to.isoformat(),
+                         "valid_to_date": valid_to_date.isoformat()},
+            )
+        if valid_to_date is not None:
+            valid_to = _end_of_day(actor.organization_id, valid_to_date)
         user = self._require_user(actor, user_id)
         role = self._require_role(actor, role_id)
 
@@ -758,7 +783,8 @@ class RoleAdminService(BaseService):
         actor: Actor,
         grant_id: uuid.UUID,
         *,
-        valid_to: datetime | None,
+        valid_to: datetime | None = None,
+        valid_to_date: date | None = None,
         expected_valid_to: datetime | None = None,
         check_expected: bool = False,
     ) -> UserRoleScope:
@@ -771,6 +797,14 @@ class RoleAdminService(BaseService):
         `None` — это законный «бессрочно», а не «не передали».
         """
         self.access.require(actor, "roles.manage")
+        if valid_to is not None and valid_to_date is not None:
+            raise ValidationFailed(
+                "Срок задают либо моментом, либо датой, но не обоими",
+                details={"valid_to": valid_to.isoformat(),
+                         "valid_to_date": valid_to_date.isoformat()},
+            )
+        if valid_to_date is not None:
+            valid_to = _end_of_day(actor.organization_id, valid_to_date)
         grant = self._require_grant(actor, grant_id)
         _refuse_stale(
             grant.valid_to, expected_valid_to, enabled=check_expected

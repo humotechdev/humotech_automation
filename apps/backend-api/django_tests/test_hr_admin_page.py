@@ -27,7 +27,8 @@
 from __future__ import annotations
 
 import uuid as uuid_module
-from datetime import timedelta
+from datetime import date, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 from django.utils import timezone
@@ -413,6 +414,110 @@ class TestConcurrency:
             format="json",
         )
         assert response.status_code == 200
+
+
+# --- срок назначения по календарной дате -------------------------------------
+
+
+class TestValidityByDate:
+    """«Действует по 31 декабря» — это конец 31 декабря В ПОЯСЕ ОРГАНИЗАЦИИ.
+
+    Считать границу суток в браузере нельзя: у администратора в одном
+    городе и у администратора в другом один и тот же выбранный день дал бы
+    разные моменты, а на экране стояло бы одно и то же число.
+    """
+
+    def test_date_becomes_the_end_of_that_day_in_the_office_zone(
+        self, admin, organization, make_user, office
+    ):
+        role = make_role(organization, "READER", ("employees.read",))
+        person = make_user(organization, permissions=())
+
+        created = admin.post(
+            f"{API}/grants",
+            {"user_id": str(person.id), "role_id": str(role.id),
+             "valid_to_date": "2026-12-31"},
+            format="json",
+        )
+        assert created.status_code == 201, created.json()
+
+        grant = UserRoleScope.objects.get(id=created.json()["id"])
+        zone = ZoneInfo(office.timezone)
+        assert grant.valid_to.astimezone(zone).date() == date(2026, 12, 31)
+        # Последний день входит в срок целиком.
+        assert grant.valid_to.astimezone(zone).hour == 23
+
+    def test_moment_and_date_together_are_refused(
+        self, admin, organization, make_user
+    ):
+        """Два способа задать одно и то же — повод спросить, а не угадывать."""
+        role = make_role(organization, "READER", ("employees.read",))
+        person = make_user(organization, permissions=())
+
+        response = admin.post(
+            f"{API}/grants",
+            {"user_id": str(person.id), "role_id": str(role.id),
+             "valid_to": timezone.now().isoformat(),
+             "valid_to_date": "2026-12-31"},
+            format="json",
+        )
+        assert response.status_code == 400
+
+    def test_validity_patch_accepts_a_date(
+        self, admin, organization, make_user, office
+    ):
+        role = make_role(organization, "READER", ("employees.read",))
+        person = make_user(organization, permissions=())
+        grant = admin.post(
+            f"{API}/grants",
+            {"user_id": str(person.id), "role_id": str(role.id)},
+            format="json",
+        ).json()
+
+        moved = admin.patch(
+            f"{API}/grants/{grant['id']}",
+            {"valid_to_date": "2026-11-30"},
+            format="json",
+        )
+        assert moved.status_code == 200, moved.json()
+        row = UserRoleScope.objects.get(id=grant["id"])
+        assert row.valid_to.astimezone(ZoneInfo(office.timezone)).date() == date(
+            2026, 11, 30
+        )
+
+    def test_validity_patch_without_any_field_is_refused(
+        self, admin, organization, make_user
+    ):
+        """Пустое тело — не «сделать бессрочным»: это ничего не сказать."""
+        role = make_role(organization, "READER", ("employees.read",))
+        person = make_user(organization, permissions=())
+        grant = admin.post(
+            f"{API}/grants",
+            {"user_id": str(person.id), "role_id": str(role.id)},
+            format="json",
+        ).json()
+
+        assert admin.patch(
+            f"{API}/grants/{grant['id']}", {}, format="json",
+        ).status_code == 400
+
+    def test_explicit_null_still_means_forever(
+        self, admin, organization, make_user
+    ):
+        role = make_role(organization, "READER", ("employees.read",))
+        person = make_user(organization, permissions=())
+        grant = admin.post(
+            f"{API}/grants",
+            {"user_id": str(person.id), "role_id": str(role.id),
+             "valid_to_date": "2026-11-30"},
+            format="json",
+        ).json()
+
+        response = admin.patch(
+            f"{API}/grants/{grant['id']}", {"valid_to": None}, format="json",
+        )
+        assert response.status_code == 200, response.json()
+        assert UserRoleScope.objects.get(id=grant["id"]).valid_to is None
 
 
 # --- журнал ------------------------------------------------------------------
