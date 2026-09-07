@@ -19,7 +19,8 @@ import { Icon } from './nav-icons';
 import { initials } from './AppShell';
 import { messageFor } from '../api/errors';
 import { longDate, useBlock, type Block } from '../features/dashboard/data';
-import { clock, span } from '../pages/AttendancePage';
+import { span } from '../pages/AttendancePage';
+import { clockOnDay } from '../features/time/zone';
 
 const STATE_TITLE: Record<string, string> = {
   IN_OFFICE: 'В офисе',
@@ -113,7 +114,7 @@ export function DayCard({ row, day, timezone, canAdd, onClose, onChanged }: Prop
               <ul className="marks">
                 {data.events.map((event) => (
                   <li key={event.id}>
-                    <span className="marks__time">{clock(event.occurred_at, timezone)}</span>
+                    <span className="marks__time">{clockOnDay(event.occurred_at, timezone, day)}</span>
                     <span className="marks__what">
                       <span className="marks__kind">
                         {event.event_type === 'ENTRY' ? 'Вход' : 'Выход'}

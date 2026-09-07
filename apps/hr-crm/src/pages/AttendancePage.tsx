@@ -25,6 +25,7 @@ import {
   formatTime, longDate, today, useBlock, type Block,
 } from '../features/dashboard/data';
 import { useSession } from '../features/auth/session';
+import { clock, clockOnDay } from '../features/time/zone';
 
 /** Состояния состава смены. Взаимоисключающими они не являются. */
 const STATE_TITLE: Record<string, string> = {
@@ -290,8 +291,8 @@ export function AttendancePage() {
                                 </td>
                                 <td>{row.office_name ?? '—'}</td>
                                 <td>{row.scheduled_start ? row.scheduled_start.slice(0, 5) : 'Не задан'}</td>
-                                <td className="num">{clock(row.first_entry_at, data.timezone)}</td>
-                                <td className="num">{clock(row.last_exit_at, data.timezone)}</td>
+                                <td className="num">{clockOnDay(row.first_entry_at, data.timezone, data.date)}</td>
+                                <td className="num">{clockOnDay(row.last_exit_at, data.timezone, data.date)}</td>
                                 <td className="num">{row.seconds ? span(row.seconds) : '—'}</td>
                                 <td>
                                   <span className="state">
@@ -456,11 +457,12 @@ function Journal({ day, region, office }: { day: string; region: string; office:
 
 // --- мелочи ----------------------------------------------------------------
 
-export function clock(at: string | null, _timezone: string): string {
-  // Сервер уже отдал момент в нужной зоне; свою арифметику над часовыми
-  // поясами здесь заводить нельзя — она разошлась бы с серверной.
-  return at ? at.slice(11, 16) : '—';
-}
+// Формат времени общий для всей CRM и живёт в `features/time/zone`.
+// Здесь он переэкспортируется, потому что карточка дня берёт его
+// отсюда: два разных способа показать одно и то же время — это ровно
+// та ошибка, из-за которой на странице стоял UTC под подписью пояса.
+export { clock, clockOnDay };
+
 
 export function span(seconds: number): string {
   const hours = Math.floor(seconds / 3600);
