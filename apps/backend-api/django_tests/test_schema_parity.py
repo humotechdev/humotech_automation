@@ -65,8 +65,12 @@ def _django_url() -> str:
 #     в табеле, а удалённая строка не объясняет ничего. Вместе с колонкой
 #     переписаны оба уникальных ключа — снятая строка не должна занимать
 #     дату.
+#   * у уведомлений появилась история попыток отдельной таблицей: счётчик
+#     и текст последней ошибки не отвечают на вопрос, сообщение не уходит
+#     второй день или упало один раз ночью.
 KNOWN_DIVERGENCES = {
     "ЛИШНЯЯ ТАБЛИЦА: telegram_link_invitations",
+    "ЛИШНЯЯ ТАБЛИЦА: notification_attempts",
     "telegram_accounts: ОГРАНИЧЕНИЕ ОТСУТСТВУЕТ: "
     "check (((status) = any ((array['active', 'revoked', 'blocked'])[])))",
     "telegram_accounts: лишнее ограничение: "
@@ -152,9 +156,9 @@ def test_business_schema_has_expected_shape():
     """
     snapshot = dump(_django_url())
     # 44 таблицы перенесены с Alembic, + telegram_link_invitations,
-    # + qr_display_devices, + export_jobs.
-    assert len(snapshot["tables"]) == 47, (
-        f"бизнес-таблиц {len(snapshot['tables'])}, ожидалось 47"
+    # + qr_display_devices, + export_jobs, + notification_attempts.
+    assert len(snapshot["tables"]) == 48, (
+        f"бизнес-таблиц {len(snapshot['tables'])}, ожидалось 48"
     )
 
     counts = {"c": 0, "f": 0, "u": 0, "x": 0}
@@ -182,8 +186,13 @@ def test_business_schema_has_expected_shape():
     #   FK    135 + 2  — организация и автор выгрузки;
     #   UNIQUE 21 + 0  — уникальных ключей у очереди нет: одну и ту же
     #                    выгрузку можно заказать дважды, это не ошибка.
-    assert counts["c"] == 100, f"CHECK: {counts['c']}, ожидалось 100"
-    assert counts["f"] == 137, f"FOREIGN KEY: {counts['f']}, ожидалось 137"
+    # Прибавка истории попыток:
+    #   CHECK 100 + 3 — исход, положительный номер и «у успеха нет причины»;
+    #   FK    137 + 1 — ссылка на уведомление;
+    #   UNIQUE  21 + 0 — двух одинаковых попыток не бывает по построению:
+    #                    номер выдаётся при записи.
+    assert counts["c"] == 103, f"CHECK: {counts['c']}, ожидалось 103"
+    assert counts["f"] == 138, f"FOREIGN KEY: {counts['f']}, ожидалось 138"
     assert counts["u"] == 21, f"UNIQUE: {counts['u']}, ожидалось 21"
     assert counts["x"] == 2, f"EXCLUDE: {counts['x']}, ожидалось 2"
     assert {"btree_gist", "vector"} <= set(snapshot["extensions"])
@@ -209,7 +218,7 @@ def test_every_foreign_key_keeps_its_on_delete_action():
         )
         rows = cursor.fetchall()
 
-    assert len(rows) == 137, f"внешних ключей {len(rows)}, ожидалось 137"
+    assert len(rows) == 138, f"внешних ключей {len(rows)}, ожидалось 138"
 
     # 'a' = NO ACTION: значит, действие не задано
     without_action = [f"{t}.{n}" for t, n, kind, _ in rows if kind == "a"]
@@ -229,6 +238,8 @@ def test_every_foreign_key_keeps_its_on_delete_action():
     # случаях один и тот же по смыслу: учётную запись сотрудника HR можно
     # заблокировать, но запись о том, что он что-то создал, обязана остаться.
     # 113 + 2 — организация и автор у задания на выгрузку.
-    assert actions["r"] == 115, f"RESTRICT: {actions['r']}, ожидалось 115"
+    # 115 + 1 — попытка отправки ссылается на уведомление: удалить строку,
+    # за которой стоят состоявшиеся отправки, нельзя.
+    assert actions["r"] == 116, f"RESTRICT: {actions['r']}, ожидалось 116"
     assert actions["n"] == 16, f"SET NULL: {actions['n']}, ожидалось 16"
     assert actions["c"] == 6, f"CASCADE: {actions['c']}, ожидалось 6"

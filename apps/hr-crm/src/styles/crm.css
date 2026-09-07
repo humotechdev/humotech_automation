@@ -2866,3 +2866,194 @@ body,
   justify-content: center;
   height: 44px;
 }
+
+/* --- уведомления ---------------------------------------------------------- */
+
+/* Сводка. Одна панель с разделителями, как в макете: четыре числа
+   стоят рядом и читаются как один ряд, а не как четыре карточки. */
+.summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  margin: 0 0 14px;
+  padding: 0;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.tile {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px;
+  border-left: 1px solid var(--edge);
+}
+
+.tile:first-child {
+  border-left: 0;
+}
+
+.tile__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  color: var(--ink-1);
+  flex: none;
+}
+
+.tile__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tile__title {
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.tile__value {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Дата периода в шапке: та же высота, что у кнопки обновления. */
+.pick--date {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  height: 38px;
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink-2);
+}
+
+.pick--date input {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: var(--ink-1);
+  padding: 0;
+}
+
+.pick--date input:focus-visible {
+  outline: 2px solid var(--ink-1);
+  outline-offset: 2px;
+}
+
+/* Текст ушедшего сообщения. Показывается как есть, без разметки. */
+.message {
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  background: var(--canvas);
+  padding: 14px 16px;
+}
+
+.message__title {
+  margin: 0 0 6px;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.message__line {
+  margin: 0 0 6px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--ink-1);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.message__line:last-child {
+  margin-bottom: 0;
+}
+
+.message__link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 12px 0 0;
+  font-size: 13px;
+}
+
+.message__link a {
+  color: var(--ink-1);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* История попыток. Только состоявшиеся события, по одной строке. */
+.attempts {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.attempts li {
+  display: grid;
+  grid-template-columns: 20px 92px 1fr;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--edge);
+  font-size: 13px;
+}
+
+.attempts li:last-child {
+  border-bottom: 0;
+}
+
+.attempts__time {
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.attempts__what {
+  color: var(--ink-1);
+}
+
+.note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  font-size: 13px;
+  color: var(--ink-1);
+}
+
+.note--dim {
+  background: var(--canvas);
+  color: var(--ink-2);
+}
+
+.view__foot-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 12px 0 0;
+  font-size: 13px;
+}
+
+.view__foot-link a {
+  color: var(--ink-1);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}

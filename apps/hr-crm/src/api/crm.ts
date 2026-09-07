@@ -914,3 +914,109 @@ export const archiveFaq = (id: string) =>
 
 export const activateFaq = (id: string) =>
   request<FaqRow>(`/knowledge/faq/${id}/activate/`, { method: 'POST', body: {} });
+
+// --- уведомления ------------------------------------------------------------
+
+export type Notification = {
+  id: string;
+  employee_id: string;
+  employee: { id: string; full_name: string; employee_number: string | null };
+  /** Офис получателя НА МОМЕНТ уведомления, а не сегодняшний. */
+  office_id: string | null;
+  office_name: string | null;
+  region_name: string | null;
+  channel: 'TELEGRAM' | 'EMAIL' | 'PUSH' | 'IN_APP';
+  notification_type: string;
+  title: string | null;
+  body: string;
+  status: 'PENDING' | 'RUNNING' | 'SENT' | 'FAILED' | 'CANCELLED' | 'READ';
+  attempts: number;
+  error_message: string | null;
+  scheduled_at: string | null;
+  next_attempt_at: string | null;
+  sent_at: string | null;
+  read_at: string | null;
+  related_entity_type: string | null;
+  related_entity_id: string | null;
+  created_at: string;
+  updated_at: string;
+  /** Что разрешает ТЕКУЩЕЕ состояние. Считает сервер, не интерфейс. */
+  can_retry: boolean;
+  can_cancel: boolean;
+};
+
+export type NotificationCounts = {
+  total: number;
+  PENDING: number;
+  RUNNING: number;
+  SENT: number;
+  FAILED: number;
+  CANCELLED: number;
+  READ: number;
+  sent: number;
+  queued: number;
+  failed: number;
+  cancelled: number;
+  /** Пояс организации: в нём показывается время и режется период. */
+  timezone: string;
+};
+
+export type NotificationQuery = {
+  status?: string;
+  search?: string;
+  office_id?: string;
+  region_id?: string;
+  employee_id?: string;
+  channel?: string;
+  date_from?: string;
+  date_to?: string;
+  limit?: string;
+  cursor?: string;
+};
+
+export const notifications = (params: NotificationQuery, signal?: AbortSignal) =>
+  request<Cursored<Notification>>(
+    `/notifications/${query(params)}`,
+    signal ? { signal } : {},
+  );
+
+export const notificationCounts = (
+  params: NotificationQuery,
+  signal?: AbortSignal,
+) =>
+  request<NotificationCounts>(
+    `/notifications/counts/${query({ ...params, status: undefined })}`,
+    signal ? { signal } : {},
+  );
+
+export const notification = (id: string, signal?: AbortSignal) =>
+  request<Notification>(`/notifications/${id}/`, signal ? { signal } : {});
+
+/** Одна СОСТОЯВШАЯСЯ попытка отправки. */
+export type Attempt = {
+  number: number;
+  attempted_at: string;
+  outcome: 'SENT' | 'FAILED' | 'CANCELLED';
+  reason: string | null;
+};
+
+export type Attempts = {
+  items: Attempt[];
+  /** Велась ли история для этой строки. false — уведомление старше истории. */
+  kept: boolean;
+};
+
+export const notificationAttempts = (id: string, signal?: AbortSignal) =>
+  request<Attempts>(`/notifications/${id}/attempts/`, signal ? { signal } : {});
+
+export const retryNotification = (id: string) =>
+  request<Notification>(`/notifications/${id}/retry/`, {
+    method: 'POST',
+    body: {},
+  });
+
+export const cancelNotification = (id: string) =>
+  request<Notification>(`/notifications/${id}/cancel/`, {
+    method: 'POST',
+    body: {},
+  });

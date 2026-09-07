@@ -45,7 +45,7 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from humotech.notifications.models import Notification
+from humotech.notifications.models import Notification, NotificationAttempt
 from humotech.telegram.identity import AccessDenied, resolve_account
 from humotech.telegram.models import TelegramAccount
 
@@ -60,6 +60,27 @@ logger = logging.getLogger("humotech.notifications")
 # из строки привязки ТОГО ЖЕ сотрудника, а не из уведомления и не из
 # запроса. Дойти до постороннего сообщению неоткуда.
 BINDING_NOTIFICATION_PREFIX = "telegram.link."
+
+
+def _log_attempt(
+    row: Notification, *, outcome: str, reason: str | None, moment: datetime
+) -> None:
+    """Записать состоявшуюся попытку в историю.
+
+    Номер сквозной по уведомлению, а не равен `attempts`: ручной повтор
+    обнуляет счётчик строки, и без своей нумерации история после повтора
+    начиналась бы с единицы поверх старой.
+    """
+    NotificationAttempt.objects.create(
+        notification_id=row.id,
+        number=(
+            NotificationAttempt.objects.filter(notification_id=row.id).count() + 1
+        ),
+        attempted_at=moment,
+        outcome=outcome,
+        # У успеха причины нет: «отправлено, потому что» не бывает.
+        reason=None if outcome == "SENT" else (reason or None),
+    )
 
 
 @dataclass(frozen=True)
@@ -166,6 +187,15 @@ def claim(*, limit: int = 20, now: datetime | None = None) -> list[Outgoing]:
                 row.save(
                     update_fields=["status", "error_message", "updated_at"]
                 )
+                # Это состоявшийся исход, а не отсутствие попытки:
+                # без записи карточка показывала бы пустую историю
+                # и статус «снято» без единого объяснения когда.
+                _log_attempt(
+                    row,
+                    outcome="CANCELLED",
+                    reason=row.error_message,
+                    moment=moment,
+                )
                 continue
 
             row.status = "RUNNING"
@@ -185,9 +215,20 @@ def claim(*, limit: int = 20, now: datetime | None = None) -> list[Outgoing]:
 
 def mark_sent(notification_id, *, now: datetime | None = None) -> None:
     moment = now or timezone.now()
-    Notification.objects.filter(id=notification_id, status="RUNNING").update(
-        status="SENT", sent_at=moment, locked_at=None, error_message=None
-    )
+    # Условие в самом UPDATE: из двух одновременных отчётов строку
+    # переводит ровно один, и попытку записывает тоже он.
+    with transaction.atomic():
+        changed = Notification.objects.filter(
+            id=notification_id, status="RUNNING"
+        ).update(
+            status="SENT", sent_at=moment, locked_at=None, error_message=None
+        )
+        if not changed:
+            # Строку уже кто-то перевёл: попытки не было, записывать нечего.
+            return
+        row = Notification.objects.filter(id=notification_id).first()
+        if row is not None:
+            _log_attempt(row, outcome="SENT", reason=None, moment=moment)
 
 
 def mark_failed(
@@ -200,7 +241,20 @@ def mark_failed(
     получить ограничение уже за поведение, а не за первую ошибку.
     """
     moment = now or timezone.now()
-    row = Notification.objects.filter(id=notification_id).first()
+    # Под блокировкой строки: отчёт может прийти дважды — повторным
+    # запросом бота или вторым его экземпляром. Без блокировки оба
+    # читают RUNNING, оба пишут попытку, и в истории появляется
+    # событие, которого не было.
+    with transaction.atomic():
+        _fail(notification_id, error=error, moment=moment)
+
+
+def _fail(notification_id, *, error: str, moment: datetime) -> None:
+    row = (
+        Notification.objects.select_for_update()
+        .filter(id=notification_id)
+        .first()
+    )
     if row is None or row.status != "RUNNING":
         return
 
@@ -228,6 +282,7 @@ def mark_failed(
             "next_attempt_at", "updated_at",
         ]
     )
+    _log_attempt(row, outcome="FAILED", reason=row.error_message, moment=moment)
 
 
 def reclaim_stale(*, now: datetime | None = None) -> int:
@@ -253,6 +308,7 @@ def _backoff(attempts: int) -> timedelta:
 
 
 __all__ = [
+    "NotificationAttempt",
     "Outgoing",
     "claim",
     "enqueue",

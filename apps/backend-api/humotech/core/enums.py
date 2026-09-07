@@ -129,6 +129,11 @@ NOTIFICATION_CHANNELS = ("TELEGRAM", "EMAIL", "PUSH", "IN_APP")
 NOTIFICATION_STATUSES = (
     "PENDING", "RUNNING", "SENT", "FAILED", "CANCELLED", "READ",
 )
+# Чем кончилась ОДНА попытка отправки. Не то же самое, что статус строки:
+# статус — это где уведомление сейчас, попытка — что случилось однажды.
+# Строка с двумя неудачами и последующим успехом имеет статус SENT и три
+# записи в истории.
+NOTIFICATION_ATTEMPT_OUTCOMES = ("SENT", "FAILED", "CANCELLED")
 
 # --- роли, создаваемые сидом ---
 SYSTEM_ROLE_CODES = (

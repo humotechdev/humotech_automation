@@ -16,6 +16,7 @@ from django.db import models
 
 from humotech.core.constraints import raw_check
 from humotech.core.enums import (
+    NOTIFICATION_ATTEMPT_OUTCOMES,
     NOTIFICATION_CHANNELS,
     NOTIFICATION_STATUSES,
     choices,
@@ -103,3 +104,72 @@ class Notification(UUIDPrimaryKeyModel, OrganizationScopedModel, TimestampedMode
 
     def __str__(self) -> str:
         return f"{self.notification_type} -> {self.employee_id}"
+
+
+class NotificationAttempt(UUIDPrimaryKeyModel, TimestampedModel):
+    """Одна попытка отправки: когда, чем кончилась и почему.
+
+    До этой таблицы у строки были только счётчик `attempts` и текст
+    последней ошибки. По ним нельзя ответить на вопрос, который задают
+    в разборе чаще всего: сообщение не уходит второй день или упало
+    один раз ночью? Счётчик «3» одинаков в обоих случаях.
+
+    Пишется РОВНО оттуда, где попытка заканчивается: `mark_sent`,
+    `mark_failed` и ветка `claim`, снимающая строку без адресата. Ручной
+    повтор сюда не пишется — он не попытка отправки, а решение человека,
+    и живёт в журнале действий.
+
+    `reason` — короткий код, а не ответ Telegram: ответ может содержать
+    эхо запроса, то есть текст уведомления целиком. Расшифровка кодов
+    в понятную фразу — дело интерфейса.
+
+    У строк, созданных до появления таблицы, истории нет и не появится.
+    Придумывать им времена попыток нельзя: интерфейс обязан сказать,
+    что история велась не всегда.
+    """
+
+    notification = models.ForeignKey(
+        Notification,
+        # RESTRICT, как и везде в этой схеме: попытка — часть истории
+        # уведомления, и удаление строки, за которой стоит отправка,
+        # обязано отклоняться самой базой, а не аккуратностью кода.
+        on_delete=models.PROTECT,
+        db_column="notification_id",
+        db_index=False,
+        related_name="attempt_log",
+    )
+    # Номер попытки в пределах уведомления. Ручной повтор обнуляет
+    # `attempts` у строки, поэтому нумерация здесь своя, сквозная:
+    # иначе после повтора история начиналась бы с единицы поверх старой.
+    number = models.IntegerField()
+    attempted_at = models.DateTimeField()
+    outcome = models.CharField(
+        max_length=20, choices=choices(NOTIFICATION_ATTEMPT_OUTCOMES)
+    )
+    reason = models.CharField(max_length=200, null=True, blank=True)
+
+    class Meta:
+        db_table = "notification_attempts"
+        verbose_name = "попытка отправки"
+        verbose_name_plural = "попытки отправки"
+        constraints = [
+            status_check(
+                "outcome",
+                NOTIFICATION_ATTEMPT_OUTCOMES,
+                "ck_notification_attempts_outcome",
+            ),
+            raw_check("number >= 1", "ck_notification_attempts_number_positive"),
+            raw_check(
+                "outcome <> 'SENT' OR reason IS NULL",
+                "ck_notification_attempts_sent_has_no_reason",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["notification", "attempted_at"],
+                name="ix_notification_attempts_row",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.notification_id} #{self.number} {self.outcome}"

@@ -26,8 +26,10 @@
 from __future__ import annotations
 
 import uuid
+from datetime import date
 
-from django.db.models import Q
+from django.db.models import Count, OuterRef, Q, Subquery
+from django.db.models.functions import TruncDate
 from django.utils import timezone
 
 from humotech.core.enums import NOTIFICATION_CHANNELS, NOTIFICATION_STATUSES
@@ -35,9 +37,11 @@ from humotech.core.errors import Conflict, NotFound, ValidationFailed
 from humotech.core.pagination import Page, paginate
 from humotech.core.rbac import Actor, snapshot
 from humotech.core.service import BaseService
+from humotech.core.timeframes import office_zone, range_bounds
 from humotech.employees.models import EmployeeAssignment
 from humotech.employees.selectors import require_visible_employee
-from humotech.notifications.models import Notification
+from humotech.notifications.models import Notification, NotificationAttempt
+from humotech.offices.models import Office
 
 NOTIFICATION_FIELDS = (
     "status", "attempts", "next_attempt_at", "error_message", "sent_at",
@@ -58,6 +62,27 @@ RETRYABLE = frozenset({"FAILED", "CANCELLED"})
 #: `reclaim_stale`, после чего отмена работает честно.
 CANCELLABLE = frozenset({"PENDING", "FAILED"})
 
+#: Как шесть состояний очереди раскладываются по вкладкам.
+#:
+#: Правило одно: вкладка и её счётчик берут ОДИН И ТОТ ЖЕ список
+#: состояний, а вкладки в сумме дают весь набор. Иначе число рядом
+#: с вкладкой не совпадает с числом строк под ней, а какие-то
+#: уведомления не видны ни на одной вкладке, кроме «Все».
+#:
+#: READ — это отправленное, которое к тому же прочитали, поэтому оно
+#: у «Отправлено». RUNNING держит отправщик прямо сейчас — это «В
+#: очереди», а не отдельное состояние для кадровика. CANCELLED —
+#: собственная вкладка: снятое не отправлено, не в очереди и не упало.
+#: Чаще всего его ставит не человек, а очередь, когда у сотрудника нет
+#: живой привязки Telegram, и прятать такие строки в «ошибки» значило бы
+#: звать неполадкой обычное положение дел.
+STATUS_GROUPS: dict[str, tuple[str, ...]] = {
+    "sent": ("SENT", "READ"),
+    "queued": ("PENDING", "RUNNING"),
+    "failed": ("FAILED",),
+    "cancelled": ("CANCELLED",),
+}
+
 #: Потолок массового повтора. Не техническое ограничение, а защита от
 #: нажатия, смысл которого нажимающий не представляет: «повторить всё»
 #: на десяти тысячах строк — это десять тысяч сообщений в чаты людей.
@@ -73,48 +98,68 @@ class NotificationService(BaseService):
         self,
         actor: Actor,
         *,
-        employee_id: uuid.UUID | None = None,
         status: str | None = None,
-        channel: str | None = None,
-        notification_type: str | None = None,
-        search: str | None = None,
         limit: int | None = None,
         cursor: str | None = None,
+        **filters,
     ) -> Page:
         self.access.require(actor, "notifications.read")
+        queryset = self._visible(actor, **filters)
+        if status:
+            queryset = queryset.filter(status__in=self._statuses(status))
+        return paginate(self._with_office(actor, queryset), limit=limit,
+                        cursor=cursor)
 
-        queryset = Notification.objects.filter(
-            organization_id=actor.organization_id
-        ).select_related("employee")
+    def counts(self, actor: Actor, **filters) -> dict:
+        """Сводка по всему доступному набору, а не по странице таблицы.
 
-        if employee_id is not None:
-            # Проверка отдельным вызовом, а не фильтром: чужой сотрудник
-            # обязан дать отказ, а не пустой список. Пустой список
-            # неотличим от «уведомлений нет» и скрывает нехватку прав.
-            require_visible_employee(self.access, actor, employee_id)
-            queryset = queryset.filter(employee_id=employee_id)
-        else:
-            queryset = self._limit_to_scope(actor, queryset)
-
-        if status is not None:
-            queryset = queryset.filter(status=self._known(status, "status"))
-        if channel is not None:
-            queryset = queryset.filter(channel=self._known(channel, "channel"))
-        if notification_type:
-            queryset = queryset.filter(
-                notification_type__startswith=notification_type.strip()
-            )
-        if search:
-            needle = search.strip()
-            queryset = queryset.filter(
-                Q(title__icontains=needle) | Q(body__icontains=needle)
-            )
-
-        return paginate(queryset, limit=limit, cursor=cursor)
+        Фильтр состояния сюда не передаётся намеренно: число рядом
+        с вкладкой не должно зависеть от того, какая вкладка открыта.
+        Остальные фильтры — период, область, поиск — применяются те же,
+        что и к списку, иначе сводка описывала бы другой набор.
+        """
+        self.access.require(actor, "notifications.read")
+        filters.pop("status", None)
+        rows = dict(
+            self._visible(actor, **filters)
+            .values_list("status")
+            .annotate(number=Count("id"))
+        )
+        counted = {code: rows.get(code, 0) for code in NOTIFICATION_STATUSES}
+        return {
+            **counted,
+            "total": sum(counted.values()),
+            **{
+                group: sum(counted[code] for code in codes)
+                for group, codes in STATUS_GROUPS.items()
+            },
+            # Пояс, в котором показывать время. Своей арифметики над
+            # поясами у интерфейса быть не должно — она разошлась бы
+            # с границами суток, по которым здесь режется период.
+            "timezone": str(self._zone(actor)),
+        }
 
     def get(self, actor: Actor, notification_id: uuid.UUID) -> Notification:
         self.access.require(actor, "notifications.read")
-        return self._require(actor, notification_id)
+        row = self._require(actor, notification_id)
+        # Карточке нужен тот же офис, что и строке списка.
+        return self._annotated(actor, row.id)
+
+    def attempts(
+        self, actor: Actor, notification_id: uuid.UUID
+    ) -> list[NotificationAttempt]:
+        """История попыток одного уведомления.
+
+        Права те же, что на само уведомление: историю попыток нельзя
+        прочитать в обход проверки области видимости.
+        """
+        self.access.require(actor, "notifications.read")
+        row = self._require(actor, notification_id)
+        return list(
+            NotificationAttempt.objects.filter(notification_id=row.id).order_by(
+                "attempted_at", "number"
+            )
+        )
 
     # -------------------------------------------------------------- изменение
 
@@ -142,7 +187,9 @@ class NotificationService(BaseService):
                 before=before,
                 after=snapshot(row, NOTIFICATION_FIELDS),
             )
-        return row
+        # Ответ несёт то же, что строка списка: интерфейс кладёт его
+        # на место карточки, не перечитывая её отдельным запросом.
+        return self._annotated(actor, row.id)
 
     def cancel(self, actor: Actor, notification_id: uuid.UUID) -> Notification:
         """Снять уведомление с отправки: адресату оно уже не нужно."""
@@ -177,7 +224,7 @@ class NotificationService(BaseService):
                 before=before,
                 after=snapshot(row, NOTIFICATION_FIELDS),
             )
-        return row
+        return self._annotated(actor, row.id)
 
     def retry_failed(
         self,
@@ -242,6 +289,154 @@ class NotificationService(BaseService):
         return len(rows)
 
     # ------------------------------------------------------------------ внутри
+
+    def _visible(
+        self,
+        actor: Actor,
+        *,
+        employee_id: uuid.UUID | None = None,
+        channel: str | None = None,
+        notification_type: str | None = None,
+        search: str | None = None,
+        office_id: uuid.UUID | None = None,
+        region_id: uuid.UUID | None = None,
+        date_from: date | None = None,
+        date_to: date | None = None,
+    ):
+        """Набор, доступный этому пользователю, с общими фильтрами.
+
+        Один и тот же метод питает список и сводку — иначе счётчики
+        описывали бы не тот набор, который показан под ними.
+        """
+        queryset = Notification.objects.filter(
+            organization_id=actor.organization_id
+        ).select_related("employee")
+
+        if employee_id is not None:
+            # Проверка отдельным вызовом, а не фильтром: чужой сотрудник
+            # обязан дать отказ, а не пустой список. Пустой список
+            # неотличим от «уведомлений нет» и скрывает нехватку прав.
+            require_visible_employee(self.access, actor, employee_id)
+            queryset = queryset.filter(employee_id=employee_id)
+        else:
+            queryset = self._limit_to_scope(actor, queryset)
+
+        # Явно запрошенная область проверяется отдельно: запрос про офис
+        # вне доступа обязан дать отказ, а не пустой список.
+        if office_id is not None:
+            self.access.require_office(actor, office_id)
+            queryset = queryset.filter(
+                employee_id__in=self._employees_of(office_id=office_id)
+            )
+        elif region_id is not None:
+            self.access.require_region(actor, region_id)
+            queryset = queryset.filter(
+                employee_id__in=self._employees_of(region_id=region_id)
+            )
+
+        if channel is not None:
+            queryset = queryset.filter(channel=self._known(channel, "channel"))
+        if notification_type:
+            queryset = queryset.filter(
+                notification_type__startswith=notification_type.strip()
+            )
+        if search:
+            needle = search.strip()
+            # Ищется и текст сообщения, и человек: кадровик одинаково
+            # часто помнит либо одно, либо другое.
+            queryset = queryset.filter(
+                Q(title__icontains=needle)
+                | Q(body__icontains=needle)
+                | Q(employee__last_name__icontains=needle)
+                | Q(employee__first_name__icontains=needle)
+                | Q(employee__middle_name__icontains=needle)
+                | Q(employee__employee_number__icontains=needle)
+            )
+        if date_from or date_to:
+            queryset = self._within(actor, queryset, date_from, date_to)
+        return queryset
+
+    def _annotated(self, actor: Actor, notification_id: uuid.UUID) -> Notification:
+        return self._with_office(
+            actor,
+            Notification.objects.select_related("employee").filter(
+                id=notification_id
+            ),
+        )[0]
+
+    def _employees_of(self, **scope):
+        """Сотрудники области — по ЛЮБОМУ периоду назначения.
+
+        Не только по текущему: иначе после перевода человека его прошлые
+        уведомления исчезли бы из отбора по прежнему офису, хотя тогда
+        он работал именно там.
+        """
+        return EmployeeAssignment.objects.filter(
+            **({"office_id": scope["office_id"]} if "office_id" in scope
+               else {"office__region_id": scope["region_id"]})
+        ).values_list("employee_id", flat=True)
+
+    def _within(self, actor: Actor, queryset, first: date | None, last: date | None):
+        if first and last and last < first:
+            raise ValidationFailed(
+                "Конец периода раньше начала",
+                details={"date_from": first.isoformat(),
+                         "date_to": last.isoformat()},
+            )
+        start, end = range_bounds(first or last, last or first, self._zone(actor))
+        return queryset.filter(created_at__gte=start, created_at__lt=end)
+
+    def _with_office(self, actor: Actor, queryset):
+        """Офис получателя НА МОМЕНТ уведомления, а не сегодняшний.
+
+        Правило явное: основное назначение, чей период содержит день
+        создания уведомления. Подставлять текущий офис человеку, которого
+        год назад перевели, значит переписывать историю: сообщение уходило
+        сотруднику другого офиса.
+
+        Считается подзапросом, а не обращением на строку: двадцать строк
+        списка иначе дают шестьдесят запросов.
+        """
+        zone = self._zone(actor)
+        # День берётся снаружи отдельной аннотацией: `TruncDate` не умеет
+        # принимать `OuterRef` напрямую — у него нет типа, пока ссылка
+        # не разрешена.
+        queryset = queryset.annotate(sent_day=TruncDate("created_at", tzinfo=zone))
+        assignment = EmployeeAssignment.objects.filter(
+            employee_id=OuterRef("employee_id"),
+            is_primary=True,
+            valid_from__lte=OuterRef("sent_day"),
+        ).filter(
+            Q(valid_to__isnull=True) | Q(valid_to__gte=OuterRef("sent_day"))
+        ).order_by("-valid_from")
+        return queryset.annotate(
+            office_at_id=Subquery(assignment.values("office_id")[:1]),
+            office_at_name=Subquery(assignment.values("office__name")[:1]),
+            region_at_name=Subquery(assignment.values("office__region__name")[:1]),
+        )
+
+    def _zone(self, actor: Actor):
+        """Пояс организации: у списка нет одного офиса, а сутки нужны одни."""
+        office = (
+            Office.objects.filter(organization_id=actor.organization_id)
+            .exclude(timezone="")
+            .order_by("created_at")
+            .first()
+        )
+        return office_zone(office)
+
+    def _statuses(self, raw: str) -> list[str]:
+        """Одно состояние или несколько через запятую.
+
+        Вкладка «Отправлено» — это SENT и READ сразу; без списка она
+        теряла бы прочитанные сообщения.
+        """
+        wanted = [self._known(part, "status") for part in raw.split(",") if part]
+        if not wanted:
+            raise ValidationFailed(
+                "Параметр «status» пуст", details={"field": "status"}
+            )
+        return wanted
 
     def _requeue(self, row: Notification) -> None:
         """PENDING прямо сейчас, счётчик попыток с нуля."""
@@ -311,4 +506,4 @@ class NotificationService(BaseService):
         return value
 
 
-__all__ = ["MAX_BULK_RETRY", "NotificationService"]
+__all__ = ["MAX_BULK_RETRY", "STATUS_GROUPS", "NotificationService"]
