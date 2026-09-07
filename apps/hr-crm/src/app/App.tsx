@@ -18,6 +18,7 @@ import { OfficesPage } from '../pages/OfficesPage';
 import { QuestionsPage } from '../pages/QuestionsPage';
 import { AnalyticsPage } from '../pages/AnalyticsPage';
 import { ReportsPage } from '../pages/ReportsPage';
+import { KnowledgePage } from '../pages/KnowledgePage';
 import { LoginPage } from '../pages/LoginPage';
 import { useSession } from '../features/auth/session';
 
@@ -33,6 +34,7 @@ export function App() {
       <Route path="/questions" element={<Protected page="questions" />} />
       <Route path="/analytics" element={<Protected page="analytics" />} />
       <Route path="/reports" element={<Protected page="reports" />} />
+      <Route path="/knowledge" element={<Protected page="knowledge" />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
@@ -41,7 +43,7 @@ export function App() {
 /** Кабинет: без сессии сюда нельзя. */
 function Protected({ page }: {
   page?: 'employees' | 'requests' | 'attendance' | 'offices' | 'questions'
-       | 'analytics' | 'reports';
+       | 'analytics' | 'reports' | 'knowledge';
 }) {
   const session = useSession();
   if (session.status === 'checking') return <Checking />;
@@ -53,6 +55,7 @@ function Protected({ page }: {
   if (page === 'questions') return <QuestionsPage />;
   if (page === 'analytics') return <AnalyticsPage />;
   if (page === 'reports') return <ReportsPage />;
+  if (page === 'knowledge') return <KnowledgePage />;
   return <DashboardPage />;
 }
 

@@ -87,6 +87,13 @@ async function safeBody(response: Response): Promise<ErrorBody> {
 function kindOf(status: number, body: ErrorBody): FailureKind {
   if (status === 401) return 'credentials';
   if (status === 400) return 'validation';
+  if (status === 409) return 'conflict';
+  // Выключенный ассистент и ненастроенный провайдер отвечают 503 — тем
+  // же кодом, что и упавший сервер. Различает их только `code`: первое
+  // чинит тот, кто принимал решение, второе — тот, у кого есть ключ,
+  // а «сервер временно недоступен» отправило бы обоих не туда.
+  if (body.code === 'ai_disabled') return 'ai_disabled';
+  if (body.code === 'provider_not_configured') return 'ai_unconfigured';
   if (status === 403) {
     // Отличаем «нет сессии» от «не прошла проверка CSRF»: первое лечится
     // входом, второе — обновлением страницы, и путать их значит давать

@@ -21,10 +21,15 @@
 from __future__ import annotations
 
 import uuid
+from contextlib import contextmanager
 
-from django.db.models import Q
+from django.db.models import Count, OuterRef, Q, Subquery
 
-from humotech.ai_assistant.availability import require_embeddings_available
+from humotech.ai_assistant.availability import (
+    embeddings_available,
+    require_embeddings_available,
+)
+from humotech.ai_assistant.errors import PublishingError
 from humotech.ai_assistant.services.chunking import hash_text
 from humotech.ai_assistant.use_cases.crm import KnowledgeAdminUseCases
 from humotech.core.enums import (
@@ -42,6 +47,21 @@ from humotech.knowledge.models import FaqEntry, KnowledgeIndexJob, KnowledgeSour
 FAQ_FIELDS = (
     "canonical_question", "approved_answer", "language", "status", "priority",
 )
+
+
+@contextmanager
+def _readable_refusal():
+    """`PublishingError` наружу как понятный отказ, а не как пятисотка.
+
+    `PublishingError` — обычное `Exception`, не `DomainError`: обработчик
+    его не узнаёт, DRF тоже, и «черновик архивировать нельзя» приходило
+    в браузер пятисоткой без текста. Правило при этом верное — переводим
+    только форму ответа, сам запрет остаётся там, где написан.
+    """
+    try:
+        yield
+    except PublishingError as exc:
+        raise Conflict(str(exc)) from exc
 
 
 class KnowledgeService(BaseService):
@@ -67,18 +87,128 @@ class KnowledgeService(BaseService):
         office_id: uuid.UUID | None = None,
         region_id: uuid.UUID | None = None,
         search: str | None = None,
+        all_versions: bool = False,
         limit: int | None = None,
         cursor: str | None = None,
     ) -> Page:
+        """Документы. По умолчанию — по одной строке на документ.
+
+        Версия — отдельная строка в `knowledge_sources`, и без свёртки
+        документ, переизданный трижды, занимал бы в списке три места,
+        а «10 документов» означало бы «10 строк таблицы». История версий
+        живёт в своей вкладке; в списке документ один.
+        """
         self.access.require(actor, "knowledge.read")
+        queryset = self._sources(
+            actor,
+            status=status,
+            language=language,
+            office_id=office_id,
+            region_id=region_id,
+            search=search,
+            all_versions=all_versions,
+        )
+        return paginate(queryset, limit=limit, cursor=cursor)
+
+    def count_sources(self, actor: Actor, **filters) -> dict[str, int]:
+        """Сколько документов в каждом статусе — по всему набору.
+
+        Считает то же самое, что показывает список: одна строка на
+        документ. Иначе число рядом с вкладкой и длина списка под ней
+        расходились бы на каждом переизданном документе.
+
+        Фильтр статуса сюда не передаётся: число рядом с «Черновики» не
+        должно меняться от того, какая вкладка открыта.
+        """
+        filters.pop("status", None)
+        self.access.require(actor, "knowledge.read")
+        rows = self._sources(actor, status=None, **filters)
+        totals = {name: 0 for name in KNOWLEDGE_SOURCE_STATUSES}
+        for row in rows.values("status").annotate(number=Count("id")):
+            totals[row["status"]] = row["number"]
+        totals["total"] = sum(totals.values())
+        return totals
+
+    def versions(self, actor: Actor, source_id: uuid.UUID) -> list[KnowledgeSource]:
+        """История версий документа, начиная с самой новой.
+
+        Линейка задаётся тройкой «организация + заголовок + язык» — той
+        же, на которой стоит частичный уникальный индекс действующей
+        версии. `parent_source_id` эту связь дополняет, но не заменяет:
+        версия могла быть заведена и без указания родителя.
+
+        Документ сначала проверяется на принадлежность организации: без
+        этого историю соседей можно было бы прочитать по одному
+        идентификатору.
+        """
+        self.access.require(actor, "knowledge.read")
+        source = self.use_cases._require_source(actor, source_id)
+        rows = self.use_cases.version_history(actor, source.title, source.language)
+        return list(
+            KnowledgeSource.objects.filter(id__in=[row.id for row in rows])
+            .select_related("office", "region", "created_by_user")
+            .order_by("-version", "-created_at")
+        )
+
+    def capability(self, actor: Actor) -> dict:
+        """Можно ли сейчас индексировать и включать записи в поиск.
+
+        Ровно один признак и причина словом. Ни ключа, ни имени модели,
+        ни других настроек провайдера отсюда не уходит: интерфейсу нужно
+        знать «нельзя и почему», а не чем именно не настроено.
+        """
+        self.access.require(actor, "knowledge.read")
+        from humotech.ai_assistant.config import ai_settings
+
+        available = embeddings_available()
+        reason = None
+        if not available:
+            reason = (
+                "ai_disabled"
+                if not ai_settings.ai_assistant_enabled
+                else "provider_not_configured"
+            )
+        return {"embeddings_available": available, "reason": reason}
+
+    def _sources(
+        self,
+        actor: Actor,
+        *,
+        status: str | None,
+        language: str | None = None,
+        office_id: uuid.UUID | None = None,
+        region_id: uuid.UUID | None = None,
+        search: str | None = None,
+        all_versions: bool = False,
+    ):
         queryset = KnowledgeSource.objects.filter(
             organization_id=actor.organization_id
-        ).select_related("office", "region", "department")
+        ).select_related("office", "region", "department", "created_by_user")
+
+        if not all_versions:
+            # Самая новая версия каждой линейки. Подзапрос НЕ сужается
+            # фильтрами снаружи: иначе «самой новой» оказалась бы самая
+            # новая среди подходящих, и документ с черновиком поверх
+            # архива показался бы архивным.
+            newest = (
+                KnowledgeSource.objects.filter(
+                    organization_id=actor.organization_id,
+                    title=OuterRef("title"),
+                    language=OuterRef("language"),
+                )
+                .order_by("-version", "-created_at", "-id")
+                .values("id")[:1]
+            )
+            queryset = queryset.filter(id=Subquery(newest))
 
         if status is not None:
-            queryset = queryset.filter(
-                status=_known(status, "status", KNOWLEDGE_SOURCE_STATUSES)
-            )
+            wanted = [
+                _known(part, "status", KNOWLEDGE_SOURCE_STATUSES)
+                for part in status.split(",")
+                if part
+            ]
+            if wanted:
+                queryset = queryset.filter(status__in=wanted)
         if language:
             queryset = queryset.filter(language=language.strip())
         if office_id is not None:
@@ -92,14 +222,14 @@ class KnowledgeService(BaseService):
             queryset = queryset.filter(
                 Q(title__icontains=needle) | Q(content__icontains=needle)
             )
-        return paginate(queryset, limit=limit, cursor=cursor)
+        return queryset
 
     def get_source(self, actor: Actor, source_id: uuid.UUID) -> KnowledgeSource:
         self.access.require(actor, "knowledge.read")
         return self.use_cases._require_source(actor, source_id)
 
     def create_source(self, actor: Actor, **payload) -> KnowledgeSource:
-        with self.atomic():
+        with _readable_refusal(), self.atomic():
             return self.use_cases.create_draft(actor, **payload)
 
     def update_source(
@@ -108,7 +238,7 @@ class KnowledgeService(BaseService):
         clean = {name: value for name, value in fields.items() if value is not None}
         if not clean:
             return self.get_source(actor, source_id)
-        with self.atomic():
+        with _readable_refusal(), self.atomic():
             return self.use_cases.update_draft(actor, source_id, **clean)
 
     def start_indexing(
@@ -121,7 +251,7 @@ class KnowledgeService(BaseService):
         висит в QUEUED: кадровик будет ждать, а причина не показана нигде.
         """
         require_embeddings_available()
-        with self.atomic():
+        with _readable_refusal(), self.atomic():
             return self.use_cases.start_indexing(actor, source_id)
 
     def index_status(self, actor: Actor, source_id: uuid.UUID):
@@ -140,12 +270,18 @@ class KnowledgeService(BaseService):
                 "Сначала запустите индексацию",
                 details={"source_id": str(source_id), "status": source.status},
             )
-        with self.atomic():
+        with _readable_refusal(), self.atomic():
             self.use_cases.publish(actor, source_id)
         return self.use_cases._require_source(actor, source_id)
 
     def archive(self, actor: Actor, source_id: uuid.UUID) -> KnowledgeSource:
-        with self.atomic():
+        """Снять документ с публикации.
+
+        Архивировать можно только ДЕЙСТВУЮЩУЮ версию: у черновика нет
+        публикации, которую снимают, и «в архив» на нём означало бы
+        удаление — а удаления здесь нет и быть не должно.
+        """
+        with _readable_refusal(), self.atomic():
             self.use_cases.archive(actor, source_id)
         return self.use_cases._require_source(actor, source_id)
 
@@ -194,27 +330,86 @@ class KnowledgeService(BaseService):
         *,
         status: str | None = None,
         language: str | None = None,
+        office_id: uuid.UUID | None = None,
+        region_id: uuid.UUID | None = None,
+        source_id: uuid.UUID | None = None,
         search: str | None = None,
         limit: int | None = None,
         cursor: str | None = None,
     ) -> Page:
         self.access.require(actor, "knowledge.read")
+        return paginate(
+            self._faq(
+                actor,
+                status=status,
+                language=language,
+                office_id=office_id,
+                region_id=region_id,
+                source_id=source_id,
+                search=search,
+            ),
+            limit=limit,
+            cursor=cursor,
+        )
+
+    def count_faq(self, actor: Actor, **filters) -> dict[str, int]:
+        """Сколько FAQ в каждом статусе — по всему доступному набору.
+
+        Как и у документов, фильтр статуса сюда не передаётся: число
+        рядом с вкладкой не должно зависеть от открытой вкладки.
+        """
+        filters.pop("status", None)
+        self.access.require(actor, "knowledge.read")
+        rows = self._faq(actor, status=None, **filters)
+        totals = {name: 0 for name in FAQ_ENTRY_STATUSES}
+        for row in rows.values("status").annotate(number=Count("id")):
+            totals[row["status"]] = row["number"]
+        totals["total"] = sum(totals.values())
+        return totals
+
+    def _faq(
+        self,
+        actor: Actor,
+        *,
+        status: str | None,
+        language: str | None = None,
+        office_id: uuid.UUID | None = None,
+        region_id: uuid.UUID | None = None,
+        source_id: uuid.UUID | None = None,
+        search: str | None = None,
+    ):
         queryset = FaqEntry.objects.filter(
             organization_id=actor.organization_id
-        ).select_related("office", "region", "source")
+        ).select_related("office", "region", "source", "created_by_user")
         if status is not None:
-            queryset = queryset.filter(
-                status=_known(status, "status", FAQ_ENTRY_STATUSES)
-            )
+            wanted = [
+                _known(part, "status", FAQ_ENTRY_STATUSES)
+                for part in status.split(",")
+                if part
+            ]
+            if wanted:
+                queryset = queryset.filter(status__in=wanted)
         if language:
             queryset = queryset.filter(language=language.strip())
+        if office_id is not None:
+            self.access.require_office(actor, office_id)
+            queryset = queryset.filter(office_id=office_id)
+        if region_id is not None:
+            self.access.require_region(actor, region_id)
+            queryset = queryset.filter(region_id=region_id)
+        if source_id is not None:
+            # Документ сверяется по организации: иначе по чужому
+            # идентификатору можно было бы проверить, есть ли у соседей
+            # FAQ по этому документу.
+            self.use_cases._require_source(actor, source_id)
+            queryset = queryset.filter(source_id=source_id)
         if search:
             needle = search.strip()
             queryset = queryset.filter(
                 Q(canonical_question__icontains=needle)
                 | Q(approved_answer__icontains=needle)
             )
-        return paginate(queryset, limit=limit, cursor=cursor)
+        return queryset
 
     def get_faq(self, actor: Actor, faq_id: uuid.UUID) -> FaqEntry:
         self.access.require(actor, "knowledge.read")
@@ -375,7 +570,9 @@ class KnowledgeService(BaseService):
 
     def _require_faq(self, actor: Actor, faq_id: uuid.UUID) -> FaqEntry:
         faq = (
-            FaqEntry.objects.select_related("office", "region", "source")
+            FaqEntry.objects.select_related(
+                "office", "region", "source", "created_by_user"
+            )
             .filter(id=faq_id, organization_id=actor.organization_id)
             .first()
         )

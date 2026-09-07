@@ -14,7 +14,8 @@ export type IconName =
   | 'report' | 'book' | 'bell' | 'admin' | 'settings'
   | 'search' | 'refresh' | 'calendar' | 'arrow' | 'logout' | 'chevron'
   | 'inbox' | 'alert' | 'database' | 'globe' | 'send' | 'building'
-  | 'download' | 'check' | 'cross' | 'lock' | 'late' | 'sheet';
+  | 'download' | 'check' | 'cross' | 'lock' | 'late' | 'sheet'
+  | 'plus' | 'pencil' | 'archive' | 'half';
 
 const PATHS: Record<IconName, string> = {
   home: 'M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4v-5H9v5H5a1 1 0 0 1-1-1z',
@@ -47,6 +48,10 @@ const PATHS: Record<IconName, string> = {
   lock: 'M6.6 10.6h10.8a.8.8 0 0 1 .8.8v7.4a.8.8 0 0 1-.8.8H6.6a.8.8 0 0 1-.8-.8v-7.4a.8.8 0 0 1 .8-.8ZM8.6 10.6V8a3.4 3.4 0 0 1 6.8 0v2.6',
   late: 'M12 20.2a8.2 8.2 0 1 0-8.2-8.2M12 7.6V12l3.2 1.9M3.2 15.6l1.6 3 2.8-1.6',
   sheet: 'M6 3.8h12a.8.8 0 0 1 .8.8v14.8a.8.8 0 0 1-.8.8H6a.8.8 0 0 1-.8-.8V4.6a.8.8 0 0 1 .8-.8ZM5.2 9.4h13.6M5.2 14.6h13.6M12 9.4v10.8',
+  plus: 'M12 5.4v13.2M5.4 12h13.2',
+  pencil: 'M4.8 19.2h3.4L18.6 8.8a1.7 1.7 0 0 0 0-2.4l-1-1a1.7 1.7 0 0 0-2.4 0L4.8 15.8Z M14.2 7.2l2.6 2.6',
+  archive: 'M4.4 5.6h15.2a.6.6 0 0 1 .6.6v2.6a.6.6 0 0 1-.6.6H4.4a.6.6 0 0 1-.6-.6V6.2a.6.6 0 0 1 .6-.6ZM5.6 9.4v9a.8.8 0 0 0 .8.8h11.2a.8.8 0 0 0 .8-.8v-9M9.8 13.2h4.4',
+  half: 'M12 20.2a8.2 8.2 0 1 0 0-16.4 8.2 8.2 0 0 0 0 16.4ZM12 3.8v16.4a8.2 8.2 0 0 0 0-16.4Z',
 };
 
 type Props = { name: IconName; size?: number; className?: string };

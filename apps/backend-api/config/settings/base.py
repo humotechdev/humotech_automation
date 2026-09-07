@@ -513,5 +513,10 @@ SPECTACULAR_SETTINGS = {
         # состояние справочной записи, и в схеме оно должно быть одним
         # компонентом с осмысленным именем.
         "ReferenceStatus": "humotech.core.enums.REGION_STATUSES",
+        # Статус документа базы знаний встречается в двух компонентах:
+        # строка списка и карточка с текстом. Это один набор состояний,
+        # и в схеме он должен быть одним именованным перечислением.
+        "KnowledgeSourceStatus": "humotech.core.enums.KNOWLEDGE_SOURCE_STATUSES",
+        "KnowledgeSourceType": "humotech.core.enums.KNOWLEDGE_SOURCE_TYPES",
     },
 }

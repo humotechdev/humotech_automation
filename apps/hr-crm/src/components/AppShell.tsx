@@ -37,7 +37,7 @@ const WORKSPACE: Item[] = [
 
 const MANAGEMENT: Item[] = [
   { key: 'reports', title: 'Отчёты', icon: 'report', to: '/reports' },
-  { key: 'knowledge', title: 'База знаний', icon: 'book' },
+  { key: 'knowledge', title: 'База знаний', icon: 'book', to: '/knowledge' },
   { key: 'notifications', title: 'Уведомления', icon: 'bell' },
   { key: 'admin', title: 'Администрирование', icon: 'admin' },
   { key: 'settings', title: 'Настройки', icon: 'settings' },

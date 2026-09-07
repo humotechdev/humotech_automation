@@ -726,3 +726,191 @@ export const downloadUrl = (id: string): string =>
 function apiBase(): string {
   return (import.meta.env['VITE_API_URL'] as string | undefined) ?? '/api/v1';
 }
+
+// --- база знаний -----------------------------------------------------------
+
+/**
+ * Документ в списке — без текста: он приходит с карточкой.
+ *
+ * Строка списка — это ДОКУМЕНТ, а не версия: сервер отдаёт самую новую
+ * версию каждой линейки «заголовок + язык». История версий — отдельный
+ * запрос.
+ */
+export type SourceRow = {
+  id: string;
+  title: string;
+  source_type: 'FAQ' | 'POLICY' | 'INSTRUCTION' | 'DOCUMENT';
+  language: string;
+  status: 'DRAFT' | 'INDEXING' | 'ACTIVE' | 'ARCHIVED' | 'ERROR';
+  version: number;
+  priority: number;
+  office_id: string | null;
+  region_id: string | null;
+  department_id: string | null;
+  office_name: string | null;
+  region_name: string | null;
+  created_by: string | null;
+  effective_from: string | null;
+  effective_to: string | null;
+  parent_source_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type Source = SourceRow & { content: string };
+
+export type SourceCounts = {
+  total: number;
+  DRAFT: number;
+  INDEXING: number;
+  ACTIVE: number;
+  ARCHIVED: number;
+  ERROR: number;
+};
+
+export type SourceQuery = {
+  status?: string;
+  search?: string;
+  office_id?: string;
+  region_id?: string;
+  language?: string;
+  limit?: string;
+  cursor?: string;
+};
+
+export const sources = (params: SourceQuery, signal?: AbortSignal) =>
+  request<Cursored<SourceRow>>(
+    `/knowledge/sources/${query(params)}`,
+    signal ? { signal } : {},
+  );
+
+export const sourceCounts = (params: SourceQuery, signal?: AbortSignal) =>
+  request<SourceCounts>(
+    `/knowledge/sources/counts/${query({ ...params, status: undefined })}`,
+    signal ? { signal } : {},
+  );
+
+export const source = (id: string, signal?: AbortSignal) =>
+  request<Source>(`/knowledge/sources/${id}/`, signal ? { signal } : {});
+
+export const sourceVersions = (id: string, signal?: AbortSignal) =>
+  request<SourceRow[]>(
+    `/knowledge/sources/${id}/versions/`,
+    signal ? { signal } : {},
+  );
+
+export type SourceDraft = {
+  title: string;
+  source_type: string;
+  language: string;
+  content: string;
+  office_id?: string;
+  region_id?: string;
+  parent_source_id?: string;
+};
+
+export const createSource = (body: SourceDraft) =>
+  request<Source>('/knowledge/sources/', { method: 'POST', body });
+
+export const updateSource = (id: string, body: { title?: string; content?: string }) =>
+  request<Source>(`/knowledge/sources/${id}/`, { method: 'PATCH', body });
+
+export const archiveSource = (id: string) =>
+  request<Source>(`/knowledge/sources/${id}/archive/`, { method: 'POST', body: {} });
+
+/**
+ * Поставить документ на индексацию.
+ *
+ * Сервер отказывает кодами `ai_disabled` и `provider_not_configured` и
+ * НЕ ставит задание в очередь: висящее в QUEUED выглядело бы принятым.
+ */
+export const indexSource = (id: string) =>
+  request<{ status: string }>(`/knowledge/sources/${id}/index/`, {
+    method: 'POST',
+    body: {},
+  });
+
+export const publishSource = (id: string) =>
+  request<Source>(`/knowledge/sources/${id}/publish/`, { method: 'POST', body: {} });
+
+/**
+ * Можно ли сейчас индексировать и включать материалы в автоответы.
+ *
+ * Настройки провайдера сюда не приходят и не должны: интерфейсу нужно
+ * знать «нельзя и почему», а не чем именно не настроено.
+ */
+export type Capability = {
+  embeddings_available: boolean;
+  reason: 'ai_disabled' | 'provider_not_configured' | null;
+};
+
+export const knowledgeCapability = (signal?: AbortSignal) =>
+  request<Capability>('/knowledge/sources/capability/', signal ? { signal } : {});
+
+export type FaqRow = {
+  id: string;
+  canonical_question: string;
+  approved_answer: string;
+  language: string;
+  status: 'DRAFT' | 'ACTIVE' | 'ARCHIVED';
+  priority: number;
+  office_id: string | null;
+  region_id: string | null;
+  source_id: string | null;
+  office_name: string | null;
+  region_name: string | null;
+  source_title: string | null;
+  created_by: string | null;
+  indexed: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type FaqCounts = {
+  total: number;
+  DRAFT: number;
+  ACTIVE: number;
+  ARCHIVED: number;
+};
+
+export type FaqQuery = {
+  status?: string;
+  search?: string;
+  office_id?: string;
+  region_id?: string;
+  source_id?: string;
+  limit?: string;
+  cursor?: string;
+};
+
+export const faqList = (params: FaqQuery, signal?: AbortSignal) =>
+  request<Cursored<FaqRow>>(`/knowledge/faq/${query(params)}`, signal ? { signal } : {});
+
+export const faqCounts = (params: FaqQuery, signal?: AbortSignal) =>
+  request<FaqCounts>(
+    `/knowledge/faq/counts/${query({ ...params, status: undefined })}`,
+    signal ? { signal } : {},
+  );
+
+export const faqItem = (id: string, signal?: AbortSignal) =>
+  request<FaqRow>(`/knowledge/faq/${id}/`, signal ? { signal } : {});
+
+export const createFaq = (body: {
+  canonical_question: string;
+  approved_answer: string;
+  language: string;
+  source_id?: string;
+  office_id?: string;
+  region_id?: string;
+}) => request<FaqRow>('/knowledge/faq/', { method: 'POST', body });
+
+export const updateFaq = (
+  id: string,
+  body: { canonical_question?: string; approved_answer?: string },
+) => request<FaqRow>(`/knowledge/faq/${id}/`, { method: 'PATCH', body });
+
+export const archiveFaq = (id: string) =>
+  request<FaqRow>(`/knowledge/faq/${id}/archive/`, { method: 'POST', body: {} });
+
+export const activateFaq = (id: string) =>
+  request<FaqRow>(`/knowledge/faq/${id}/activate/`, { method: 'POST', body: {} });

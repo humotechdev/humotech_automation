@@ -44,29 +44,84 @@ def _uuid(request, name: str) -> uuid.UUID | None:
 # --- документы ---------------------------------------------------------------
 
 
-class KnowledgeSourceSerializer(serializers.Serializer):
+class KnowledgeSourceRowSerializer(serializers.Serializer):
+    """Документ в списке — без текста.
+
+    `content` здесь нет намеренно: полный текст двадцати регламентов на
+    каждое обновление списка — это мегабайты ради строки заголовка.
+    Текст приходит вместе с карточкой, когда документ открыли.
+    """
+
     id = serializers.UUIDField()
     title = serializers.CharField()
     source_type = serializers.ChoiceField(choices=KNOWLEDGE_SOURCE_TYPES)
     language = serializers.CharField()
-    content = serializers.CharField()
     status = serializers.ChoiceField(choices=KNOWLEDGE_SOURCE_STATUSES)
     version = serializers.IntegerField()
     priority = serializers.IntegerField()
     office_id = serializers.UUIDField(allow_null=True)
     region_id = serializers.UUIDField(allow_null=True)
     department_id = serializers.UUIDField(allow_null=True)
+    office_name = serializers.CharField(source="office.name", allow_null=True,
+                                        default=None)
+    region_name = serializers.CharField(source="region.name", allow_null=True,
+                                        default=None)
+    created_by = serializers.SerializerMethodField(
+        help_text="Кто завёл эту версию. Приходит со списком: запрос "
+                  "на каждую строку здесь недопустим",
+    )
     effective_from = serializers.DateField(allow_null=True)
     effective_to = serializers.DateField(allow_null=True)
     parent_source_id = serializers.UUIDField(allow_null=True)
     created_at = serializers.DateTimeField()
     updated_at = serializers.DateTimeField()
 
+    def get_created_by(self, source) -> str | None:
+        user = getattr(source, "created_by_user", None)
+        return getattr(user, "email", None) if user else None
+
+
+class KnowledgeSourceSerializer(KnowledgeSourceRowSerializer):
+    """Документ целиком — с текстом. Отдаётся карточкой, не списком."""
+
+    content = serializers.CharField()
+
 
 class KnowledgeSourcePageSerializer(serializers.Serializer):
-    items = KnowledgeSourceSerializer(many=True)
+    items = KnowledgeSourceRowSerializer(many=True)
     next_cursor = serializers.CharField(allow_null=True)
     has_more = serializers.BooleanField()
+
+
+class KnowledgeCountsSerializer(serializers.Serializer):
+    """Сколько документов в каждом статусе.
+
+    Явные поля, а не словарь: по схеме генерируются клиенты, и словарь
+    без описания оставляет в ней дыру.
+    """
+
+    total = serializers.IntegerField()
+    DRAFT = serializers.IntegerField()
+    INDEXING = serializers.IntegerField()
+    ACTIVE = serializers.IntegerField()
+    ARCHIVED = serializers.IntegerField()
+    ERROR = serializers.IntegerField()
+
+
+class KnowledgeCapabilitySerializer(serializers.Serializer):
+    """Что сейчас можно делать с базой знаний.
+
+    Ни ключа, ни имени модели, ни других настроек провайдера здесь нет:
+    интерфейсу нужно знать «нельзя и почему», а не чем именно
+    не настроено.
+    """
+
+    embeddings_available = serializers.BooleanField()
+    reason = serializers.ChoiceField(
+        choices=["ai_disabled", "provider_not_configured"],
+        allow_null=True,
+        help_text="Почему индексация недоступна. null — доступна",
+    )
 
 
 class KnowledgeSourceCreateSerializer(serializers.Serializer):
@@ -126,13 +181,26 @@ class KnowledgeSourceViewSet(ServiceViewSet):
 
     @extend_schema(
         summary="Список документов",
+        description=(
+            "По одной строке на ДОКУМЕНТ, а не на версию: показывается "
+            "самая новая версия каждой линейки «заголовок + язык». "
+            "История версий — отдельным действием `versions`.\n\n"
+            "Текста документа в списке нет: он приходит с карточкой."
+        ),
         parameters=[
-            OpenApiParameter("status", str, enum=list(KNOWLEDGE_SOURCE_STATUSES)),
+            OpenApiParameter(
+                "status", str,
+                description="Одно состояние или несколько через запятую",
+            ),
             OpenApiParameter("language", str),
             OpenApiParameter("office_id", OpenApiTypes.UUID),
             OpenApiParameter("region_id", OpenApiTypes.UUID),
             OpenApiParameter(
                 "search", str, description="Подстрока в заголовке или тексте",
+            ),
+            OpenApiParameter(
+                "all_versions", bool,
+                description="true — каждая версия отдельной строкой",
             ),
             OpenApiParameter("cursor", str),
             OpenApiParameter("limit", int),
@@ -145,15 +213,74 @@ class KnowledgeSourceViewSet(ServiceViewSet):
             self.service.list_sources(
                 self.actor,
                 **params,
-                language=request.query_params.get("language") or None,
-                office_id=_uuid(request, "office_id"),
-                region_id=_uuid(request, "region_id"),
+                **self._scope(request),
+                all_versions=request.query_params.get("all_versions") == "true",
+            ),
+            serializer_class=KnowledgeSourceRowSerializer,
+        )
+
+    @extend_schema(
+        summary="Сколько документов в каждом статусе",
+        description=(
+            "Считается по всему доступному набору и по тому же правилу, "
+            "что и список: одна строка на документ. Фильтр статуса сюда "
+            "не передаётся — число рядом с вкладкой не должно зависеть "
+            "от открытой вкладки."
+        ),
+        parameters=[
+            OpenApiParameter("language", str),
+            OpenApiParameter("office_id", OpenApiTypes.UUID),
+            OpenApiParameter("region_id", OpenApiTypes.UUID),
+            OpenApiParameter("search", str),
+        ],
+        responses={200: KnowledgeCountsSerializer},
+    )
+    @action(detail=False)
+    def counts(self, request):
+        return Response(
+            self.service.count_sources(
+                self.actor,
+                search=request.query_params.get("search") or None,
+                **self._scope(request),
             )
         )
 
-    @extend_schema(summary="Один документ")
+    @extend_schema(
+        summary="Доступна ли сейчас индексация",
+        description=(
+            "Признак для интерфейса: можно ли публиковать документы и "
+            "включать FAQ в поиск. Настройки провайдера наружу не идут."
+        ),
+        responses={200: KnowledgeCapabilitySerializer},
+    )
+    @action(detail=False)
+    def capability(self, request):
+        return Response(self.service.capability(self.actor))
+
+    @extend_schema(summary="Один документ", responses={200: KnowledgeSourceSerializer})
     def retrieve(self, request, pk=None):
         return self.item_response(self.service.get_source(self.actor, pk))
+
+    @extend_schema(
+        summary="История версий документа",
+        description=(
+            "Линейка — это «организация + заголовок + язык»: та же тройка, "
+            "на которой стоит уникальность действующей версии. Чужой "
+            "документ отвечает как отсутствующий."
+        ),
+        responses={200: KnowledgeSourceRowSerializer(many=True)},
+    )
+    @action(detail=True)
+    def versions(self, request, pk=None):
+        rows = self.service.versions(self.actor, pk)
+        return Response(KnowledgeSourceRowSerializer(rows, many=True).data)
+
+    def _scope(self, request) -> dict:
+        return {
+            "language": request.query_params.get("language") or None,
+            "office_id": _uuid(request, "office_id"),
+            "region_id": _uuid(request, "region_id"),
+        }
 
     @extend_schema(
         summary="Завести черновик документа",
@@ -260,6 +387,13 @@ class FaqSerializer(serializers.Serializer):
     office_id = serializers.UUIDField(allow_null=True)
     region_id = serializers.UUIDField(allow_null=True)
     source_id = serializers.UUIDField(allow_null=True)
+    office_name = serializers.CharField(source="office.name", allow_null=True,
+                                        default=None)
+    region_name = serializers.CharField(source="region.name", allow_null=True,
+                                        default=None)
+    source_title = serializers.CharField(source="source.title", allow_null=True,
+                                         default=None)
+    created_by = serializers.SerializerMethodField()
     indexed = serializers.SerializerMethodField(
         help_text="Посчитан ли эмбеддинг. Без него запись в поиск не попадает",
     )
@@ -269,11 +403,24 @@ class FaqSerializer(serializers.Serializer):
     def get_indexed(self, faq) -> bool:
         return faq.question_embedding is not None
 
+    def get_created_by(self, faq) -> str | None:
+        user = getattr(faq, "created_by_user", None)
+        return getattr(user, "email", None) if user else None
+
 
 class FaqPageSerializer(serializers.Serializer):
     items = FaqSerializer(many=True)
     next_cursor = serializers.CharField(allow_null=True)
     has_more = serializers.BooleanField()
+
+
+class FaqCountsSerializer(serializers.Serializer):
+    """Сколько FAQ в каждом статусе. Состояния свои, не как у документов."""
+
+    total = serializers.IntegerField()
+    DRAFT = serializers.IntegerField()
+    ACTIVE = serializers.IntegerField()
+    ARCHIVED = serializers.IntegerField()
 
 
 class FaqCreateSerializer(serializers.Serializer):
@@ -306,8 +453,17 @@ class FaqViewSet(ServiceViewSet):
     @extend_schema(
         summary="Список FAQ",
         parameters=[
-            OpenApiParameter("status", str, enum=list(FAQ_ENTRY_STATUSES)),
+            OpenApiParameter(
+                "status", str,
+                description="Одно состояние или несколько через запятую",
+            ),
             OpenApiParameter("language", str),
+            OpenApiParameter("office_id", OpenApiTypes.UUID),
+            OpenApiParameter("region_id", OpenApiTypes.UUID),
+            OpenApiParameter(
+                "source_id", OpenApiTypes.UUID,
+                description="Только записи, привязанные к этому документу",
+            ),
             OpenApiParameter("search", str),
             OpenApiParameter("cursor", str),
             OpenApiParameter("limit", int),
@@ -317,12 +473,42 @@ class FaqViewSet(ServiceViewSet):
     def list(self, request):
         params = self.list_params()
         return self.page_response(
-            self.service.list_faq(
+            self.service.list_faq(self.actor, **params, **self._filters(request))
+        )
+
+    @extend_schema(
+        summary="Сколько FAQ в каждом статусе",
+        description=(
+            "По всему доступному набору. Фильтр статуса сюда не "
+            "передаётся: число рядом с вкладкой не должно зависеть от "
+            "того, какая вкладка открыта."
+        ),
+        parameters=[
+            OpenApiParameter("language", str),
+            OpenApiParameter("office_id", OpenApiTypes.UUID),
+            OpenApiParameter("region_id", OpenApiTypes.UUID),
+            OpenApiParameter("source_id", OpenApiTypes.UUID),
+            OpenApiParameter("search", str),
+        ],
+        responses={200: FaqCountsSerializer},
+    )
+    @action(detail=False)
+    def counts(self, request):
+        return Response(
+            self.service.count_faq(
                 self.actor,
-                **params,
-                language=request.query_params.get("language") or None,
+                search=request.query_params.get("search") or None,
+                **self._filters(request),
             )
         )
+
+    def _filters(self, request) -> dict:
+        return {
+            "language": request.query_params.get("language") or None,
+            "office_id": _uuid(request, "office_id"),
+            "region_id": _uuid(request, "region_id"),
+            "source_id": _uuid(request, "source_id"),
+        }
 
     @extend_schema(summary="Один FAQ")
     def retrieve(self, request, pk=None):
