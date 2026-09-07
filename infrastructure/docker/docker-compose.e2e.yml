@@ -1,0 +1,151 @@
+# Изолированный стенд для сквозной проверки очереди уведомлений.
+#
+#   docker compose -p humotech_e2e -f docker-compose.e2e.yml up -d
+#   docker compose -p humotech_e2e -f docker-compose.e2e.yml down -v
+#
+# Это ОТДЕЛЬНЫЙ стек, а не надстройка над рабочим: своя база, своя сеть,
+# свой том. Рабочие контейнеры он не трогает и не перезапускает.
+#
+# Главное свойство — сеть `internal: true`. У контейнеров этого стека нет
+# маршрута наружу вовсе: ни к api.telegram.org, ни куда-либо ещё. Это и
+# есть технический ответ на вопрос «как гарантируется, что проверочные
+# сообщения не уйдут людям»: не «мы подставили заглушку и не забыли», а
+# «отправить некуда, даже если забыли».
+#
+# Заглушка отправщика — второй рубеж, независимый от первого. Настоящий
+# токен сюда не передаётся, и заглушка отказывается стартовать, если он
+# всё-таки появился в окружении.
+#
+# Третий рубеж — в самой команде посева: она сверяет имя базы, переменную
+# окружения и идентификаторы чатов у привязок.
+
+name: humotech_e2e
+
+x-backend-env: &backend_env
+  DJANGO_SETTINGS_MODULE: config.settings.e2e
+  DJANGO_DATABASE_URL: postgresql://humotech:humotech_e2e@postgres-e2e:5432/humotech_e2e
+  DJANGO_ALLOWED_HOSTS: backend-e2e,localhost,127.0.0.1
+  DJANGO_SECRET_KEY: e2e-only-not-a-real-secret-key
+  # Общий секрет бота — свой у стенда. Рабочий сюда не переносится:
+  # он не нужен, а перенесённый секрет означал бы, что стенд умеет
+  # разговаривать с рабочим backend.
+  TELEGRAM_BOT_API_SECRET: e2e-bot-secret
+  TELEGRAM_BOT_TOKEN: ""
+  TELEGRAM_MINI_APP_URL: http://localhost/e2e
+  TELEGRAM_MINI_APP_ALLOWED_ORIGINS: ""
+  AI_ASSISTANT_ENABLED: "false"
+  HUMOTECH_TEST_STAND: "1"
+  # Паузы между попытками сжаты до секунд. Правила повторов при этом
+  # те же самые: меняются только настройки стенда, иначе проверка
+  # исчерпания попыток заняла бы восемь минут ожидания.
+  NOTIFICATIONS_RETRY_BASE_SECONDS: "1"
+  NOTIFICATIONS_RETRY_MAX_SECONDS: "4"
+  NOTIFICATIONS_MAX_ATTEMPTS: "3"
+
+services:
+  postgres-e2e:
+    image: pgvector/pgvector:pg18
+    container_name: humotech_e2e_postgres
+    environment:
+      POSTGRES_USER: humotech
+      POSTGRES_PASSWORD: humotech_e2e
+      POSTGRES_DB: humotech
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    volumes:
+      - e2e_postgres:/var/lib/postgresql
+      - ./e2e-initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U humotech -d humotech_e2e"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - e2e
+    # Порт наружу не публикуется: у стенда нет причин быть доступным
+    # с хоста, а опубликованный порт — это ещё один способ перепутать
+    # его с рабочей базой.
+    restart: "no"
+
+  migrate-e2e:
+    build:
+      context: ../../apps/backend-api
+    image: humotech/backend:local
+    container_name: humotech_e2e_migrate
+    command: ["python", "manage.py", "migrate", "--noinput"]
+    environment: *backend_env
+    depends_on:
+      postgres-e2e:
+        condition: service_healthy
+    networks:
+      - e2e
+    restart: "no"
+
+  backend-e2e:
+    build:
+      context: ../../apps/backend-api
+    image: humotech/backend:local
+    container_name: humotech_e2e_backend
+    # gunicorn с одним воркером: стенду не нужна параллельность, а один
+    # процесс проще разглядывать в логах.
+    command:
+      - gunicorn
+      - config.wsgi:application
+      - --bind
+      - 0.0.0.0:8000
+      - --workers
+      - "1"
+      - --access-logfile
+      - "-"
+      - --error-logfile
+      - "-"
+    environment: *backend_env
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "-H", "Host: backend-e2e", "http://127.0.0.1:8000/readyz"]
+      interval: 5s
+      timeout: 5s
+      start_period: 20s
+      retries: 12
+    depends_on:
+      migrate-e2e:
+        condition: service_completed_successfully
+    networks:
+      - e2e
+    restart: "no"
+
+  # Тот же образ бота и тот же цикл очереди, что в бою. Отличий два:
+  # отправщик — заглушка, и диспетчер aiogram не поднимается вовсе
+  # (см. `run_queue_only` в src/main.py).
+  worker-e2e:
+    build:
+      context: ../../apps/employee-telegram-bot
+    image: humotech/bot:local
+    container_name: humotech_e2e_worker
+    environment:
+      NOTIFICATIONS_SENDER: stub
+      # Заведомо ненастоящий. Заглушка сверяет форму и отказывается
+      # работать, если сюда попадёт похожий на настоящий.
+      BOT_TOKEN: stub-not-a-real-token
+      BACKEND_API_URL: http://backend-e2e:8000/api/v1
+      BACKEND_BOT_SECRET: e2e-bot-secret
+      NOTIFICATIONS_POLL_SECONDS: "2"
+      # Типы, которые заглушка объявляет неудачными: без этого нельзя
+      # проверить ни повтор, ни исчерпание попыток.
+      NOTIFICATIONS_STUB_FAIL: ${E2E_STUB_FAIL:-}
+      LOG_LEVEL: INFO
+    depends_on:
+      backend-e2e:
+        condition: service_healthy
+    networks:
+      - e2e
+    restart: "no"
+
+volumes:
+  e2e_postgres:
+
+networks:
+  e2e:
+    driver: bridge
+    # Ни одного маршрута наружу. Docker не подключает шлюз к такой сети,
+    # поэтому обращение к api.telegram.org отсюда невозможно физически,
+    # а не по договорённости.
+    internal: true

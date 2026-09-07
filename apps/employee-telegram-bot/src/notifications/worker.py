@@ -14,6 +14,11 @@ LOCKED` — делает backend: там есть транзакция, здес
   * НЕ повторяет сам. Неудача сообщается backend, а он решает, ждать
     и сколько.
 
+Кого именно звать для последнего шага, решает `sender.py`, и решает
+один раз при запуске. Здесь про Telegram не знают вовсе — поэтому цикл
+можно провести целиком, ни разу не выйдя наружу, и это не «режим
+тестирования» внутри рабочего кода, а другой отправщик снаружи него.
+
 Результат сообщается пачкой, а не по одному: между отправкой и отчётом
 процесс может упасть, и чем меньше таких промежутков, тем меньше сообщений
 уйдёт дважды. Совсем избежать этого нельзя — «отправить» и «записать, что
@@ -26,24 +31,22 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from aiogram import Bot
-from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError
-
 from src.api.errors import ApiError
 from src.api.selfservice import SelfServiceClient
 from src.config.settings import settings
+from src.notifications.sender import Sender
 
 logger = logging.getLogger("humotech.notifications")
 
 
-async def run_worker(bot: Bot, client: SelfServiceClient) -> None:
+async def run_worker(sender: Sender, client: SelfServiceClient) -> None:
     """Бесконечный цикл. Отменяется вместе с ботом."""
     interval = max(settings.notifications_poll_seconds, 1)
     logger.info("notification worker started, interval=%ss", interval)
 
     while True:
         try:
-            await tick(bot, client)
+            await tick(sender, client)
         except asyncio.CancelledError:
             raise
         except ApiError as error:
@@ -55,7 +58,7 @@ async def run_worker(bot: Bot, client: SelfServiceClient) -> None:
         await asyncio.sleep(interval)
 
 
-async def tick(bot: Bot, client: SelfServiceClient) -> int:
+async def tick(sender: Sender, client: SelfServiceClient) -> int:
     """Один проход: забрать, отправить, отчитаться. Возвращает число писем."""
     batch = await client.claim_notifications()
     messages = batch.get("messages") or []
@@ -64,30 +67,26 @@ async def tick(bot: Bot, client: SelfServiceClient) -> int:
 
     results = []
     for item in messages:
-        results.append(await _deliver(bot, item))
+        results.append(await _deliver(sender, item))
 
     await client.report_notifications(results)
     return len(messages)
 
 
-async def _deliver(bot: Bot, item: dict) -> dict:
-    try:
-        await bot.send_message(item["chat_id"], item["text"])
+async def _deliver(sender: Sender, item: dict) -> dict:
+    """Один отчёт для backend. Кто именно относил — решено при запуске.
+
+    Причина неудачи наружу уходит кодом, а не текстом: ответ Telegram
+    может содержать эхо запроса, то есть само уведомление целиком.
+    """
+    outcome = await sender.deliver(
+        chat_id=item["chat_id"],
+        text=item["text"],
+        notification_type=item.get("type") or "",
+    )
+    if outcome.sent:
         return {"id": item["id"], "sent": True}
-    except TelegramForbiddenError:
-        # Человек заблокировал бота или удалил чат. Повторять бессмысленно —
-        # но и молча терять нельзя: причина уходит в backend, где по ней
-        # видно, почему уведомление не дошло.
-        return {"id": item["id"], "sent": False, "error": "blocked_by_user"}
-    except TelegramAPIError as error:
-        # Только класс ошибки, не текст: ответ Telegram может содержать эхо
-        # запроса, то есть само уведомление целиком.
-        logger.info("send failed: %s", type(error).__name__)
-        return {
-            "id": item["id"],
-            "sent": False,
-            "error": type(error).__name__,
-        }
+    return {"id": item["id"], "sent": False, "error": outcome.error}
 
 
 __all__ = ["run_worker", "tick"]

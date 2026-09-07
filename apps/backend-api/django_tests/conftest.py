@@ -49,6 +49,86 @@ def postgres_only(django_db_setup, django_db_blocker):
     assert not missing, f"В тестовой базе нет расширений: {missing}"
 
 
+# --- запрет настоящих сетевых вызовов ------------------------------------
+
+
+def _allowed_addresses() -> set[str]:
+    """Адреса, к которым тестам ходить можно: только своя база.
+
+    Больше ничего наружу в тестах не открывается. Список собирается по
+    фактической настройке подключения, а не по имени хоста в строке:
+    в docker база — это `postgres`, на голой машине — `127.0.0.1`, и
+    сравнение по строке сломалось бы на первом же переезде.
+    """
+    import socket as _socket
+
+    from django.conf import settings as _settings
+
+    allowed = {"127.0.0.1", "::1"}
+    host = (_settings.DATABASES["default"].get("HOST") or "").strip()
+    if host:
+        try:
+            for family, _, _, _, address in _socket.getaddrinfo(host, None):
+                if family in (_socket.AF_INET, _socket.AF_INET6):
+                    allowed.add(address[0])
+        except OSError:  # pragma: no cover — база всё равно не поднимется
+            pass
+    return allowed
+
+
+class RealNetworkCallBlocked(RuntimeError):
+    """Тест попытался выйти в настоящую сеть."""
+
+
+@pytest.fixture(scope="session", autouse=True)
+def no_real_network():
+    """Любое обращение наружу проваливает тест немедленно.
+
+    История вопроса простая: проверка интерфейса уведомлений однажды
+    закончилась настоящими сообщениями живым людям. Заглушка отправщика
+    защищает ровно до тех пор, пока её не забыли подставить, а этот
+    предохранитель не зависит от аккуратности вызывающего: он ловит сам
+    системный вызов.
+
+    Разрешена только база. Telegram, OpenAI и любой другой внешний адрес
+    дают исключение с именем адреса — не молчаливый таймаут, по которому
+    потом гадают.
+    """
+    import socket
+
+    allowed = _allowed_addresses()
+    real_connect = socket.socket.connect
+    real_connect_ex = socket.socket.connect_ex
+
+    def _check(address) -> None:
+        if not isinstance(address, tuple) or not address:
+            return  # AF_UNIX и прочее без IP — не выход наружу
+        host = str(address[0])
+        if host in allowed:
+            return
+        raise RealNetworkCallBlocked(
+            f"Тест попытался открыть соединение с {host}. "
+            "Наружу из тестов ходить нельзя: внешние отправители "
+            "подменяются заглушкой."
+        )
+
+    def guarded_connect(self, address, *args, **kwargs):
+        _check(address)
+        return real_connect(self, address, *args, **kwargs)
+
+    def guarded_connect_ex(self, address, *args, **kwargs):
+        _check(address)
+        return real_connect_ex(self, address, *args, **kwargs)
+
+    socket.socket.connect = guarded_connect
+    socket.socket.connect_ex = guarded_connect_ex
+    try:
+        yield
+    finally:
+        socket.socket.connect = real_connect
+        socket.socket.connect_ex = real_connect_ex
+
+
 # --- базовые сущности ---
 
 @pytest.fixture()

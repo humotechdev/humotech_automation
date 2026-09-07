@@ -29,6 +29,7 @@ from src.config.settings import settings
 from src.handlers import build_root_router
 from src.messages import employee as text
 from src.middlewares.employee import EmployeeMiddleware
+from src.notifications.sender import TelegramSender, build_stub_sender
 from src.notifications.worker import run_worker
 from src.utils.commands import set_default_commands
 from src.utils.menu_button import ensure_menu_button
@@ -65,11 +66,34 @@ async def on_error(event: ErrorEvent) -> bool:
     return True
 
 
+async def run_queue_only() -> None:
+    """Изолированный стенд: одна очередь и заглушка вместо Telegram.
+
+    Диспетчер здесь не поднимается вовсе, и объект `Bot` не создаётся.
+    Это не бережливость: живой `Bot` начинает опрашивать Telegram сразу,
+    и «мы же подменили отправщик» перестало бы что-либо значить — процесс
+    всё равно ходил бы наружу с настоящим токеном.
+    """
+    sender = build_stub_sender()
+    client = SelfServiceClient()
+    logger.info(
+        "queue-only mode: sender=stub, api=%s", settings.backend_api_url
+    )
+    try:
+        await run_worker(sender, client)
+    finally:
+        await client.close()
+
+
 async def main() -> None:
     logging.basicConfig(
         level=settings.log_level.upper(),
         format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
     )
+
+    if settings.notifications_sender == "stub":
+        await run_queue_only()
+        return
 
     bot = Bot(
         token=settings.bot_token,
@@ -89,7 +113,7 @@ async def main() -> None:
     await ensure_menu_button(bot)
     logger.info("bot @%s started, api=%s", me.username, settings.backend_api_url)
 
-    worker = asyncio.create_task(run_worker(bot, client))
+    worker = asyncio.create_task(run_worker(TelegramSender(bot), client))
     try:
         await dispatcher.start_polling(bot)
     finally:
