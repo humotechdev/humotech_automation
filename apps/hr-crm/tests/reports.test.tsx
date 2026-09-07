@@ -107,6 +107,14 @@ describe('часовые пояса', () => {
     const absences = KINDS.find((kind) => kind.key === 'absences')!;
     expect(zoneNote(absences, true)).not.toContain('офиса');
   });
+
+  test('у сессий границы суток считает организация, а не офис', () => {
+    // `_limit_to_period` берёт пояс организации: у списка сессий может
+    // не быть одного офиса. Обещать пояс офиса здесь было бы неправдой.
+    const sessions = KINDS.find((kind) => kind.key === 'sessions')!;
+    expect(zoneNote(sessions, true)).toContain('организации');
+    expect(zoneNote(sessions, false)).toContain('организации');
+  });
 });
 
 describe('незнакомый вид отчёта', () => {
@@ -371,6 +379,51 @@ describe('история', () => {
     renderApp('/reports');
 
     expect(await screen.findByText(/сформируйте первый/)).toBeTruthy();
+  });
+
+  test('следующая страница дочитывается курсором, а не номером', async () => {
+    const page1 = Array.from({ length: 20 }, (_, i) => ({ ...READY, id: `p1-${i}` }));
+    const page2 = [{ ...READY, id: 'p2-0' }];
+    const calls = fakeNetwork((path) => {
+      if (path.includes('/auth/')) return json(200, { ...USER, permissions: PERMISSIONS });
+      if (path.includes('/export-jobs/counts')) {
+        return json(200, { ...COUNTS, total: 21, SUCCEEDED: 21, QUEUED: 0, FAILED: 0 });
+      }
+      if (path.includes('/export-jobs')) {
+        return path.includes('cursor=c1')
+          ? json(200, { items: page2, next_cursor: null, has_more: false })
+          : json(200, { items: page1, next_cursor: 'c1', has_more: true });
+      }
+      return crm(path) ?? json(200, { items: [], next_cursor: null, has_more: false });
+    });
+    renderApp('/reports');
+
+    // Пока есть следующая страница, итог неизвестен — «показано», не «все».
+    expect(await screen.findByText('Показано 20 выгрузок')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Показать ещё' }));
+
+    await waitFor(() =>
+      expect(calls.some((c) => c.url.includes('cursor=c1'))).toBe(true),
+    );
+    expect(await screen.findByText('Показаны все 21 выгрузка')).toBeTruthy();
+    // Номеров страниц в этом API нет, и рисовать их нечем.
+    expect(screen.queryByRole('button', { name: '2' })).toBeNull();
+  });
+
+  test('неудачное обновление не стирает уже показанные строки', async () => {
+    let broken = false;
+    network((path) =>
+      broken && path.includes('/export-jobs') ? json(500, { error: {} }) : null,
+    );
+    renderApp('/reports');
+    await screen.findByText(/Показаны все/);
+
+    broken = true;
+    fireEvent.click(screen.getByLabelText('Обновить историю'));
+
+    expect(await screen.findByText(/данные не обновились/i)).toBeTruthy();
+    // Строки на месте: ошибка обновления — это не «выгрузок нет».
+    expect(screen.getAllByText('Посещаемость').length).toBeGreaterThan(0);
   });
 
   test('фильтр автора появляется только с правом на журнал', async () => {

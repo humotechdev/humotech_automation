@@ -490,3 +490,43 @@ class TestScopeAfterNarrowing:
         assert response.status_code == 200
         text = b"".join(response.streaming_content).decode("utf-8")
         assert "Далёкий" in text
+
+
+class TestTimezoneInFiles:
+    """Файл называет пояс, по которому посчитаны его даты.
+
+    Иначе «01 августа» в отчёте по нескольким офисам означает разное
+    для разных читателей, и спорить об этом будет некому.
+    """
+
+    def test_attendance_names_the_office_zone(self, exporter, office, employee):
+        text = body_of(
+            exporter.get(
+                f"{API}/reports/attendance/export", {"date": FIRST.isoformat()}
+            )
+        )
+        assert "Часовой пояс" in text
+
+    def test_lateness_names_the_zone(self, exporter, office):
+        text = body_of(
+            exporter.get(
+                f"{API}/reports/lateness/export",
+                {"date_from": FIRST.isoformat(), "date_to": LAST.isoformat()},
+            )
+        )
+        assert "Часовой пояс" in text
+
+    def test_sessions_name_the_organization_zone(self, exporter, office, employee):
+        """У сессий границы суток отсчитаны по поясу организации.
+
+        Он и назван в файле — раньше строки «Часовой пояс» здесь
+        не было вовсе, а экран обещал пояс офиса.
+        """
+        text = body_of(
+            exporter.get(
+                f"{API}/reports/sessions/export",
+                {"date_from": FIRST.isoformat(), "date_to": LAST.isoformat()},
+            )
+        )
+        assert "Часовой пояс" in text
+        assert "по часовому поясу организации" in text

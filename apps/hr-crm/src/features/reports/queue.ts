@@ -53,12 +53,10 @@ export const pending = (items: api.ExportJob[]): boolean =>
 type Options = {
   status: string;
   mineOnly: boolean;
-  /** Меняется, чтобы перезапросить принудительно. */
-  attempt: number;
   onFresh: () => void;
 };
 
-export function useHistory({ status, mineOnly, attempt, onFresh }: Options) {
+export function useHistory({ status, mineOnly, onFresh }: Options) {
   const [live, setLive] = useState<Live>({ state: 'loading' });
   const [more, setMore] = useState<{ busy: boolean; kind: string | null }>({
     busy: false,
@@ -74,7 +72,10 @@ export function useHistory({ status, mineOnly, attempt, onFresh }: Options) {
   const fresh = useRef(onFresh);
   fresh.current = onFresh;
 
-  const key = `${status}|${mineOnly}|${attempt}`;
+  // Смена вкладки или фильтра автора — это ДРУГОЙ набор, и его
+  // законно показать заново с состоянием загрузки. Обычное
+  // обновление идёт через `refresh` и таблицу не гасит.
+  const key = `${status}|${mineOnly}`;
 
   /** Один запрос списка и счётчиков. Счётчики — без фильтра вкладки. */
   const fetchPage = useCallback(

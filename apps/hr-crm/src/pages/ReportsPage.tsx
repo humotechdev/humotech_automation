@@ -75,7 +75,6 @@ export function ReportsPage() {
   const tab = (TABS.find((item) => item.key === params.get('tab'))?.key ??
     'all') as TabKey;
   const mineOnly = !maySeeOthers || params.get('authors') !== 'all';
-  const [attempt, setAttempt] = useState(0);
   const [updated, setUpdated] = useState<Date | null>(null);
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [rowError, setRowError] = useState<{ id: string; text: string } | null>(null);
@@ -84,7 +83,6 @@ export function ReportsPage() {
   const { live, loadMore, more, replace, refresh } = useHistory({
     status: TABS.find((item) => item.key === tab)?.statuses ?? '',
     mineOnly,
-    attempt,
     onFresh,
   });
 
@@ -146,7 +144,7 @@ export function ReportsPage() {
       // «Добавлено в очередь» до подтверждения означало бы обещание,
       // которого никто не давал.
       setNotice({ good: true, text: `Отчёт «${kindTitle(job.kind)}» добавлен в очередь` });
-      setAttempt((n) => n + 1);
+      refresh();
     } catch (error) {
       if (error instanceof ApiFailure) {
         setFields(error.fields);
@@ -225,8 +223,12 @@ export function ReportsPage() {
           </p>
         </div>
         <div className="head__actions">
+          {/* Обновление НЕ гасит уже показанные строки: неудачный
+              запрос оставляет их с пометкой «данные не обновились».
+              Полная перезагрузка на каждое нажатие превращала бы любой
+              сетевой сбой в пустую таблицу. */}
           <button type="button" className="tool" aria-label="Обновить историю"
-                  onClick={() => setAttempt((n) => n + 1)}>
+                  onClick={refresh}>
             <Icon name="refresh" size={18} />
           </button>
           <p className="head__stamp">
@@ -434,7 +436,7 @@ export function ReportsPage() {
               </label>
             )}
             <button type="button" className="tool" aria-label="Обновить историю выгрузок"
-                    onClick={() => setAttempt((n) => n + 1)}>
+                    onClick={refresh}>
               <Icon name="refresh" size={18} />
             </button>
           </div>
@@ -464,7 +466,7 @@ export function ReportsPage() {
           <p className="empty empty--bad">
             Не удалось загрузить историю выгрузок. Это ошибка запроса, а не
             отсутствие файлов.{' '}
-            <button type="button" className="link" onClick={() => setAttempt((n) => n + 1)}>
+            <button type="button" className="link" onClick={refresh}>
               Повторить
             </button>
           </p>
@@ -706,15 +708,22 @@ export function days(from: string, to: string): number {
 /**
  * Пояснение про часовые пояса — по фактическим правилам backend.
  *
- * Присутствие считается в поясе ОФИСА, и при нескольких офисах берётся
- * пояс первого из выборки — он же назван в шапке файла. Обещать «по
- * часовому поясу офиса» для отчёта по всей области было бы неправдой.
+ * Правила у отчётов РАЗНЫЕ, и одной фразой на всех тут не отделаться:
  *
- * Отсутствия сравниваются по датам заявок, а их даты Django сравнивает
- * в UTC: пояс офиса тут ни при чём.
+ * — присутствие и опоздания считает `presence()`: сутки ограничены
+ *   поясом ОФИСА, а при нескольких офисах берётся пояс первого из
+ *   выборки — он же назван в шапке файла;
+ * — сессии ограничены поясом ОРГАНИЗАЦИИ (`_limit_to_period`): у списка
+ *   может не быть одного офиса, и границы суток нужны определённые;
+ * — отсутствия отбираются по датам заявок, а их Django сравнивает
+ *   в UTC: пояс офиса тут ни при чём;
+ * — у состава сотрудников дат нет вовсе.
  */
 export function zoneNote(kind: Kind, oneOffice: boolean): string {
   if (kind.key === 'absences') return 'Даты отсутствий сравниваются по UTC';
+  if (kind.key === 'sessions') {
+    return 'Границы периода — по часовому поясу организации; он указан в файле';
+  }
   if (!kind.period) return 'Состав берётся на момент формирования файла';
   return oneOffice
     ? 'Даты — по часовому поясу офиса'
