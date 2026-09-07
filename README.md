@@ -48,6 +48,8 @@ Face Recognition в системе не используется. Вход и в
   AI-ассистент: RAG на pgvector, версионирование знаний, двухфазная публикация
 - [`packages/api-contracts/telegram-bot.v1.md`](packages/api-contracts/telegram-bot.v1.md) —
   контракт API для Telegram-бота
+- [`docs/development/isolated-checks.md`](docs/development/isolated-checks.md) —
+  как проверять очередь уведомлений, не отправляя сообщений живым людям
 
 ## Стек
 
