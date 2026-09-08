@@ -3812,29 +3812,54 @@ html {
   white-space: nowrap;
 }
 
-/* Показатель с переходом: вся плитка — кнопка, а не ссылка-невидимка. */
-.card__go {
+/* Показатель с переходом.
+ *
+ * Оформление берётся у существующего `.metric` — того же, что на
+ * главной и в аналитике. Своих классов здесь заводить нельзя: плитка,
+ * названная несуществующим `.card`, оставалась без фона, рамки и
+ * отступов, а значение печаталось обычным текстом в 14 px.
+ *
+ * Кнопка САМА несёт `.metric`, а не лежит внутри него: `.metric` —
+ * это сетка из трёх строк, и обёртка между ней и содержимым сложила
+ * бы все три строки в одну ячейку.
+ */
+.metric-cell {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+}
+
+.metric--go {
   width: 100%;
-  padding: 0;
-  border: 0;
-  background: none;
   font: inherit;
   color: inherit;
   text-align: left;
   cursor: pointer;
 }
 
-.card__go:focus-visible {
-  outline: 2px solid var(--ink-1);
-  outline-offset: 3px;
+.metric--go:hover {
+  background: #fafafa;
 }
 
-.card__hint {
-  font-size: 12px;
-  color: var(--ink-2);
+.metric--go:focus-visible {
+  outline: 2px solid var(--ink-1);
+  outline-offset: 2px;
+}
+
+/* Строка списка отметок. `.marks li` задаёт раскладку, этот класс —
+   только опора для чтения разметки. */
+.marks__line {
+  min-width: 0;
+}
+
+/* ФИО в шапке карточки крупнее, чем в строке списка: это заголовок
+   страницы, а не ячейка таблицы. */
+.who--card .who__name {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.15;
+}
+
+.who--card .who__id {
+  font-size: 13px;
 }
 
 /* Часы по дням.
@@ -3885,4 +3910,59 @@ html {
     margin-left: 0;
     align-items: flex-start;
   }
+}
+
+/* Неделя по графику. Рабочий день отличается фоном и текстом, а не
+   цветом: палитра раздела чёрно-белая. */
+.week {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.week__day {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 10px;
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  font-size: 13px;
+}
+
+.week__day--on {
+  background: var(--soft);
+  border-color: #d5d5d5;
+}
+
+.week__title {
+  font-weight: 600;
+}
+
+.week__hours {
+  font-size: 12px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 900px) {
+  .week {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* Привязка Telegram в карточке: состояние и действие — в столбец.
+   В строку они вставали вплотную, и подпись упиралась в кнопку. */
+.tg-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.tg-block .tg__state {
+  margin: 0;
 }

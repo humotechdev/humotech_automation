@@ -1432,3 +1432,42 @@ export const attendanceDaily = (
     `/attendance/daily${query(params)}`,
     signal ? { signal } : {},
   );
+
+
+// --- график работы -----------------------------------------------------------
+
+/** День недели графика. `weekday` — 1 (понедельник) … 7 (воскресенье). */
+export type ScheduleDay = {
+  weekday: number;
+  is_working_day: boolean;
+  start_time: string | null;
+  end_time: string | null;
+};
+
+export type WorkScheduleDetail = {
+  id: string;
+  name: string;
+  timezone: string;
+  weekly_minutes: number;
+  late_grace_minutes: number | null;
+  early_leave_grace_minutes: number | null;
+  is_flexible: boolean;
+  status: string;
+  days: ScheduleDay[];
+};
+
+/** Назначение графика сотруднику: период действия и ссылка на график. */
+export type ScheduleAssignment = {
+  id: string;
+  employee_id: string;
+  schedule_id: string;
+  schedule_name: string | null;
+  valid_from: string;
+  valid_to: string | null;
+};
+
+export const workSchedule = (id: string, signal?: AbortSignal) =>
+  request<WorkScheduleDetail>(
+    `/work-schedules/${id}/`,
+    signal ? { signal } : {},
+  );

@@ -19,7 +19,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import * as api from '../api/crm';
 import { ApiFailure, messageFor } from '../api/errors';
 import { AppShell } from '../components/AppShell';
-import { Icon } from '../components/nav-icons';
+import { Icon, type IconName } from '../components/nav-icons';
 import { useSession } from '../features/auth/session';
 import { useBlock, type Block } from '../features/dashboard/data';
 import { clockOnDay, moment, shortDate } from '../features/time/zone';
@@ -201,7 +201,7 @@ function Header({ person, zone, rights }: {
       </span>
       {rights.manage && (
         <span className="who__actions">
-          <Link className="btn" to="/employees">Редактировать</Link>
+          <Link className="btn btn--dark" to="/employees">Редактировать</Link>
         </span>
       )}
     </header>
@@ -246,37 +246,48 @@ function Overview({ id, person, zone, rights, onGo, onChanged }: {
   return (
     <>
       <ul className="cards cards--four" aria-label="Показатели сотрудника">
-        <Tile title="Сегодня в офисе" note={`За ${today}`}
+        <Tile icon="clock" title="Сегодня в офисе" note={`За ${today}`}
               value={todayRow ? duration(todayRow.seconds) : '—'}
-              hint={todayRow ? dayState(todayRow) : 'Нет данных за сегодня'}
+              hint={todayRow ? dayState(todayRow) : 'нет данных'}
               onGo={() => onGo('attendance')} />
-        <Tile title="За месяц" note={`${month.first} — ${month.last}`}
+        <Tile icon="calendar" title="За месяц"
+              note={`${month.first} — ${month.last}`}
               value={report ? duration(report.totals.seconds) : '—'}
-              hint="Сумма учитываемых интервалов"
               onGo={() => onGo('attendance')} />
-        <Tile title="Дней с отметками" note="За тот же месяц"
+        <Tile icon="check" title="Дней с отметками" note="За тот же месяц"
               value={report ? String(report.totals.days_with_marks) : '—'}
-              hint={report ? `Рабочих дней ${report.totals.working_days}` : ''}
+              {...(report ? { hint: `рабочих ${report.totals.working_days}` } : {})}
               onGo={() => onGo('attendance')} />
-        <Tile title="Заявок ждут решения" note="Все открытые"
+        <Tile icon="inbox" title="Заявок ждут решения" note="Все открытые"
               value={waiting === null ? '—' : String(waiting)}
-              hint="Отпуска, больничные и исправления"
               onGo={() => onGo('requests')} />
       </ul>
 
       <div className="split split--open">
-        <section className="panel">
-          <h3 className="panel__title">Профиль</h3>
-          <dl className="facts">
-            <Fact label="Дата приёма" value={text(person, 'hire_date')} />
-            <Fact label="Должность" value={text(person, 'position_name')} />
-            <Fact label="Отдел" value={text(person, 'department_name')} />
-            <Fact label="Офис" value={text(person, 'office_name')} />
-            <Fact label="Телефон" value={text(person, 'phone')} />
-            <Fact label="Рабочая почта" value={text(person, 'corporate_email')} />
-            <Fact label="Табельный номер" value={text(person, 'employee_number')} />
-          </dl>
-        </section>
+        <div className="setup__forms">
+          <section className="panel">
+            <h3 className="panel__title">Профиль</h3>
+            <dl className="facts">
+              <Fact label="Дата приёма" value={text(person, 'hire_date')} />
+              <Fact label="Должность" value={text(person, 'position_name')} />
+              <Fact label="Отдел" value={text(person, 'department_name')} />
+              <Fact label="Офис" value={text(person, 'office_name')} />
+              <Fact label="Телефон" value={text(person, 'phone')} />
+              <Fact label="Рабочая почта" value={text(person, 'corporate_email')} />
+              <Fact label="Табельный номер" value={text(person, 'employee_number')} />
+            </dl>
+          </section>
+
+          <section className="panel">
+            <h3 className="panel__title">Последние заявки</h3>
+            {!rights.absences ? (
+              <p className="muted">Нет права на заявки.</p>
+            ) : (
+              <RequestList block={requests} zone={zone} picked={null}
+                           onPick={() => onGo('requests')} compact />
+            )}
+          </section>
+        </div>
 
         <div className="setup__aside">
           <section className="panel">
@@ -313,30 +324,44 @@ function Overview({ id, person, zone, rights, onGo, onChanged }: {
         </div>
       </div>
 
-      <section className="panel">
-        <h3 className="panel__title">Последние заявки</h3>
-        {!rights.absences ? (
-          <p className="muted">Нет права на заявки.</p>
-        ) : (
-          <RequestList block={requests} zone={zone} picked={null}
-                       onPick={() => onGo('requests')} compact />
-        )}
-      </section>
     </>
   );
 }
 
-function Tile({ title, note, value, hint, onGo }: {
-  title: string; note: string; value: string; hint: string;
-  onGo: () => void;
+/**
+ * Показатель. Оформление — существующий `.metric`, тот же, что на
+ * главной и в аналитике.
+ *
+ * Своих классов здесь заводить было нельзя: `.card` в этом проекте
+ * не существует вовсе, и плитка, названная так, оставалась без фона,
+ * рамки, отступов и без крупного значения — рисовался голый текст.
+ *
+ * `onGo` необязателен: показатель без перехода остаётся текстом, а не
+ * превращается в кнопку, которая ничего не делает.
+ */
+function Tile({ icon, title, note, value, hint, onGo }: {
+  icon: IconName;
+  title: string;
+  note: string;
+  value: string;
+  hint?: string;
+  onGo?: () => void;
 }) {
+  const body = (
+    <>
+      <span className="metric__head">
+        <Icon name={icon} size={16} />
+        <span>{title}</span>
+      </span>
+      <span className="metric__value">{value}</span>
+      <span className="metric__note">{note}{hint ? ` \u00b7 ${hint}` : ''}</span>
+    </>
+  );
+  if (!onGo) return <li className="metric">{body}</li>;
   return (
-    <li className="card">
-      <button type="button" className="card__go" onClick={onGo}>
-        <span className="card__title">{title}</span>
-        <span className="card__value">{value}</span>
-        <span className="card__note">{note}</span>
-        {hint && <span className="card__hint">{hint}</span>}
+    <li className="metric-cell">
+      <button type="button" className="metric metric--go" onClick={onGo}>
+        {body}
       </button>
     </li>
   );
@@ -365,7 +390,7 @@ function TelegramBlock({ id, block, onChanged }: {
   const state = link?.state ?? null;
 
   return (
-    <>
+    <div className="tg-block">
       <p className="tg__state">
         {state === 'ACTIVE' ? 'Привязан'
           : state === 'PENDING' ? 'Приглашение отправлено, ожидает подтверждения'
@@ -387,7 +412,7 @@ function TelegramBlock({ id, block, onChanged }: {
         </button>
       )}
       {error && <p className="form-grid__error" role="alert">{error}</p>}
-    </>
+    </div>
   );
 }
 
@@ -475,21 +500,20 @@ function Attendance({ id, rights, zone }: {
           {report.note && <p className="note note--dim">{report.note}</p>}
 
           <ul className="cards cards--four" aria-label="Показатели за период">
-            <Tile title="Время в офисе" note="За весь период"
-                  value={duration(report.totals.seconds)}
-                  hint="Сумма учитываемых интервалов" onGo={() => undefined} />
-            <Tile title="Дней с отметками" note="За весь период"
+            {/* Без перехода: это итог периода, показанного тут же.
+                Кнопка, ведущая на саму себя, обещала бы действие. */}
+            <Tile icon="clock" title="Время в офисе" note="За весь период"
+                  value={duration(report.totals.seconds)} />
+            <Tile icon="check" title="Дней с отметками" note="За весь период"
                   value={String(report.totals.days_with_marks)}
-                  hint={`Рабочих дней ${report.totals.working_days}`}
-                  onGo={() => undefined} />
-            <Tile title="Опозданий" note="Сверх допуска графика"
+                  hint={`рабочих ${report.totals.working_days}`} />
+            <Tile icon="late" title="Опозданий" note="Сверх допуска графика"
                   value={String(report.totals.late_days)}
-                  hint={report.totals.late_minutes
-                    ? `Всего ${report.totals.late_minutes} мин` : ''}
-                  onGo={() => undefined} />
-            <Tile title="Незакрытых сессий" note="Без отметки выхода"
-                  value={String(report.totals.open_sessions)}
-                  hint="Требуют разбора" onGo={() => undefined} />
+                  {...(report.totals.late_minutes
+                    ? { hint: `${report.totals.late_minutes} мин` } : {})} />
+            <Tile icon="alert" title="Незакрытых сессий"
+                  note="Без отметки выхода"
+                  value={String(report.totals.open_sessions)} />
           </ul>
 
           <div className="split split--open">
@@ -509,7 +533,7 @@ function Attendance({ id, rights, zone }: {
                   <tbody>
                     {rows.map((row) => (
                       <tr key={row.day}
-                          className={`row${picked === row.day ? ' row--on' : ''}`}>
+                          className={picked === row.day ? 'row--on' : undefined}>
                         <td>
                           <button type="button" className="linky"
                                   onClick={() => setPicked(row.day)}>
@@ -631,7 +655,7 @@ function DayDetails({ id, day, row, zone, rights, onClose }: {
           ) : (
             <ul className="marks">
               {detail.data.sessions.map((session) => (
-                <li key={session.id} className="marks__row">
+                <li key={session.id} className="marks__line">
                   <span className="marks__time">
                     {clockOnDay(session.started_at, zone, day)} —{' '}
                     {session.ended_at ? clockOnDay(session.ended_at, zone, day) : 'открыта'}
@@ -649,7 +673,7 @@ function DayDetails({ id, day, row, zone, rights, onClose }: {
           ) : (
             <ul className="marks">
               {detail.data.events.map((mark) => (
-                <li key={mark.id} className="marks__row">
+                <li key={mark.id} className="marks__line">
                   <span className="marks__time">
                     {clockOnDay(mark.occurred_at, zone, day)}
                   </span>
@@ -698,95 +722,193 @@ function verification(mark: api.EventRow): string {
 // --- вкладка «График и назначения» -------------------------------------------
 
 function Schedule({ id }: { id: string }) {
-  const [data] = useBlock(
+  const [data, reload] = useBlock(
     (signal) => Promise.all([
       api.employeeAssignments(id, signal),
       api.employeeSchedules(id, signal),
     ]).then(([assignments, schedules]) => ({
       assignments: assignments.items,
-      schedules: schedules.items,
+      schedules: schedules.items as unknown as api.ScheduleAssignment[],
     })),
     `schedule|${id}`,
   );
 
+  const current = data.state === 'ready'
+    ? data.data.schedules.find((row) => !row.valid_to) ?? null
+    : null;
+
+  // Карточка графика — вторым запросом и только когда есть что спрашивать:
+  // назначение знает лишь имя графика, а недельная полоса собирается
+  // из его дней.
+  const [detail] = useBlock(
+    (signal) => api.workSchedule(current?.schedule_id ?? '', signal),
+    `schedule-detail|${current?.schedule_id ?? 'none'}`,
+    Boolean(current?.schedule_id),
+  );
+
   if (data.state === 'loading') return <p className="empty" role="status">Загружаем…</p>;
-  if (data.state !== 'ready') {
-    return <p className="empty empty--bad">Не удалось загрузить назначения.</p>;
+  if (data.state === 'denied') {
+    return <p className="empty empty--bad">Назначения закрыты вашей областью доступа.</p>;
+  }
+  if (data.state === 'error') {
+    return (
+      <p className="empty empty--bad">
+        Не удалось загрузить назначения.{' '}
+        <button type="button" className="link" onClick={reload}>Повторить</button>
+      </p>
+    );
   }
 
-  const current = data.data.assignments.find((row) => !row.valid_to) ?? null;
+  const post = data.data.assignments.find((row) => !row.valid_to) ?? null;
 
   return (
     <>
       <div className="split split--open">
         <section className="panel">
           <h3 className="panel__title">Текущее назначение</h3>
-          {current ? (
+          {post ? (
             <dl className="facts">
-              <Fact label="Регион" value={current.region_name} />
-              <Fact label="Офис" value={current.office_name} />
-              <Fact label="Отдел" value={current.department_name} />
-              <Fact label="Должность" value={current.position_name} />
-              <Fact label="Действует с" value={current.valid_from} />
+              <Fact label="Регион" value={post.region_name} />
+              <Fact label="Офис" value={post.office_name} />
+              <Fact label="Отдел" value={post.department_name} />
+              <Fact label="Должность" value={post.position_name} />
+              <Fact label="Действует с" value={post.valid_from} />
             </dl>
           ) : (
-            <p className="muted">Действующего назначения нет.</p>
+            <p className="empty">Действующего назначения нет.</p>
           )}
           <p className="field__hint">
-            Перевод создаёт новый период и закрывает прежний — история
-            назначений при этом сохраняется целиком и прошлые расчёты
-            не меняются.
+            Перевод создаёт новый период и закрывает прежний: история
+            сохраняется целиком, а прошлые расчёты не меняются.
           </p>
         </section>
 
         <section className="panel">
           <h3 className="panel__title">Текущий график</h3>
-          {data.data.schedules.length === 0 ? (
+          {!current ? (
             <p className="empty">График не назначен.</p>
-          ) : (
+          ) : detail.state === 'ready' ? (
             <dl className="facts">
-              {Object.entries(data.data.schedules[0] ?? {})
-                .filter(([key]) => ['name', 'timezone', 'weekly_minutes',
-                                    'late_grace_minutes', 'valid_from'].includes(key))
-                .map(([key, value]) => (
-                  <Fact key={key} label={key} value={value === null ? null : String(value)} />
-                ))}
+              <Fact label="Название" value={detail.data.name} />
+              <Fact label="Часовой пояс" value={detail.data.timezone} />
+              <Fact label="Часов в неделю"
+                    value={`${Math.round(detail.data.weekly_minutes / 60)}`} />
+              <Fact label="Допуск опоздания"
+                    value={detail.data.late_grace_minutes === null
+                      ? null : `${detail.data.late_grace_minutes} мин`} />
+              <Fact label="Действует с" value={current.valid_from} />
             </dl>
+          ) : detail.state === 'error' ? (
+            <p className="empty empty--bad">Карточку графика получить не удалось.</p>
+          ) : (
+            <p className="empty" role="status">Читаем график…</p>
           )}
         </section>
       </div>
 
       <section className="panel">
-        <h3 className="panel__title">История назначений</h3>
-        <div className="scroller">
-          <table className="grid-table" aria-label="История назначений">
-            <thead>
-              <tr>
-                <th scope="col">Период</th>
-                <th scope="col">Офис</th>
-                <th scope="col">Отдел</th>
-                <th scope="col">Должность</th>
-                <th scope="col">Состояние</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.data.assignments.map((row) => (
-                <tr key={row.id}>
-                  <td>{row.valid_from} — {row.valid_to ?? 'по настоящее время'}</td>
-                  <td>{orDash(row.office_name)}</td>
-                  <td>{orDash(row.department_name)}</td>
-                  <td>{orDash(row.position_name)}</td>
-                  <td>{row.valid_to ? 'Завершено' : 'Действует'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {data.data.assignments.length === 0 && (
-          <p className="empty">Записей о назначениях нет.</p>
+        <h3 className="panel__title">Неделя по графику</h3>
+        {!current ? (
+          <p className="empty">График не назначен.</p>
+        ) : detail.state === 'ready' ? (
+          <Week days={detail.data.days} />
+        ) : (
+          <p className="empty" role="status">Читаем график…</p>
         )}
+        <p className="field__hint">
+          Полоса показывает график как он назначен. Праздники и переносы
+          применяются расчётом на стороне сервера в день события.
+        </p>
       </section>
+
+      <div className="split split--open">
+        <section className="panel">
+          <h3 className="panel__title">История назначений</h3>
+          <Periods rows={data.data.assignments.map((row) => ({
+            id: row.id,
+            from: row.valid_from ?? '',
+            to: row.valid_to,
+            what: [row.office_name, row.department_name, row.position_name]
+              .filter(Boolean).join(' · ') || 'Без подробностей',
+          }))} empty="Записей о назначениях нет." />
+        </section>
+
+        <section className="panel">
+          <h3 className="panel__title">История графиков</h3>
+          <Periods rows={data.data.schedules.map((row) => ({
+            id: row.id,
+            from: row.valid_from,
+            to: row.valid_to,
+            what: row.schedule_name ?? 'График',
+          }))} empty="Графиков не назначалось." />
+        </section>
+      </div>
     </>
+  );
+}
+
+const WEEKDAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+
+/** Неделя рабочих интервалов. Выходной — не «нет данных», и наоборот. */
+function Week({ days }: { days: api.ScheduleDay[] }) {
+  const byWeekday = new Map(days.map((day) => [day.weekday, day]));
+  return (
+    <ul className="week" aria-label="Неделя по графику">
+      {WEEKDAYS.map((title, index) => {
+        const day = byWeekday.get(index + 1);
+        const working = Boolean(day?.is_working_day);
+        return (
+          <li key={title} className={`week__day${working ? ' week__day--on' : ''}`}>
+            <span className="week__title">{title}</span>
+            <span className="week__hours">
+              {!day ? 'нет данных'
+                : working ? `${(day.start_time ?? '').slice(0, 5)} — ${(day.end_time ?? '').slice(0, 5)}`
+                : 'выходной'}
+            </span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/**
+ * История периодов: действующие, будущие и завершённые — разными словами.
+ *
+ * Даты приходят с сервера и здесь не пересчитываются: смена пояса
+ * отображения CRM не должна сдвигать границы кадровых периодов.
+ */
+function Periods({ rows, empty }: {
+  rows: Array<{ id: string; from: string; to: string | null; what: string }>;
+  empty: string;
+}) {
+  const today = todayIso();
+  if (rows.length === 0) return <p className="empty">{empty}</p>;
+  return (
+    <div className="scroller">
+      <table className="grid-table" aria-label="История периодов">
+        <thead>
+          <tr>
+            <th scope="col">Период</th>
+            <th scope="col">Что</th>
+            <th scope="col">Состояние</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.id}>
+              <td>{row.from} — {row.to ?? 'по настоящее время'}</td>
+              <td>{row.what}</td>
+              <td>
+                {row.from > today ? 'Начнётся позже'
+                  : row.to && row.to < today ? 'Завершено'
+                  : 'Действует'}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -894,16 +1016,20 @@ function RequestList({ block, zone, picked, onPick, compact }: {
             <button type="button"
                     className={`roster__go${picked === item.id ? ' roster__go--on' : ''}`}
                     onClick={() => onPick(item.id)}>
-              <span className="roster__name">
-                {item.kind === 'absence'
-                  ? orDash((item.absence as Record<string, unknown> | undefined)?.['absence_type_name'])
-                  : 'Исправление отметки'}
-              </span>
-              <span className="roster__note">
-                {moment(item.created_at, zone, false)}
-                {compact ? '' : ` · ${item.kind === 'absence'
-                  ? (REQUEST_STATUS[status] ?? status)
-                  : (CORRECTION_STATUS[status] ?? status)}`}
+              <span className="who">
+                <span className="who__text">
+                  <span className="who__name">
+                    {item.kind === 'absence'
+                      ? orDash((item.absence as Record<string, unknown> | undefined)?.['absence_type_name'])
+                      : 'Исправление отметки'}
+                  </span>
+                  <span className="who__id">
+                    {moment(item.created_at, zone, false)}
+                    {compact ? '' : ` · ${item.kind === 'absence'
+                      ? (REQUEST_STATUS[status] ?? status)
+                      : (CORRECTION_STATUS[status] ?? status)}`}
+                  </span>
+                </span>
               </span>
             </button>
           </li>
@@ -987,7 +1113,7 @@ function RequestDetails({ item, zone, rights, onClose, onDone }: {
           ) : (
             <ul className="marks">
               {documents.map((doc) => (
-                <li key={String(doc['id'])} className="marks__row">
+                <li key={String(doc['id'])} className="marks__line">
                   <span className="marks__what">{orDash(doc['file_name'])}</span>
                   <span className="marks__kind">
                     {DOCUMENT_STATUS[String(doc['verification_status'] ?? '')]
@@ -1096,10 +1222,14 @@ function History({ id, rights, zone }: {
                   <button type="button"
                           className={`roster__go${picked === row.id ? ' roster__go--on' : ''}`}
                           onClick={() => setPicked(row.id)}>
-                    <span className="roster__name">{row.action}</span>
-                    <span className="roster__note">
-                      {moment(row.occurred_at, zone, false)}
-                      {row.actor_email ? ` · ${row.actor_email}` : ''}
+                    <span className="who">
+                      <span className="who__text">
+                        <span className="who__name">{row.action}</span>
+                        <span className="who__id">
+                          {moment(row.occurred_at, zone, false)}
+                          {row.actor_email ? ` · ${row.actor_email}` : ''}
+                        </span>
+                      </span>
                     </span>
                   </button>
                 </li>
@@ -1153,7 +1283,7 @@ function Diff({ before, after }: {
   return (
     <ul className="marks">
       {keys.map((key) => (
-        <li key={key} className="marks__row">
+        <li key={key} className="marks__line">
           <span className="marks__kind">{key}</span>
           <span className="marks__what">{orDash(before?.[key])}</span>
           <span className="marks__time">→ {orDash(after?.[key])}</span>
