@@ -24,7 +24,12 @@ import { AppShell } from '../components/AppShell';
 import { AuditTab } from '../components/AuditTab';
 import { Icon } from '../components/nav-icons';
 import { RolesTab } from '../components/RolesTab';
-import { Overlay, UserCard, type Rights } from '../components/UserCard';
+import {
+  Overlay,
+  ScopePicker,
+  UserCard,
+  type Rights,
+} from '../components/UserCard';
 import { useSession } from '../features/auth/session';
 import { useBlock } from '../features/dashboard/data';
 import {
@@ -34,11 +39,11 @@ import {
   emptyText,
   initials,
   roleSummary,
+  scopeHint,
   scopeSummary,
   userLine,
   userSubtitle,
   userTitle,
-  type ScopeRegion,
 } from '../features/admin/model';
 
 type Tab = 'users' | 'roles' | 'audit';
@@ -56,20 +61,17 @@ function taken<T>(result: PromiseSettledResult<{ items: T[] }>): T[] {
   return result.status === 'fulfilled' ? result.value.items : [];
 }
 
-function active<T extends { status: string }>(items: T[]): T[] {
-  return items.filter((item) => item.status === 'ACTIVE');
-}
-
-/** Регионы, видимые через офисы: без дублей и без выдуманных полей. */
-function fromOffices(offices: api.Office[]): ScopeRegion[] {
-  const seen = new Map<string, string>();
-  for (const office of offices) {
-    if (office.region_id && !seen.has(office.region_id)) {
-      seen.set(office.region_id, office.region_name ?? office.region_id);
-    }
-  }
-  return [...seen].map(([id, name]) => ({ id, name }));
-}
+/**
+ * Ничего не выбрать. Именно `all_organization: false`, а не «неизвестно»:
+ * пустой список областей плюс запрет на всю организацию — это состояние,
+ * в котором выдать нельзя ничего, и форма обязана сказать это прямо,
+ * а не предлагать выбор из ничего.
+ */
+const NOTHING: api.AssignableScopes = {
+  all_organization: false,
+  regions: [],
+  offices: [],
+};
 
 export function AdminPage() {
   const session = useSession();
@@ -121,52 +123,45 @@ export function AdminPage() {
   // --- справочники ----------------------------------------------------------
 
   // Справочники берутся по отдельности, а не одним `Promise.all`.
-  // Права на них независимы: у технического администратора есть
-  // `offices.read` и нет `regions.read`, и общий отказ по регионам
-  // оставил бы страницу вообще без ролей, каталога прав и офисов —
-  // из-за справочника, без которого остальное прекрасно работает.
+  // Права на них независимы, и общий отказ по одному оставил бы
+  // страницу вообще без остальных — из-за списка, без которого прочее
+  // прекрасно работает.
+  //
+  // Области берутся из `/grants/scopes`, а НЕ из `/regions/` и
+  // `/offices/`. Те — справочники, и читаются они по `regions.read` и
+  // `offices.read`; у технического администратора первого права нет
+  // вовсе. Собирать регионы из видимых офисов, как было раньше, значит
+  // терять регион без офисов — вместе с возможностью выдать назначение
+  // на него.
   const [directory, reloadDirectory] = useBlock(
     (signal) =>
       Promise.allSettled([
-        api.regions(signal),
-        api.offices(signal),
+        // Спрашивается только тогда, когда есть чем воспользоваться:
+        // без `roles.manage` формы выдачи на странице нет.
+        rights.roles
+          ? api.assignableScopes(signal)
+          : Promise.resolve(NOTHING),
         rights.roles
           ? api.roles(signal)
           : Promise.resolve({ items: [] as api.RoleFull[] }),
         rights.roles
           ? api.permissionCatalog(signal)
           : Promise.resolve({ items: [] as api.PermissionRow[] }),
-      ]).then(([regions, offices, roles, catalog]) => {
-        const offiseItems = active(taken(offices));
-        return {
-          // Регионы: свой справочник, если он доступен. Если нет —
-          // те, что видны через офисы. Это не догадка: id и название
-          // региона лежат в самой строке офиса. Пустой список тогда
-          // означает «регионов не видно», и форма это говорит вслух,
-          // а не молча предлагает выбрать из ничего.
-          regions: taken(regions).length
-            ? active(taken(regions)).map((item) => ({
-                id: item.id, name: item.name,
-              }))
-            : fromOffices(offiseItems),
-          regionsOwn: regions.status === 'fulfilled',
-          offices: offiseItems,
-          officesOwn: offices.status === 'fulfilled',
-          roles: taken(roles),
-          catalog: taken(catalog),
-          rolesOwn: roles.status === 'fulfilled',
-        };
-      }),
+      ]).then(([scopes, roles, catalog]) => ({
+        scopes: scopes.status === 'fulfilled' ? scopes.value : NOTHING,
+        scopesOwn: scopes.status === 'fulfilled',
+        roles: taken(roles),
+        catalog: taken(catalog),
+        rolesOwn: roles.status === 'fulfilled',
+      })),
     `admin-directory|${attempt}|${rights.roles}`,
     rights.users || rights.roles,
   );
   const book = directory.state === 'ready'
     ? directory.data
     : {
-        regions: [] as ScopeRegion[],
-        regionsOwn: true,
-        offices: [] as api.Office[],
-        officesOwn: true,
+        scopes: NOTHING,
+        scopesOwn: true,
         roles: [] as api.RoleFull[],
         catalog: [] as api.PermissionRow[],
         rolesOwn: true,
@@ -378,9 +373,8 @@ export function AdminPage() {
                 user={card.data}
                 zone={zone}
                 rights={rights}
-                regions={book.regions}
-                offices={book.offices}
-                scopesKnown={book.regionsOwn && book.officesOwn}
+                scopes={book.scopes}
+                scopesKnown={book.scopesOwn}
                 roles={book.roles}
                 catalog={book.catalog}
                 onClose={() => patch({ id: null })}
@@ -401,9 +395,8 @@ export function AdminPage() {
       {creating && (
         <CreateUser
           roles={book.roles}
-          regions={book.regions}
-          offices={book.offices}
-          scopesKnown={book.regionsOwn && book.officesOwn}
+          scopes={book.scopes}
+          scopesKnown={book.scopesOwn}
           mayAssign={rights.roles}
           onClose={() => setCreating(false)}
           onDone={(id) => { setCreating(false); changed(); patch({ id }); }}
@@ -592,11 +585,10 @@ function UserTable({ page, counts, search, filtered, picked, onPick, filters }: 
  * где остановился.
  */
 function CreateUser({
-  roles, regions, offices, scopesKnown, mayAssign, onClose, onDone,
+  roles, scopes, scopesKnown, mayAssign, onClose, onDone,
 }: {
   roles: api.RoleFull[];
-  regions: ScopeRegion[];
-  offices: api.Office[];
+  scopes: api.AssignableScopes;
   scopesKnown: boolean;
   mayAssign: boolean;
   onClose: () => void;
@@ -623,6 +615,11 @@ function CreateUser({
     active: boolean;
     role: boolean;
   }>({ id: null, password: false, active: false, role: false });
+
+  // Область важна только вместе с ролью: без роли назначение не
+  // отправляется вовсе, и требовать выбор области было бы придиркой.
+  const wrongScope =
+    roleId && mayAssign ? scopeHint(scopes, region, office) : null;
 
   // Введённое, но не отправленное. Незавершённый шаг тоже считается:
   // закрыть форму, когда запись уже создана, а роль ещё нет, значит
@@ -723,12 +720,6 @@ function CreateUser({
 
       {mayAssign && (
         <>
-          {!scopesKnown && (
-            <p className="note note--dim">
-              Справочник областей прочитан не полностью: часть регионов или
-              офисов вам не видна.
-            </p>
-          )}
           <label className="form-grid__field">
             <span className="form-grid__label">Роль</span>
             <select className="form-grid__input" value={roleId} aria-label="Роль"
@@ -741,29 +732,14 @@ function CreateUser({
               ))}
             </select>
           </label>
-          <label className="form-grid__field">
-            <span className="form-grid__label">Регион</span>
-            <select className="form-grid__input" value={region} aria-label="Регион"
-                    onChange={(event) => { setRegion(event.target.value); setOffice(''); }}>
-              <option value="">Вся организация</option>
-              {regions.map((item) => (
-                <option key={item.id} value={item.id}>{item.name}</option>
-              ))}
-            </select>
-          </label>
-          <label className="form-grid__field">
-            <span className="form-grid__label">Офис</span>
-            <select className="form-grid__input" value={office} aria-label="Офис"
-                    onChange={(event) => setOffice(event.target.value)}>
-              <option value="">Весь выбранный уровень</option>
-              {(region
-                ? offices.filter((item) => item.region_id === region)
-                : offices
-              ).map((item) => (
-                <option key={item.id} value={item.id}>{item.name}</option>
-              ))}
-            </select>
-          </label>
+          {/* Область спрашивается только вместе с ролью: без роли
+              выдавать нечего, и назначение не отправляется вовсе. */}
+          {roleId && (
+            <ScopePicker scopes={scopes} known={scopesKnown}
+                         hint={wrongScope}
+                         region={region} office={office}
+                         onRegion={setRegion} onOffice={setOffice} />
+          )}
         </>
       )}
 
@@ -780,7 +756,7 @@ function CreateUser({
       <div className="side-panel__actions">
         <button type="button" className="btn" onClick={close}>Отмена</button>
         <button type="button" className="btn btn--dark"
-                disabled={sending || (!email && !done.id)}
+                disabled={sending || (!email && !done.id) || Boolean(wrongScope)}
                 onClick={() => void submit()}>
           {sending ? 'Сохраняем…' : done.id ? 'Продолжить' : 'Создать'}
         </button>

@@ -119,6 +119,58 @@ docker compose -p humotech_e2e -f docker-compose.e2e.yml down -v
 
 ---
 
+## Браузерная проверка CRM на изолированном стенде
+
+Проверка интерфейса требует того же стенда, но с двумя оговорками, из-за
+которых её нельзя запустить «просто так».
+
+**Первая: у `backend-e2e` исходники запечены в образ.** Он поднят из
+`humotech/backend:local`, и рабочее дерево в него не попадает. Проверять
+через него свежий код бессмысленно — он ответит вчерашним. Поэтому рядом
+поднимается второй backend с примонтированным деревом.
+
+**Вторая: сеть стенда объявлена `internal: true`.** Маршрута наружу у неё
+нет — в этом и смысл, — но вместе с ним нет и способа опубликовать порт
+backend на хост. Мостом служит сам контейнер с dev-сервером CRM: он стоит
+в двух сетях, публикует свой порт на хост и ходит в backend по внутренней.
+Наружу он ничего не отправляет, а backend и воркер остаются без маршрута
+наружу — это проверяется одной командой (см. «Три независимых рубежа»).
+
+```bash
+# 1. стенд уже поднят (см. «Сквозная проверка очереди»)
+
+# 2. backend с рабочим деревом. Имя БЕЗ подчёркиваний: Django
+#    отвергает Host, не проходящий RFC 1034/1035, и запрос через
+#    dev-прокси получил бы 400 ещё до всякой авторизации.
+docker run -d --name humotech-e2e-live --network humotech_e2e_e2e   -v "$PWD/../../apps/backend-api:/app" -w /app   -e DJANGO_SETTINGS_MODULE=config.settings.e2e   -e DJANGO_DATABASE_URL=postgresql://humotech:humotech_e2e@postgres-e2e:5432/humotech_e2e   -e DJANGO_ALLOWED_HOSTS=backend-e2e,humotech-e2e-live,localhost,127.0.0.1   -e DJANGO_SECRET_KEY=e2e-only-not-a-real-secret-key   -e TELEGRAM_BOT_API_SECRET=e2e-bot-secret -e TELEGRAM_BOT_TOKEN=   -e AI_ASSISTANT_ENABLED=false -e HUMOTECH_TEST_STAND=1   --entrypoint python humotech/backend:local   -m gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2
+
+# 3. CRM. Адрес НЕ localhost: cookie не различают порт, и вход на
+#    стенде снял бы сессию рабочего стенда на localhost:5173.
+docker run -d --name humotech_crm_e2e -p 127.0.0.1:5174:5174   -v "$PWD/../../apps/hr-crm:/app" -w /app   -e VITE_BACKEND_ORIGIN=http://humotech-e2e-live:8000   -e VITE_TRUSTED_ORIGIN=http://humotech-e2e-live:8000   node:22-alpine npx vite --port 5174 --host 0.0.0.0 --strictPort
+docker network connect humotech_e2e_e2e humotech_crm_e2e
+
+# 4. пароль синтетической учётке. Ввод скрытый: в историю команд,
+#    журналы и переписку он не попадает.
+docker exec -it humotech-e2e-live python manage.py changepassword tech@humotech.local
+
+# 5. открыть http://127.0.0.1:5174/ и войти
+```
+
+`VITE_TRUSTED_ORIGIN` обязан совпадать с тем, во что `changeOrigin`
+переписывает `Host`. Django сверяет `Origin` с `request.get_host()`, и
+несовпадение даёт «CSRF Failed: Origin checking failed» на первом же
+сохранении — отказ, который легко принять за ошибку интерфейса.
+
+Убрать за собой:
+
+```bash
+docker rm -f humotech_crm_e2e humotech-e2e-live
+```
+
+Стенд и его данные при этом остаются: они нужны другим проверкам.
+
+---
+
 ## Почему команда посева отказывается работать
 
 `seed_demo_notifications` проверяет три вещи и отказывается при любой:

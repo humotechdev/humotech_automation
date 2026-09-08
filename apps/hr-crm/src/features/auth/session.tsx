@@ -20,35 +20,61 @@ import {
 
 import * as api from '../../api/auth';
 import type { CurrentUser } from '../../api/auth';
+import { ApiFailure } from '../../api/errors';
 
 /** Пока идёт первая проверка, показывать нельзя ни форму, ни кабинет. */
 export type SessionState =
   | { status: 'checking' }
   | { status: 'anonymous' }
+  /**
+   * Сервер не ответил. Про сессию НИЧЕГО не известно — ни что она
+   * жива, ни что её нет.
+   *
+   * Отдельное состояние, а не разновидность `anonymous`: перезапуск
+   * dev-сервера, перезагрузка backend и оборванная сеть отвечают
+   * отказом транспорта, а не отказом в доступе. Свести их к «войдите»
+   * значит объявить человека вышедшим из-за чужой заминки — сессия на
+   * сервере при этом цела, и следующий же успешный `/auth/me` это
+   * подтверждает.
+   */
+  | { status: 'unavailable' }
   | { status: 'authenticated'; user: CurrentUser };
 
 type Session = SessionState & {
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
+  /** Спросить сервер заново. Нужна экрану «backend не отвечает». */
+  recheck: () => void;
 };
 
 const SessionContext = createContext<Session | null>(null);
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<SessionState>({ status: 'checking' });
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     const stop = new AbortController();
+    setState({ status: 'checking' });
     api
       .currentUser(stop.signal)
       .then((user) => setState({ status: 'authenticated', user }))
-      // Любой отказ здесь означает одно: показывать надо форму входа.
-      // Различать причины незачем — человеку всё равно предстоит войти.
-      .catch(() => {
-        if (!stop.signal.aborted) setState({ status: 'anonymous' });
+      .catch((failure: unknown) => {
+        if (stop.signal.aborted) return;
+        // «Доступа нет» и «сервер не ответил» — разные ответы, и
+        // склеивать их нельзя. 401 и 403 означают, что войти
+        // действительно надо: сессии нет, она истекла или запись
+        // отключили. Оборванный запрос и 5xx не означают ничего о
+        // сессии вовсе — она жива, просто спросить не у кого.
+        const broken =
+          failure instanceof ApiFailure
+          && (failure.kind === 'offline' || failure.kind === 'server');
+        setState({ status: broken ? 'unavailable' : 'anonymous' });
       });
     return () => stop.abort();
-  }, []);
+  }, [attempt]);
+
+  const recheck = useCallback(() => setAttempt((n) => n + 1), []);
 
   const signIn = useCallback(async (email: string, password: string) => {
     const user = await api.login(email, password);
@@ -71,7 +97,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const value = useMemo<Session>(() => ({ ...state, signIn, signOut }), [state, signIn, signOut]);
+  const value = useMemo<Session>(
+    () => ({ ...state, signIn, signOut, recheck }),
+    [state, signIn, signOut, recheck],
+  );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }

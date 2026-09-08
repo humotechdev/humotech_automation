@@ -1177,6 +1177,29 @@ export const userGrants = (
     signal ? { signal } : {},
   );
 
+/**
+ * Области, которые ЭТОТ пользователь вправе указать в назначении.
+ *
+ * Не справочник `/regions/` и не `/offices/`: те читаются по
+ * `regions.read` и `offices.read`, а роли выдаёт тот, у кого
+ * `roles.manage`. У технического администратора `regions.read` нет
+ * вовсе, и собирать регионы из видимых офисов, как делала форма
+ * раньше, значит терять регион без офисов — вместе с возможностью
+ * выдать назначение на него.
+ *
+ * `all_organization` — отдельный вопрос: вправе ли этот пользователь
+ * выдать назначение без региона и офиса. Несколько ограниченных
+ * областей такого права не дают.
+ */
+export type AssignableScopes = {
+  all_organization: boolean;
+  regions: Array<{ id: string; name: string }>;
+  offices: Array<{ id: string; name: string; region_id: string | null }>;
+};
+
+export const assignableScopes = (signal?: AbortSignal) =>
+  request<AssignableScopes>('/grants/scopes', signal ? { signal } : {});
+
 export const assignRole = (body: {
   user_id: string;
   role_id: string;

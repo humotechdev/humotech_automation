@@ -56,7 +56,9 @@ from humotech.core.service import BaseService
 from humotech.core.timeframes import closed_range_bounds, organization_zone
 from humotech.core.validation import clean_code, clean_text, validate_email
 from humotech.employees.selectors import require_visible_employee
+from humotech.offices.models import Office
 from humotech.rbac.models import Permission, Role, RolePermission
+from humotech.regions.models import Region
 
 USER_FIELDS = ("email", "status", "mfa_enabled")
 
@@ -662,6 +664,68 @@ class RoleAdminService(BaseService):
         }
 
     # -------------------------------------------------------------- назначения
+
+    def assignable_scopes(self, actor: Actor) -> dict:
+        """Области, которые ЭТОТ пользователь вправе указать в назначении.
+
+        Не справочник. Справочник регионов читается по `regions.read`,
+        и у технического администратора этого права нет — а выдавать
+        роли он обязан. Здесь другое право (`roles.manage`) и другой
+        вопрос: не «что человеку показать в справочнике», а «что он
+        вправе выдать» — то же самое, что проверит `assign`.
+
+        Совпадение с проверкой обеспечено не сходством условий, а общим
+        кодом: `region_filter` и `office_filter` — это `require_region`
+        и `require_office`, записанные как условие запроса. Собирать
+        список отдельным перебором значило бы завести вторую политику,
+        которая однажды разойдётся с первой.
+
+        `None` из фильтра означает «ограничивать не нужно» — доступ ко
+        всей организации, — а не пустую область. Разница существенная:
+        проверка на истинность склеила бы «видит всё» и «не видит
+        ничего».
+
+        Роль на список не влияет: `assign` проверяет роль
+        (`_require_grantable`) и территорию (`_require_within_own_scope`)
+        независимо, и допустимая область от выбранной роли не зависит.
+        Поэтому параметра роли здесь нет.
+
+        Сознательное сужение: отдаются только действующие регионы и
+        офисы. Сама проверка статуса не смотрит, но предлагать
+        закрытый офис в форме выдачи незачем. Регион остаётся в списке
+        и тогда, когда действующих офисов в нём нет вовсе.
+        """
+        self.access.require(actor, "roles.manage")
+
+        regions = Region.objects.filter(
+            organization_id=actor.organization_id, status="ACTIVE"
+        )
+        allowed_regions = self.access.region_filter(actor)
+        if allowed_regions is not None:
+            regions = regions.filter(allowed_regions)
+
+        offices = Office.objects.filter(
+            organization_id=actor.organization_id, status="ACTIVE"
+        )
+        allowed_offices = self.access.office_filter(actor)
+        if allowed_offices is not None:
+            offices = offices.filter(allowed_offices)
+
+        return {
+            # Назначение без региона и офиса означает «вся организация»,
+            # и выдать его вправе не каждый. Интерфейс обязан это знать
+            # заранее, иначе единственный способ узнать — отказ сервера
+            # после нажатия «Назначить».
+            "all_organization": self.access.scope(actor).all_offices,
+            "regions": [
+                {"id": row.id, "name": row.name}
+                for row in regions.order_by("name", "id")
+            ],
+            "offices": [
+                {"id": row.id, "name": row.name, "region_id": row.region_id}
+                for row in offices.order_by("name", "id")
+            ],
+        }
 
     def assignments(
         self, actor: Actor, user_id: uuid.UUID, *, include_expired: bool = False

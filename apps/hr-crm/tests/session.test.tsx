@@ -11,7 +11,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, test, vi } from 'vitest';
 
 import { csrfToken } from '../src/api/client';
-import { USER, crm, empty, fakeNetwork, json, renderApp } from './helpers';
+import { USER, crm, empty, fakeNetwork, html, json, renderApp } from './helpers';
 
 const REFUSED = json(403, {
   error: { code: 'not_authenticated', message: '…', details: null },
@@ -82,6 +82,81 @@ describe('проверка сессии при запуске', () => {
 
     expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ credentials: 'include' });
   });
+});
+
+describe('backend не отвечает — это не выход', () => {
+  /**
+   * Отдельная группа, потому что раньше эти случаи были склеены.
+   * Любой отказ `/auth/me` превращался в «войдите», и перезапуск
+   * dev-сервера или backend выглядел как потеря доступа: серверная
+   * сессия при этом цела, а человек видел форму входа и вводил пароль
+   * заново без всякой причины.
+   */
+
+  test('оборванный запрос не выбрасывает из системы', async () => {
+    fakeNetwork(() => {
+      throw new TypeError('Failed to fetch');
+    });
+    renderApp('/admin');
+
+    expect(await screen.findByRole('alert')).toHaveProperty(
+      'textContent',
+      expect.stringContaining('Сервер не отвечает'),
+    );
+    expect(screen.queryByRole('heading', { name: 'Добро пожаловать' })).toBeNull();
+  });
+
+  test('пятисотка тоже не считается отсутствием доступа', async () => {
+    // Так отвечает dev-прокси, пока backend поднимается.
+    fakeNetwork(() => html(502));
+    renderApp('/admin');
+
+    await screen.findByRole('alert');
+    expect(screen.queryByRole('heading', { name: 'Добро пожаловать' })).toBeNull();
+  });
+
+  test('страница не подменяется формой входа: человек остаётся где был',
+    async () => {
+      // Форма входа — это переход на `/login`, и вернуться после него
+      // на прежний экран уже нельзя. Экран «сервер не отвечает»
+      // остаётся на месте защищённой страницы.
+      fakeNetwork(() => html(502));
+      renderApp('/admin');
+
+      await screen.findByRole('alert');
+      expect(screen.queryByLabelText('Логин')).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Войти' })).toBeNull();
+    });
+
+  test('«Повторить» спрашивает сервер заново и открывает страницу',
+    async () => {
+      let down = true;
+      const calls = fakeNetwork((path) => {
+        if (path.endsWith('/auth/me') && down) return html(502);
+        return crm(path) ?? json(200, USER);
+      });
+      renderApp('/');
+      await screen.findByRole('alert');
+
+      down = false;
+      await userEvent.click(screen.getByRole('button', { name: 'Повторить' }));
+
+      await screen.findByText('Обзор на сегодня');
+      expect(calls.filter((c) => c.url.endsWith('/auth/me')).length)
+        .toBeGreaterThan(1);
+    });
+
+  test('403 по-прежнему означает вход: отключённая запись и снятая сессия',
+    async () => {
+      // Проверка обратной стороны. Различать причины — не значит
+      // перестать пускать на форму входа тех, кому туда и надо.
+      fakeNetwork(() => REFUSED.clone());
+      renderApp('/admin');
+
+      expect(await screen.findByRole('heading', { name: 'Добро пожаловать' }))
+        .toBeTruthy();
+      expect(screen.queryByText('Сервер не отвечает')).toBeNull();
+    });
 });
 
 describe('выход', () => {

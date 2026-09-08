@@ -9,6 +9,7 @@ from rest_framework.routers import DefaultRouter
 
 from humotech.accounts.views import CurrentUserView, LoginView, LogoutView
 from humotech.accounts.rbac_views import (
+    AssignableScopesView,
     CrmUserViewSet,
     GrantCreateView,
     GrantDetailView,
@@ -196,6 +197,14 @@ urlpatterns = [
         "users/<uuid:user_id>/grants",
         UserGrantsView.as_view(),
         name="user-grants",
+    ),
+    # Области, доступные для выдачи. Стоит перед `grants/<uuid>`
+    # намеренно: путь читается сверху вниз, и общий маршрут с
+    # идентификатором не должен перехватывать именованный.
+    path(
+        "grants/scopes",
+        AssignableScopesView.as_view(),
+        name="grant-scopes",
     ),
     path("grants", GrantCreateView.as_view(), name="grant-create"),
     path(

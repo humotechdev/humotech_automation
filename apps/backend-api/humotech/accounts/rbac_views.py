@@ -232,6 +232,26 @@ class GrantValiditySerializer(serializers.Serializer):
     )
 
 
+class ScopeRegionSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+
+
+class ScopeOfficeSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+    region_id = serializers.UUIDField(allow_null=True)
+
+
+class AssignableScopesSerializer(serializers.Serializer):
+    all_organization = serializers.BooleanField(
+        help_text="Вправе ли выдать назначение без региона и офиса, то "
+                  "есть доступ на всю организацию",
+    )
+    regions = ScopeRegionSerializer(many=True)
+    offices = ScopeOfficeSerializer(many=True)
+
+
 @extend_schema(tags=["Пользователи"])
 class CrmUserViewSet(ServiceViewSet):
     """Учётные записи CRM. Требует `users.manage`.
@@ -527,6 +547,45 @@ class UserGrantsView(APIView):
             actor, user_id, include_expired=history
         )
         return Response({"items": GrantSerializer(rows, many=True).data})
+
+
+@extend_schema(tags=["Роли"])
+class AssignableScopesView(APIView):
+    """Области, доступные для выдачи. Требует `roles.manage`."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        operation_id="grants_scopes",
+        summary="Области, которые вы вправе назначить",
+        description=(
+            "Не справочник регионов и офисов: тот читается по "
+            "`regions.read` и `offices.read`, а роли выдаёт тот, у кого "
+            "`roles.manage`. Права это разные, и у технического "
+            "администратора `regions.read` нет.\n\n"
+            "Список считается тем же кодом, что и проверка при выдаче, "
+            "поэтому разойтись с ней не может. Регион попадает сюда и "
+            "тогда, когда офисов в нём нет вовсе.\n\n"
+            "`all_organization` отвечает на отдельный вопрос: вправе ли "
+            "этот пользователь выдать доступ на всю организацию "
+            "(назначение без региона и офиса). Несколько ограниченных "
+            "областей такого права не дают.\n\n"
+            "Параметра роли здесь нет намеренно: выдача проверяет роль "
+            "и территорию независимо, и допустимая область от выбранной "
+            "роли не зависит.\n\n"
+            "Сознательное сужение: отдаются только действующие регионы "
+            "и офисы. Сама проверка статуса не смотрит, но предлагать "
+            "закрытый офис в форме выдачи незачем."
+        ),
+        responses={200: AssignableScopesSerializer},
+    )
+    def get(self, request):
+        actor = Actor.from_user(request.user)
+        return Response(
+            AssignableScopesSerializer(
+                RoleAdminService().assignable_scopes(actor)
+            ).data
+        )
 
 
 @extend_schema(tags=["Роли"])

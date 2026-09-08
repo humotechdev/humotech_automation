@@ -685,3 +685,186 @@ class TestWhoAmI:
         api_client.force_authenticate(user=make_user(organization, permissions=()))
         body = api_client.get(f"{API}/auth/me").json()
         assert body["timezone"] == organization.default_timezone
+
+
+# --- источник областей для выдачи --------------------------------------------
+
+
+class TestAssignableScopes:
+    """Откуда форма берёт список областей.
+
+    До этого форма собирала регионы из видимых офисов. Источник был
+    неверный по трём причинам сразу: у технического администратора есть
+    `offices.read` и нет `regions.read`, поэтому справочник регионов ему
+    закрыт; регион без офисов из такого источника пропадал совсем;
+    а «вправе прочитать» и «вправе выдать» — разные вопросы, и второй
+    задавался только сервером, уже после нажатия кнопки.
+
+    Список считается тем же кодом, что и проверка при выдаче
+    (`region_filter`/`office_filter` — это `require_region`/
+    `require_office` как условие запроса), поэтому здесь проверяется не
+    совпадение двух похожих реализаций, а поведение на границах.
+    """
+
+    URL = f"{API}/grants/scopes"
+
+    @staticmethod
+    def _ids(rows: list[dict]) -> set[str]:
+        return {row["id"] for row in rows}
+
+    def test_region_without_offices_is_offered(
+        self, admin, region, other_region, office
+    ):
+        """Главный случай: регион есть, офисов в нём нет.
+
+        Прежний источник — «регионы видимых офисов» — терял такой регион
+        молча, и выдать назначение на него из формы было нельзя вовсе.
+        """
+        body = admin.get(self.URL).json()
+        assert body["all_organization"] is True
+        assert self._ids(body["regions"]) == {str(region.id), str(other_region.id)}
+        # офисов у второго региона нет — и это ему не мешает
+        assert self._ids(body["offices"]) == {str(office.id)}
+
+    def test_foreign_organization_is_absent(
+        self, admin, region, foreign_region, foreign_office
+    ):
+        body = admin.get(self.URL).json()
+        assert str(foreign_region.id) not in self._ids(body["regions"])
+        assert str(foreign_office.id) not in self._ids(body["offices"])
+
+    def test_region_admin_gets_own_region_only(
+        self, api_client, make_user, organization, region, other_region,
+        office, other_office,
+    ):
+        api_client.force_authenticate(
+            user=make_user(organization, permissions=ADMIN, region=region)
+        )
+        body = api_client.get(self.URL).json()
+        assert body["all_organization"] is False
+        assert self._ids(body["regions"]) == {str(region.id)}
+        assert self._ids(body["offices"]) == {str(office.id)}
+
+    def test_office_admin_gets_own_office(
+        self, api_client, make_user, organization, region, other_region,
+        office, other_office,
+    ):
+        """Область — один офис. Его регион в списке остаётся.
+
+        Так отвечает и `require_region`: регион виден и тогда, когда
+        выдан офис внутри него. Список обязан совпадать с проверкой,
+        а не быть строже или мягче неё.
+        """
+        api_client.force_authenticate(
+            user=make_user(organization, permissions=ADMIN, office=office)
+        )
+        body = api_client.get(self.URL).json()
+        assert body["all_organization"] is False
+        assert self._ids(body["offices"]) == {str(office.id)}
+        assert self._ids(body["regions"]) == {str(region.id)}
+
+    def test_several_limited_regions_do_not_add_up_to_the_organization(
+        self, api_client, make_user, organization, region, other_region,
+        make_actor,
+    ):
+        """Две области — это две области, а не «вся организация».
+
+        Проверяется не только признак: следом идёт сама выдача без
+        региона и офиса, и она обязана быть отклонена.
+        """
+        from humotech.accounts.models import UserRoleScope as Grant
+
+        user = make_user(organization, permissions=ADMIN, region=region)
+        first = Grant.objects.get(user=user)
+        Grant.objects.create(
+            organization=organization,
+            user=user,
+            role=first.role,
+            region=other_region,
+            valid_from=first.valid_from,
+        )
+        api_client.force_authenticate(user=user)
+
+        body = api_client.get(self.URL).json()
+        assert body["all_organization"] is False
+        assert self._ids(body["regions"]) == {str(region.id), str(other_region.id)}
+
+        target = make_user(organization, permissions=())
+        modest = make_role(organization, "MODEST_ORG", ("employees.read",))
+        refusal = api_client.post(
+            f"{API}/grants",
+            {"user_id": str(target.id), "role_id": str(modest.id)},
+            format="json",
+        )
+        assert refusal.status_code == 403
+
+    def test_scope_not_offered_is_refused_when_substituted_by_hand(
+        self, api_client, make_user, organization, region, other_region,
+        other_office,
+    ):
+        """Идентификатор из формы доверия не даёт.
+
+        Список областей — подсказка, а не разрешение. Подставленный
+        вручную чужой регион обязан быть отклонён сервером, иначе
+        защита существовала бы только в разметке.
+        """
+        user = make_user(organization, permissions=ADMIN, region=region)
+        api_client.force_authenticate(user=user)
+
+        offered = self._ids(api_client.get(self.URL).json()["regions"])
+        assert str(other_region.id) not in offered
+
+        target = make_user(organization, permissions=())
+        modest = make_role(organization, "MODEST_SUB", ("employees.read",))
+        for payload in (
+            {"region_id": str(other_region.id)},
+            {"office_id": str(other_office.id)},
+        ):
+            refusal = api_client.post(
+                f"{API}/grants",
+                {"user_id": str(target.id), "role_id": str(modest.id), **payload},
+                format="json",
+            )
+            assert refusal.status_code == 403, payload
+
+    def test_roles_manage_is_required(
+        self, api_client, make_user, organization, region
+    ):
+        """`users.manage` этого механизма не открывает: выдача — не заведение."""
+        api_client.force_authenticate(
+            user=make_user(organization, permissions=("users.manage",))
+        )
+        assert api_client.get(self.URL).status_code == 403
+
+    def test_regions_read_is_not_required(
+        self, api_client, make_user, organization, region, office
+    ):
+        """Ровно набор технического администратора: офисы есть, регионов нет.
+
+        Справочник регионов ему закрыт, а роли он выдаёт. Если бы форма
+        по-прежнему зависела от `regions.read`, здесь был бы отказ.
+        """
+        tech = make_user(
+            organization,
+            permissions=("users.manage", "roles.manage", "offices.read"),
+        )
+        api_client.force_authenticate(user=tech)
+        assert api_client.get(f"{API}/regions/").status_code == 403
+
+        body = api_client.get(self.URL).json()
+        assert self._ids(body["regions"]) == {str(region.id)}
+
+    def test_closed_office_is_not_offered_but_its_region_stays(
+        self, admin, region, office
+    ):
+        """Сознательное сужение: предлагать закрытый офис незачем.
+
+        Регион при этом остаётся: назначение на него по-прежнему
+        законно, и исчезнуть вместе с последним офисом он не должен.
+        """
+        office.status = "CLOSED"
+        office.save(update_fields=["status"])
+
+        body = admin.get(self.URL).json()
+        assert body["offices"] == []
+        assert self._ids(body["regions"]) == {str(region.id)}

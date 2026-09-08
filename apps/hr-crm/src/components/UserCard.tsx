@@ -37,9 +37,9 @@ import {
   sections,
   userSubtitle,
   userTitle,
+  scopeHint,
   validityTitle,
   type Phase,
-  type ScopeRegion,
 } from '../features/admin/model';
 import { dayInZone, moment } from '../features/time/zone';
 
@@ -49,8 +49,8 @@ type Props = {
   user: api.CrmUser;
   zone: string;
   rights: Rights;
-  regions: ScopeRegion[];
-  offices: api.Office[];
+  scopes: api.AssignableScopes;
+  /** Прочитан ли список областей. Отказ сети — не пустая область. */
   scopesKnown: boolean;
   roles: api.RoleFull[];
   catalog: api.PermissionRow[];
@@ -68,7 +68,7 @@ const INNER: Array<{ key: Inner; title: string }> = [
 ];
 
 export function UserCard({
-  user, zone, rights, regions, offices, scopesKnown, roles, catalog,
+  user, zone, rights, scopes, scopesKnown, roles, catalog,
   onClose, onChanged,
 }: Props) {
   const [tab, setTab] = useState<Inner>('profile');
@@ -174,7 +174,7 @@ export function UserCard({
                       onDone={(fresh) => { setForm(null); onChanged(fresh); }} />
       )}
       {form === 'assign' && (
-        <AssignForm user={user} roles={roles} regions={regions} offices={offices}
+        <AssignForm user={user} roles={roles} scopes={scopes}
                     scopesKnown={scopesKnown}
                     onClose={() => setForm(null)}
                     onDone={() => { setForm(null); onChanged(); }} />
@@ -745,13 +745,12 @@ function PasswordForm({ user, onClose, onDone }: {
 // --- назначение роли --------------------------------------------------------
 
 function AssignForm({
-  user, roles, regions, offices, scopesKnown, onClose, onDone,
+  user, roles, scopes, scopesKnown, onClose, onDone,
 }: {
   user: api.CrmUser;
   roles: api.RoleFull[];
-  regions: ScopeRegion[];
-  offices: api.Office[];
-  /** Прочитаны ли справочники областей целиком. */
+  scopes: api.AssignableScopes;
+  /** Прочитан ли список областей. */
   scopesKnown: boolean;
   onClose: () => void;
   onDone: () => void;
@@ -766,6 +765,11 @@ function AssignForm({
 
   const role = roles.find((item) => item.id === roleId);
   const blocked = role ? grantBlockedBecause(role) : null;
+  // Область проверяется отдельно от роли — ровно так же, как на
+  // сервере: `_require_grantable` смотрит на права роли,
+  // `_require_within_own_scope` — на территорию, и одно от другого
+  // не зависит.
+  const wrongScope = scopeHint(scopes, region, office);
 
   const submit = useCallback(async () => {
     if (busy.current) return;
@@ -814,42 +818,10 @@ function AssignForm({
       </label>
       {blocked && <p className="form-grid__error">{blocked}</p>}
 
-      {!scopesKnown && (
-        <p className="note note--dim">
-          Справочник областей прочитан не полностью: часть регионов или
-          офисов вам не видна. Выбор ниже — только то, что доступно;
-          назначение на область, которой в списке нет, отсюда не выдать.
-        </p>
-      )}
+      <ScopePicker scopes={scopes} known={scopesKnown} hint={wrongScope}
+                   region={region} office={office}
+                   onRegion={setRegion} onOffice={setOffice} />
 
-      <label className="form-grid__field">
-        <span className="form-grid__label">Регион</span>
-        <select className="form-grid__input" value={region} aria-label="Регион"
-                onChange={(event) => {
-                  // Офис из другого региона несовместим с выбором:
-                  // показанное обязано совпадать с отправляемым.
-                  setRegion(event.target.value);
-                  setOffice('');
-                }}>
-          <option value="">Вся организация</option>
-          {regions.map((item) => (
-            <option key={item.id} value={item.id}>{item.name}</option>
-          ))}
-        </select>
-      </label>
-      <label className="form-grid__field">
-        <span className="form-grid__label">Офис</span>
-        <select className="form-grid__input" value={office} aria-label="Офис"
-                onChange={(event) => setOffice(event.target.value)}>
-          <option value="">Весь выбранный уровень</option>
-          {(region
-            ? offices.filter((item) => item.region_id === region)
-            : offices
-          ).map((item) => (
-            <option key={item.id} value={item.id}>{item.name}</option>
-          ))}
-        </select>
-      </label>
       <label className="form-grid__field">
         <span className="form-grid__label">Действует по</span>
         <input className="form-grid__input" type="date" value={until}
@@ -862,12 +834,94 @@ function AssignForm({
       <div className="side-panel__actions">
         <button type="button" className="btn" onClick={onClose}>Отмена</button>
         <button type="button" className="btn btn--dark"
-                disabled={sending || !roleId || Boolean(blocked)}
+                disabled={
+                  sending || !roleId || Boolean(blocked) || Boolean(wrongScope)
+                }
                 onClick={() => void submit()}>
           {sending ? 'Выдаём…' : 'Назначить'}
         </button>
       </div>
     </Overlay>
+  );
+}
+
+/**
+ * Выбор области назначения. Один на обе формы — и в карточке, и при
+ * заведении записи.
+ *
+ * Варианты приходят с сервера (`/grants/scopes`) и совпадают с
+ * проверкой при выдаче: они считаются тем же кодом. Собирать регионы
+ * из видимых офисов, как делала форма раньше, нельзя — регион без
+ * офисов пропал бы вместе с возможностью выдать назначение на него,
+ * а у технического администратора справочника регионов нет вовсе.
+ *
+ * «Вся организация» появляется только у того, кто вправе её выдать.
+ * Раньше этот вариант стоял первым у всех, был выбран по умолчанию —
+ * и администратор одного региона узнавал об отказе после нажатия
+ * кнопки.
+ */
+export function ScopePicker({
+  scopes, known, hint, region, office, onRegion, onOffice,
+}: {
+  scopes: api.AssignableScopes;
+  known: boolean;
+  /** Почему выбранное отправить нельзя. Считает `scopeHint`. */
+  hint: string | null;
+  region: string;
+  office: string;
+  onRegion: (id: string) => void;
+  onOffice: (id: string) => void;
+}) {
+  // Офисы выбранного региона. Без региона — все доступные: область
+  // «офис» самостоятельна и региона не требует.
+  const here = region
+    ? scopes.offices.filter((item) => item.region_id === region)
+    : scopes.offices;
+
+  return (
+    <>
+      {!known && (
+        <p className="note note--dim">
+          Список доступных областей не загрузился. Выбрать область сейчас
+          нельзя; закройте форму и откройте её заново.
+        </p>
+      )}
+
+      <label className="form-grid__field">
+        <span className="form-grid__label">Регион</span>
+        <select className="form-grid__input" value={region} aria-label="Регион"
+                onChange={(event) => {
+                  // Офис из другого региона несовместим с выбором:
+                  // показанное обязано совпадать с отправляемым.
+                  onRegion(event.target.value);
+                  onOffice('');
+                }}>
+          <option value="">
+            {scopes.all_organization ? 'Вся организация' : 'Не выбран'}
+          </option>
+          {scopes.regions.map((item) => (
+            <option key={item.id} value={item.id}>{item.name}</option>
+          ))}
+        </select>
+      </label>
+
+      <label className="form-grid__field">
+        <span className="form-grid__label">Офис</span>
+        <select className="form-grid__input" value={office} aria-label="Офис"
+                onChange={(event) => onOffice(event.target.value)}>
+          <option value="">
+            {region || scopes.all_organization
+              ? 'Весь выбранный уровень'
+              : 'Не выбран'}
+          </option>
+          {here.map((item) => (
+            <option key={item.id} value={item.id}>{item.name}</option>
+          ))}
+        </select>
+      </label>
+
+      {hint && <p className="note note--dim">{hint}</p>}
+    </>
   );
 }
 

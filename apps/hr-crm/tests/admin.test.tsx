@@ -299,9 +299,30 @@ const NO_ACCESS = {
 
 const COUNTS = { active: 2, inactive: 5, total: 137, roles: 3 };
 
+/**
+ * Области, доступные для выдачи. Один ответ сервера — справочники
+ * `/regions/` и `/offices/` для этого не читаются вовсе.
+ *
+ * «Хатлон» без единого офиса здесь намеренно: прежний источник собирал
+ * регионы из видимых офисов и такой регион терял молча.
+ */
+const SCOPES = {
+  all_organization: true,
+  regions: [
+    { id: 'reg-1', name: 'Согд' },
+    { id: 'reg-2', name: 'Хатлон' },
+  ],
+  offices: [{ id: 'off-1', name: 'Центральный', region_id: 'reg-1' }],
+};
+
 function network(
   own: (url: string, method: string) => Response | Promise<Response> | null = () => null,
-  options: { users?: unknown[]; counts?: unknown; permissions?: string[] } = {},
+  options: {
+    users?: unknown[];
+    counts?: unknown;
+    permissions?: string[];
+    scopes?: unknown;
+  } = {},
 ) {
   return fakeNetwork((url, call) => {
     const mine = own(url, call.method);
@@ -334,19 +355,11 @@ function network(
     }
     if (bare.endsWith('/roles')) return json(200, { items: ROLES });
     if (bare.endsWith('/permissions')) return json(200, { items: CATALOG });
+    if (bare.endsWith('/grants/scopes')) {
+      return json(200, options.scopes ?? SCOPES);
+    }
     if (bare.includes('/audit-logs')) {
       return json(200, { items: [], next_cursor: null, has_more: false });
-    }
-    if (bare.includes('/regions/')) {
-      return json(200, {
-        items: [{ id: 'reg-1', code: 'SUGD', name: 'Согд', status: 'ACTIVE' }],
-      });
-    }
-    if (bare.includes('/offices/')) {
-      return json(200, {
-        items: [{ id: 'off-1', code: 'MAIN', name: 'Центральный',
-                  region_id: 'reg-1', region_name: 'Согд', status: 'ACTIVE' }],
-      });
     }
     return crm(url) ?? json(200, { items: [], next_cursor: null, has_more: false });
   });
@@ -795,11 +808,110 @@ describe('доступ к разделу', () => {
   });
 });
 
-describe('устойчивость справочников', () => {
-  test('отказ по регионам не гасит страницу целиком', async () => {
-    // У технического администратора есть offices.read и нет regions.read.
+describe('источник областей для выдачи', () => {
+  /** Открыть форму «Назначить роль» на карточке и выбрать роль. */
+  async function assignForm() {
+    renderApp('/admin?id=u-1');
+    await screen.findByRole('tab', { name: /Роли и области/ });
+    fireEvent.click(screen.getByRole('tab', { name: /Роли и области/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /Назначить роль/ }));
+    const form = await screen.findByRole('dialog', { name: /Назначить роль/ });
+    fireEvent.change(within(form).getByLabelText('Роль'), {
+      target: { value: 'r-1' } });
+    return form;
+  }
+
+  test('справочник регионов для этого не читается вовсе', async () => {
+    // Ровно набор технического администратора: `offices.read` есть,
+    // `regions.read` нет. Раньше страница спрашивала оба справочника и
+    // собирала регионы из офисов; теперь спрашивается то, что человек
+    // вправе выдать.
+    const calls = network();
+    renderApp('/admin');
+    await opened();
+
+    await waitFor(() =>
+      expect(calls.some((c) => clean(c.url).endsWith('/grants/scopes')))
+        .toBe(true),
+    );
+    expect(calls.some((c) => clean(c.url).includes('/regions/'))).toBe(false);
+    expect(calls.some((c) => clean(c.url).includes('/offices/'))).toBe(false);
+  });
+
+  test('регион без офисов доступен для выбора и уходит на сервер',
+    async () => {
+      const calls = network((url, method) =>
+        clean(url).endsWith('/grants') && method === 'POST'
+          ? json(201, { id: 'g-new' })
+          : null,
+      );
+      const form = await assignForm();
+
+      // «Хатлон» офисов не имеет. Прежний источник его не показывал.
+      fireEvent.change(within(form).getByLabelText('Регион'), {
+        target: { value: 'reg-2' } });
+      fireEvent.click(
+        within(form).getByRole('button', { name: /Назначить|Выдаём/ }),
+      );
+
+      await waitFor(() => {
+        const sent = calls.find(
+          (c) => c.method === 'POST' && clean(c.url).endsWith('/grants'),
+        );
+        expect(sent).toBeTruthy();
+        const body = sent?.body as Record<string, unknown>;
+        expect(body['region_id']).toBe('reg-2');
+        expect(body['office_id']).toBeUndefined();
+      });
+    });
+
+  test('без права на всю организацию такого варианта в форме нет',
+    async () => {
+      // Область — один регион. Назначение без региона и офиса означало
+      // бы всю организацию, и сервер его отклонит; форма обязана
+      // сказать это до нажатия кнопки, а не после.
+      const calls = network(undefined, {
+        scopes: {
+          all_organization: false,
+          regions: [{ id: 'reg-1', name: 'Согд' }],
+          offices: [{ id: 'off-1', name: 'Центральный', region_id: 'reg-1' }],
+        },
+      });
+      const form = await assignForm();
+
+      const picker = within(form).getByLabelText('Регион') as HTMLSelectElement;
+      expect(within(picker).queryByText('Вся организация')).toBeNull();
+      expect(within(picker).getByText('Не выбран')).toBeTruthy();
+      expect(within(form).getByText(/только тот, чья область/)).toBeTruthy();
+
+      const button = within(form)
+        .getByRole('button', { name: /Назначить|Выдаём/ }) as HTMLButtonElement;
+      expect(button.disabled).toBe(true);
+      fireEvent.click(button);
+      expect(calls.some(
+        (c) => c.method === 'POST' && clean(c.url).endsWith('/grants'),
+      )).toBe(false);
+
+      // Выбор области снимает запрет: это ограничение области, а не роли.
+      fireEvent.change(picker, { target: { value: 'reg-1' } });
+      expect((within(form)
+        .getByRole('button', { name: /Назначить|Выдаём/ }) as HTMLButtonElement)
+        .disabled).toBe(false);
+    });
+
+  test('пустая собственная область объясняется, а не выглядит поломкой',
+    async () => {
+      network(undefined, {
+        scopes: { all_organization: false, regions: [], offices: [] },
+      });
+      const form = await assignForm();
+      expect(within(form).getByText(/Областей, доступных вам для выдачи, нет/))
+        .toBeTruthy();
+    });
+
+  test('отказ по областям не гасит страницу целиком', async () => {
     network((url) =>
-      clean(url).includes('/regions/')
+      clean(url).endsWith('/grants/scopes')
         ? json(403, { error: { code: 'permission_denied', message: 'Нельзя' } })
         : null,
     );

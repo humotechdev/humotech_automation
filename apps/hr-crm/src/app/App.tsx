@@ -51,6 +51,12 @@ function Protected({ page }: {
 }) {
   const session = useSession();
   if (session.status === 'checking') return <Checking />;
+  // Сначала сбой связи, потом отсутствие доступа: перепутать их значит
+  // объявить человека вышедшим из-за перезапуска сервера. Сессия на
+  // сервере при этом цела, и «Повторить» это показывает.
+  if (session.status === 'unavailable') {
+    return <Unavailable onRetry={session.recheck} />;
+  }
   if (session.status === 'anonymous') return <Navigate to="/login" replace />;
   if (page === 'employees') return <EmployeesPage />;
   if (page === 'requests') return <RequestsPage />;
@@ -76,6 +82,25 @@ function GuestOnly() {
   if (session.status === 'checking') return <Checking />;
   if (session.status === 'authenticated') return <Navigate to="/" replace />;
   return <LoginPage />;
+}
+
+/**
+ * Backend не ответил. Про сессию ничего не известно, и форма входа
+ * здесь была бы неправдой: вводить пароль незачем, войти всё равно не
+ * выйдет, а старая сессия скорее всего жива.
+ */
+function Unavailable({ onRetry }: { onRetry: () => void }) {
+  return (
+    <main className="page page--plain">
+      <p className="checking" role="alert">
+        Сервер не отвечает. Проверить, вошли ли вы, сейчас не у кого —
+        выходить из системы для этого не нужно.{' '}
+        <button type="button" className="link" onClick={onRetry}>
+          Повторить
+        </button>
+      </p>
+    </main>
+  );
 }
 
 function Checking() {
