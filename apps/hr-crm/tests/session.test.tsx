@@ -174,6 +174,25 @@ describe('выход', () => {
     expect(out?.method).toBe('POST');
   });
 
+  test('после выхода в интерфейсе не остаётся прежнего пользователя',
+    async () => {
+      // Форма входа на экране — ещё не пустой кабинет. Организация,
+      // роль и почта прежнего человека в разметке означали бы, что
+      // выход коснулся только маршрута.
+      fakeNetwork((path) =>
+        path.endsWith('/auth/logout') ? empty(204) : crm(path) ?? json(200, USER),
+      );
+      renderApp('/');
+      await screen.findByText('Обзор на сегодня');
+      expect(screen.getByText(USER.organization_code)).toBeTruthy();
+
+      await userEvent.click(screen.getByRole('button', { name: 'Выйти' }));
+
+      await screen.findByRole('heading', { name: 'Добро пожаловать' });
+      expect(screen.queryByText(USER.organization_code)).toBeNull();
+      expect(screen.queryByText(USER.email)).toBeNull();
+    });
+
   test('человек выходит даже если сервер не ответил', async () => {
     // Он нажал «выйти». Оставить его в интерфейсе вошедшим нельзя.
     fakeNetwork((path) => {
