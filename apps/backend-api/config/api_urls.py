@@ -27,6 +27,7 @@ from humotech.analytics.views import (
 )
 from humotech.attendance.views import (
     AttendanceViewSet,
+    EmployeeDailyView,
     CorrectionDecisionView,
     CorrectionListView,
     ManualEventView,
@@ -234,6 +235,14 @@ urlpatterns = [
     path("attendance/sessions", AttendanceViewSet.as_view({"get": "sessions"}),
          name="attendance-sessions"),
     path("attendance/presence", PresenceView.as_view(), name="attendance-presence"),
+    # Журнал по дням для одного человека. Строку дня собирает тот же
+    # код, что и присутствие: у ночной смены и открытой сессии
+    # должен быть один ответ, а не два похожих.
+    path(
+        "attendance/daily",
+        EmployeeDailyView.as_view(),
+        name="attendance-daily",
+    ),
     path("attendance/corrections", CorrectionListView.as_view(),
          name="attendance-corrections"),
     path("attendance/corrections/<uuid:request_id>/<str:decision>",

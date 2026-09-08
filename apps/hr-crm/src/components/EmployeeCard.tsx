@@ -11,6 +11,7 @@
  */
 
 import { useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 
 import * as api from '../api/crm';
 import { Icon } from './nav-icons';
@@ -41,6 +42,7 @@ const STATE_TITLE: Record<string, string> = {
 };
 
 export function EmployeeCard({ id, onClose }: { id: string; onClose: () => void }) {
+  const location = useLocation();
   const [tab, setTab] = useState<(typeof TABS)[number]>('Обзор');
 
   const [card] = useBlock(
@@ -75,6 +77,15 @@ export function EmployeeCard({ id, onClose }: { id: string; onClose: () => void 
                     <span className="drawer__name">{name}</span>
                     <span className="drawer__id">{person['employee_number'] ?? '—'}</span>
                   </span>
+                  {/* Переход в полную карточку, а не второй редактор
+                      того же человека: быстрые действия остаются здесь,
+                      подробности живут по своему адресу. */}
+                  <Link className="link drawer__more"
+                        to={`/employees/${id}?back=${encodeURIComponent(
+                          location.pathname + location.search,
+                        )}`}>
+                    Открыть карточку →
+                  </Link>
                   <button type="button" className="tool" aria-label="Закрыть" onClick={onClose}>
                     ✕
                   </button>

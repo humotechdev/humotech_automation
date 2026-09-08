@@ -43,6 +43,15 @@ class AttendanceEventSerializer(serializers.Serializer):
     occurred_at = serializers.DateTimeField()
     received_at = serializers.DateTimeField()
     rejection_reason = serializers.CharField(allow_null=True)
+    # Результаты проверок — признаками, а не координатами. `null`
+    # означает «проверка не проводилась», и это не то же самое, что
+    # «не прошла»: у ручной отметки кадровика геопроверки нет вовсе.
+    #
+    # Сами широта и долгота наружу не отдаются: карточке достаточно
+    # ответа «внутри или снаружи», а точка на карте — это уже слежение
+    # за человеком, и права на неё здесь никто не спрашивал.
+    inside_geofence = serializers.BooleanField(allow_null=True)
+    inside_office_network = serializers.BooleanField(allow_null=True)
     created_at = serializers.DateTimeField()
 
     # Ни `qr_nonce_hash`, ни координат, ни IP: журнал смотрит кадровик,

@@ -108,6 +108,17 @@ class AuditLogView(APIView):
                 ),
             ),
             OpenApiParameter("actor_user_id", str),
+            OpenApiParameter(
+                "employee_id", str,
+                description=(
+                    "Всё, что связано с одним сотрудником: он сам, его "
+                    "назначения, графики, заявки на отсутствие и на "
+                    "исправление отметок. Связанные объекты подбирает "
+                    "СЕРВЕР — клиенту не нужно знать их идентификаторы "
+                    "заранее и незачем вычитывать журнал организации, "
+                    "чтобы отобрать в браузере"
+                ),
+            ),
             OpenApiParameter("date_from", str),
             OpenApiParameter("date_to", str),
             OpenApiParameter("cursor", str),
@@ -145,6 +156,12 @@ class AuditLogView(APIView):
             # Иначе запрос истории человека без назначений вернул бы
             # чужие записи по всей организации.
             queryset = queryset.filter(entity_id__in=entity_ids)
+
+        employee_id = _uuid_param(request, "employee_id")
+        if employee_id:
+            queryset = queryset.filter(
+                entity_id__in=_employee_trail(actor, employee_id)
+            )
 
         actor_user_id = _uuid_param(request, "actor_user_id")
         if actor_user_id:
@@ -198,6 +215,43 @@ class AuditLogView(APIView):
         )
         start, end = range_bounds(first or last, last or first, office_zone(office))
         return queryset.filter(occurred_at__gte=start, occurred_at__lt=end)
+
+
+def _employee_trail(actor, employee_id) -> list:
+    """Идентификаторы всего, что относится к одному сотруднику.
+
+    Собирается на СЕРВЕРЕ по трём причинам.
+
+    Клиент не знает их заранее: идентификаторы назначений, графиков и
+    заявок появляются по ходу дела, и «сначала загрузи пять списков,
+    потом спроси журнал» — это пять лишних обходов и гонка между ними.
+
+    Журнал организации в браузер не уезжает: отбор в клиенте означал бы
+    выгрузить чужие записи и спрятать их разметкой.
+
+    Область проверяется до сбора: чужой сотрудник отвечает «не найден»
+    тем же способом, что и везде, а не пустым журналом, по которому
+    можно отличить существующего человека от несуществующего.
+    """
+    from humotech.absences.models import AbsenceRequest
+    from humotech.attendance.hr import AttendanceHrService
+    from humotech.attendance.models import AttendanceCorrectionRequest
+    from humotech.employees.models import EmployeeAssignment
+    from humotech.schedules.models import EmployeeScheduleAssignment
+
+    AttendanceHrService()._require_employee_visible(actor, employee_id)  # noqa: SLF001
+
+    ids = [employee_id]
+    for model in (
+        EmployeeAssignment,
+        EmployeeScheduleAssignment,
+        AbsenceRequest,
+        AttendanceCorrectionRequest,
+    ):
+        ids.extend(
+            model.objects.filter(employee_id=employee_id).values_list("id", flat=True)
+        )
+    return ids
 
 
 def _uuid_list(request, name: str) -> list[uuid.UUID] | None:

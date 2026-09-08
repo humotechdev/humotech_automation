@@ -533,6 +533,7 @@ class AbsenceService(BaseService):
         *,
         status: str | None = None,
         type_code: str | None = None,
+        employee_id=None,
         office_id=None,
         region_id=None,
         search: str | None = None,
@@ -561,6 +562,11 @@ class AbsenceService(BaseService):
 
         if status:
             queryset = queryset.filter(status__in=[s for s in status.split(",") if s])
+        if employee_id:
+            # Отбор по человеку не расширяет доступ: область ниже
+            # по-прежнему применяется, и чужой сотрудник даст пустой
+            # набор, а не чужие заявки.
+            queryset = queryset.filter(employee_id=employee_id)
         if type_code:
             codes = [c for c in type_code.split(",") if c]
             queryset = queryset.filter(absence_type__code__in=codes)

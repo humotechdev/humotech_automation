@@ -310,6 +310,8 @@ export type QueueQuery = {
   kind?: string;
   status?: string;
   type?: string;
+  /** Заявки одного сотрудника. Фильтр сужает уже разрешённое. */
+  employee_id?: string;
   region_id?: string;
   office_id?: string;
   search?: string;
@@ -388,6 +390,16 @@ export type EventRow = {
   occurred_at: string;
   received_at: string;
   rejection_reason: string | null;
+  /**
+   * Результаты проверок — признаками, а не координатами.
+   *
+   * `null` означает «проверка не проводилась» и это НЕ то же самое,
+   * что «не прошла»: у ручной отметки кадровика геопроверки нет вовсе.
+   * Широта и долгота наружу не отдаются — карточке достаточно ответа
+   * «внутри или снаружи».
+   */
+  inside_geofence: boolean | null;
+  inside_office_network: boolean | null;
 };
 
 export type EventQuery = {
@@ -1254,6 +1266,13 @@ export type AuditQuery = {
   entity_id?: string;
   /** Несколько объектов через запятую: история назначений одного человека. */
   entity_ids?: string;
+  /**
+   * Всё, что связано с одним сотрудником: он сам, его назначения,
+   * графики и заявки. Связанные объекты подбирает СЕРВЕР — клиенту
+   * незачем знать их идентификаторы заранее и уж точно незачем
+   * вычитывать журнал организации, чтобы отобрать в браузере.
+   */
+  employee_id?: string;
   actor_user_id?: string;
   date_from?: string;
   date_to?: string;
@@ -1350,3 +1369,66 @@ export type Integration = {
 
 export const integrations = (signal?: AbortSignal) =>
   request<Items<Integration>>('/settings/integrations', signal ? { signal } : {});
+
+
+// --- посещаемость сотрудника по дням -----------------------------------------
+
+/**
+ * Строка дня. Все величины посчитал сервер тем же кодом, что и присутствие
+ * на дашборде: у ночной смены, открытой сессии и допуска опоздания должен
+ * быть один ответ, а не два похожих.
+ */
+export type DailyRow = {
+  day: string;
+  /** Пояс ОФИСА, по которому определён этот день. */
+  timezone: string;
+  office_id: string | null;
+  office_name: string | null;
+  /**
+   * `IN_OFFICE`, `LEFT`, `NOT_COME`, `DAY_OFF`, `NO_SCHEDULE`,
+   * `SICK_LEAVE`, `VACATION`, `OTHER_ABSENCE`. «Нет графика» и
+   * «выходной» — разные состояния, и ни одно из них не равно прогулу.
+   */
+  state: string;
+  first_entry_at: string | null;
+  last_exit_at: string | null;
+  /** Сумма учитываемых интервалов, а не разница входа и выхода. */
+  seconds: number;
+  sessions: number;
+  open_session_id: string | null;
+  /** Минуты СВЕРХ допуска. `null` — сравнивать не с чем. */
+  late_minutes: number | null;
+  scheduled_start: string | null;
+  absence_code: string | null;
+  absence_name: string | null;
+  conflicting_marks: boolean;
+};
+
+/** Итоги за ВЕСЬ период, а не за показанные строки. */
+export type DailyTotals = {
+  seconds: number;
+  days_with_marks: number;
+  working_days: number;
+  late_days: number;
+  late_minutes: number;
+  open_sessions: number;
+};
+
+export type DailyReport = {
+  employee_id: string;
+  timezone: string;
+  first: string;
+  last: string;
+  days: DailyRow[];
+  totals: DailyTotals;
+  note: string | null;
+};
+
+export const attendanceDaily = (
+  params: { employee_id: string; date_from: string; date_to: string },
+  signal?: AbortSignal,
+) =>
+  request<DailyReport>(
+    `/attendance/daily${query(params)}`,
+    signal ? { signal } : {},
+  );

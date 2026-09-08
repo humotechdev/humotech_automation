@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 
 from django.db.models import Q, QuerySet
 
@@ -63,6 +63,15 @@ from humotech.schedules.models import CalendarException, EmployeeScheduleAssignm
 # «пришедшим»: либо больничный оформлен задним числом, либо отметку сделал
 # не он. В обоих случаях кадровик должен увидеть предупреждение, а не
 # ровную строку.
+#: Сколько дней помещается в один журнал по человеку.
+#:
+#: Журнал спрашивает график и календарь на КАЖДЫЙ день отдельно —
+#: иначе пришлось бы повторить их правила второй раз и в другом
+#: месте. Месяц с запасом — предел, за которым это перестаёт быть
+#: карточкой и становится отчётом; для длинных периодов есть
+#: выгрузка и `/analytics`.
+MAX_JOURNAL_DAYS = 31
+
 PRESENCE_STATES = (
     "SICK_LEAVE",
     "VACATION",
@@ -212,6 +221,171 @@ class AttendanceHrService(BaseService):
             result = [row for row in result if row.state == state]
         return PresenceReport(day=day, timezone=str(tz), rows=result)
 
+    # ------------------------------------------------- журнал одного человека
+
+    def daily(
+        self,
+        actor: Actor,
+        employee_id: uuid.UUID,
+        *,
+        first: date,
+        last: date,
+    ) -> dict:
+        """День за днём по одному сотруднику — и итоги за ВЕСЬ период.
+
+        Считает тот же код, что и `presence()`: строка дня собирается
+        `_presence_row`, сессии берутся `_sessions_of_day`, отсутствия —
+        `_absences_of_day`, график и календарь — `_scheduled_starts`.
+        Второй реализации тех же правил здесь нет намеренно: у ночной
+        смены, открытой сессии и допуска опоздания должен быть один
+        ответ, а не два похожих.
+
+        Три правила, которые из-за этого достаются журналу даром и
+        которые легко потерять, считая на клиенте:
+
+          * **день определяется поясом ОФИСА**, а не браузера и не
+            организации. Перевод в офис с другим поясом посреди периода
+            меняет пояс со дня перевода — назначение берётся на каждый
+            день своё;
+          * **ночная смена принадлежит дню, в который НАЧАЛАСЬ.** Так
+            её считает `_sessions_of_day`, и журнал обязан совпадать
+            с присутствием, а не спорить с ним;
+          * **открытая сессия учитывается до момента расчёта.** Её
+            длительность живёт в `duration_seconds`, который
+            пересчитывает сервер; клиент, вычитающий «сейчас минус
+            вход», получил бы другое число.
+
+        Итоги считаются по всему периоду, а не по показанным строкам:
+        сводка, зависящая от длины таблицы, отвечает не на тот вопрос.
+        """
+        self.access.require(actor, "attendance.read")
+        # Проверка области: чужой сотрудник отвечает «не найден», а не
+        # «нельзя» — иначе перебором идентификаторов считается чужой штат.
+        self._require_employee_visible(actor, employee_id)
+
+        if last < first:
+            raise ValidationFailed(
+                "Конец периода раньше начала",
+                details={"date_from": first.isoformat(),
+                         "date_to": last.isoformat()},
+            )
+        span = (last - first).days + 1
+        if span > MAX_JOURNAL_DAYS:
+            raise ValidationFailed(
+                f"Журнал отдаётся не длиннее {MAX_JOURNAL_DAYS} дней",
+                details={"days": span, "max_days": MAX_JOURNAL_DAYS},
+            )
+
+        # Назначения, накрывающие период, — одним запросом. Их может быть
+        # несколько: человека переводили, и у каждого дня свой офис.
+        assignments = list(
+            EmployeeAssignment.objects.filter(
+                employee_id=employee_id,
+                is_primary=True,
+                valid_from__lte=last,
+            )
+            .filter(Q(valid_to__isnull=True) | Q(valid_to__gte=first))
+            .select_related("employee", "office", "department", "position")
+            .order_by("-valid_from")
+        )
+        if not assignments:
+            # Без назначения нет ни офиса, ни пояса, ни области доступа.
+            # Это не ошибка: у только что заведённого человека так и есть.
+            return {
+                "employee_id": employee_id,
+                "timezone": str(office_zone(None)),
+                "first": first,
+                "last": last,
+                "days": [],
+                "totals": _empty_totals(),
+                "note": "У сотрудника нет кадрового назначения за этот период",
+            }
+
+        # Область проверяется по каждому офису периода: перевод не должен
+        # открывать чужой офис задним числом.
+        for assignment in assignments:
+            if assignment.office_id:
+                self.access.require_office(actor, assignment.office_id)
+
+        rows: list[dict] = []
+        totals = _empty_totals()
+        shown_zone = None
+
+        for offset in range(span):
+            day = first + timedelta(days=offset)
+            assignment = _assignment_on(assignments, day)
+            if assignment is None:
+                continue
+            tz = office_zone(assignment.office)
+            if shown_zone is None:
+                shown_zone = str(tz)
+            start, end = day_bounds(day, tz)
+
+            sessions = self._sessions_of_day([employee_id], start, end).get(
+                employee_id, []
+            )
+            absence = self._absences_of_day([employee_id], start, end).get(
+                employee_id
+            )
+            scheduled, calendar = self._scheduled_starts(
+                [employee_id],
+                day,
+                organization_id=actor.organization_id,
+                office_ids=[assignment.office_id] if assignment.office_id else [],
+            )
+            row = self._presence_row(
+                assignment=assignment,
+                day=day,
+                tz=tz,
+                sessions=sessions,
+                absence=absence,
+                schedule=scheduled.get(employee_id),
+                calendar=calendar,
+            )
+            open_session = row.open_session_id is not None
+            rows.append(
+                {
+                    "day": day,
+                    "timezone": str(tz),
+                    "office_id": row.office_id,
+                    "office_name": row.office_name,
+                    "state": row.state,
+                    "first_entry_at": row.first_entry_at,
+                    "last_exit_at": row.last_exit_at,
+                    "seconds": row.seconds,
+                    "sessions": len(sessions),
+                    "open_session_id": row.open_session_id,
+                    "late_minutes": row.late_minutes,
+                    "scheduled_start": row.scheduled_start,
+                    "absence_code": row.absence_code,
+                    "absence_name": row.absence_name,
+                    # Отметки в день подтверждённого отсутствия — не норма,
+                    # и молчать об этом нельзя: расхождение разбирает человек.
+                    "conflicting_marks": row.conflicting_marks,
+                }
+            )
+
+            totals["seconds"] += row.seconds
+            if sessions:
+                totals["days_with_marks"] += 1
+            if open_session:
+                totals["open_sessions"] += 1
+            if row.scheduled_start is not None:
+                totals["working_days"] += 1
+            if row.late_minutes:
+                totals["late_days"] += 1
+                totals["late_minutes"] += row.late_minutes
+
+        return {
+            "employee_id": employee_id,
+            "timezone": shown_zone or str(office_zone(None)),
+            "first": first,
+            "last": last,
+            "days": rows,
+            "totals": totals,
+            "note": None,
+        }
+
     # ----------------------------------------------------------------- события
 
     def events(
@@ -301,6 +475,7 @@ class AttendanceHrService(BaseService):
         actor: Actor,
         *,
         status: str | None = None,
+        employee_id: uuid.UUID | None = None,
         office_id=None,
         region_id=None,
         search: str | None = None,
@@ -318,6 +493,11 @@ class AttendanceHrService(BaseService):
 
         if status:
             queryset = queryset.filter(status__in=[s for s in status.split(",") if s])
+        if employee_id:
+            # Фильтр сужает уже разрешённое, а не открывает доступ:
+            # проверка области ниже остаётся на месте.
+            self._require_employee_visible(actor, employee_id)
+            queryset = queryset.filter(employee_id=employee_id)
         if search:
             pattern = search.strip()
             queryset = queryset.filter(
@@ -902,6 +1082,33 @@ class AttendanceHrService(BaseService):
                 "status": session.status,
             },
         }
+
+
+def _empty_totals() -> dict:
+    """Итоги за период. Ноль — это ноль, а не «нет данных»."""
+    return {
+        "seconds": 0,
+        "days_with_marks": 0,
+        "working_days": 0,
+        "late_days": 0,
+        "late_minutes": 0,
+        "open_sessions": 0,
+    }
+
+
+def _assignment_on(assignments: list, day: date):
+    """Кадровое назначение, действовавшее в этот день.
+
+    Список отсортирован по убыванию `valid_from`, поэтому первое
+    подходящее — самое позднее из начавшихся, а именно оно и действует.
+    """
+    for row in assignments:
+        if row.valid_from and row.valid_from > day:
+            continue
+        if row.valid_to and row.valid_to < day:
+            continue
+        return row
+    return None
 
 
 def _state_of(

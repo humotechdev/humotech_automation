@@ -16,6 +16,7 @@ from __future__ import annotations
 import uuid
 from datetime import date
 
+from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import serializers as drf_serializers
 from rest_framework import status as http_status
@@ -370,4 +371,124 @@ class ManualEventView(APIView):
         return Response(
             AttendanceEventSerializer(event).data,
             status=http_status.HTTP_201_CREATED,
+        )
+
+
+class DailyRowSerializer(drf_serializers.Serializer):
+    """Один день журнала. Все величины посчитал сервер."""
+
+    day = drf_serializers.DateField()
+    timezone = drf_serializers.CharField(
+        help_text="Пояс ОФИСА, по которому определён этот день",
+    )
+    office_id = drf_serializers.UUIDField(allow_null=True)
+    office_name = drf_serializers.CharField(allow_null=True)
+    state = drf_serializers.CharField(
+        help_text=(
+            "IN_OFFICE, LEFT, NOT_COME, DAY_OFF, NO_SCHEDULE, SICK_LEAVE, "
+            "VACATION, OTHER_ABSENCE. «Нет графика» и «выходной» — разные "
+            "состояния, и оба не равны прогулу"
+        ),
+    )
+    first_entry_at = drf_serializers.DateTimeField(allow_null=True)
+    last_exit_at = drf_serializers.DateTimeField(allow_null=True)
+    seconds = drf_serializers.IntegerField(
+        help_text=(
+            "Сумма учитываемых интервалов, а не разница первого входа и "
+            "последнего выхода: перерывы между сессиями сюда не входят"
+        ),
+    )
+    sessions = drf_serializers.IntegerField()
+    open_session_id = drf_serializers.UUIDField(
+        allow_null=True,
+        help_text="Незакрытая сессия. Её длительность считает сервер",
+    )
+    late_minutes = drf_serializers.IntegerField(
+        allow_null=True,
+        help_text=(
+            "Минуты СВЕРХ допуска графика. `null` — сравнивать не с чем: "
+            "нет графика или день нерабочий"
+        ),
+    )
+    scheduled_start = drf_serializers.TimeField(allow_null=True)
+    absence_code = drf_serializers.CharField(allow_null=True)
+    absence_name = drf_serializers.CharField(allow_null=True)
+    conflicting_marks = drf_serializers.BooleanField(
+        help_text="Отметки в день подтверждённого отсутствия — расхождение",
+    )
+
+
+class DailyTotalsSerializer(drf_serializers.Serializer):
+    """Итоги за ВЕСЬ период, а не за показанные строки."""
+
+    seconds = drf_serializers.IntegerField()
+    days_with_marks = drf_serializers.IntegerField()
+    working_days = drf_serializers.IntegerField()
+    late_days = drf_serializers.IntegerField()
+    late_minutes = drf_serializers.IntegerField()
+    open_sessions = drf_serializers.IntegerField()
+
+
+class DailyResponseSerializer(drf_serializers.Serializer):
+    employee_id = drf_serializers.UUIDField()
+    timezone = drf_serializers.CharField()
+    first = drf_serializers.DateField()
+    last = drf_serializers.DateField()
+    days = DailyRowSerializer(many=True)
+    totals = DailyTotalsSerializer()
+    note = drf_serializers.CharField(allow_null=True)
+
+
+@extend_schema(tags=["Посещаемость"])
+class EmployeeDailyView(APIView):
+    """Журнал по дням для одного сотрудника. Требует `attendance.read`."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        operation_id="attendance_daily",
+        summary="Посещаемость сотрудника по дням",
+        description=(
+            "Строку дня собирает тот же код, что и присутствие на "
+            "дашборде: у ночной смены, открытой сессии и допуска "
+            "опоздания один ответ, а не два похожих.\n\n"
+            "Три правила, которые из-за этого достаются журналу даром. "
+            "День определяется поясом ОФИСА, а не браузера: перевод в "
+            "офис с другим поясом меняет пояс со дня перевода. Ночная "
+            "смена принадлежит дню, в который НАЧАЛАСЬ. Открытая сессия "
+            "учитывается до момента серверного расчёта — клиент, "
+            "вычитающий «сейчас минус вход», получил бы другое число.\n\n"
+            "Итоги считаются по всему периоду, а не по показанным "
+            "строкам: сводка, зависящая от длины таблицы, отвечает "
+            "не на тот вопрос."
+        ),
+        parameters=[
+            OpenApiParameter(
+                "employee_id", OpenApiTypes.UUID, required=True,
+                description="Чужой сотрудник отвечает «не найден»",
+            ),
+            OpenApiParameter("date_from", str, required=True),
+            OpenApiParameter("date_to", str, required=True),
+        ],
+        responses=DailyResponseSerializer,
+    )
+    def get(self, request):
+        actor = Actor.from_user(request.user)
+        employee_id = _uuid_param(request, "employee_id")
+        if employee_id is None:
+            raise ValidationFailed(
+                "Параметр «employee_id» обязателен",
+                details={"field": "employee_id"},
+            )
+        first = _date_param(request, "date_from")
+        last = _date_param(request, "date_to")
+        if first is None or last is None:
+            raise ValidationFailed(
+                "Период обязателен: передайте date_from и date_to",
+                details={"fields": ["date_from", "date_to"]},
+            )
+        return Response(
+            AttendanceHrService().daily(
+                actor, employee_id, first=first, last=last
+            )
         )

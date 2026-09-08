@@ -82,6 +82,14 @@ class RequestQueueView(APIView):
         parameters=[
             OpenApiParameter("kind", str, enum=["absence", "correction"]),
             OpenApiParameter("status", str),
+            OpenApiParameter(
+                "employee_id", str,
+                description=(
+                    "Заявки одного сотрудника. Фильтр сужает уже "
+                    "разрешённое: чужой сотрудник даёт пустой набор, "
+                    "а не чужие заявки"
+                ),
+            ),
             OpenApiParameter("office_id", str),
             OpenApiParameter("region_id", str),
             OpenApiParameter("search", str),
@@ -136,6 +144,7 @@ class RequestQueueView(APIView):
             actor,
             status=request.query_params.get("status") or None,
             type_code=request.query_params.get("type") or None,
+            employee_id=_uuid_param(request, "employee_id"),
             office_id=_uuid_param(request, "office_id"),
             region_id=_uuid_param(request, "region_id"),
             search=request.query_params.get("search") or None,
@@ -151,6 +160,7 @@ class RequestQueueView(APIView):
         queryset = AttendanceHrService().correction_queue(
             actor,
             status=request.query_params.get("status") or None,
+            employee_id=_uuid_param(request, "employee_id"),
             office_id=_uuid_param(request, "office_id"),
             region_id=_uuid_param(request, "region_id"),
             search=request.query_params.get("search") or None,
