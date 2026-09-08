@@ -40,7 +40,7 @@ const MANAGEMENT: Item[] = [
   { key: 'knowledge', title: 'База знаний', icon: 'book', to: '/knowledge' },
   { key: 'notifications', title: 'Уведомления', icon: 'bell', to: '/notifications' },
   { key: 'admin', title: 'Администрирование', icon: 'admin', to: '/admin' },
-  { key: 'settings', title: 'Настройки', icon: 'settings' },
+  { key: 'settings', title: 'Настройки', icon: 'settings', to: '/settings' },
 ];
 
 /** Человеческие названия ролей. Незнакомый код показывается как есть. */

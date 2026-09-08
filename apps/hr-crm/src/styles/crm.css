@@ -3359,3 +3359,380 @@ body,
   background: var(--surface);
   border-top: 1px solid var(--edge);
 }
+
+/* --- страница настроек ----------------------------------------------------
+ *
+ * Три колонки: меню разделов, формы, контекст. При сужении правая
+ * колонка уходит вниз, а меню — наверх. Ни `zoom`, ни `transform`,
+ * ни фиксированной высоты: страница подстраивается под доступное
+ * место, а не под размер, на котором её рисовали.
+ */
+
+.setup {
+  display: grid;
+  grid-template-columns: 236px minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.setup__menu {
+  position: sticky;
+  top: 16px;
+}
+
+.setup__group {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.setup__list {
+  list-style: none;
+  margin: 0 0 14px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.setup__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 42px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink-1);
+  text-align: left;
+  cursor: pointer;
+}
+
+.setup__item:hover {
+  background: var(--soft);
+}
+
+/* Активный раздел отмечен полосой и фоном, а не цветом: палитра
+ * страницы чёрно-белая, и «выбрано» должно читаться без него. */
+.setup__item--on,
+.setup__item--on:hover {
+  background: var(--soft);
+  border-color: var(--edge);
+  font-weight: 600;
+  box-shadow: inset 3px 0 0 var(--ink-1);
+}
+
+.setup__item:focus-visible {
+  outline: 2px solid var(--ink-1);
+  outline-offset: 2px;
+}
+
+.setup__rule {
+  height: 1px;
+  margin: 4px 0 14px;
+  background: var(--edge);
+}
+
+.setup__foot {
+  margin: 18px 0 0;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.setup__body {
+  min-width: 0;
+}
+
+.setup__intro {
+  margin-bottom: 14px;
+}
+
+.setup__title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.setup__lead {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.setup__cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 16px;
+  align-items: start;
+}
+
+.setup__forms,
+.setup__aside {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.setup__aside-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.setup__block {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 0 12px;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.setup__pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.setup__when {
+  margin: 0 0 2px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* --- панель сохранения ---------------------------------------------------- */
+
+.setup__save {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+}
+
+.setup__state {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+}
+
+.setup__state > span:last-child {
+  display: flex;
+  flex-direction: column;
+}
+
+.setup__dot {
+  width: 10px;
+  height: 10px;
+  border: 1px solid var(--ink-2);
+  border-radius: 50%;
+}
+
+.setup__dot--on {
+  background: var(--ink-1);
+  border-color: var(--ink-1);
+}
+
+.setup__hint {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.setup__buttons {
+  display: flex;
+  gap: 10px;
+}
+
+.setup__buttons .btn {
+  min-width: 132px;
+  height: 44px;
+}
+
+/* --- списки внутри разделов ------------------------------------------------ */
+
+.setup__links,
+.setup__states,
+.setup__owners {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.setup__link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 12px;
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  color: var(--ink-1);
+  text-decoration: none;
+}
+
+.setup__link:hover {
+  background: var(--soft);
+}
+
+.setup__link > span:first-child {
+  display: flex;
+  flex-direction: column;
+}
+
+.setup__owner {
+  display: grid;
+  grid-template-columns: minmax(0, 200px) minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: baseline;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--edge);
+  font-size: 13px;
+}
+
+.setup__owner:last-child {
+  border-bottom: 0;
+}
+
+.setup__owner-hint {
+  color: var(--ink-2);
+}
+
+.setup__state-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+}
+
+.setup__state-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.setup__state-meta {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+/* Состояние подключения различается словом и обводкой, не цветом. */
+.state--working .state__dot {
+  background: var(--ink-1);
+}
+
+.state--unknown .state__dot {
+  background: repeating-linear-gradient(
+    45deg, var(--ink-2), var(--ink-2) 1px, transparent 1px, transparent 3px
+  );
+}
+
+.state--off .state__dot {
+  background: none;
+  border: 1px solid var(--ink-2);
+}
+
+/* --- флажки и наборы ------------------------------------------------------- */
+
+.setup__set {
+  margin: 12px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.setup__check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+  font-size: 13px;
+}
+
+.setup__check--row {
+  align-items: flex-start;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--edge);
+}
+
+.setup__check--row:last-of-type {
+  border-bottom: 0;
+}
+
+.setup__check > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1.35;
+}
+
+.setup__check input {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  accent-color: var(--ink-1);
+}
+
+.setup__mime {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.pill--demo {
+  margin-left: 12px;
+  vertical-align: middle;
+  font-size: 12px;
+}
+
+/* --- перестроение сетки ---------------------------------------------------- */
+
+@media (max-width: 1360px) {
+  .setup__cols {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 1080px) {
+  .setup {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .setup__menu {
+    position: static;
+  }
+
+  .setup__list {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .setup__item {
+    width: auto;
+  }
+
+  .setup__owner {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+}

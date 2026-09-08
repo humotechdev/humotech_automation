@@ -275,3 +275,270 @@ class TestHttp:
 
     def test_anonymous_gets_nothing(self, api_client):
         assert api_client.get(f"{API}/settings").status_code in (401, 403)
+
+
+# --- группа «Организация» ----------------------------------------------------
+
+
+@pytest.mark.django_db
+class TestOrganizationGroup:
+    """Название, описание и пояс показа — одна группа и одна транзакция.
+
+    Разными запросами их сохранять нельзя: половина применённой группы —
+    это состояние, которого человек не выбирал.
+    """
+
+    KEY = "organization.defaults"
+
+    def section(self, service, actor) -> dict:
+        return next(
+            item for item in service.all(actor)["items"] if item["key"] == self.KEY
+        )
+
+    def test_group_carries_name_description_and_both_zones(
+        self, service, settings_actor, organization
+    ):
+        section = self.section(service, settings_actor)
+        assert set(section["values"]) == {
+            "name", "description", "crm_timezone", "default_timezone",
+        }
+        assert section["values"]["name"] == organization.name
+        # Что действует НА САМОМ ДЕЛЕ — отдельно от того, что записано:
+        # пустой пояс CRM означает не «UTC», а «как у первого офиса».
+        assert section["effective"]["timezone"]
+        assert section["updated_at"] is not None
+
+    def test_whole_group_is_saved_at_once_and_audited_once(
+        self, service, settings_actor, organization
+    ):
+        from humotech.audit.models import AuditLog
+
+        service.update(
+            settings_actor,
+            self.KEY,
+            {
+                "name": "  Новое имя  ",
+                "description": "Одна строка",
+                "crm_timezone": "Europe/Moscow",
+            },
+        )
+        organization.refresh_from_db()
+        assert organization.name == "Новое имя"  # пробелы обрезаны сервером
+
+        values = self.section(service, settings_actor)["values"]
+        assert values["description"] == "Одна строка"
+        assert values["crm_timezone"] == "Europe/Moscow"
+
+        # Три поля — одно нажатие кнопки — одна запись в журнале.
+        rows = AuditLog.objects.filter(
+            organization_id=settings_actor.organization_id,
+            action="organization.defaults",
+        )
+        assert rows.count() == 1
+        row = rows.first()
+        assert row.old_values["description"] is None
+        assert row.new_values["crm_timezone"] == "Europe/Moscow"
+
+    def test_crm_timezone_changes_what_the_crm_shows(
+        self, service, settings_actor, organization, office
+    ):
+        """Настройка, на которую никто не смотрит, ничем не лучше опечатки.
+
+        Здесь проверяется именно применение: пояс показа читает `/auth/me`
+        и через него — весь интерфейс.
+        """
+        from humotech.core.timeframes import organization_zone
+
+        assert str(organization_zone(organization.id)) == office.timezone
+
+        service.update(
+            settings_actor, self.KEY, {"crm_timezone": "Europe/Moscow"}
+        )
+        assert str(organization_zone(organization.id)) == "Europe/Moscow"
+
+        # Пусто — законный выбор: он возвращает прежнее правило, а не UTC.
+        service.update(settings_actor, self.KEY, {"crm_timezone": None})
+        assert str(organization_zone(organization.id)) == office.timezone
+
+    def test_display_zone_does_not_touch_office_or_schedules(
+        self, service, settings_actor, organization, office
+    ):
+        """Смена пояса ПОКАЗА не переписывает то, по чему считают работу."""
+        from humotech.core.timeframes import office_zone
+
+        before = office.timezone
+        service.update(
+            settings_actor, self.KEY, {"crm_timezone": "Pacific/Auckland"}
+        )
+        office.refresh_from_db()
+        assert office.timezone == before
+        assert str(office_zone(office)) == before
+
+    def test_unknown_field_of_the_group_is_refused(self, service, settings_actor):
+        with pytest.raises(ValidationFailed) as exc:
+            service.update(settings_actor, self.KEY, {"logo_url": "http://x"})
+        assert exc.value.details["unknown"] == ["logo_url"]
+
+    def test_empty_name_is_refused(self, service, settings_actor):
+        with pytest.raises(ValidationFailed):
+            service.update(settings_actor, self.KEY, {"name": "   "})
+
+
+# --- защита от незаметной перезаписи -----------------------------------------
+
+
+@pytest.mark.django_db
+class TestConcurrentEditing:
+    """Второй администратор не должен молча отменить работу первого."""
+
+    KEY = "organization.defaults"
+
+    def edition(self, service, actor):
+        return next(
+            item for item in service.all(actor)["items"] if item["key"] == self.KEY
+        )["updated_at"]
+
+    def test_stale_edition_is_refused(self, service, settings_actor):
+        from humotech.core.errors import Conflict
+
+        seen = self.edition(service, settings_actor)
+        service.update(settings_actor, self.KEY, {"description": "первый"})
+
+        with pytest.raises(Conflict):
+            service.update(
+                settings_actor,
+                self.KEY,
+                {"description": "второй"},
+                expected_updated_at=seen,
+                check_expected=True,
+            )
+
+    def test_fresh_edition_goes_through(self, service, settings_actor):
+        service.update(settings_actor, self.KEY, {"description": "первый"})
+        service.update(
+            settings_actor,
+            self.KEY,
+            {"description": "второй"},
+            expected_updated_at=self.edition(service, settings_actor),
+            check_expected=True,
+        )
+        section = next(
+            item for item in service.all(settings_actor)["items"]
+            if item["key"] == self.KEY
+        )
+        assert section["values"]["description"] == "второй"
+
+    def test_edition_follows_both_sources_of_the_group(
+        self, service, settings_actor
+    ):
+        """Правка соседа в другой половине группы тоже считается.
+
+        Название лежит в колонке, описание — в JSONB. Если брать редакцию
+        только одного источника, правка второго осталась бы незамеченной.
+        """
+        from humotech.core.errors import Conflict
+
+        seen = self.edition(service, settings_actor)
+        service.update(settings_actor, self.KEY, {"name": "Сосед переименовал"})
+
+        with pytest.raises(Conflict):
+            service.update(
+                settings_actor,
+                self.KEY,
+                {"description": "а я про описание"},
+                expected_updated_at=seen,
+                check_expected=True,
+            )
+
+
+# --- вложения ----------------------------------------------------------------
+
+
+@pytest.mark.django_db
+class TestDocumentTypes:
+    def test_format_the_storage_cannot_verify_is_refused(
+        self, service, settings_actor
+    ):
+        """Иначе настройка выглядит применённой, а загрузка отвергает файл."""
+        with pytest.raises(ValidationFailed) as exc:
+            service.update(
+                settings_actor,
+                POLICY_KEY,
+                {"allowed_document_types": ["application/msword"]},
+            )
+        assert exc.value.details["unsupported"] == ["application/msword"]
+
+    def test_storable_types_are_reported_next_to_the_choice(
+        self, service, settings_actor
+    ):
+        from humotech.files.storage import EXTENSIONS
+
+        section = next(
+            item for item in service.all(settings_actor)["items"]
+            if item["key"] == POLICY_KEY
+        )
+        assert section["effective"]["storable_document_types"] == sorted(EXTENSIONS)
+
+
+# --- подключения -------------------------------------------------------------
+
+
+@pytest.mark.django_db
+class TestIntegrations:
+    def test_requires_settings_manage(self, service, nobody_actor):
+        with pytest.raises(PermissionDenied):
+            service.integrations(nobody_actor)
+
+    def test_no_secret_ever_reaches_the_answer(
+        self, service, settings_actor, settings
+    ):
+        """Ни токена, ни его начала.
+
+        По обрывку токен не восстановить, но и пользы от него никакой,
+        а в журнале браузера он останется.
+        """
+        import json
+
+        secret = "1234567890:AAHsecret-value-for-the-test"
+        telegram = dict(settings.TELEGRAM)
+        telegram["BOT_TOKEN"] = secret
+        settings.TELEGRAM = telegram
+
+        body = json.dumps(service.integrations(settings_actor), default=str)
+        assert secret not in body
+        for length in (8, 10, 12):
+            assert secret[:length] not in body
+
+    def test_configured_is_not_the_same_as_working(
+        self, service, settings_actor, settings
+    ):
+        telegram = dict(settings.TELEGRAM)
+        telegram["BOT_TOKEN"] = "1234567890:AAH-token"
+        settings.TELEGRAM = telegram
+
+        bot = next(
+            item for item in service.integrations(settings_actor)["items"]
+            if item["key"] == "telegram_bot"
+        )
+        assert bot["configured"] is True
+        # Отправок не было — значит «не удалось проверить», а не «работает».
+        assert bot["state"] == "unknown"
+
+    def test_disabled_ai_is_called_disabled(self, service, settings_actor):
+        from humotech.ai_assistant.config import ai_settings
+
+        assert ai_settings.ai_assistant_enabled is False
+        ai = next(
+            item for item in service.integrations(settings_actor)["items"]
+            if item["key"] == "ai_assistant"
+        )
+        # «Выключено» — принятое решение, а не сбой проверки.
+        assert ai["state"] == "off"
+
+    def test_viewing_sends_nothing(self, service, settings_actor):
+        """Открытая страница настроек не ставит ничего в очередь."""
+        from humotech.notifications.models import Notification
+
+        before = Notification.objects.count()
+        service.integrations(settings_actor)
+        assert Notification.objects.count() == before

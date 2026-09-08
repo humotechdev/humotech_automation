@@ -73,12 +73,30 @@ def organization_zone(organization_id) -> ZoneInfo:
     вход в систему выглядит произошедшим в разное время у двух людей,
     открывших журнал из разных городов.
 
-    Берётся пояс первого заведённого офиса — то же правило, по которому
-    считает сутки список уведомлений, — и только если офисов нет,
-    подставляется `Organization.default_timezone`.
+    Порядок такой. Сначала явно выбранный пояс отображения CRM
+    (`organization.defaults.crm_timezone`): его задают на странице
+    настроек ровно для этого. Если он не задан — пояс первого
+    заведённого офиса, то же правило, по которому считает сутки список
+    уведомлений. Если офисов нет — `Organization.default_timezone`.
+
+    Это пояс ПОКАЗА. Отметки, графики и рабочие дни считаются по поясу
+    ОФИСА (`office_zone`) и от этой настройки не зависят: смена пояса
+    отображения не переписывает события и не пересчитывает историю.
     """
     from humotech.offices.models import Office
-    from humotech.organizations.models import Organization
+    from humotech.organizations.models import Organization, OrganizationSetting
+
+    chosen = (
+        OrganizationSetting.objects.filter(
+            organization_id=organization_id, key="organization.defaults"
+        )
+        .values_list("value", flat=True)
+        .first()
+    )
+    if isinstance(chosen, dict):
+        named = chosen.get("crm_timezone")
+        if isinstance(named, str) and named.strip():
+            return zone(named)
 
     office = (
         Office.objects.filter(organization_id=organization_id)

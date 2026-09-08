@@ -43,15 +43,43 @@ from humotech.absences.policy import (
 )
 from humotech.core.errors import NotFound, ValidationFailed
 from humotech.core.rbac import Actor
-from humotech.core.service import BaseService
-from humotech.core.validation import validate_timezone
-from humotech.organizations.models import Organization
+from humotech.core.service import BaseService, refuse_stale
+from humotech.core.timeframes import organization_zone
+from humotech.core.validation import clean_text, validate_timezone
+from humotech.files.storage import EXTENSIONS
+from humotech.organizations.models import Organization, OrganizationSetting
+
+#: Форматы, которые хранилище умеет проверить по содержимому. Список
+#: не настройка, а факт: `store()` сверяет сигнатуру начала файла, и
+#: тип, которого здесь нет, будет отвергнут при загрузке.
+STORABLE_DOCUMENT_TYPES = frozenset(EXTENSIONS)
 
 #: Ключи, которые CRM вправе менять. Всё остальное — ошибка, а не
 #: молчаливая запись в JSONB.
 ORGANIZATION_DEFAULTS_KEY = "organization.defaults"
 
 KNOWN_KEYS = (ABSENCE_POLICY_KEY, ORGANIZATION_DEFAULTS_KEY)
+
+#: Поля группы «Организация». Название живёт в своей колонке, остальное —
+#: в JSONB под тем же ключом: колонку заводят под то, что ищут и по чему
+#: соединяют, а описание и пояс отображения ни там, ни там не нужны.
+DEFAULTS_FIELDS = ("name", "description", "crm_timezone", "default_timezone")
+
+DEFAULTS_HELP = {
+    "name": "Название рабочего пространства. Видно в шапке и в письмах",
+    "description": "Одна-две строки о том, чем занята организация",
+    "crm_timezone": (
+        "Пояс, в котором CRM ПОКАЗЫВАЕТ время там, где у строки нет "
+        "своего офиса: журнал действий, список уведомлений, карточки "
+        "учётных записей. Пусто — берётся пояс первого офиса, а если "
+        "офисов нет, то пояс организации"
+    ),
+    "default_timezone": (
+        "Запасной пояс организации. Действует там, где у офиса не задан "
+        "свой. Отметки и графики считаются по поясу ОФИСА и от этой "
+        "настройки не зависят"
+    ),
+}
 
 _BOOL_FIELDS = {
     "require_hr_approval",
@@ -110,10 +138,11 @@ class OrganizationSettingsService(BaseService):
         self.access.require(actor, "settings.manage")
         return {
             "items": [
-                self._absence_section(actor),
                 self._defaults_section(actor),
+                self._absence_section(actor),
             ],
             "elsewhere": self._elsewhere(),
+            "last_change": self._last_change(actor),
         }
 
     def get(self, actor: Actor, key: str) -> dict:
@@ -125,8 +154,22 @@ class OrganizationSettingsService(BaseService):
             )
         return self._section(actor, key)
 
-    def update(self, actor: Actor, key: str, values: dict) -> dict:
-        """Записать настройку. Неизвестный ключ или поле — ошибка."""
+    def update(
+        self,
+        actor: Actor,
+        key: str,
+        values: dict,
+        *,
+        expected_updated_at=None,
+        check_expected: bool = False,
+    ) -> dict:
+        """Записать настройку. Неизвестный ключ или поле — ошибка.
+
+        `expected_updated_at` — редакция, которую видел правящий. Второй
+        администратор, открывший ту же страницу минутой раньше, иначе
+        молча отменил бы работу первого: он отправил бы свою копию
+        значений целиком.
+        """
         self.access.require(actor, "settings.manage")
         if key not in KNOWN_KEYS:
             raise NotFound(
@@ -138,6 +181,11 @@ class OrganizationSettingsService(BaseService):
                 "Значение настройки должно быть объектом",
                 details={"key": key},
             )
+        refuse_stale(
+            self._section_updated_at(actor, key),
+            expected_updated_at,
+            enabled=check_expected,
+        )
         if key == ORGANIZATION_DEFAULTS_KEY:
             return self._update_defaults(actor, values)
 
@@ -157,12 +205,18 @@ class OrganizationSettingsService(BaseService):
         return self._absence_section(actor)
 
     def _update_defaults(self, actor: Actor, values: dict) -> dict:
-        """Пояс организации. Пишется в свою колонку, а не в JSONB."""
-        unknown = sorted(set(values) - {"default_timezone"})
+        """Группа «Организация» целиком, одной транзакцией.
+
+        Название лежит в колонке `organizations.name`, описание и пояс
+        отображения — в JSONB под тем же ключом. Разными запросами их
+        сохранять нельзя: половина применённой группы — это состояние,
+        которого человек не выбирал.
+        """
+        unknown = sorted(set(values) - set(DEFAULTS_FIELDS))
         if unknown:
             raise ValidationFailed(
                 "Неизвестные настройки",
-                details={"unknown": unknown, "known": ["default_timezone"]},
+                details={"unknown": unknown, "known": list(DEFAULTS_FIELDS)},
             )
         organization = Organization.objects.filter(
             id=actor.organization_id
@@ -170,25 +224,101 @@ class OrganizationSettingsService(BaseService):
         if organization is None:
             raise NotFound("Организация не найдена")
 
-        before = {"default_timezone": organization.default_timezone}
+        stored = self._stored_defaults(actor.organization_id)
+        before = {
+            "name": organization.name,
+            "description": stored.get("description"),
+            "crm_timezone": stored.get("crm_timezone"),
+            "default_timezone": organization.default_timezone,
+        }
+        columns: list[str] = []
+        after_stored = dict(stored)
+
+        if "name" in values:
+            organization.name = clean_text(
+                values["name"], field="name", required=True, max_length=255
+            )
+            columns.append("name")
         if "default_timezone" in values:
             organization.default_timezone = validate_timezone(
                 values["default_timezone"],
                 field="default_timezone",
                 required=True,
             )
+            columns.append("default_timezone")
+        if "description" in values:
+            after_stored["description"] = clean_text(
+                values["description"], field="description", max_length=500
+            )
+        if "crm_timezone" in values:
+            # Пусто — законный выбор: он означает «как раньше, по офису».
+            after_stored["crm_timezone"] = validate_timezone(
+                values["crm_timezone"], field="crm_timezone", required=False
+            )
 
         with self.atomic():
-            organization.save(update_fields=["default_timezone", "updated_at"])
+            if columns:
+                organization.save(update_fields=[*columns, "updated_at"])
+            if after_stored != stored:
+                OrganizationSetting.objects.update_or_create(
+                    organization_id=actor.organization_id,
+                    key=ORGANIZATION_DEFAULTS_KEY,
+                    defaults={"value": after_stored},
+                )
+            after = {
+                "name": organization.name,
+                "description": after_stored.get("description"),
+                "crm_timezone": after_stored.get("crm_timezone"),
+                "default_timezone": organization.default_timezone,
+            }
+            # Одна запись на всю группу: три строки журнала про одно
+            # нажатие кнопки читаются как три разных решения.
             self.audit.record(
                 actor,
                 action="organization.defaults",
                 entity_type="organizations",
                 entity_id=organization.id,
                 before=before,
-                after={"default_timezone": organization.default_timezone},
+                after=after,
             )
         return self._defaults_section(actor)
+
+    @staticmethod
+    def _stored_defaults(organization_id) -> dict:
+        row = OrganizationSetting.objects.filter(
+            organization_id=organization_id, key=ORGANIZATION_DEFAULTS_KEY
+        ).first()
+        value = getattr(row, "value", None)
+        return dict(value) if isinstance(value, dict) else {}
+
+    @staticmethod
+    def _setting_updated_at(organization_id, key: str):
+        row = OrganizationSetting.objects.filter(
+            organization_id=organization_id, key=key
+        ).only("updated_at").first()
+        return getattr(row, "updated_at", None)
+
+    def _section_updated_at(self, actor: Actor, key: str):
+        """Редакция группы — самое позднее изменение её источников.
+
+        У группы «Организация» источников два: колонка и строка JSONB.
+        Брать только один значило бы не заметить правку соседа, если он
+        поменял другую половину.
+        """
+        stamp = self._setting_updated_at(actor.organization_id, key)
+        if key != ORGANIZATION_DEFAULTS_KEY:
+            return stamp
+        organization = (
+            Organization.objects.filter(id=actor.organization_id)
+            .only("updated_at")
+            .first()
+        )
+        column = getattr(organization, "updated_at", None)
+        if stamp is None:
+            return column
+        if column is None:
+            return stamp
+        return max(stamp, column)
 
     # ---------------------------------------------------------------- частное
 
@@ -197,49 +327,215 @@ class OrganizationSettingsService(BaseService):
             return self._defaults_section(actor)
         return self._absence_section(actor)
 
-    @staticmethod
-    def _absence_section(actor: Actor) -> dict:
+    def _absence_section(self, actor: Actor) -> dict:
         policy = policy_for(actor.organization_id)
         defaults = AbsencePolicy().as_dict()
         return {
             "key": ABSENCE_POLICY_KEY,
-            "title": "Правила отсутствий",
+            "title": "Заявки и документы",
             "description": (
                 "Действуют на решения, принимаемые после изменения. "
-                "Уже подтверждённые отсутствия не пересматриваются."
+                "Уже подтверждённые отсутствия не пересматриваются, а "
+                "загруженные справки не перепроверяются."
             ),
             "values": policy.as_dict(),
             "defaults": defaults,
             "help": dict(ABSENCE_POLICY_HELP),
+            "effective": {
+                # Хранилище проверяет содержимое по сигнатуре и умеет
+                # ровно эти три формата. Предлагать четвёртый значило бы
+                # обещать приём файла, который сервер потом отвергнет.
+                "storable_document_types": sorted(STORABLE_DOCUMENT_TYPES),
+            },
+            "updated_at": self._setting_updated_at(
+                actor.organization_id, ABSENCE_POLICY_KEY
+            ),
         }
 
-    @staticmethod
-    def _defaults_section(actor: Actor) -> dict:
-        organization = (
-            Organization.objects.filter(id=actor.organization_id)
-            .only("default_timezone")
-            .first()
-        )
+    def _defaults_section(self, actor: Actor) -> dict:
+        organization = Organization.objects.filter(
+            id=actor.organization_id
+        ).first()
+        stored = self._stored_defaults(actor.organization_id)
         return {
             "key": ORGANIZATION_DEFAULTS_KEY,
-            "title": "Умолчания организации",
+            "title": "Организация",
             "description": (
-                "Пояс, по которому считается день там, где у офиса "
-                "не задан свой."
+                "Название, описание и пояс, в котором CRM показывает "
+                "время. Отметки и графики считаются по поясу офиса и "
+                "отсюда не меняются."
             ),
             "values": {
+                "name": getattr(organization, "name", None),
+                "description": stored.get("description"),
+                "crm_timezone": stored.get("crm_timezone"),
                 "default_timezone": getattr(
                     organization, "default_timezone", None
                 ),
             },
-            "defaults": {"default_timezone": "UTC"},
-            "help": {
-                "default_timezone": (
-                    "Название пояса IANA, например Asia/Dushanbe. "
-                    "У офиса может быть свой — он и главнее."
-                ),
+            "defaults": {
+                "name": None,
+                "description": None,
+                "crm_timezone": None,
+                "default_timezone": "UTC",
             },
+            "help": dict(DEFAULTS_HELP),
+            "effective": {
+                # Что действует НА САМОМ ДЕЛЕ. Пустой `crm_timezone`
+                # означает не «UTC», а «как у первого офиса», и без
+                # этого поля страница не могла бы этого показать.
+                "timezone": str(organization_zone(actor.organization_id)),
+                "code": getattr(organization, "code", None),
+            },
+            "updated_at": self._section_updated_at(
+                actor, ORGANIZATION_DEFAULTS_KEY
+            ),
         }
+
+    def _last_change(self, actor: Actor) -> dict | None:
+        """Кто и когда менял настройки в последний раз.
+
+        Читается из журнала действий и только тем, кому журнал открыт:
+        «кто это сделал» — сведение из аудита, и показывать его в обход
+        `audit.read` значило бы выдать это право страницей настроек.
+        Записи нет — возвращается `null`, а не выдуманные дата и автор.
+        """
+        if not self.access.has(actor, "audit.read"):
+            return None
+        from humotech.audit.models import AuditLog
+
+        row = (
+            AuditLog.objects.filter(
+                organization_id=actor.organization_id,
+                action__in=("organization.defaults", "organization_setting.update"),
+            )
+            .select_related("actor_user")
+            .order_by("-occurred_at", "-id")
+            .first()
+        )
+        if row is None:
+            return None
+        return {
+            "at": row.occurred_at,
+            "action": row.action,
+            "actor_email": getattr(row.actor_user, "email", None),
+        }
+
+    def integrations(self, actor: Actor) -> dict:
+        """Состояние подключений. Только чтение, только по `settings.manage`.
+
+        Три вещи, которые здесь принципиально не делаются.
+
+        **Ни одного исходящего запроса.** Открытая страница настроек не
+        обязана дёргать Telegram и тем более платного провайдера AI.
+        Поэтому «работает» здесь не проверяется, а выводится из следов,
+        которые система оставила сама: успешная попытка отправки — это
+        доказательство, а переменная окружения — только намерение.
+
+        **Ни одного секрета наружу.** Ни токена, ни его длины, ни первых
+        символов: по префиксу токен не восстановить, но и пользы от него
+        нет никакой, а в журнале браузера он останется.
+
+        **Разница между «настроено» и «проверено».** Заполненная
+        переменная означает, что администратор что-то ввёл, — и ничего
+        не говорит о том, отвечает ли сервис. Пока подтверждения нет,
+        состояние честно называется «не удалось проверить».
+        """
+        self.access.require(actor, "settings.manage")
+        from django.conf import settings as django_settings
+
+        from humotech.ai_assistant.config import ai_settings
+        from humotech.notifications.models import Notification, NotificationAttempt
+
+        telegram = django_settings.TELEGRAM
+        bot_configured = bool((telegram.get("BOT_TOKEN") or "").strip())
+        mini_app_configured = bool((telegram.get("MINI_APP_URL") or "").strip())
+
+        # Доказательство работы — состоявшаяся отправка, а не настройка.
+        last_sent = (
+            NotificationAttempt.objects.filter(
+                notification__organization_id=actor.organization_id,
+                notification__channel="TELEGRAM",
+                outcome="SENT",
+            )
+            .order_by("-created_at")
+            .values_list("created_at", flat=True)
+            .first()
+        )
+        pending = Notification.objects.filter(
+            organization_id=actor.organization_id,
+            channel="TELEGRAM",
+            status__in=("PENDING", "RUNNING"),
+        ).count()
+
+        return {
+            "items": [
+                {
+                    "key": "telegram_bot",
+                    "title": "Telegram-бот",
+                    "configured": bot_configured,
+                    "state": self._state(bot_configured, last_sent is not None),
+                    # Пояснение обязано следовать за состоянием, а не жить
+                    # своей жизнью: «выключено» рядом с «доставка
+                    # подтверждена» — это два взаимоисключающих ответа на
+                    # один вопрос, и читатель вправе не поверить обоим.
+                    "note": (
+                        "Токен бота не задан развёртыванием: отправлять "
+                        "нечем, что бы ни лежало в очереди"
+                        if not bot_configured
+                        else "Доставка подтверждена успешной отправкой"
+                        if last_sent is not None
+                        else "Настроено, но успешных отправок ещё не было"
+                    ),
+                    # Факт из прошлого показывается только тогда, когда он
+                    # не спорит с настоящим.
+                    "confirmed_at": last_sent if bot_configured else None,
+                    "queued": pending,
+                    "link": "/notifications",
+                },
+                {
+                    "key": "mini_app",
+                    "title": "Mini App",
+                    "configured": mini_app_configured,
+                    "state": self._state(mini_app_configured, False),
+                    "note": (
+                        "Адрес задан развёртыванием. Доступность извне "
+                        "отсюда не проверяется"
+                    ),
+                    "confirmed_at": None,
+                    "queued": None,
+                    "link": None,
+                },
+                {
+                    "key": "ai_assistant",
+                    "title": "AI-ассистент",
+                    "configured": bool(ai_settings.has_credentials),
+                    # Выключенный ассистент — это не сбой и не «не удалось
+                    # проверить»: это принятое решение, и называть его
+                    # надо своим словом.
+                    "state": (
+                        "off"
+                        if not ai_settings.ai_assistant_enabled
+                        else self._state(ai_settings.has_credentials, False)
+                    ),
+                    "note": (
+                        "Выключен рубильником. Запросы к провайдеру не "
+                        "уходят вовсе"
+                        if not ai_settings.ai_assistant_enabled
+                        else "Включён. Проверка доступности здесь не выполняется"
+                    ),
+                    "confirmed_at": None,
+                    "queued": None,
+                    "link": "/knowledge",
+                },
+            ],
+        }
+
+    @staticmethod
+    def _state(configured: bool, confirmed: bool) -> str:
+        if not configured:
+            return "off"
+        return "working" if confirmed else "unknown"
 
     @staticmethod
     def _elsewhere() -> list[dict]:
@@ -327,10 +623,24 @@ class OrganizationSettingsService(BaseService):
                         "Разрешённые типы справок — непустой список строк",
                         details={"field": key},
                     )
+                # Формат, который хранилище не умеет проверить, принимать
+                # нельзя: настройка выглядела бы применённой, а загрузка
+                # отвергала бы файл со ссылкой на «неверное содержимое».
+                unsupported = sorted(set(value) - STORABLE_DOCUMENT_TYPES)
+                if unsupported:
+                    raise ValidationFailed(
+                        "Такой формат хранилище не проверяет и не примет",
+                        details={
+                            "field": key,
+                            "unsupported": unsupported,
+                            "supported": sorted(STORABLE_DOCUMENT_TYPES),
+                        },
+                    )
 
 
 __all__ = [
     "ABSENCE_POLICY_HELP",
+    "STORABLE_DOCUMENT_TYPES",
     "KNOWN_KEYS",
     "ORGANIZATION_DEFAULTS_KEY",
     "OrganizationSettingsService",

@@ -1266,3 +1266,87 @@ export const auditLogs = (params: AuditQuery, signal?: AbortSignal) =>
     `/audit-logs${query(params)}`,
     signal ? { signal } : {},
   );
+
+// --- настройки организации ---------------------------------------------------
+
+/**
+ * Одна группа настроек.
+ *
+ * `values` — то, что записано и что можно менять. `effective` — то, что
+ * действует на самом деле: пустой `crm_timezone` означает не «UTC», а
+ * «как у первого офиса», и по одним `values` этого не прочесть.
+ *
+ * `updated_at` возвращается обратно в `expected_updated_at` при
+ * сохранении: без него второй администратор, открывший ту же страницу,
+ * молча отменил бы работу первого.
+ */
+export type SettingSection = {
+  key: string;
+  title: string;
+  description: string;
+  values: Record<string, unknown>;
+  defaults: Record<string, unknown>;
+  help: Record<string, string>;
+  effective?: Record<string, unknown>;
+  updated_at: string | null;
+};
+
+/** Настройка, которую ищут здесь, а живёт она у офиса, графика или развёртывания. */
+export type SettingElsewhere = {
+  name: string;
+  owner: string;
+  hint: string;
+};
+
+export type LastChange = {
+  at: string;
+  action: string;
+  actor_email: string | null;
+};
+
+export type SettingsAll = {
+  items: SettingSection[];
+  elsewhere: SettingElsewhere[];
+  /** `null` и когда записи нет, и когда у смотрящего нет `audit.read`. */
+  last_change: LastChange | null;
+};
+
+export const settings = (signal?: AbortSignal) =>
+  request<SettingsAll>('/settings', signal ? { signal } : {});
+
+export const saveSettings = (
+  key: string,
+  values: Record<string, unknown>,
+  expected: string | null,
+) =>
+  request<SettingSection>(`/settings/${key}`, {
+    method: 'PATCH',
+    body: {
+      values,
+      expected_updated_at: expected,
+      // Отдельный признак: у ненастроенной группы редакции нет вовсе,
+      // и `null` здесь — законное значение, а не «не передали».
+      check_expected: true,
+    },
+  });
+
+/**
+ * Состояние подключения.
+ *
+ * `configured` и `state` — разные вопросы. Заполненная переменная
+ * окружения означает, что администратор что-то ввёл, и ничего не
+ * говорит о том, отвечает ли сервис.
+ */
+export type Integration = {
+  key: string;
+  title: string;
+  configured: boolean;
+  state: 'working' | 'unknown' | 'off';
+  note: string;
+  confirmed_at: string | null;
+  queued: number | null;
+  link: string | null;
+};
+
+export const integrations = (signal?: AbortSignal) =>
+  request<Items<Integration>>('/settings/integrations', signal ? { signal } : {});

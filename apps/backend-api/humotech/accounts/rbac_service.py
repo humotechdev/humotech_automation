@@ -52,7 +52,7 @@ from humotech.core.enums import USER_STATUSES
 from humotech.core.errors import Conflict, NotFound, PermissionDenied, ValidationFailed
 from humotech.core.pagination import Page, paginate
 from humotech.core.rbac import Actor, snapshot
-from humotech.core.service import BaseService
+from humotech.core.service import BaseService, refuse_stale
 from humotech.core.timeframes import closed_range_bounds, organization_zone
 from humotech.core.validation import clean_code, clean_text, validate_email
 from humotech.employees.selectors import require_visible_employee
@@ -430,23 +430,9 @@ def _end_of_day(organization_id, day: date) -> datetime:
     return end
 
 
-def _refuse_stale(current, expected, *, enabled: bool = True) -> None:
-    """Отказать, если правят не ту редакцию, которую видели.
-
-    `enabled` отделяет «не передали редакцию» от «передали пустую».
-    У срока назначения `None` — законное значение «бессрочно», и без
-    этого признака проверка молча пропускала бы ровно тот случай, ради
-    которого её ставили.
-    """
-    if enabled and current != expected:
-        raise Conflict(
-            "Запись изменилась, пока вы её редактировали. Откройте её "
-            "заново и повторите правку.",
-            details={
-                "current": current.isoformat() if current else None,
-                "expected": expected.isoformat() if expected else None,
-            },
-        )
+#: Проверка редакции живёт в общем слое: тот же вопрос задают
+#: настройки организации, и двух ответов у него быть не должно.
+_refuse_stale = refuse_stale
 
 
 class RoleAdminService(BaseService):

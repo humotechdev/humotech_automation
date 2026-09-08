@@ -46,6 +46,7 @@ from humotech.knowledge.views import (
 from humotech.notifications.views import NotificationViewSet
 from humotech.offices.views import OfficeViewSet
 from humotech.organizations.views import (
+    IntegrationsView,
     OrganizationSettingDetailView,
     OrganizationSettingsView,
 )
@@ -213,6 +214,13 @@ urlpatterns = [
         name="grant-detail",
     ),
     path("settings", OrganizationSettingsView.as_view(), name="settings"),
+    # Состояние подключений. Стоит перед `settings/<key>`: путь
+    # читается сверху вниз, и общий маршрут перехватил бы именованный.
+    path(
+        "settings/integrations",
+        IntegrationsView.as_view(),
+        name="settings-integrations",
+    ),
     path(
         "settings/<str:key>",
         OrganizationSettingDetailView.as_view(),

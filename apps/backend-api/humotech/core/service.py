@@ -22,7 +22,7 @@ from contextlib import contextmanager
 
 from django.db import IntegrityError, transaction
 
-from humotech.core.errors import translate_integrity_error
+from humotech.core.errors import Conflict, translate_integrity_error
 from humotech.core.rbac import AccessControl, AuditTrail
 
 
@@ -43,3 +43,27 @@ class BaseService:
                 yield
         except IntegrityError as exc:
             raise translate_integrity_error(exc) from exc
+
+
+def refuse_stale(current, expected, *, enabled: bool = True) -> None:
+    """Отказать, если правят не ту редакцию, которую видели.
+
+    Один механизм на все разделы: у роли, у назначения и у настроек
+    вопрос один и тот же — «не изменилось ли это, пока я редактировал».
+    Второй словарь для того же понятия означал бы два разных ответа на
+    один вопрос и два разных повода для 409.
+
+    `enabled` отделяет «не передали редакцию» от «передали пустую».
+    У срока назначения `None` — законное значение «бессрочно», и без
+    этого признака проверка молча пропускала бы ровно тот случай, ради
+    которого её ставили.
+    """
+    if enabled and current != expected:
+        raise Conflict(
+            "Запись изменилась, пока вы её редактировали. Откройте её "
+            "заново и повторите правку.",
+            details={
+                "current": current.isoformat() if current else None,
+                "expected": expected.isoformat() if expected else None,
+            },
+        )
