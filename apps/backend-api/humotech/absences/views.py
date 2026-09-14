@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from django.http import FileResponse
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import serializers
@@ -65,6 +66,13 @@ class HrAbsenceRequestSerializer(serializers.Serializer):
     comment = serializers.CharField(allow_null=True)
     review_comment = serializers.CharField(allow_null=True)
     submitted_at = serializers.DateTimeField(allow_null=True)
+    history = serializers.ListField(
+        child=serializers.DictField(),
+        help_text=(
+            "Шаги заявки по порядку: at, action, comment. Комментарий есть "
+            "только у решений кадровика"
+        ),
+    )
 
 
 class PendingAbsenceRequestsSerializer(serializers.Serializer):
@@ -142,7 +150,26 @@ def hr_request_json(request) -> dict:
         "submitted_at": (
             request.submitted_at.isoformat() if request.submitted_at else None
         ),
+        # История — неизменяемые записи `AbsenceAction` по порядку. Комментарий
+        # отдаётся только у решений кадровика: у шагов сотрудника в нём
+        # бывает диагноз, а история видна всем, кто разбирает очередь.
+        "history": [
+            {
+                "at": action.created_at.isoformat(),
+                "action": action.action,
+                "comment": (
+                    action.comment
+                    if action.action in HR_DECISION_ACTIONS
+                    else None
+                ),
+            }
+            for action in sorted(request.actions.all(), key=lambda one: one.created_at)
+        ],
     }
+
+
+# Шаги, комментарий к которым пишет кадровик, а не сотрудник.
+HR_DECISION_ACTIONS = ("APPROVED", "REJECTED", "CANCELLED")
 
 
 @extend_schema(tags=["Отсутствия"])
@@ -214,4 +241,39 @@ class AbsenceDecisionView(APIView):
         return Response(hr_request_json(row))
 
 
-__all__ = ["AbsenceDecisionView", "PendingAbsenceRequestsView"]
+@extend_schema(tags=["Отсутствия"])
+class AbsenceDocumentDownloadView(APIView):
+    """Файл справки к заявке.
+
+    Отдаётся отсюда, а не веб-сервером: файл лежит в приватном хранилище,
+    и право на него спрашивается при каждом открытии. `inline` — PDF и
+    картинку браузер показывает сам, сохранить их можно из просмотрщика.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        operation_id="absence_request_document_download",
+        summary="Файл справки к заявке",
+        parameters=[
+            OpenApiParameter("request_id", OpenApiTypes.UUID, OpenApiParameter.PATH),
+            OpenApiParameter("document_id", OpenApiTypes.UUID, OpenApiParameter.PATH),
+        ],
+        responses={(200, "application/octet-stream"): OpenApiTypes.BINARY},
+    )
+    def get(self, request, request_id, document_id):
+        actor = Actor.from_user(request.user)
+        stream, record = AbsenceService().open_document(actor, request_id, document_id)
+        return FileResponse(
+            stream,
+            as_attachment=False,
+            filename=record.original_filename,
+            content_type=record.mime_type,
+        )
+
+
+__all__ = [
+    "AbsenceDecisionView",
+    "AbsenceDocumentDownloadView",
+    "PendingAbsenceRequestsView",
+]

@@ -54,7 +54,7 @@ from humotech.core.timeframes import (
     local_date,
     range_bounds,
 )
-from humotech.files.storage import store
+from humotech.files.storage import open_stored, store
 from humotech.notifications import messages
 from humotech.notifications.outbox import enqueue
 from humotech.schedules.models import CalendarException, EmployeeScheduleAssignment
@@ -539,8 +539,12 @@ class AbsenceService(BaseService):
         search: str | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
+        request_kind: str | None = None,
     ):
         """Заявки на отсутствие под фильтрами очереди HR.
+
+        `request_kind` — вид заявки: `CREATE`, `EXTEND` или `CANCEL`. Отмена
+        подтверждённого отпуска — тоже заявка, и у неё своя вкладка.
 
         Область видимости — та же, что у списка сотрудников: заявка видна,
         если виден сам сотрудник. Фильтр не расширяет доступ: он сужает
@@ -556,12 +560,16 @@ class AbsenceService(BaseService):
         queryset = AbsenceRequest.objects.filter(
             organization_id=actor.organization_id
         ).select_related("absence_type", "employee", "parent_request").prefetch_related(
-            # Документы страницей, а не по запросу на строку.
-            "documents__file"
+            # Документы и история страницей, а не по запросу на строку.
+            "documents__file",
+            "actions",
         )
 
         if status:
             queryset = queryset.filter(status__in=[s for s in status.split(",") if s])
+        if request_kind:
+            kinds = [k for k in request_kind.split(",") if k]
+            queryset = queryset.filter(request_kind__in=kinds)
         if employee_id:
             # Отбор по человеку не расширяет доступ: область ниже
             # по-прежнему применяется, и чужой сотрудник даст пустой
@@ -616,6 +624,33 @@ class AbsenceService(BaseService):
         return EmployeeAssignment.objects.filter(
             current_primary_assignment_filter(date.today()) & condition
         ).values_list("employee_id", flat=True)
+
+    def open_document(self, actor: Actor, request_id, document_id):
+        """Файл справки к заявке — тем, кто видит саму заявку.
+
+        Право то же, что на очередь, и область та же: справка чужого офиса
+        не открывается по угаданному адресу. Отказ по области отвечает «не
+        найдено», а не «запрещено»: иначе по ответу можно было бы
+        перебирать, какие заявки существуют.
+        """
+        self.access.require(actor, "absences.read")
+        document = (
+            AbsenceDocument.objects.filter(
+                id=document_id,
+                absence_request_id=request_id,
+                organization_id=actor.organization_id,
+            )
+            .select_related("file", "absence_request")
+            .first()
+        )
+        if document is None:
+            raise NotFound("Документ не найден")
+        visible = self._scope_ids(actor)
+        if visible is not None and not visible.filter(
+            employee_id=document.absence_request.employee_id
+        ).exists():
+            raise NotFound("Документ не найден")
+        return open_stored(document.file), document.file
 
     def pending(self, actor: Actor):
         """Заявки, ждущие решения. Для будущего интерфейса HR."""

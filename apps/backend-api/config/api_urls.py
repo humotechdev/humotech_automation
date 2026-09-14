@@ -19,7 +19,7 @@ from humotech.accounts.rbac_views import (
     UserGrantsView,
 )
 from humotech.audit.views import AuditLogView
-from humotech.core.queue_views import RequestQueueView
+from humotech.core.queue_views import RequestCountsView, RequestQueueView
 from humotech.analytics.views import (
     AnalyticsView,
     ComparisonView,
@@ -37,6 +37,7 @@ from humotech.departments.views import DepartmentViewSet, PositionViewSet
 from humotech.employees.views import EmployeeViewSet
 from humotech.absences.views import (
     AbsenceDecisionView,
+    AbsenceDocumentDownloadView,
     PendingAbsenceRequestsView,
 )
 from humotech.knowledge.views import (
@@ -179,6 +180,9 @@ urlpatterns = [
     # списком. Склеить две страницы на клиенте нельзя — получилась бы
     # не очередь, а произвольная смесь двух её половин.
     path("requests", RequestQueueView.as_view(), name="requests-queue"),
+    # Счётчики вкладок очереди одним ответом: по одной строке на вкладку
+    # видно только «есть или нет», а не сколько.
+    path("requests/counts", RequestCountsView.as_view(), name="requests-counts"),
     # Аналитика. Каждая доля приходит с числителем, знаменателем и
     # словесным определением формулы: процент без них проверить нечем.
     path("analytics", AnalyticsView.as_view(), name="analytics"),
@@ -254,6 +258,9 @@ urlpatterns = [
          name="absence-requests-pending"),
     path("absence-requests/<uuid:request_id>/<str:decision>",
          AbsenceDecisionView.as_view(), name="absence-request-decision"),
+    path("absence-requests/<uuid:request_id>/documents/<uuid:document_id>/download",
+         AbsenceDocumentDownloadView.as_view(),
+         name="absence-request-document-download"),
     # Личный кабинет сотрудника. Один набор endpoint'ов на Mini App и бота:
     # разные клиенты, но одни и те же цифры.
     path("me/", include("humotech.selfservice.urls")),
