@@ -13,9 +13,11 @@
  */
 
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 
 import * as api from '../api/crm';
-import { Icon } from './nav-icons';
+import { AppIcon } from './AppIcon';
+import { DayBar } from './DayBar';
 import { initials } from './AppShell';
 import { messageFor } from '../api/errors';
 import { longDate, useBlock, type Block } from '../features/dashboard/data';
@@ -66,7 +68,9 @@ export function DayCard({ row, day, timezone, canAdd, onClose, onChanged }: Prop
     <aside className="panel side-panel" aria-label="Отметки за день">
       <header className="side-panel__head">
         <span className="side-panel__title">Отметки за день</span>
-        <button type="button" className="tool" aria-label="Закрыть" onClick={onClose}>✕</button>
+        <button type="button" className="tool" aria-label="Закрыть" onClick={onClose}>
+          <AppIcon name="close" size={16} />
+        </button>
       </header>
 
       <div className="side-panel__body">
@@ -74,7 +78,10 @@ export function DayCard({ row, day, timezone, canAdd, onClose, onChanged }: Prop
           <span className="avatar">{initials(row.full_name)}</span>
           <span className="who__text">
             <span className="who__name">{row.full_name}</span>
-            <span className="who__id">{row.office_name ?? '—'}</span>
+            <span className="who__id">{row.employee_number ?? '—'}</span>
+            <span className="who__id">
+              {[row.office_name, row.department_name].filter(Boolean).join(' · ') || '—'}
+            </span>
           </span>
         </div>
 
@@ -85,7 +92,11 @@ export function DayCard({ row, day, timezone, canAdd, onClose, onChanged }: Prop
           </div>
           <div className="facts__row">
             <dt>График</dt>
-            <dd>{row.scheduled_start ? row.scheduled_start.slice(0, 5) : 'Не задан'}</dd>
+            <dd>
+              {row.scheduled_start && row.scheduled_end
+                ? `${row.scheduled_start.slice(0, 5)} – ${row.scheduled_end.slice(0, 5)}`
+                : 'Не задан'}
+            </dd>
           </div>
           <div className="facts__row">
             <dt>В офисе за день</dt>
@@ -105,7 +116,13 @@ export function DayCard({ row, day, timezone, canAdd, onClose, onChanged }: Prop
           )}
         </dl>
 
-        <p className="side-panel__label">История отметок</p>
+        {/* Та же шкала, что в строке таблицы, но крупнее: здесь на неё
+            смотрят внимательно, а не мельком. */}
+        <div className="side-panel__bar">
+          <DayBar row={row} zone={timezone} big />
+        </div>
+
+        <p className="side-panel__label">События сегодня</p>
         <Body block={detail} name="отметки">
           {(data) =>
             data.events.length === 0 ? (
@@ -141,6 +158,11 @@ export function DayCard({ row, day, timezone, canAdd, onClose, onChanged }: Prop
           }
         </Body>
 
+        <Link className="btn side-panel__go" to={`/employees/${row.employee_id}`}>
+          <AppIcon name="user" size={16} />
+          Открыть карточку
+        </Link>
+
         {canAdd ? (
           adding ? (
             <ManualForm
@@ -154,7 +176,7 @@ export function DayCard({ row, day, timezone, canAdd, onClose, onChanged }: Prop
             />
           ) : (
             <button type="button" className="btn btn--dark" onClick={() => setAdding(true)}>
-              <Icon name="doc" size={16} />
+              <AppIcon name="doc" size={16} />
               Добавить отметку
             </button>
           )

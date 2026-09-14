@@ -24,7 +24,7 @@ import { useSearchParams } from 'react-router-dom';
 import * as api from '../api/crm';
 import { ApiFailure, messageFor } from '../api/errors';
 import { AppShell } from '../components/AppShell';
-import { Icon } from '../components/nav-icons';
+import { AppIcon } from '../components/AppIcon';
 import { MaterialForm } from '../components/MaterialForm';
 import { Markup } from '../features/knowledge/markup';
 import { usePaging } from '../features/knowledge/paging';
@@ -243,7 +243,7 @@ export function KnowledgePage() {
                       editing: null,
                       newVersionOf: null,
                     })}>
-            <Icon name="plus" size={17} />
+            <AppIcon name="plus" size={16} />
             Добавить материал
           </button>
           <AiBadge capability={capability} />
@@ -269,7 +269,7 @@ export function KnowledgePage() {
         <section className="panel panel--list">
           <div className="toolbar">
             <label className="find find--wide">
-              <Icon name="search" size={16} />
+              <AppIcon name="search" size={16} />
               <input type="search" value={search}
                      placeholder={area === 'faq' ? 'Поиск вопроса' : 'Поиск материала'}
                      aria-label={area === 'faq' ? 'Поиск вопроса' : 'Поиск материала'}
@@ -346,7 +346,7 @@ export function KnowledgePage() {
                           }}>
                         <td className="grid-table__name">
                           <span className="who">
-                            <Icon name="sheet" size={16} />
+                            <AppIcon name="sheet" size={16} />
                             <span className="two">
                               <b>{row.title}</b>
                               <span className="two__second">{row.created_by ?? '—'}</span>
@@ -391,7 +391,7 @@ export function KnowledgePage() {
                           }}>
                         <td className="grid-table__name">
                           <span className="who">
-                            <Icon name="chat" size={16} />
+                            <AppIcon name="chat" size={16} />
                             <span className="two">
                               <b>{row.canonical_question}</b>
                               <span className="two__second">
@@ -543,7 +543,7 @@ function DocView({
     <>
       <header className="view__head">
         <span className="view__icon" aria-hidden="true">
-          <Icon name="sheet" size={22} />
+          <AppIcon name="sheet" size={20} />
         </span>
         <div className="view__who">
           <h2 className="view__title">{doc.title}</h2>
@@ -556,7 +556,7 @@ function DocView({
           </p>
         </div>
         <button type="button" className="tool" aria-label="Закрыть карточку" onClick={onClose}>
-          <Icon name="cross" size={18} />
+          <AppIcon name="cross" size={18} />
         </button>
       </header>
 
@@ -643,7 +643,7 @@ function DocView({
             <button type="button" className="btn btn--dark" disabled={!mayWrite}
                     title={mayWrite ? undefined : 'Нужно право knowledge.write'}
                     onClick={() => onEdit(doc)}>
-              <Icon name="pencil" size={16} />
+              <AppIcon name="pencil" size={16} />
               Редактировать
             </button>
           ) : (
@@ -651,7 +651,7 @@ function DocView({
             // черновик, сотрудникам продолжает отвечать текущая.
             <button type="button" className="btn btn--dark" disabled={!mayWrite}
                     onClick={() => onNewVersion(doc)}>
-              <Icon name="pencil" size={16} />
+              <AppIcon name="pencil" size={16} />
               Новая версия
             </button>
           )}
@@ -663,13 +663,13 @@ function DocView({
                     disabled={!mayIndex || Boolean(notYet) || acting}
                     title={notYet ? `Сейчас нельзя: ${notYet}` : undefined}
                     onClick={() => onIndex(doc)}>
-              <Icon name="refresh" size={16} />
+              <AppIcon name="refresh" size={16} />
               Отправить на индексацию
             </button>
           ) : doc.status === 'INDEXING' ? (
             <button type="button" className="btn" disabled={!mayPublish || acting}
                     onClick={() => onPublish(doc)}>
-              <Icon name="check" size={16} />
+              <AppIcon name="check" size={16} />
               Опубликовать
             </button>
           ) : null}
@@ -681,7 +681,7 @@ function DocView({
                       : 'Архивируют опубликованный документ: у черновика нет публикации, которую снимают'
                   }
                   onClick={() => onArchive(doc)}>
-            <Icon name="archive" size={16} />
+            <AppIcon name="archive" size={16} />
             В архив
           </button>
         </div>
@@ -723,7 +723,7 @@ function FaqView({
     <>
       <header className="view__head">
         <span className="view__icon" aria-hidden="true">
-          <Icon name="chat" size={22} />
+          <AppIcon name="chat" size={20} />
         </span>
         <div className="view__who">
           <h2 className="view__title">{row.canonical_question}</h2>
@@ -733,7 +733,7 @@ function FaqView({
           </p>
         </div>
         <button type="button" className="tool" aria-label="Закрыть карточку" onClick={onClose}>
-          <Icon name="cross" size={18} />
+          <AppIcon name="cross" size={18} />
         </button>
       </header>
 
@@ -754,7 +754,7 @@ function FaqView({
         <div className="view__actions">
           <button type="button" className="btn btn--dark" disabled={!mayWrite}
                   onClick={() => onEdit(row)}>
-            <Icon name="pencil" size={16} />
+            <AppIcon name="pencil" size={16} />
             Редактировать
           </button>
           {row.status === 'DRAFT' && (
@@ -765,14 +765,14 @@ function FaqView({
                     disabled={!mayPublish || Boolean(notYet) || acting}
                     title={notYet ? `Сейчас нельзя: ${notYet}` : undefined}
                     onClick={() => onActivate(row)}>
-              <Icon name="check" size={16} />
+              <AppIcon name="check" size={16} />
               Включить в ответы
             </button>
           )}
           <button type="button" className="btn"
                   disabled={!mayPublish || row.status === 'ARCHIVED' || acting}
                   onClick={() => onArchive(row)}>
-            <Icon name="archive" size={16} />
+            <AppIcon name="archive" size={16} />
             В архив
           </button>
         </div>
@@ -792,7 +792,7 @@ function AiBadge({ capability }: { capability: api.Capability | null }) {
   if (capability.embeddings_available) {
     return (
       <span className="ai-badge">
-        <Icon name="half" size={15} />
+        <AppIcon name="half" size={16} />
         AI-ответы включены
       </span>
     );
@@ -803,7 +803,7 @@ function AiBadge({ capability }: { capability: api.Capability | null }) {
         ? 'Рубильник AI_ASSISTANT_ENABLED выключен'
         : 'Провайдер эмбеддингов не настроен'
     }>
-      <Icon name="half" size={15} />
+      <AppIcon name="half" size={16} />
       {capability.reason === 'ai_disabled'
         ? 'AI-ответы выключены'
         : 'AI-провайдер не настроен'}
@@ -820,7 +820,7 @@ function StatusPill({ status, title }: { status: string; title: string }) {
             : 'pencil';
   return (
     <span className={`state state--${status.toLowerCase()}`}>
-      <Icon name={icon} size={15} />
+      <AppIcon name={icon} size={16} />
       {title}
     </span>
   );

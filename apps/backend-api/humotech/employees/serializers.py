@@ -9,6 +9,11 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
+from humotech.core.enums import (
+    EMPLOYEE_DOCUMENT_KINDS,
+    GENDERS,
+    MARITAL_STATUSES,
+)
 from humotech.employees.models import Employee, EmployeeAssignment
 
 
@@ -48,6 +53,11 @@ class EmployeeListItemSerializer(serializers.ModelSerializer):
     current_assignment = AssignmentSerializer(read_only=True, default=None)
     current_schedule = serializers.SerializerMethodField()
     telegram_state = serializers.SerializerMethodField()
+    telegram_username = serializers.SerializerMethodField()
+    # Признак наличия снимка, а не сам снимок: список из двухсот строк с
+    # картинками внутри весил бы мегабайты. Изображение отдаётся
+    # отдельным адресом, где право спрашивается при каждом открытии.
+    photo = serializers.SerializerMethodField()
 
     class Meta:
         model = Employee
@@ -55,15 +65,28 @@ class EmployeeListItemSerializer(serializers.ModelSerializer):
             "id", "organization_id", "employee_number",
             "first_name", "last_name", "middle_name", "full_name",
             "phone", "corporate_email", "employment_status",
-            "hire_date", "termination_date", "telegram_connected",
-            "created_at", "current_assignment", "current_schedule",
-            "telegram_state",
+            "birth_date", "hire_date", "termination_date",
+            "telegram_connected", "created_at", "current_assignment",
+            "current_schedule", "telegram_state", "telegram_username",
+            "photo",
         )
         read_only_fields = fields
 
     def get_full_name(self, employee: Employee) -> str:
         parts = [employee.last_name, employee.first_name, employee.middle_name]
         return " ".join(part for part in parts if part)
+
+    def get_photo(self, employee: Employee) -> bool:
+        return employee.photo_id is not None
+
+    def get_telegram_username(self, employee: Employee) -> str | None:
+        """Имя в Telegram или `null`.
+
+        Берётся у привязки, а не у сотрудника: у сотрудника такого поля
+        нет вовсе, и подставить сюда что-то другое значило бы показать
+        имя, которого не существует.
+        """
+        return getattr(employee, "telegram_username", None)
 
     def get_telegram_state(self, employee: Employee) -> str | None:
         """Состояние привязки или `null`, если её нет вовсе.
@@ -136,6 +159,14 @@ class EmployeeCardSerializer(serializers.Serializer):
         source="employee.preferred_language"
     )
     employment_status = serializers.CharField(source="employee.employment_status")
+    gender = serializers.CharField(source="employee.gender", allow_null=True)
+    marital_status = serializers.CharField(source="employee.marital_status",
+                                           allow_null=True)
+    # Само изображение здесь не отдаётся: карточка ходит по сети часто, а
+    # фотография весит мегабайты. Отдаётся отдельный адрес, который
+    # спрашивает право на каждое открытие.
+    photo = serializers.SerializerMethodField()
+    documents = serializers.SerializerMethodField()
     archived_at = serializers.DateTimeField(source="employee.archived_at",
                                             allow_null=True)
     created_at = serializers.DateTimeField(source="employee.created_at")
@@ -145,6 +176,15 @@ class EmployeeCardSerializer(serializers.Serializer):
     current_schedule = serializers.SerializerMethodField()
     telegram = TelegramBindingSerializer()
     assignment_history = AssignmentSerializer(many=True)
+
+    def get_photo(self, card) -> dict | None:
+        record = card.employee.photo
+        if record is None:
+            return None
+        return AttachedFileSerializer(record).data
+
+    def get_documents(self, card) -> list[dict]:
+        return EmployeeDocumentSerializer(card.documents, many=True).data
 
     def get_current_schedule(self, card) -> dict | None:
         row = card.current_schedule
@@ -229,3 +269,127 @@ class AssignmentChangeSerializer(serializers.Serializer):
 class TerminateSerializer(serializers.Serializer):
     termination_date = serializers.DateField()
     reason = serializers.CharField(required=False, allow_null=True)
+
+
+class EmployeeDocumentInputSerializer(serializers.Serializer):
+    """Одна приложенная бумага: вид и уже загруженный файл."""
+
+    kind = serializers.ChoiceField(choices=EMPLOYEE_DOCUMENT_KINDS)
+    file_id = serializers.UUIDField()
+    title = serializers.CharField(max_length=255, required=False,
+                                  allow_null=True, allow_blank=True)
+
+
+class EmployeeOnboardSerializer(serializers.Serializer):
+    """Одна форма приёма: всё, что HR заполняет на странице «Новый сотрудник».
+
+    Табельного номера здесь нет намеренно — его выдаёт система, и поле для
+    него означало бы, что кто-то должен помнить, какой номер свободен.
+    """
+
+    # Ключ придумывает клиент один раз на форму. Повтор с тем же ключом
+    # отдаёт того же сотрудника, а не заводит второго.
+    idempotency_key = serializers.CharField(max_length=100)
+
+    last_name = serializers.CharField(max_length=100)
+    first_name = serializers.CharField(max_length=100)
+    middle_name = serializers.CharField(max_length=100, required=False,
+                                        allow_null=True, allow_blank=True)
+    birth_date = serializers.DateField(required=False, allow_null=True)
+    pinfl = serializers.CharField(max_length=32)
+    phone = serializers.CharField(max_length=30)
+    corporate_email = serializers.CharField(max_length=255, required=False,
+                                            allow_null=True, allow_blank=True)
+    telegram_username = serializers.CharField(max_length=255, required=False,
+                                              allow_null=True, allow_blank=True)
+    # Числовой идентификатор Telegram. Приходит только когда он уже известен
+    # достоверно; по `@username` его не восстанавливают — имя можно сменить.
+    telegram_user_id = serializers.IntegerField(required=False, allow_null=True)
+
+    hire_date = serializers.DateField()
+    region_id = serializers.UUIDField(required=False, allow_null=True)
+    office_id = serializers.UUIDField()
+    department_id = serializers.UUIDField()
+    position_id = serializers.UUIDField()
+    manager_employee_id = serializers.UUIDField(required=False, allow_null=True)
+    employment_type = serializers.CharField(max_length=30, required=False,
+                                            default="FULL_TIME")
+    work_mode = serializers.CharField(max_length=30, required=False,
+                                      default="ONSITE")
+    # Испытательный срок отражается статусом, а не отдельным полем: в базе
+    # есть PROBATION, и второе место для той же мысли разошлось бы с ним.
+    employment_status = serializers.CharField(max_length=30, required=False,
+                                              default="ACTIVE")
+    schedule_id = serializers.UUIDField()
+    preferred_language = serializers.CharField(max_length=10, required=False,
+                                               default="ru")
+
+    gender = serializers.ChoiceField(choices=GENDERS, required=False,
+                                     allow_null=True, allow_blank=True)
+    marital_status = serializers.ChoiceField(choices=MARITAL_STATUSES,
+                                             required=False, allow_null=True,
+                                             allow_blank=True)
+    # Файлы приходят идентификаторами: их тело загружено отдельным запросом
+    # до нажатия кнопки. Это позволяет показать фотографию и размер файла
+    # ещё в форме, а сам приём оставить одной операцией.
+    photo_file_id = serializers.UUIDField(required=False, allow_null=True)
+    documents = EmployeeDocumentInputSerializer(many=True, required=False)
+
+    def validate_documents(self, rows):
+        """Один файл на вид бумаги, кроме «прочего».
+
+        Это правило базы (`uq_employee_documents_kind`). Проверка здесь
+        нужна, чтобы человек увидел понятный отказ, а не поломанный приём
+        на IntegrityError внутри транзакции.
+        """
+        seen = set()
+        for row in rows:
+            kind = row["kind"]
+            if kind == "OTHER":
+                continue
+            if kind in seen:
+                raise serializers.ValidationError(
+                    "Документ такого вида можно приложить только один"
+                )
+            seen.add(kind)
+        return rows
+
+
+class AttachedFileSerializer(serializers.Serializer):
+    """Загруженный файл — то, что о нём знает форма до сохранения."""
+
+    id = serializers.UUIDField()
+    name = serializers.CharField(source="original_filename")
+    mime_type = serializers.CharField()
+    size_bytes = serializers.IntegerField()
+
+
+class EmployeeDocumentSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    kind = serializers.CharField()
+    title = serializers.CharField()
+    status = serializers.CharField()
+    file_id = serializers.UUIDField(allow_null=True)
+    file = AttachedFileSerializer(allow_null=True)
+
+
+class TelegramOutcomeSerializer(serializers.Serializer):
+    """Чем закончилась подготовка доступа к боту."""
+
+    state = serializers.CharField()
+    link = serializers.CharField(allow_null=True)
+    message = serializers.CharField()
+
+
+class OnboardedSerializer(serializers.Serializer):
+    """Ответ приёма: карточка плюс отчёт по каждому шагу.
+
+    Шаги перечислены отдельно, а не свёрнуты в «успех»: подготовка Telegram
+    может не пройти, не отменяя приёма, и различать это нужно на экране.
+    """
+
+    employee = EmployeeCardSerializer(source="card")
+    created = serializers.BooleanField()
+    schedule_assigned = serializers.BooleanField()
+    telegram = TelegramOutcomeSerializer()
+    documents = EmployeeDocumentSerializer(many=True)

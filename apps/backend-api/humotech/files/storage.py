@@ -99,8 +99,19 @@ def store(
     employee,
     allowed_types,
     max_bytes: int,
+    prefix: str = "absences",
+    user_id=None,
 ) -> StoredFile:
-    """Принять файл: проверить, положить, записать метаданные."""
+    """Принять файл: проверить, положить, записать метаданные.
+
+    `prefix` — каталог внутри приватного хранилища. Справки и кадровые
+    бумаги лежат порознь не ради порядка: у них разный срок хранения и
+    разные права, и разбирать это по одной куче пришлось бы запросом.
+
+    `employee` и `user_id` — кто приложил. Ровно один из них: сотрудник
+    грузит справку сам, кадровые документы прикладывает кадровик, у
+    которого сотрудника нет вовсе.
+    """
     declared = (getattr(upload, "content_type", "") or "").split(";")[0].strip()
     size = getattr(upload, "size", None)
 
@@ -136,7 +147,7 @@ def store(
 
     storage = private_storage()
     # Имя на диске не связано с исходным: ни фамилии, ни диагноза, ни даты.
-    key = f"absences/{secrets.token_urlsafe(24)}{EXTENSIONS[declared]}"
+    key = f"{prefix}/{secrets.token_urlsafe(24)}{EXTENSIONS[declared]}"
     stored_key = storage.save(key, upload)
 
     record = File.objects.create(
@@ -151,6 +162,7 @@ def store(
         # «проверка не проводилась», пока сканер не включён.
         scan_status="PENDING" if settings.FILES["SCANNER_ENABLED"] else "CLEAN",
         uploaded_by_employee=employee,
+        uploaded_by_user_id=user_id,
     )
     return StoredFile(file=record, size_bytes=size)
 

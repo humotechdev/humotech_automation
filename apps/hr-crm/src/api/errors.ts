@@ -44,13 +44,28 @@ export class ApiFailure extends Error {
   readonly kind: FailureKind;
   readonly status: number;
   readonly fields: Record<string, string[]>;
+  /**
+   * Поле, на которое сервер указал в `details.field`.
+   *
+   * Нужно, чтобы отказ встал рядом с тем полем, из-за которого он
+   * произошёл, а не общей строкой над формой: «Сотрудник с таким ПИНФЛ
+   * уже есть» над всей страницей не говорит, какое из четырнадцати полей
+   * править. Текст при этом остаётся наш — сюда попадает только имя поля.
+   */
+  readonly field: string | null;
 
-  constructor(kind: FailureKind, status = 0, fields: Record<string, string[]> = {}) {
+  constructor(
+    kind: FailureKind,
+    status = 0,
+    fields: Record<string, string[]> = {},
+    field: string | null = null,
+  ) {
     super(kind);
     this.name = 'ApiFailure';
     this.kind = kind;
     this.status = status;
     this.fields = fields;
+    this.field = field;
   }
 }
 

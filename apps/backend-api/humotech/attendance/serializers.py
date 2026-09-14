@@ -75,6 +75,14 @@ class AttendanceSessionSerializer(serializers.Serializer):
         return session.ended_at is None
 
 
+class PresenceIntervalSerializer(serializers.Serializer):
+    """Один отрезок присутствия. `ended_at: null` — сессия ещё открыта."""
+
+    started_at = serializers.DateTimeField()
+    ended_at = serializers.DateTimeField(allow_null=True)
+    seconds = serializers.IntegerField()
+
+
 class PresenceRowSerializer(serializers.Serializer):
     employee_id = serializers.UUIDField()
     full_name = serializers.CharField()
@@ -93,10 +101,15 @@ class PresenceRowSerializer(serializers.Serializer):
     # null означает «сравнивать не с чем», а не «не опоздал».
     late_minutes = serializers.IntegerField(allow_null=True)
     scheduled_start = serializers.TimeField(allow_null=True)
+    scheduled_end = serializers.TimeField(allow_null=True)
 
     absence_code = serializers.CharField(allow_null=True)
     absence_name = serializers.CharField(allow_null=True)
     conflicting_marks = serializers.BooleanField()
+    # Отрезки присутствия за день. Шкале рабочего дня их не собрать из
+    # первого входа и последнего выхода: обед между ними пропал бы.
+    intervals = PresenceIntervalSerializer(many=True)
+    outside_geofence = serializers.BooleanField()
 
 
 class CorrectionRequestSerializer(serializers.Serializer):

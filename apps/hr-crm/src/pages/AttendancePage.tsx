@@ -19,7 +19,8 @@ import { useSearchParams } from 'react-router-dom';
 
 import * as api from '../api/crm';
 import { AppShell, initials } from '../components/AppShell';
-import { Icon } from '../components/nav-icons';
+import { AppIcon } from '../components/AppIcon';
+import { DayBar, atClock } from '../components/DayBar';
 import { DayCard } from '../components/DayCard';
 import {
   formatTime, longDate, today, useBlock, type Block,
@@ -53,6 +54,11 @@ export function AttendancePage() {
   const region = params.get('region_id') ?? '';
   const office = params.get('office_id') ?? '';
   const state = params.get('state') ?? '';
+  // Признак строки, а не состояние сервера: опоздавший может быть
+  // и в офисе, и уже ушедшим, поэтому «Опоздали» — отдельная ось.
+  const flag = params.get('flag') === 'late' || params.get('flag') === 'open'
+    ? (params.get('flag') as 'late' | 'open')
+    : '';
   const page = Number(params.get('page') ?? '1');
   const picked = params.get('employee') ?? '';
 
@@ -93,7 +99,12 @@ export function AttendancePage() {
     }),
     [day, region, office],
   );
-  const key = `${day}|${region}|${office}|${state}|${search}|${attempt}`;
+  // Панель и список по умолчанию смотрят на ПОЛНЫЙ состав дня: доля
+  // в офисе и динамика приходов не должны меняться от того, какой
+  // фильтр выбран в таблице.
+  const wide = `${day}|${region}|${office}|${attempt}`;
+  const key = `${wide}|${state}|${search}`;
+  const narrowed = Boolean(state || search);
 
   // Пять показателей берутся у дашборда: он считает их по ВСЕМУ составу,
   // а не по строкам, которые поместились в ответ.
@@ -106,15 +117,25 @@ export function AttendancePage() {
     key,
   );
 
-  const [shift] = useBlock(
+  const [base] = useBlock(
+    (signal) => api.presenceDay(scope, signal),
+    wide,
+    tab === 'day',
+  );
+
+  // Второй запрос — только когда отбор действительно сужает набор.
+  // Без фильтра он повторял бы первый.
+  const [narrow] = useBlock(
     (signal) =>
       api.presenceDay(
         { ...scope, ...(state ? { state } : {}), ...(search ? { search } : {}) },
         signal,
       ),
     key,
-    tab === 'day',
+    tab === 'day' && narrowed,
   );
+
+  const shift = narrowed ? narrow : base;
 
   const [directory] = useBlock(
     (signal) =>
@@ -131,15 +152,33 @@ export function AttendancePage() {
     return region ? all.filter((o) => o.region_id === region) : all;
   }, [directory, region]);
 
-  const rows = shift.state === 'ready' ? shift.data.items : [];
+  const found = shift.state === 'ready' ? shift.data.items : [];
+  // Опоздание и незакрытая сессия уже лежат в строке: спрашивать их у
+  // сервера отдельно значило бы сходить за тем, что пришло.
+  const rows = flag === 'late'
+    ? found.filter((row) => (row.late_minutes ?? 0) > 0)
+    : flag === 'open'
+      ? found.filter((row) => row.open_session_id !== null)
+      : found;
   const pages = Math.max(1, Math.ceil(rows.length / PAGE));
   const slice = rows.slice((page - 1) * PAGE, page * PAGE);
   const current = rows.find((row) => row.employee_id === picked) ?? null;
-  const dirty = Boolean(search || region || office || state);
+  const dirty = Boolean(search || region || office || state || flag);
   const counts = cards.state === 'ready'
     ? Object.fromEntries(cards.data.cards.map((c) => [c.key, c.value]))
     : {};
   const past = day < today();
+
+  // Чипы, плитки панели и строки «Требует внимания» — один и тот же
+  // отбор, показанный в трёх местах. Нажатие в любом из них ставит то
+  // же самое, и подсветка совпадает без отдельного состояния.
+  const chosen = pickedQuick(state, flag);
+  const choose = (item: Quick) =>
+    patch(
+      chosen === item.id && item.id !== 'all'
+        ? { state: null, flag: null }
+        : { state: item.state ?? null, flag: item.flag ?? null },
+    );
 
   return (
     <AppShell breadcrumb="Посещаемость" section="attendance">
@@ -153,20 +192,20 @@ export function AttendancePage() {
         <div className="head__filters">
           <div className="filters">
             <label className="pick pick--date">
-              <Icon name="calendar" size={16} />
+              <AppIcon name="calendar" size={16} />
               <input type="date" value={day} aria-label="Дата"
                      onChange={(event) => patch({ date: event.target.value || today() })} />
             </label>
             {can('reports.export') && (
               <button type="button" className="btn" disabled
                       title="Выгрузка появится следующим этапом">
-                <Icon name="report" size={16} />
+                <AppIcon name="report" size={16} />
                 Экспорт
               </button>
             )}
             <button type="button" className="pick pick--icon" aria-label="Обновить"
                     onClick={() => setAttempt((n) => n + 1)}>
-              <Icon name="refresh" size={16} />
+              <AppIcon name="refresh" size={16} />
             </button>
           </div>
           <p className="head__updated">
@@ -192,34 +231,39 @@ export function AttendancePage() {
         <>
           <Section block={cards} name="показатели">
             {(data) => (
-              <ul className="cards cards--five">
-                <Metric icon="calendar" title="По графику"
-                        value={counts['should_work_today']} note="Ожидаются на работе" />
-                <Metric
-                  icon="building"
-                  title={past ? 'Были в офисе' : 'Сейчас в офисах'}
-                  value={counts['in_office']}
-                  note="По открытым посещениям"
-                  accent
-                />
-                <Metric icon="logout" title="Уже ушли" value={counts['left']}
-                        note="Закрыли посещение" />
-                <Metric icon="clock" title="Нет отметки" value={counts['not_come']}
-                        note="Смена уже началась" />
-                {/* Признак, а не отдельная категория: человек может
-                    одновременно опоздать и находиться в офисе. */}
-                <Metric icon="alert" title="Пришли позже" value={counts['late']}
-                        note="Из отметившихся" />
-                <span className="visually-hidden">{data.date}</span>
-              </ul>
+              <Today
+                counts={counts}
+                past={past}
+                rows={base.state === 'ready' ? base.data.items : []}
+                zone={base.state === 'ready' ? base.data.timezone : ''}
+                chosen={chosen}
+                onPick={choose}
+                date={data.date}
+              />
             )}
           </Section>
 
           <div className="queue-grid">
             <section className="sheet">
-              <div className="toolbar">
+              <div className="toolbar toolbar--day">
+                {/* Быстрые фильтры — те же состояния, что и в списке
+                    справа: один способ сузить выборку, а не два. */}
+                <div className="chips" role="group" aria-label="Быстрый отбор">
+                  {QUICK.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={`chip${chosen === item.id ? ' chip--on' : ''}`}
+                      aria-pressed={chosen === item.id}
+                      onClick={() => choose(item)}
+                    >
+                      {item.title}
+                      <span className="chip__count">{item.count(counts)}</span>
+                    </button>
+                  ))}
+                </div>
                 <label className="find find--wide">
-                  <Icon name="search" size={16} />
+                  <AppIcon name="search" size={16} />
                   <input type="search" value={draft} placeholder="Поиск сотрудника"
                          aria-label="Поиск сотрудника"
                          onChange={(event) => setDraft(event.target.value)} />
@@ -231,7 +275,9 @@ export function AttendancePage() {
                         onChange={(value) => patch({ office_id: value || null })} />
                 <label className="pick">
                   <span className="visually-hidden">Статус</span>
-                  <select value={state} onChange={(event) => patch({ state: event.target.value || null })}>
+                  <select value={state}
+                          onChange={(event) =>
+                            patch({ state: event.target.value || null, flag: null })}>
                     <option value="">Все статусы</option>
                     {Object.entries(STATE_TITLE).map(([code, title]) => (
                       <option key={code} value={code}>{title}</option>
@@ -240,7 +286,8 @@ export function AttendancePage() {
                 </label>
                 {dirty && (
                   <button type="button" className="btn" onClick={() =>
-                    patch({ search: null, region_id: null, office_id: null, state: null })}>
+                    patch({ search: null, region_id: null, office_id: null,
+                            state: null, flag: null })}>
                     Сбросить
                   </button>
                 )}
@@ -248,7 +295,7 @@ export function AttendancePage() {
 
               <Section block={shift} name="состав смены">
                 {(data) =>
-                  data.items.length === 0 ? (
+                  rows.length === 0 ? (
                     <p className="empty">
                       {dirty ? 'По этим условиям никого нет.' : 'На выбранный день отметок нет.'}
                     </p>
@@ -265,10 +312,8 @@ export function AttendancePage() {
                           <thead>
                             <tr>
                               <th>Сотрудник</th>
-                              <th>Офис</th>
-                              <th>График</th>
-                              <th>Первый вход</th>
-                              <th>Последний выход</th>
+                              <th>Офис / график</th>
+                              <th className="people__day">Рабочий день</th>
                               <th>В офисе</th>
                               <th>Статус</th>
                             </tr>
@@ -289,19 +334,32 @@ export function AttendancePage() {
                                     </span>
                                   </span>
                                 </td>
-                                <td>{row.office_name ?? '—'}</td>
-                                <td>{row.scheduled_start ? row.scheduled_start.slice(0, 5) : 'Не задан'}</td>
-                                <td className="num">{clockOnDay(row.first_entry_at, data.timezone, data.date)}</td>
-                                <td className="num">{clockOnDay(row.last_exit_at, data.timezone, data.date)}</td>
+                                <td>
+                                  <span className="two">
+                                    <span className="two__first">{row.office_name ?? '—'}</span>
+                                    <span className="two__second">
+                                      {row.scheduled_start && row.scheduled_end
+                                        ? `${row.scheduled_start.slice(0, 5)} – ${row.scheduled_end.slice(0, 5)}`
+                                        : 'График не задан'}
+                                    </span>
+                                  </span>
+                                </td>
+                                <td className="people__day">
+                                  <DayBar row={row} zone={data.timezone} />
+                                </td>
                                 <td className="num">{row.seconds ? span(row.seconds) : '—'}</td>
                                 <td>
-                                  <span className="state">
-                                    <i className="state__dot" />
-                                    {STATE_TITLE[row.state] ?? row.state}
+                                  <span className="two">
+                                    <span className="state">
+                                      <i className="state__dot" />
+                                      {STATE_TITLE[row.state] ?? row.state}
+                                    </span>
+                                    {row.late_minutes !== null && row.late_minutes > 0 && (
+                                      <span className="two__second">
+                                        Позже на {row.late_minutes} мин
+                                      </span>
+                                    )}
                                   </span>
-                                  {row.late_minutes !== null && row.late_minutes > 0 && (
-                                    <span className="who__id">Позже на {row.late_minutes} мин</span>
-                                  )}
                                 </td>
                               </tr>
                             ))}
@@ -333,22 +391,303 @@ export function AttendancePage() {
               <p className="sheet__hint">Нажмите на сотрудника, чтобы увидеть отметки.</p>
             </section>
 
-            {current && (
-              <DayCard
+            <div className="att-side">
+              <Attention
+                counts={counts}
+                chosen={chosen}
+                onPick={choose}
+              />
+
+              {current ? (
+                <DayCard
                 row={current}
                 day={day}
                 timezone={shift.state === 'ready' ? shift.data.timezone : ''}
                 canAdd={can('attendance.manual')}
                 onClose={() => patch({ employee: null }, true)}
                 onChanged={() => setAttempt((n) => n + 1)}
-              />
-            )}
+                />
+              ) : (
+                <section className="panel">
+                  <p className="empty">Выберите сотрудника, чтобы увидеть его день.</p>
+                </section>
+              )}
+            </div>
           </div>
         </>
       ) : (
         <Journal day={day} region={region} office={office} />
       )}
     </AppShell>
+  );
+}
+
+/**
+ * Быстрый отбор над таблицей.
+ *
+ * Значения — настоящие состояния сервера, а не выдуманные ярлыки:
+ * нажатие ставит тот же `state`, который принимает `/attendance/presence`.
+ * «Все» — пустое значение, то есть снятый фильтр.
+ */
+type Quick = {
+  /** Опознавательный знак отбора: по нему совпадает подсветка. */
+  id: string;
+  title: string;
+  /** Состояние присутствия. Его понимает сервер. */
+  state?: string;
+  /**
+   * Признак строки. Состоянием он быть не может: опоздавший бывает и
+   * в офисе, и уже ушедшим, а сессию оставляют открытой в любом из них.
+   * Считается по уже полученным строкам.
+   */
+  flag?: 'late' | 'open';
+  icon?: 'alert' | 'late' | 'clock' | 'logout';
+  count: (counts: Record<string, number>) => number;
+};
+
+const QUICK: Quick[] = [
+  { id: 'all', title: 'Все', count: (c) => c['should_work_today'] ?? 0 },
+  { id: 'now', title: 'Сейчас', state: 'IN_OFFICE', count: (c) => c['in_office'] ?? 0 },
+  { id: 'none', title: 'Нет отметки', state: 'NOT_COME', count: (c) => c['not_come'] ?? 0 },
+  { id: 'late', title: 'Опоздали', flag: 'late', count: (c) => c['late'] ?? 0 },
+];
+
+/**
+ * Четыре числа панели. Каждое — кнопка: она сужает таблицу, а не просто
+ * повторяет цифру.
+ */
+const METRICS: Quick[] = [
+  { id: 'left', title: 'Уже ушли', state: 'LEFT', icon: 'logout',
+    count: (c) => c['left'] ?? 0 },
+  { id: 'none', title: 'Нет отметки', state: 'NOT_COME', icon: 'alert',
+    count: (c) => c['not_come'] ?? 0 },
+  { id: 'late', title: 'Опоздали', flag: 'late', icon: 'late',
+    count: (c) => c['late'] ?? 0 },
+  { id: 'open', title: 'Незакрытые', flag: 'open', icon: 'clock',
+    count: (c) => c['open_sessions'] ?? 0 },
+];
+
+/**
+ * Строки блока «Требует внимания». Каждая — тот же отбор таблицы.
+ *
+ * «Вне геозоны» в макете есть, а здесь нет: признак живёт на отметке
+ * (inside_geofence), а не на строке состава, и ни одно число дня его
+ * не считает. Строка с нулём утверждала бы, что таких нет, — а это
+ * неизвестно.
+ */
+const ATTENTION: Quick[] = [
+  { id: 'none', title: 'Нет отметки', state: 'NOT_COME', icon: 'alert',
+    count: (c) => c['not_come'] ?? 0 },
+  { id: 'late', title: 'Опоздали', flag: 'late', icon: 'late',
+    count: (c) => c['late'] ?? 0 },
+  { id: 'open', title: 'Незакрытые посещения', flag: 'open', icon: 'clock',
+    count: (c) => c['open_sessions'] ?? 0 },
+];
+
+/**
+ * Какой из быстрых отборов сейчас включён.
+ *
+ * Ответ один на все три места: признак важнее состояния, потому что
+ * «опоздали» и «незакрытые» ставятся вместе со снятым состоянием.
+ */
+function pickedQuick(state: string, flag: string): string {
+  if (flag) return QUICK.concat(METRICS, ATTENTION).find((one) => one.flag === flag)?.id ?? '';
+  if (!state) return 'all';
+  return QUICK.concat(METRICS, ATTENTION).find((one) => one.state === state)?.id ?? '';
+}
+
+/**
+ * Панель «Сегодня»: доля в офисе, приходы по времени и четыре числа.
+ *
+ * Заменяет пять отдельных карточек. Те занимали треть экрана и отвечали
+ * на один вопрос — сколько человек где; здесь тот же ответ, но место
+ * остаётся таблице, ради которой на страницу и заходят.
+ */
+function Today({
+  counts,
+  past,
+  rows,
+  zone,
+  chosen,
+  onPick,
+  date,
+}: {
+  counts: Record<string, number>;
+  past: boolean;
+  rows: api.PresenceRow[];
+  zone: string;
+  chosen: string;
+  onPick: (item: Quick) => void;
+  date: string;
+}) {
+  const expected = counts['should_work_today'] ?? 0;
+  // У прошедшего дня «сейчас в офисе» равно нулю по определению:
+  // спрашивают у него не это, а сколько человек пришло.
+  const here = past ? (counts['came'] ?? 0) : (counts['in_office'] ?? 0);
+  // Доля считается от тех, кого ждали, а не от всей организации:
+  // выходной у половины компании иначе выглядел бы провалом.
+  const share = expected > 0 ? (here / expected) * 100 : 0;
+
+  return (
+    <section className="panel today">
+      <h2 className="today__title">{past ? 'Итоги дня' : 'Сегодня'}</h2>
+
+      <div className="today__body">
+        <div className="today__share">
+          <Donut share={share} />
+          <p className="today__sum">
+            <strong>{here} из {expected}</strong>
+            <span>{past ? 'пришли на работу' : 'сейчас в офисе'}</span>
+          </p>
+        </div>
+
+        <Arrivals rows={rows} zone={zone} past={past} />
+
+        <div className="today__metrics">
+          {METRICS.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={`today__metric${chosen === item.id ? ' today__metric--on' : ''}`}
+              onClick={() => onPick(item)}
+              aria-pressed={chosen === item.id}
+            >
+              <AppIcon name={item.icon ?? 'alert'} size={18} />
+              <span className="today__metric-title">{item.title}</span>
+              <strong className="today__metric-value">{item.count(counts)}</strong>
+            </button>
+          ))}
+        </div>
+      </div>
+      <span className="visually-hidden">{date}</span>
+    </section>
+  );
+}
+
+/** Кольцо доли. Дугой, а не заливкой: так видна и сотая часть. */
+function Donut({ share }: { share: number }) {
+  const length = 2 * Math.PI * 26;
+  const filled = (Math.min(Math.max(share, 0), 100) / 100) * length;
+  return (
+    <svg className="donut" viewBox="0 0 60 60" width={72} height={72}
+         role="img" aria-label={`В офисе ${share.toFixed(1)} процента`}>
+      <circle className="donut__track" cx="30" cy="30" r="26" />
+      <circle className="donut__fill" cx="30" cy="30" r="26"
+              strokeDasharray={`${filled} ${length}`} />
+      <text className="donut__text" x="30" y="30">
+        {share.toFixed(1).replace('.', ',')}%
+      </text>
+    </svg>
+  );
+}
+
+/**
+ * Динамика приходов: во сколько сегодня приходили.
+ *
+ * Берётся ПЕРВЫЙ вход каждого человека. Все входы подряд сместили бы
+ * картину к обеду: возвращение с обеда — это тоже вход.
+ */
+function Arrivals({ rows, zone, past }: {
+  rows: api.PresenceRow[]; zone: string; past: boolean;
+}) {
+  const step = 15;
+  const title = past ? 'Динамика приходов' : 'Динамика приходов сегодня';
+  const values = rows
+    .map((row) => minutesOf(row.first_entry_at, zone))
+    .filter((one): one is number => one !== null);
+
+  if (values.length === 0) {
+    return (
+      <div className="today__chart">
+        <p className="today__chart-title">{title}</p>
+        <p className="muted">{past ? 'Приходов в этот день нет.' : 'Приходов пока нет.'}</p>
+      </div>
+    );
+  }
+
+  const low = Math.floor(Math.min(...values) / 60) * 60;
+  const high = Math.ceil(Math.max(...values) / 60) * 60;
+  const buckets: { from: number; count: number }[] = [];
+  for (let from = low; from <= high; from += step) {
+    buckets.push({
+      from,
+      count: values.filter((one) => one >= from && one < from + step).length,
+    });
+  }
+  const top = Math.max(1, ...buckets.map((one) => one.count));
+
+  return (
+    <div className="today__chart">
+      <p className="today__chart-title">{title}</p>
+      <div className="today__bars">
+        {buckets.map((one) => (
+          <span
+            key={one.from}
+            className="today__bar"
+            style={{ height: `${Math.max((one.count / top) * 100, one.count ? 8 : 0)}%` }}
+            title={`${atClock(one.from)} – ${atClock(one.from + step)} · ${one.count}`}
+          />
+        ))}
+      </div>
+      <div className="today__axis">
+        <span>{atClock(low)}</span>
+        <span>{atClock(high)}</span>
+      </div>
+    </div>
+  );
+}
+
+/** Минуты от полуночи в поясе офиса. */
+function minutesOf(at: string | null, zone: string): number | null {
+  if (!at) return null;
+  const date = new Date(at);
+  if (Number.isNaN(date.getTime())) return null;
+  const text = new Intl.DateTimeFormat('ru-RU', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    ...(zone ? { timeZone: zone } : {}),
+  }).format(date);
+  const [h, m] = text.split(':').map((part) => Number.parseInt(part, 10));
+  if (Number.isNaN(h as number) || Number.isNaN(m as number)) return null;
+  return (h as number) * 60 + (m as number);
+}
+
+/** «Требует внимания»: те же состояния, но списком и с переходом. */
+function Attention({
+  counts,
+  chosen,
+  onPick,
+}: {
+  counts: Record<string, number>;
+  chosen: string;
+  onPick: (item: Quick) => void;
+}) {
+  const total = ATTENTION.reduce((sum, one) => sum + one.count(counts), 0);
+  return (
+    <section className="panel attention">
+      <h2 className="attention__title">
+        Требует внимания
+        <span className="attention__total">{total}</span>
+      </h2>
+      <ul className="attention__rows">
+        {ATTENTION.map((item) => (
+          <li key={item.id}>
+            <button
+              type="button"
+              className={`attention__row${chosen === item.id ? ' attention__row--on' : ''}`}
+              aria-pressed={chosen === item.id}
+              onClick={() => onPick(item)}
+            >
+              <AppIcon name={item.icon ?? 'alert'} size={18} />
+              <span className="attention__name">{item.title}</span>
+              <span className="attention__count">{item.count(counts)}</span>
+              <AppIcon name="next" size={16} />
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
@@ -468,22 +807,6 @@ export function span(seconds: number): string {
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.round((seconds % 3600) / 60);
   return hours ? `${hours} ч ${String(minutes).padStart(2, '0')} м` : `${minutes} м`;
-}
-
-function Metric({ icon, title, value, note, accent }: {
-  icon: Parameters<typeof Icon>[0]['name'];
-  title: string; value: number | undefined; note: string; accent?: boolean;
-}) {
-  return (
-    <li className={accent ? 'metric metric--accent' : 'metric'}>
-      <p className="metric__head">
-        <Icon name={icon} size={17} />
-        <span>{title}</span>
-      </p>
-      <p className="metric__value">{value ?? '—'}</p>
-      <p className="metric__note">{note}</p>
-    </li>
-  );
 }
 
 function Picker({ label, value, empty, options, onChange }: {

@@ -79,9 +79,9 @@ describe('карточки показателей', () => {
     renderApp('/');
     await screen.findByText('Сейчас в офисах');
 
-    fireEvent.change(screen.getByLabelText('Дата'), {
-      target: { value: '2020-01-02' },
-    });
+    const field = screen.getByLabelText('Дата');
+    fireEvent.change(field, { target: { value: '02.01.2020' } });
+    fireEvent.keyDown(field, { key: 'Enter' });
 
     expect(await screen.findByText('В офисах')).toBeTruthy();
     expect(screen.queryByText('Сейчас в офисах')).toBeNull();
@@ -149,7 +149,8 @@ describe('фильтры', () => {
 
     const before = calls.filter((c) => c.url.includes('/dashboard')).length;
     const date = screen.getByLabelText('Дата') as HTMLInputElement;
-    fireEvent.change(date, { target: { value: '2026-09-01' } });
+    fireEvent.change(date, { target: { value: '01.09.2026' } });
+    fireEvent.keyDown(date, { key: 'Enter' });
 
     await waitFor(() =>
       expect(

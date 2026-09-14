@@ -20,7 +20,7 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 
 import * as api from '../api/crm';
 import { ApiFailure, messageFor } from '../api/errors';
-import { Icon } from './nav-icons';
+import { AppIcon } from './AppIcon';
 import { useBlock, type Block } from '../features/dashboard/data';
 import {
   PHASE_TITLE,
@@ -126,13 +126,13 @@ export function UserCard({
           {rights.users && (
             <button type="button" className="btn btn--small"
                     onClick={() => { setForm('password'); setError(null); }}>
-              <Icon name="key" size={15} />
+              <AppIcon name="key" size={16} />
               Задать пароль
             </button>
           )}
           <button type="button" className="tool" aria-label="Закрыть карточку"
                   onClick={onClose}>
-            <Icon name="cross" size={16} />
+            <AppIcon name="cross" size={16} />
           </button>
         </div>
       </div>
@@ -361,7 +361,7 @@ function Grants({
         {live.map((grant) => (
           <li key={grant.id} className="grant">
             <div className="grant__head">
-              <Icon name="admin" size={16} />
+              <AppIcon name="admin" size={16} />
               <b className="grant__name">{grant.role_name}</b>
               {roles.find((item) => item.id === grant.role_id)?.is_system && (
                 <span className="chip">Системная роль</span>
@@ -410,7 +410,7 @@ function Grants({
             {rest.map((grant) => (
               <li key={grant.id} className="grant">
                 <div className="grant__head">
-                  <Icon name="clock" size={15} />
+                  <AppIcon name="clock" size={16} />
                   <b className="grant__name">{grant.role_name}</b>
                   <span className="chip">{PHASE_TITLE[phases.get(grant.id)!]}</span>
                 </div>
@@ -439,7 +439,7 @@ function Grants({
 
       <div className="side-panel__actions">
         <button type="button" className="btn btn--dark btn--wide" onClick={onOpenAssign}>
-          <Icon name="plus" size={16} />
+          <AppIcon name="plus" size={16} />
           Назначить роль
         </button>
       </div>
@@ -557,7 +557,7 @@ export function PermissionList({ codes, catalog }: {
           <ul className="perms__list">
             {group.items.map((item) => (
               <li key={item.code} className="perms__row">
-                <Icon name="check" size={15} />
+                <AppIcon name="check" size={16} />
                 <span className="perms__text">
                   <span className="perms__name">{permissionTitle(item)}</span>
                   <span className="perms__code mono">{item.code}</span>
@@ -659,7 +659,7 @@ export function Diff({ entry, at }: {
         <li key={row.field} className="diff__row">
           <span className="diff__field">{row.field}</span>
           <span className="diff__was">{row.before}</span>
-          <Icon name="arrow" size={13} />
+          <AppIcon name="arrow" size={16} />
           <span className="diff__now">{row.after}</span>
         </li>
       ))}
@@ -948,7 +948,7 @@ export function Overlay({ title, children, onClose }: {
           <b className="drawer__name">{title}</b>
           <button type="button" className="tool" aria-label="Закрыть"
                   onClick={onClose}>
-            <Icon name="cross" size={16} />
+            <AppIcon name="cross" size={16} />
           </button>
         </div>
         <div className="dialog__body">{children}</div>

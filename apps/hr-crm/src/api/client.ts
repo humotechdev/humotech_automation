@@ -21,6 +21,15 @@ export function csrfToken(source: string = document.cookie): string | null {
   return null;
 }
 
+/**
+ * Полный адрес для ссылок и тегов `img`.
+ *
+ * Файлы лежат в приватном хранилище, и открывает их то же приложение с
+ * той же cookie. Собирать адрес в другом месте значило бы завести вторую
+ * копию базового пути, которая разойдётся при переносе стенда.
+ */
+export const apiUrl = (path: string) => `${BASE}${path}`;
+
 type Options = {
   // DELETE есть ровно у одной операции — отзыва назначения роли. Строку
   // он при этом не удаляет: сервер закрывает срок, чтобы в истории
@@ -70,8 +79,56 @@ export async function request<T>(path: string, options: Options = {}): Promise<T
     }
   }
 
+  throw await failure(response);
+}
+
+/**
+ * Загрузка файла. Тело — `FormData`, и заголовок типа не ставится
+ * намеренно: границу многопартового тела браузер подставляет сам, а
+ * заданный вручную `Content-Type` её затирает.
+ */
+export async function upload<T>(
+  path: string,
+  form: FormData,
+  signal?: AbortSignal,
+): Promise<T> {
+  const headers: Record<string, string> = {};
+  const token = csrfToken();
+  if (token) headers['X-CSRFToken'] = token;
+
+  let response: Response;
+  try {
+    response = await fetch(`${BASE}${path}`, {
+      method: 'POST',
+      headers,
+      credentials: 'include',
+      body: form,
+      ...(signal ? { signal } : {}),
+    });
+  } catch {
+    throw new ApiFailure('offline');
+  }
+
+  if (response.ok) {
+    if (response.status === 204) return undefined as T;
+    try {
+      return (await response.json()) as T;
+    } catch {
+      throw new ApiFailure('server', response.status);
+    }
+  }
+  throw await failure(response);
+}
+
+/** Отказ сервера в одном виде — и для JSON, и для файлов. */
+async function failure(response: Response): Promise<ApiFailure> {
   const body = await safeBody(response);
-  throw new ApiFailure(kindOf(response.status, body), response.status, fieldsOf(body));
+  return new ApiFailure(
+    kindOf(response.status, body),
+    response.status,
+    fieldsOf(body),
+    fieldOf(body),
+  );
 }
 
 type ErrorBody = { code?: string; message?: string; details?: unknown };
@@ -108,6 +165,14 @@ function kindOf(status: number, body: ErrorBody): FailureKind {
   }
   if (status >= 500) return 'server';
   return 'server';
+}
+
+/** Имя поля, если сервер назвал его в `details.field`. */
+function fieldOf(body: ErrorBody): string | null {
+  const details = body.details;
+  if (!details || typeof details !== 'object' || Array.isArray(details)) return null;
+  const name = (details as Record<string, unknown>)['field'];
+  return typeof name === 'string' && name ? name : null;
 }
 
 function fieldsOf(body: ErrorBody): Record<string, string[]> {

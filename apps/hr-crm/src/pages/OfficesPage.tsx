@@ -18,7 +18,7 @@ import { useSearchParams } from 'react-router-dom';
 
 import * as api from '../api/crm';
 import { AppShell } from '../components/AppShell';
-import { Icon } from '../components/nav-icons';
+import { AppIcon } from '../components/AppIcon';
 import { OfficeCard } from '../components/OfficeCard';
 import { useBlock, type Block } from '../features/dashboard/data';
 import { useSession } from '../features/auth/session';
@@ -172,7 +172,7 @@ export function OfficesPage() {
           <div className="head__actions">
             <button type="button" className="btn btn--dark" disabled
                     title="Форма создания появится следующим этапом">
-              <Icon name="building" size={16} />
+              <AppIcon name="building" size={16} />
               Добавить офис
             </button>
           </div>
@@ -233,7 +233,7 @@ export function OfficesPage() {
 
             <div className="toolbar">
               <label className="find find--wide">
-                <Icon name="search" size={16} />
+                <AppIcon name="search" size={16} />
                 <input type="search" value={draft} placeholder="Поиск офиса"
                        aria-label="Поиск офиса"
                        onChange={(event) => setDraft(event.target.value)} />
@@ -272,9 +272,9 @@ export function OfficesPage() {
                   aria-pressed={onlySetup}
                   onClick={() => patch({ setup: onlySetup ? null : '1' })}
                 >
-                  <Icon name="settings" size={15} />
+                  <AppIcon name="settings" size={16} />
                   Требует настройки · {setupCount}
-                  {onlySetup && <span aria-hidden="true">✕</span>}
+                  {onlySetup && <AppIcon name="close" size={16} />}
                 </button>
               </div>
             )}
@@ -307,7 +307,7 @@ export function OfficesPage() {
                             <td>
                               <span className="who">
                                 <span className="avatar avatar--square">
-                                  <Icon name="building" size={16} />
+                                  <AppIcon name="building" size={16} />
                                 </span>
                                 <span className="who__text">
                                   <span className="who__name">{row.office.name}</span>
@@ -412,7 +412,7 @@ function RegionsTab({ canManage, onChanged, onPick }: {
     <section className="sheet">
       <div className="toolbar">
         <label className="find find--wide">
-          <Icon name="search" size={16} />
+          <AppIcon name="search" size={16} />
           <input type="search" value={search} placeholder="Поиск региона"
                  aria-label="Поиск региона"
                  onChange={(event) => setSearch(event.target.value)} />

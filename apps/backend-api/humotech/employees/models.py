@@ -9,8 +9,12 @@ from django.db.models import F, Func, Q, Value
 
 from humotech.core.constraints import raw_check
 from humotech.core.enums import (
+    EMPLOYEE_DOCUMENT_KINDS,
+    EMPLOYEE_DOCUMENT_STATUSES,
     EMPLOYMENT_STATUSES,
     EMPLOYMENT_TYPES,
+    GENDERS,
+    MARITAL_STATUSES,
     OFFICE_ACCESS_TYPES,
     WORK_MODES,
     choices,
@@ -52,6 +56,32 @@ class Employee(
     corporate_email = models.CharField(max_length=255, null=True, blank=True)
     personal_email = models.CharField(max_length=255, null=True, blank=True)
     birth_date = models.DateField(null=True, blank=True)
+    # Анкетные поля. Оба необязательны по той же причине, что и ПИНФЛ:
+    # у заведённых раньше сотрудников их нет, и пустое значение здесь
+    # означает «не указано», а не «неизвестного пола».
+    gender = models.CharField(
+        max_length=10, choices=choices(GENDERS), null=True, blank=True
+    )
+    marital_status = models.CharField(
+        max_length=20, choices=choices(MARITAL_STATUSES), null=True, blank=True
+    )
+    # Фотография — обычный приложенный файл, а не колонка с путём: она
+    # лежит в приватном хранилище и отдаётся view, который сначала
+    # спрашивает, кому можно. PROTECT — чтобы файл нельзя было удалить
+    # из-под живой карточки.
+    photo = models.ForeignKey(
+        "files.File",
+        on_delete=models.PROTECT,
+        db_column="photo_file_id",
+        db_index=False,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    # ПИНФЛ. Необязателен: у сотрудников, заведённых до появления поля, его
+    # нет, и требовать его задним числом означало бы не дать открыть их
+    # карточку. У новых он обязателен — это проверяет сервис приёма.
+    pinfl = models.CharField(max_length=14, null=True, blank=True)
     hire_date = models.DateField()
     termination_date = models.DateField(null=True, blank=True)
     preferred_language = models.CharField(max_length=10, db_default="ru")
@@ -70,9 +100,24 @@ class Employee(
                 fields=["organization", "employee_number"],
                 name="uq_employees_org_number",
             ),
+            # ПИНФЛ уникален в организации, а не глобально: одна и та же
+            # физическая персона может числиться в двух организациях базы.
+            # Условие на NOT NULL обязательно — иначе строки без ПИНФЛ
+            # считались бы совпадающими в Postgres по-другому, чем ожидает
+            # сервис, и старые записи нельзя было бы хранить рядом.
+            models.UniqueConstraint(
+                fields=["organization", "pinfl"],
+                condition=Q(pinfl__isnull=False),
+                name="uq_employees_org_pinfl",
+            ),
             status_check(
                 "employment_status", EMPLOYMENT_STATUSES,
                 "ck_employees_employment_status",
+            ),
+            status_check("gender", GENDERS, "ck_employees_gender", nullable=True),
+            status_check(
+                "marital_status", MARITAL_STATUSES,
+                "ck_employees_marital_status", nullable=True,
             ),
             raw_check(
                 "termination_date IS NULL OR termination_date >= hire_date",
@@ -266,3 +311,122 @@ class EmployeeOfficeAccess(
 
     def __str__(self) -> str:
         return f"{self.employee_id} -> {self.office_id}"
+
+
+class EmployeeDocument(
+    UUIDPrimaryKeyModel, OrganizationScopedModel, TimestampedModel
+):
+    """Чек-лист бумаг сотрудника: что нужно, что уже есть, чего ждём.
+
+    Отдельная таблица, а не поля в карточке: список требуемых документов
+    со временем меняется, и хранить его колонками означало бы миграцию на
+    каждую новую бумагу. Файл здесь не обязателен — строка со статусом
+    «будет сформирован» существует именно для того, чтобы сказать, что
+    документа пока нет и это нормально.
+    """
+
+    employee = models.ForeignKey(
+        Employee,
+        on_delete=models.PROTECT,
+        db_column="employee_id",
+        db_index=False,
+        related_name="documents",
+    )
+    kind = models.CharField(max_length=30, choices=choices(EMPLOYEE_DOCUMENT_KINDS))
+    title = models.CharField(max_length=255)
+    status = models.CharField(
+        max_length=30, choices=choices(EMPLOYEE_DOCUMENT_STATUSES)
+    )
+    file = models.ForeignKey(
+        "files.File",
+        on_delete=models.PROTECT,
+        db_column="file_id",
+        db_index=False,
+        null=True,
+        blank=True,
+        related_name="employee_documents",
+    )
+
+    class Meta:
+        db_table = "employee_documents"
+        verbose_name = "документ сотрудника"
+        verbose_name_plural = "документы сотрудника"
+        constraints = [
+            status_check(
+                "kind", EMPLOYEE_DOCUMENT_KINDS, "ck_employee_documents_kind"
+            ),
+            status_check(
+                "status", EMPLOYEE_DOCUMENT_STATUSES, "ck_employee_documents_status"
+            ),
+            # Одна бумага одного вида на сотрудника; «прочее» может быть
+            # любым числом, поэтому оно из правила исключено.
+            models.UniqueConstraint(
+                fields=["employee", "kind"],
+                condition=~Q(kind="OTHER"),
+                name="uq_employee_documents_kind",
+            ),
+            raw_check(
+                "status <> 'UPLOADED' OR file_id IS NOT NULL",
+                "ck_employee_documents_uploaded_has_file",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["organization"], name="ix_employee_documents_org_id"
+            ),
+            models.Index(
+                fields=["employee"], name="ix_employee_documents_employee_id"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.employee_id} {self.kind} {self.status}"
+
+
+class EmployeeOnboardingKey(
+    UUIDPrimaryKeyModel, OrganizationScopedModel, TimestampedModel
+):
+    """Ключ одного нажатия кнопки «Добавить сотрудника».
+
+    Двойное нажатие, потерянный ответ и повтор из-за обрыва связи — это
+    три разных истории с одним исходом: запрос приходит дважды. Ключ
+    придумывает клиент один раз на форму; повтор с тем же ключом отдаёт
+    того же созданного сотрудника, а не заводит второго.
+
+    Уникальность на уровне базы, а не проверкой перед вставкой: два
+    запроса, пришедшие одновременно, обе проверки прошли бы.
+    """
+
+    key = models.CharField(max_length=100)
+    employee = models.ForeignKey(
+        Employee,
+        on_delete=models.PROTECT,
+        db_column="employee_id",
+        db_index=False,
+        related_name="onboarding_keys",
+    )
+    created_by_user = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.PROTECT,
+        db_column="created_by_user_id",
+        db_index=False,
+        related_name="employee_onboarding_keys",
+    )
+
+    class Meta:
+        db_table = "employee_onboarding_keys"
+        verbose_name = "ключ добавления сотрудника"
+        verbose_name_plural = "ключи добавления сотрудников"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "key"], name="uq_employee_onboarding_keys"
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["organization"], name="ix_employee_onboarding_org_id"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.key} -> {self.employee_id}"

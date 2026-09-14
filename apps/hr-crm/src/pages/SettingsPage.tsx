@@ -25,7 +25,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import * as api from '../api/crm';
 import { ApiFailure, messageFor } from '../api/errors';
 import { AppShell } from '../components/AppShell';
-import { Icon } from '../components/nav-icons';
+import { AppIcon } from '../components/AppIcon';
 import { useSession } from '../features/auth/session';
 import { useBlock } from '../features/dashboard/data';
 import { moment } from '../features/time/zone';
@@ -132,7 +132,7 @@ export function SettingsPage() {
                         className={`setup__item${tab === item.key ? ' setup__item--on' : ''}`}
                         aria-current={tab === item.key ? 'page' : undefined}
                         onClick={() => open(item.key)}>
-                  <Icon name={item.icon} size={16} />
+                  <AppIcon name={item.icon} size={16} />
                   <span>{item.title}</span>
                 </button>
               </li>
@@ -147,7 +147,7 @@ export function SettingsPage() {
                       className={`setup__item${tab === 'me' ? ' setup__item--on' : ''}`}
                       aria-current={tab === 'me' ? 'page' : undefined}
                       onClick={() => open('me')}>
-                <Icon name={PERSONAL.icon} size={16} />
+                <AppIcon name={PERSONAL.icon} size={16} />
                 <span>{PERSONAL.title}</span>
               </button>
             </li>
@@ -404,7 +404,7 @@ function Organization({ section, draft, set, errors }: {
   return (
     <>
       <section className="panel">
-        <h3 className="setup__block"><Icon name="building" size={17} /> Основные сведения</h3>
+        <h3 className="setup__block"><AppIcon name="building" size={16} /> Основные сведения</h3>
 
         <Field label="Название рабочего пространства" name="name" errors={errors}>
           <input className="form-grid__input" type="text" aria-label="Название рабочего пространства"
@@ -423,7 +423,7 @@ function Organization({ section, draft, set, errors }: {
       </section>
 
       <section className="panel">
-        <h3 className="setup__block"><Icon name="clock" size={17} /> Дата и время</h3>
+        <h3 className="setup__block"><AppIcon name="clock" size={16} /> Дата и время</h3>
 
         <Field label="Часовой пояс CRM" name="crm_timezone" errors={errors}>
           <select className="form-grid__input" aria-label="Часовой пояс CRM"
@@ -457,7 +457,7 @@ function Organization({ section, draft, set, errors }: {
         </p>
 
         <p className="note note--dim">
-          <Icon name="alert" size={15} /> Отметки и графики рассчитываются по
+          <AppIcon name="alert" size={16} /> Отметки и графики рассчитываются по
           часовому поясу офиса. Пояс CRM меняет только показ времени там, где
           у строки нет своего офиса, — журнал действий, список уведомлений,
           карточки учётных записей.
@@ -476,7 +476,7 @@ function Organization({ section, draft, set, errors }: {
       </section>
 
       <section className="panel">
-        <h3 className="setup__block"><Icon name="globe" size={17} /> Язык интерфейса</h3>
+        <h3 className="setup__block"><AppIcon name="globe" size={16} /> Язык интерфейса</h3>
         <Field label="Язык по умолчанию" name="language" errors={errors}>
           <input className="form-grid__input" type="text" readOnly
                  aria-label="Язык по умолчанию" value="Русский" />
@@ -513,7 +513,7 @@ function Requests({ section, draft, set, errors }: {
   return (
     <>
       <section className="panel">
-        <h3 className="setup__block"><Icon name="doc" size={17} /> Согласование</h3>
+        <h3 className="setup__block"><AppIcon name="doc" size={16} /> Согласование</h3>
         <Switch field="require_hr_approval" draft={draft} set={set}
                 title="Согласование HR обязательно" help={section.help} />
         <Switch field="employee_may_cancel_pending" draft={draft} set={set}
@@ -527,7 +527,7 @@ function Requests({ section, draft, set, errors }: {
       </section>
 
       <section className="panel">
-        <h3 className="setup__block"><Icon name="archive" size={17} /> Справки</h3>
+        <h3 className="setup__block"><AppIcon name="archive" size={16} /> Справки</h3>
         <Switch field="document_required" draft={draft} set={set}
                 title="Справка обязательна при подаче" help={section.help} />
         <Switch field="document_can_be_added_later" draft={draft} set={set}
@@ -579,7 +579,7 @@ function Requests({ section, draft, set, errors }: {
       </section>
 
       <section className="panel">
-        <h3 className="setup__block"><Icon name="calendar" size={17} /> Сроки и остатки</h3>
+        <h3 className="setup__block"><AppIcon name="calendar" size={16} /> Сроки и остатки</h3>
         <Switch field="allow_negative_leave_balance" draft={draft} set={set}
                 title="Отпуск в минус по остатку" help={section.help} />
         <Field label="Оформление задним числом, дней" name="backdating_days_allowed"
@@ -623,7 +623,7 @@ function Attendance({ elsewhere }: { elsewhere: api.SettingElsewhere[] }) {
   return (
     <>
       <section className="panel">
-        <h3 className="setup__block"><Icon name="clock" size={17} /> Где живёт какое правило</h3>
+        <h3 className="setup__block"><AppIcon name="clock" size={16} /> Где живёт какое правило</h3>
         <p className="muted">
           Общих переключателей посещаемости здесь нет намеренно. У каждого
           правила один владелец, и второй, «организационный», сделал бы
@@ -638,7 +638,7 @@ function Attendance({ elsewhere }: { elsewhere: api.SettingElsewhere[] }) {
                 <span className="setup__owner-hint">{item.hint}</span>
                 <span className="setup__owner-where">
                   {owner?.to ? (
-                    <Link className="link" to={owner.to}>{owner.where} →</Link>
+                    <Link className="link" to={owner.to}>{owner.where} <AppIcon name="arrow" size={16} /></Link>
                   ) : (
                     owner?.where ?? item.owner
                   )}
@@ -650,7 +650,7 @@ function Attendance({ elsewhere }: { elsewhere: api.SettingElsewhere[] }) {
       </section>
 
       <section className="panel">
-        <h3 className="setup__block"><Icon name="pin" size={17} /> Куда идти за настройкой</h3>
+        <h3 className="setup__block"><AppIcon name="pin" size={16} /> Куда идти за настройкой</h3>
         <ul className="setup__links">
           <li>
             <Link className="setup__link" to="/offices">
@@ -660,7 +660,7 @@ function Attendance({ elsewhere }: { elsewhere: api.SettingElsewhere[] }) {
                   Координаты, радиус геозоны и QR-точки офиса
                 </span>
               </span>
-              <Icon name="chevron" size={16} />
+              <AppIcon name="chevron" size={16} />
             </Link>
           </li>
           <li>
@@ -671,7 +671,7 @@ function Attendance({ elsewhere }: { elsewhere: api.SettingElsewhere[] }) {
                   Отметки, смены и заявки на исправление
                 </span>
               </span>
-              <Icon name="chevron" size={16} />
+              <AppIcon name="chevron" size={16} />
             </Link>
           </li>
         </ul>
@@ -696,7 +696,7 @@ function Notifications({ links, zone, onRetry }: {
   return (
     <>
       <section className="panel">
-        <h3 className="setup__block"><Icon name="bell" size={17} /> Канал доставки</h3>
+        <h3 className="setup__block"><AppIcon name="bell" size={16} /> Канал доставки</h3>
         <p className="muted">
           Редактируемых параметров у канала нет: отправкой занимается
           отдельный обработчик очереди, и переключатель здесь ничего бы
@@ -706,7 +706,7 @@ function Notifications({ links, zone, onRetry }: {
       </section>
 
       <section className="panel">
-        <h3 className="setup__block"><Icon name="inbox" size={17} /> Журнал отправок</h3>
+        <h3 className="setup__block"><AppIcon name="inbox" size={16} /> Журнал отправок</h3>
         <ul className="setup__links">
           <li>
             <Link className="setup__link" to="/notifications">
@@ -716,7 +716,7 @@ function Notifications({ links, zone, onRetry }: {
                   Очередь, попытки отправки и причины отказов
                 </span>
               </span>
-              <Icon name="chevron" size={16} />
+              <AppIcon name="chevron" size={16} />
             </Link>
           </li>
         </ul>
@@ -737,11 +737,11 @@ function Connections({ links, zone, onRetry }: {
   return (
     <>
       <section className="panel">
-        <h3 className="setup__block"><Icon name="globe" size={17} /> Подключения</h3>
+        <h3 className="setup__block"><AppIcon name="globe" size={16} /> Подключения</h3>
         <States links={links} zone={zone} onRetry={onRetry} />
       </section>
       <p className="note note--dim">
-        <Icon name="lock" size={15} /> Токенов, секретов и строк подключения
+        <AppIcon name="lock" size={16} /> Токенов, секретов и строк подключения
         здесь нет — ни целиком, ни префиксами: они не выходят за пределы
         сервера. Формы их правки не предусмотрено, эти значения задаются
         развёртыванием.
@@ -793,7 +793,7 @@ function States({ links, zone, onRetry, only }: {
               : ''}
           </span>
           {item.link && (
-            <Link className="link" to={item.link}>Открыть раздел →</Link>
+            <Link className="link" to={item.link}>Открыть раздел <AppIcon name="arrow" size={16} /></Link>
           )}
         </li>
       ))}
@@ -809,7 +809,7 @@ function Personal({ session }: { session: ReturnType<typeof useSession> }) {
   return (
     <>
       <section className="panel">
-        <h3 className="setup__block"><Icon name="users" size={17} /> Ваша учётная запись</h3>
+        <h3 className="setup__block"><AppIcon name="users" size={16} /> Ваша учётная запись</h3>
         <dl className="facts">
           <div className="facts__row"><dt>Логин</dt><dd>{user.email}</dd></div>
           <div className="facts__row">
@@ -826,7 +826,7 @@ function Personal({ session }: { session: ReturnType<typeof useSession> }) {
       </section>
 
       <section className="panel">
-        <h3 className="setup__block"><Icon name="alert" size={17} /> Личных переопределений пока нет</h3>
+        <h3 className="setup__block"><AppIcon name="alert" size={16} /> Личных переопределений пока нет</h3>
         <p className="muted">
           Личный язык и личные форматы отображения в CRM не хранятся: ни
           локализации, ни настраиваемых форматов в системе ещё нет, и поле
@@ -851,7 +851,7 @@ function ScopeCard({ section }: { section: api.SettingSection }) {
   return (
     <section className="panel">
       <div className="setup__aside-head">
-        <h3 className="setup__block"><Icon name="globe" size={17} /> Область действия</h3>
+        <h3 className="setup__block"><AppIcon name="globe" size={16} /> Область действия</h3>
         <span className="pill">Вся организация</span>
       </div>
       <p className="muted">{section.description}</p>
@@ -864,7 +864,7 @@ function ScopeCard({ section }: { section: api.SettingSection }) {
       <p className="field__hint">
         Параметры отдельных офисов задаются в их карточках.
       </p>
-      <Link className="link" to="/offices">Офисы и регионы →</Link>
+      <Link className="link" to="/offices">Офисы и регионы <AppIcon name="arrow" size={16} /></Link>
     </section>
   );
 }
@@ -876,7 +876,7 @@ function LastChangeCard({ change, zone, mayAudit }: {
 }) {
   return (
     <section className="panel">
-      <h3 className="setup__block"><Icon name="refresh" size={17} /> Последнее изменение</h3>
+      <h3 className="setup__block"><AppIcon name="refresh" size={16} /> Последнее изменение</h3>
       {change ? (
         <>
           <p className="setup__when">{moment(change.at, zone, false)}</p>
@@ -890,7 +890,7 @@ function LastChangeCard({ change, zone, mayAudit }: {
         </p>
       )}
       {mayAudit && (
-        <Link className="link" to="/admin?tab=audit">Открыть журнал действий →</Link>
+        <Link className="link" to="/admin?tab=audit">Открыть журнал действий <AppIcon name="arrow" size={16} /></Link>
       )}
     </section>
   );
@@ -899,7 +899,7 @@ function LastChangeCard({ change, zone, mayAudit }: {
 function RelatedCard() {
   return (
     <section className="panel">
-      <h3 className="setup__block"><Icon name="book" size={17} /> Связанные разделы</h3>
+      <h3 className="setup__block"><AppIcon name="book" size={16} /> Связанные разделы</h3>
       <ul className="setup__links">
         <li>
           <Link className="setup__link" to="/offices">
@@ -907,7 +907,7 @@ function RelatedCard() {
               <strong>Офисы и регионы</strong>
               <span className="setup__hint">Офисы и QR-точки</span>
             </span>
-            <Icon name="chevron" size={16} />
+            <AppIcon name="chevron" size={16} />
           </Link>
         </li>
         <li>
@@ -916,7 +916,7 @@ function RelatedCard() {
               <strong>Администрирование</strong>
               <span className="setup__hint">Пользователи, роли и доступ</span>
             </span>
-            <Icon name="chevron" size={16} />
+            <AppIcon name="chevron" size={16} />
           </Link>
         </li>
       </ul>

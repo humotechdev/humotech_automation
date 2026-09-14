@@ -13,14 +13,15 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 
-import { Logo } from './Logo';
-import { Icon, type IconName } from './nav-icons';
+import { BrandLockup } from './Logo';
+import { backdropImage } from '../features/shell/backdrop';
+import { AppIcon, ICON_SIZE, type AppIconName } from './AppIcon';
 import { useSession } from '../features/auth/session';
 
 type Item = {
   key: string;
   title: string;
-  icon: IconName;
+  icon: AppIconName;
   /** Адрес готового раздела. Без него пункт показан недоступным. */
   to?: string;
 };
@@ -66,13 +67,20 @@ export function AppShell({ children, badges = {}, breadcrumb, section = 'home' }
 
   return (
     <div className="shell">
+      {/* Декоративная подложка. Снимок подставляется, если он лежит в
+          `src/assets/office-backdrop.*`; без файла остаётся светлая
+          заливка с мягкими бликами. Оба слоя вне потока и недоступны
+          чтению с экрана. */}
+      <div
+        className="shell__backdrop"
+        aria-hidden="true"
+        {...(backdropImage ? { style: { backgroundImage: backdropImage } } : {})}
+      />
+      <div className="shell__wash" aria-hidden="true" />
+
       <nav className="side" aria-label="Разделы">
         <div className="side__brand">
-          <Logo size={40} />
-          <span className="side__brand-text">
-            <span className="side__name">HUMOTECH</span>
-            <span className="side__tagline">HR CONTROL SYSTEM</span>
-          </span>
+          <BrandLockup />
         </div>
 
         <div className="side__scroll">
@@ -90,7 +98,7 @@ export function AppShell({ children, badges = {}, breadcrumb, section = 'home' }
           </span>
         </div>
         <button type="button" className="side__exit" onClick={() => void session.signOut()}>
-          <Icon name="logout" />
+          <AppIcon name="logout" size={ICON_SIZE.nav} />
           Выйти
         </button>
       </nav>
@@ -128,7 +136,7 @@ function Group({ title, items, badges, active }: {
           const count = badges[item.key];
           const inside = (
             <>
-              <Icon name={item.icon} />
+              <AppIcon name={item.icon} size={ICON_SIZE.nav} />
               <span>{item.title}</span>
               {count !== undefined && count > 0 && (
                 <span className="nav__badge">{count}</span>
@@ -172,7 +180,7 @@ function EmployeeSearch() {
   const [text, setText] = useState('');
   return (
     <label className="find">
-      <Icon name="search" size={16} />
+      <AppIcon name="search" size={ICON_SIZE.action} />
       <input
         type="search"
         placeholder="Поиск сотрудника"
@@ -187,8 +195,8 @@ function EmployeeSearch() {
 /** Уведомления. Числа нет: право `notifications.read` есть не у всех. */
 function Bell() {
   return (
-    <button type="button" className="tool" aria-label="Уведомления">
-      <Icon name="bell" size={18} />
+    <button type="button" className="tool tool--bell" aria-label="Уведомления">
+      <AppIcon name="bell" size={ICON_SIZE.title} />
     </button>
   );
 }
@@ -221,7 +229,7 @@ function Language() {
         onClick={() => setOpen((was) => !was)}
       >
         RU
-        <Icon name="chevron" size={14} />
+        <AppIcon name="chevron" size={16} />
       </button>
       {open && (
         <ul className="lang__list" role="listbox" aria-label="Язык интерфейса">

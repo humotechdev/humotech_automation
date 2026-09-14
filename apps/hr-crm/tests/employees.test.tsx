@@ -42,6 +42,13 @@ function network(handler: (path: string) => Response | null = () => null) {
     if (path.includes('/employees/counts')) {
       return json(200, { total: 12, ACTIVE: 9, SUSPENDED: 1, TERMINATED: 2 });
     }
+    if (path.includes('/attendance/presence')) {
+      return json(200, {
+        date: '2026-03-12', timezone: 'Asia/Dushanbe', total: 12,
+        counts: { IN_OFFICE: 9, NOT_COME: 2, DAY_OFF: 1 },
+        truncated: false, items: [],
+      });
+    }
     if (path.includes('/regions/')) {
       return json(200, { items: [{ id: 'r-1', code: 'C', name: 'Центр', status: 'ACTIVE' }] });
     }
@@ -88,7 +95,7 @@ describe('список', () => {
     renderApp('/employees');
     await screen.findByText('Каримов Алишер');
 
-    fireEvent.change(screen.getByLabelText('Поиск по имени или ID'), {
+    fireEvent.change(screen.getByLabelText('Поиск по ФИО, должности или Telegram'), {
       target: { value: 'Кар' },
     });
 
@@ -143,10 +150,23 @@ describe('список', () => {
 });
 
 describe('карточка', () => {
-  test('открывается нажатием на строку', async () => {
+  test('нажатие на строку выбирает сотрудника, а не открывает карточку', async () => {
+    // Выбор показывает человека в правой колонке. Открытие карточки —
+    // отдельное действие: список из двухсот строк не должен перекрываться
+    // диалогом от случайного попадания курсором.
     network();
     renderApp('/employees');
     fireEvent.click(await screen.findByText('Каримов Алишер'));
+
+    expect(await screen.findByRole('button', { name: 'Открыть профиль' })).toBeTruthy();
+    expect(screen.queryByRole('dialog', { name: 'Карточка сотрудника' })).toBeNull();
+  });
+
+  test('открывается кнопкой «Открыть профиль»', async () => {
+    network();
+    renderApp('/employees');
+    fireEvent.click(await screen.findByText('Каримов Алишер'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Открыть профиль' }));
 
     expect(await screen.findByRole('dialog', { name: 'Карточка сотрудника' })).toBeTruthy();
   });
@@ -156,6 +176,7 @@ describe('карточка', () => {
     const calls = network();
     renderApp('/employees');
     fireEvent.click(await screen.findByText('Каримов Алишер'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Открыть профиль' }));
     await screen.findByRole('dialog', { name: 'Карточка сотрудника' });
 
     expect(calls.filter((c) => c.method === 'POST' && c.url.includes('invitations'))).toHaveLength(0);

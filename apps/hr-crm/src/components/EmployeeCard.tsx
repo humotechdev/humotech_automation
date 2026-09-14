@@ -14,7 +14,7 @@ import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 
 import * as api from '../api/crm';
-import { Icon } from './nav-icons';
+import { AppIcon } from './AppIcon';
 import { initials } from './AppShell';
 import { messageFor } from '../api/errors';
 import { useBlock, type Block } from '../features/dashboard/data';
@@ -84,10 +84,10 @@ export function EmployeeCard({ id, onClose }: { id: string; onClose: () => void 
                         to={`/employees/${id}?back=${encodeURIComponent(
                           location.pathname + location.search,
                         )}`}>
-                    Открыть карточку →
+                    Открыть карточку <AppIcon name="arrow" size={16} />
                   </Link>
                   <button type="button" className="tool" aria-label="Закрыть" onClick={onClose}>
-                    ✕
+                    <AppIcon name="close" size={16} />
                   </button>
                 </header>
 
@@ -218,7 +218,7 @@ function Telegram({ id, link }: { id: string; link: api.TelegramLink | null }) {
   return (
     <div className="tg">
       <p className="tg__state">
-        <Icon name="send" size={16} />
+        <AppIcon name="send" size={16} />
         {STATE_TITLE[state] ?? state}
       </p>
       {link?.account?.telegram_username && (

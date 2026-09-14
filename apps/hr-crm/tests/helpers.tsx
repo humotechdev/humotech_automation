@@ -49,7 +49,11 @@ export function fakeNetwork(handler: (path: string, call: Call) => Response | Pr
       url,
       method: init?.method ?? 'GET',
       headers: (init?.headers as Record<string, string>) ?? {},
-      body: init?.body ? JSON.parse(String(init.body)) : undefined,
+      // Многопартовое тело остаётся собой: разобрать его как JSON
+      // нельзя, а проверяют в нём поля формы, а не структуру.
+      body: init?.body instanceof FormData
+        ? init.body
+        : init?.body ? JSON.parse(String(init.body)) : undefined,
     };
     calls.push(call);
     return handler(url, call);

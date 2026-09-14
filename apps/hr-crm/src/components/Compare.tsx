@@ -15,7 +15,7 @@
 import { useState } from 'react';
 
 import * as api from '../api/crm';
-import { Icon } from './nav-icons';
+import { AppIcon } from './AppIcon';
 import {
   UNIT_TITLE, formatCount, formatPercent, formatPoints,
 } from '../features/analytics/metrics';
@@ -113,7 +113,7 @@ export function Compare({ from, to, prevFrom, prevTo, group, objects, chosen, on
               <div className="versus">
                 <Side report={data.left} />
                 <span className="versus__mid" aria-hidden="true">
-                  <Icon name="arrow" size={18} />
+                  <AppIcon name="arrow" size={18} />
                 </span>
                 <Side report={data.right} />
               </div>

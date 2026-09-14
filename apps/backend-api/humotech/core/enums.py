@@ -28,6 +28,16 @@ EMPLOYMENT_STATUSES = ("ACTIVE", "PROBATION", "SUSPENDED", "TERMINATED", "ARCHIV
 EMPLOYMENT_TYPES = ("FULL_TIME", "PART_TIME", "CONTRACT", "INTERN")
 WORK_MODES = ("ONSITE", "HYBRID", "REMOTE")
 OFFICE_ACCESS_TYPES = ("PRIMARY", "TEMPORARY", "PERMANENT", "VISITOR")
+# Документы при приёме. «Будет сформирован» — это не файл, а обещание
+# системы: договор и приказ печатаются позже, и до тех пор их состояние
+# отличается и от «нет», и от «загружен».
+EMPLOYEE_DOCUMENT_KINDS = ("IDENTITY", "CONTRACT", "HIRE_ORDER", "OTHER")
+# Пол и семейное положение — анкетные поля кадровой карточки. Оба
+# необязательны: у сотрудников, заведённых до их появления, значения нет,
+# и требовать его задним числом означало бы не дать открыть их карточку.
+GENDERS = ("MALE", "FEMALE")
+MARITAL_STATUSES = ("SINGLE", "MARRIED", "DIVORCED", "WIDOWED")
+EMPLOYEE_DOCUMENT_STATUSES = ("MISSING", "UPLOADED", "GENERATED_LATER", "REVIEW")
 
 # --- пользователи ---
 USER_STATUSES = ("ACTIVE", "INACTIVE", "LOCKED", "ARCHIVED")
@@ -141,13 +151,22 @@ SYSTEM_ROLE_CODES = (
     "MANAGER", "ACCOUNTANT", "TECH_ADMIN",
 )
 
-def status_check(field: str, values: tuple[str, ...], name: str) -> models.CheckConstraint:
+def status_check(
+    field: str, values: tuple[str, ...], name: str, *, nullable: bool = False
+) -> models.CheckConstraint:
     """`CHECK (field IN (...))` с точным именем ограничения.
 
     Имя задаётся явно, а не генерируется Django: на него ссылается перевод
     ошибок целостности в понятные сообщения, и оно уже есть в базе.
+
+    `nullable=True` разрешает NULL. Без него необязательное поле с таким
+    ограничением стало бы обязательным на уровне базы: `NULL IN (...)`
+    даёт NULL, а не истину, и строка без значения не прошла бы проверку.
     """
-    return models.CheckConstraint(condition=Q(**{f"{field}__in": list(values)}), name=name)
+    condition = Q(**{f"{field}__in": list(values)})
+    if nullable:
+        condition = Q(**{f"{field}__isnull": True}) | condition
+    return models.CheckConstraint(condition=condition, name=name)
 
 
 def choices(values: tuple[str, ...]) -> list[tuple[str, str]]:

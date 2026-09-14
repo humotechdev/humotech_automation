@@ -13,6 +13,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { DashboardPage } from '../pages/DashboardPage';
 import { EmployeesPage } from '../pages/EmployeesPage';
 import { EmployeePage } from '../pages/EmployeePage';
+import { NewEmployeePage } from '../pages/NewEmployeePage';
 import { RequestsPage } from '../pages/RequestsPage';
 import { AttendancePage } from '../pages/AttendancePage';
 import { OfficesPage } from '../pages/OfficesPage';
@@ -34,6 +35,10 @@ export function App() {
       <Route path="/employees" element={<Protected page="employees" />} />
       {/* Полная карточка. Собственный адрес — чтобы ссылка на человека
           передавалась, а «Назад» возвращал в список с его фильтрами. */}
+      {/* Приём стоит ВЫШЕ маршрута карточки: иначе `/employees/new`
+          совпал бы с `:id` и страница пыталась бы открыть сотрудника с
+          идентификатором «new». */}
+      <Route path="/employees/new" element={<Protected page="employee-new" />} />
       <Route path="/employees/:id" element={<Protected page="employee" />} />
       <Route path="/requests" element={<Protected page="requests" />} />
       <Route path="/attendance" element={<Protected page="attendance" />} />
@@ -54,6 +59,7 @@ export function App() {
 function Protected({ page }: {
   page?: 'employees' | 'requests' | 'attendance' | 'offices' | 'questions'
        | 'analytics' | 'reports' | 'knowledge' | 'notifications' | 'admin'
+       | 'employee-new'
        | 'settings' | 'employee';
 }) {
   const session = useSession();
@@ -67,6 +73,7 @@ function Protected({ page }: {
   if (session.status === 'anonymous') return <Navigate to="/login" replace />;
   if (page === 'employees') return <EmployeesPage />;
   if (page === 'employee') return <EmployeePage />;
+  if (page === 'employee-new') return <NewEmployeePage />;
   if (page === 'requests') return <RequestsPage />;
   if (page === 'attendance') return <AttendancePage />;
   if (page === 'offices') return <OfficesPage />;

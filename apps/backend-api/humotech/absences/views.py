@@ -133,6 +133,12 @@ def hr_request_json(request) -> dict:
         "requires_document": request.absence_type.requires_document,
         "comment": request.employee_comment,
         "review_comment": request.review_comment,
+        # Когда по заявке приняли решение. Отдельно от `submitted_at`:
+        # заявку подают и решают в разные дни, и «последние решения»
+        # строятся именно по второй дате.
+        "reviewed_at": (
+            request.reviewed_at.isoformat() if request.reviewed_at else None
+        ),
         "submitted_at": (
             request.submitted_at.isoformat() if request.submitted_at else None
         ),

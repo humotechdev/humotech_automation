@@ -15,7 +15,7 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 
 import * as api from '../api/crm';
 import { ApiFailure } from '../api/errors';
-import { Icon } from './nav-icons';
+import { AppIcon } from './AppIcon';
 import { Diff } from './UserCard';
 import { useBlock } from '../features/dashboard/data';
 import {
@@ -124,7 +124,7 @@ export function AuditTab({ zone, mayRead }: { zone: string; mayRead: boolean }) 
           </select>
         </label>
         <label className="pick pick--date">
-          <Icon name="calendar" size={16} />
+          <AppIcon name="calendar" size={16} />
           <span className="visually-hidden">Начало периода</span>
           <input type="date" value={from} max={to || undefined}
                  aria-label="Начало периода"
@@ -137,7 +137,7 @@ export function AuditTab({ zone, mayRead }: { zone: string; mayRead: boolean }) 
                  onChange={(event) => setTo(event.target.value)} />
         </label>
         <label className="find">
-          <Icon name="search" size={16} />
+          <AppIcon name="search" size={16} />
           <input type="search" value={actor} placeholder="ID инициатора"
                  aria-label="Идентификатор инициатора"
                  onChange={(event) => setActor(event.target.value.trim())} />

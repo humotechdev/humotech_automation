@@ -191,7 +191,26 @@ export interface Day {
   missed: boolean;
   absence_code: string | null;
   absence_name: string | null;
+  /**
+   * Норма дня в секундах: 0 у выходного, null — графика на этот день нет.
+   *
+   * Разные вещи, и путать их нельзя: ноль означает «работать не нужно»,
+   * null — «сколько нужно, неизвестно». Кольцо недели красится по этому
+   * числу, а не по «обычным восьми часам».
+   */
+  norm_seconds: number | null;
   sessions?: OpenSession[];
+}
+
+/** Уведомление, которое уже дошло до сотрудника. */
+export interface Note {
+  id: string;
+  notification_type: string;
+  title: string | null;
+  body: string;
+  sent_at: string | null;
+  read_at: string | null;
+  is_read: boolean;
 }
 
 export interface ScanResponse {
@@ -285,6 +304,17 @@ export const api = {
     call<AbsenceRequest>('/me/absences', { method: 'POST', form }),
   cancelAbsence: (id: string) =>
     call<AbsenceRequest>(`/me/absences/${id}`, { method: 'DELETE' }),
+  /**
+   * Лента уведомлений. Отдельный запрос, а не часть профиля: она
+   * обновляется по своим поводам и не должна ронять весь экран, если
+   * упадёт.
+   */
+  notifications: (limit = 20) =>
+    call<{ unread: number; items: Note[] }>('/me/notifications', {
+      query: { limit },
+    }),
+  readNotification: (id: string) =>
+    call<Note>(`/me/notifications/${id}/read`, { method: 'POST' }),
   leaveBalance: () =>
     call<{
       balances: Array<{

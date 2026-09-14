@@ -47,7 +47,10 @@ from humotech.core.rbac import Actor
 from humotech.core.service import BaseService
 from humotech.core.timeframes import days_in, local_date, office_zone, range_bounds
 from humotech.employees.models import Employee, EmployeeAssignment
-from humotech.employees.services import current_primary_assignment_filter
+from humotech.employees.services import (
+    current_primary_assignment_filter,
+    roster_assignment_filter,
+)
 from humotech.offices.models import Office
 from humotech.schedules.models import CalendarException, EmployeeScheduleAssignment
 
@@ -406,7 +409,7 @@ class AnalyticsService(BaseService):
         only: uuid.UUID | None,
     ) -> set[uuid.UUID]:
         queryset = EmployeeAssignment.objects.filter(
-            current_primary_assignment_filter(at),
+            roster_assignment_filter(at),
             office_id__in=office_ids,
             employee__organization_id=actor.organization_id,
         )

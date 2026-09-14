@@ -15,7 +15,7 @@
 
 import type { Profile as ProfileData, Status } from '../api';
 import { PRESENCE } from '../format';
-import { initials } from '../ui/AppHeader';
+import { initials } from '../ui/TopBar';
 import { ClockIcon, OfficeIcon } from '../ui/icons';
 import {
   Card,

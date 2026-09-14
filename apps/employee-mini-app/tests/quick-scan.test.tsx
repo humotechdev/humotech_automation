@@ -24,7 +24,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App, { isQuickScanRoute, QUICK_SCAN_PATH } from '../src/App';
 import { forgetToken } from '../src/auth';
 import { CLOSE_AFTER_MS } from '../src/screens/QuickScan';
-import { profile as profileStub, session, status as statusStub } from './fixtures';
+import { TZ, profile as profileStub, session, status as statusStub } from './fixtures';
 
 afterEach(() => {
   cleanup();
@@ -527,6 +527,21 @@ function stubApi({
       return json(statusStub({ state: 'OUTSIDE', open_session: session() }));
     }
     if (address.includes('/me/profile')) return json(profileStub);
+    if (address.includes('/me/history')) {
+      return json({
+        period: { first: '2026-09-04', last: '2026-09-04', timezone: TZ },
+        days: [],
+        total: 0,
+        offset: 0,
+        limit: 30,
+        has_more: false,
+      });
+    }
+    if (address.includes('/me/statistics')) return json({ summary: null, days: [] });
+    if (address.includes('/me/notifications')) {
+      return json({ unread: 0, items: [] });
+    }
+    if (address.includes('/me/absences')) return json({ requests: [], total: 0 });
     return json({});
   });
 

@@ -16,7 +16,7 @@ import { useSearchParams } from 'react-router-dom';
 
 import * as api from '../api/crm';
 import { AppShell, initials } from '../components/AppShell';
-import { Icon } from '../components/nav-icons';
+import { AppIcon } from '../components/AppIcon';
 import { messageFor } from '../api/errors';
 import { formatTime, longDate, useBlock, type Block } from '../features/dashboard/data';
 
@@ -58,6 +58,19 @@ export function RequestsPage() {
   const to = params.get('date_to') ?? '';
   const cursor = params.get('cursor') ?? '';
   const opened = params.get('request') ?? '';
+  /*
+   * Заявки одного сотрудника.
+   *
+   * Своего поля у этого фильтра нет — он приходит по ссылке с главной
+   * страницы. Без него «Последние решения» открывались через раз:
+   * список отсортирован по дате подачи, а решения — по дате решения, и
+   * заявка, поданная месяц назад и решённая сегодня, лежит на десятой
+   * странице. Сужение по сотруднику возвращает её на первую.
+   *
+   * Чтобы сужение не выглядело поломкой списка, оно показано плашкой с
+   * именем и снимается одним нажатием.
+   */
+  const employee = params.get('employee_id') ?? '';
 
   const [draft, setDraft] = useState(search);
   const [updated, setUpdated] = useState<Date | null>(null);
@@ -94,13 +107,14 @@ export function RequestsPage() {
       ...(search ? { search } : {}),
       ...(region ? { region_id: region } : {}),
       ...(office ? { office_id: office } : {}),
+      ...(employee ? { employee_id: employee } : {}),
       ...(status === 'open' ? { status: OPEN_STATUSES } : status ? { status } : {}),
       ...(from ? { date_from: from } : {}),
       ...(to ? { date_to: to } : {}),
     }),
-    [tab, search, region, office, status, from, to],
+    [tab, search, region, office, employee, status, from, to],
   );
-  const key = `${tab.key}|${search}|${region}|${office}|${status}|${from}|${to}|${cursor}|${attempt}`;
+  const key = `${tab.key}|${search}|${region}|${office}|${employee}|${status}|${from}|${to}|${cursor}|${attempt}`;
 
   const [list, reload] = useBlock(
     (signal) =>
@@ -144,7 +158,13 @@ export function RequestsPage() {
 
   const items = list.state === 'ready' ? list.data.items : [];
   const current = items.find((item) => item.id === opened) ?? null;
-  const dirty = Boolean(search || region || office || status || from || to);
+  const dirty = Boolean(search || region || office || employee || status || from || to);
+  /* Имя берётся из самих строк: по одному идентификатору его взять
+     неоткуда, а когда фильтр работает, все строки — этого человека. */
+  const first = items[0];
+  const employeeName = employee
+    ? first?.absence?.employee.full_name ?? first?.correction?.employee?.full_name ?? null
+    : null;
 
   return (
     <AppShell breadcrumb="Заявки" section="requests">
@@ -156,7 +176,7 @@ export function RequestsPage() {
         <div className="head__filters">
           <button type="button" className="pick pick--icon" aria-label="Обновить"
                   onClick={() => setAttempt((n) => n + 1)}>
-            <Icon name="refresh" size={16} />
+            <AppIcon name="refresh" size={16} />
           </button>
           <p className="head__updated">
             {updated ? `Обновлено в ${formatTime(updated)}` : 'Загружаем…'}
@@ -186,7 +206,7 @@ export function RequestsPage() {
 
           <div className="toolbar">
             <label className="find find--wide">
-              <Icon name="search" size={16} />
+              <AppIcon name="search" size={16} />
               <input
                 type="search"
                 value={draft}
@@ -205,13 +225,17 @@ export function RequestsPage() {
               <select value={status} onChange={(event) => patch({ status: event.target.value || null })}>
                 <option value="">Любой статус</option>
                 <option value="open">Требуют действия</option>
+                {/* Решённые одним пунктом: с главной страницы «Все решения»
+                    ведёт именно сюда, и выбранный пункт должен совпадать с
+                    тем, что показано, а не остаться пустым. */}
+                <option value="APPROVED,REJECTED">Решённые</option>
                 <option value="APPROVED">Подтверждённые</option>
                 <option value="REJECTED">Отклонённые</option>
                 <option value="CANCELLED">Отменённые</option>
               </select>
             </label>
             <label className="pick pick--date">
-              <Icon name="calendar" size={16} />
+              <AppIcon name="calendar" size={16} />
               <span className="visually-hidden">Отсутствие с</span>
               <input type="date" value={from} aria-label="Отсутствие с"
                      onChange={(event) => patch({ date_from: event.target.value || null })} />
@@ -221,10 +245,20 @@ export function RequestsPage() {
               <input type="date" value={to} aria-label="Отсутствие по"
                      onChange={(event) => patch({ date_to: event.target.value || null })} />
             </label>
+            {employee && (
+              <button
+                type="button"
+                className="chip chip--filter"
+                onClick={() => patch({ employee_id: null })}
+              >
+                {employeeName ? `Заявки: ${employeeName}` : 'Заявки одного сотрудника'}
+                <AppIcon name="close" size={16} />
+              </button>
+            )}
             {dirty && (
               <button type="button" className="btn" onClick={() =>
-                patch({ search: null, region_id: null, office_id: null, status: null,
-                        date_from: null, date_to: null })}>
+                patch({ search: null, region_id: null, office_id: null, employee_id: null,
+                        status: null, date_from: null, date_to: null })}>
                 Сбросить
               </button>
             )}
@@ -327,7 +361,7 @@ function Row({ item, selected, onOpen }: {
           <span className="muted">—</span>
         ) : document ? (
           <span className="pill">
-            <Icon name="doc" size={14} />
+            <AppIcon name="doc" size={16} />
             {DOCUMENT_TITLE[document.verification_status] ?? 'Загружена'}
           </span>
         ) : item.absence?.requires_document ? (
@@ -339,7 +373,7 @@ function Row({ item, selected, onOpen }: {
       <td>
         <span className="pill">{STATUS_TITLE[status] ?? status}</span>
       </td>
-      <td className="people__go"><Icon name="arrow" size={16} /></td>
+      <td className="people__go"><AppIcon name="arrow" size={16} /></td>
     </tr>
   );
 }
@@ -381,11 +415,13 @@ function Details({ item, onClose, onDone }: {
     <aside className="panel side-panel" aria-label="Подробности заявки">
       <header className="side-panel__head">
         <span className="side-panel__title">
-          <Icon name="doc" size={18} />
+          <AppIcon name="doc" size={18} />
           {kindTitle(item)}
         </span>
         <span className="pill">{STATUS_TITLE[status] ?? status}</span>
-        <button type="button" className="tool" aria-label="Закрыть" onClick={onClose}>✕</button>
+        <button type="button" className="tool" aria-label="Закрыть" onClick={onClose}>
+          <AppIcon name="close" size={16} />
+        </button>
       </header>
 
       <div className="side-panel__body">

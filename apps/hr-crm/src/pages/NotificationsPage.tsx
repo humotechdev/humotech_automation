@@ -23,7 +23,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import * as api from '../api/crm';
 import { ApiFailure, messageFor } from '../api/errors';
 import { AppShell } from '../components/AppShell';
-import { Icon } from '../components/nav-icons';
+import { AppIcon } from '../components/AppIcon';
 import { useFeed } from '../features/live/feed';
 import {
   CHANNEL, STATUS, TABS, attemptTitle, cancelBlockedBecause, deliveryNote,
@@ -224,7 +224,7 @@ export function NotificationsPage() {
         </div>
         <div className="head__actions">
           <label className="pick pick--date">
-            <Icon name="calendar" size={16} />
+            <AppIcon name="calendar" size={16} />
             <span className="visually-hidden">Начало периода</span>
             <input type="date" value={from} max={to || undefined}
                    aria-label="Начало периода"
@@ -238,7 +238,7 @@ export function NotificationsPage() {
           </label>
           <button type="button" className="tool" aria-label="Обновить список"
                   onClick={refresh}>
-            <Icon name="refresh" size={18} />
+            <AppIcon name="refresh" size={18} />
           </button>
           <p className="head__stamp">
             {/* Время двигается только после УДАЧНОГО ответа. */}
@@ -261,7 +261,7 @@ export function NotificationsPage() {
         <section className="panel panel--list">
           <div className="toolbar">
             <label className="find find--wide">
-              <Icon name="search" size={16} />
+              <AppIcon name="search" size={16} />
               <input type="search" value={search}
                      placeholder="Поиск сообщения или сотрудника"
                      aria-label="Поиск сообщения или сотрудника"
@@ -357,7 +357,7 @@ export function NotificationsPage() {
                             }}>
                           <td className="grid-table__name">
                             <span className="who">
-                              <Icon name={eventIcon(row.notification_type)} size={16} />
+                              <AppIcon name={eventIcon(row.notification_type)} size={16} />
                               <span className="two">
                                 <b>{eventTitle(row)}</b>
                                 <span className="two__second">
@@ -391,7 +391,7 @@ export function NotificationsPage() {
                     </button>
                   )}
                   <span className="muted sheet__lock">
-                    <Icon name="alert" size={15} />
+                    <AppIcon name="alert" size={16} />
                     Статус отправки не подтверждает прочтение сотрудником
                   </span>
                 </span>
@@ -451,7 +451,7 @@ function Card({
     <>
       <header className="view__head">
         <span className="view__icon" aria-hidden="true">
-          <Icon name="bell" size={22} />
+          <AppIcon name="bell" size={20} />
         </span>
         <div className="view__who">
           <h2 className="view__title">Уведомление</h2>
@@ -461,7 +461,7 @@ function Card({
           </p>
         </div>
         <button type="button" className="tool" aria-label="Закрыть карточку" onClick={onClose}>
-          <Icon name="cross" size={18} />
+          <AppIcon name="cross" size={18} />
         </button>
       </header>
 
@@ -493,7 +493,7 @@ function Card({
         {link ? (
           <p className="message__link">
             <Link to={link.to}>{link.title}</Link>
-            <Icon name="arrow" size={15} />
+            <AppIcon name="arrow" size={16} />
           </p>
         ) : row.related_entity_type ? (
           // Вид объекта сервер знает, а страницы для него в CRM нет.
@@ -506,7 +506,7 @@ function Card({
 
         {reason && (
           <p className="note note--dim" role="status">
-            <Icon name="alert" size={15} />
+            <AppIcon name="alert" size={16} />
             {reason}
           </p>
         )}
@@ -520,14 +520,14 @@ function Card({
                   disabled={Boolean(noRetry) || acting}
                   title={noRetry ? `Сейчас нельзя: ${noRetry}` : undefined}
                   onClick={() => onRetry(row)}>
-            <Icon name="refresh" size={16} />
+            <AppIcon name="refresh" size={16} />
             {acting ? 'Отправляем запрос…' : 'Повторить отправку'}
           </button>
           <button type="button" className="btn"
                   disabled={Boolean(noCancel) || acting}
                   title={noCancel ? `Сейчас нельзя: ${noCancel}` : undefined}
                   onClick={() => onCancel(row)}>
-            <Icon name="archive" size={16} />
+            <AppIcon name="archive" size={16} />
             Снять с отправки
           </button>
         </div>
@@ -539,7 +539,7 @@ function Card({
         )}
         <p className="view__foot-link">
           <Link to={`/employees?employee=${row.employee_id}`}>Карточка сотрудника</Link>
-          <Icon name="arrow" size={15} />
+          <AppIcon name="arrow" size={16} />
         </p>
       </footer>
     </>
@@ -577,7 +577,7 @@ function Attempts({ block, zone }: {
       <ol className="attempts">
         {items.map((item) => (
           <li key={item.number}>
-            <Icon name={item.outcome === 'SENT' ? 'check' : 'alert'} size={16} />
+            <AppIcon name={item.outcome === 'SENT' ? 'check' : 'alert'} size={16} />
             <span className="attempts__time">{moment(item.attempted_at, zone, false)}</span>
             <span className="attempts__what">{attemptTitle(item)}</span>
           </li>
@@ -590,13 +590,13 @@ function Attempts({ block, zone }: {
 // --- мелочи -----------------------------------------------------------------
 
 function Tile({ icon, title, value }: {
-  icon: Parameters<typeof Icon>[0]['name'];
+  icon: Parameters<typeof AppIcon>[0]['name'];
   title: string;
   value: number | undefined;
 }) {
   return (
     <li className="tile">
-      <span className="tile__icon" aria-hidden="true"><Icon name={icon} size={20} /></span>
+      <span className="tile__icon" aria-hidden="true"><AppIcon name={icon} size={20} /></span>
       <span className="tile__text">
         <span className="tile__title">{title}</span>
         {/* Пока сводка не пришла — прочерк, а не ноль. Ноль означал бы,
@@ -616,13 +616,13 @@ function StatusPill({ status }: { status: string }) {
             : 'clock';
   return (
     <span className={`state state--${status.toLowerCase()}`}>
-      <Icon name={icon} size={15} />
+      <AppIcon name={icon} size={16} />
       {STATUS[status] ?? status}
     </span>
   );
 }
 
-function eventIcon(type: string): Parameters<typeof Icon>[0]['name'] {
+function eventIcon(type: string): Parameters<typeof AppIcon>[0]['name'] {
   if (type.startsWith('telegram.link.')) return 'lock';
   if (type.startsWith('absence.')) return 'calendar';
   if (type.startsWith('question.')) return 'chat';

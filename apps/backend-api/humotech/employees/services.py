@@ -20,7 +20,7 @@ from datetime import date, timedelta
 from django.db.models import Count, Q
 
 from humotech.core.errors import Conflict, NotFound, ValidationFailed
-from humotech.core.pagination import Page, paginate
+from humotech.core.pagination import Cursor, Page, normalize_limit, paginate
 from humotech.core.rbac import Actor, snapshot
 from humotech.core.service import BaseService
 from humotech.core.validation import (
@@ -31,7 +31,11 @@ from humotech.core.validation import (
     validate_phone,
 )
 from humotech.departments.models import Department
-from humotech.employees.models import Employee, EmployeeAssignment
+from humotech.employees.models import (
+    Employee,
+    EmployeeAssignment,
+    EmployeeDocument,
+)
 from humotech.schedules.models import EmployeeScheduleAssignment
 from humotech.telegram.models import TelegramAccount
 from humotech.employees.selectors import require_visible_employee
@@ -74,6 +78,23 @@ def current_primary_assignment_filter(at: date) -> Q:
     )
 
 
+def roster_assignment_filter(at: date) -> Q:
+    """Кто состоит в смене на этот день — одно определение на всю систему.
+
+    К «текущему основному назначению» добавляется работающий статус
+    сотрудника. Без этого условия уволенный человек с незакрытым
+    назначением продолжает считаться: состав смены его уже не видит
+    (`attendance.hr` и `analytics.dashboard` фильтруют по статусу), а
+    отчёт `analytics` видел — и знаменатель явки расходился с карточкой
+    «по графику» на число таких людей.
+
+    Правило одно и лежит здесь, чтобы разойтись снова не смогло.
+    """
+    return current_primary_assignment_filter(at) & Q(
+        employee__employment_status__in=WORKING_STATUSES
+    )
+
+
 @dataclass(frozen=True)
 class TelegramBinding:
     """Состояние привязки Telegram. Сам идентификатор наружу не отдаётся:
@@ -99,6 +120,7 @@ class EmployeeCard:
     current_schedule: EmployeeScheduleAssignment | None
     telegram: TelegramBinding
     assignment_history: list[EmployeeAssignment] = field(default_factory=list)
+    documents: list[EmployeeDocument] = field(default_factory=list)
 
     @property
     def full_name(self) -> str:
@@ -112,6 +134,94 @@ class EmployeeService(BaseService):
     `employees.archive` — для увольнения и перевода в архив."""
 
     # ------------------------------------------------------------------ чтение
+
+    def highlights(
+        self,
+        actor: Actor,
+        *,
+        office_id: uuid.UUID | None = None,
+        region_id: uuid.UUID | None = None,
+        department_id: uuid.UUID | None = None,
+        at: date | None = None,
+    ) -> dict:
+        """Новички, именинники и люди без графика.
+
+        Три вопроса про всю организацию сразу. По странице списка на них
+        не ответить: там восемь строк из скольких угодно, и «двое
+        именинников» превратилось бы в «двое среди показанных».
+
+        Имена возвращаются короткими списками — правая колонка показывает
+        несколько лиц и число остальных. Больше пяти оттуда всё равно не
+        видно, и отдавать двести строк было бы тратой.
+        """
+        self.access.require(actor, "employees.read")
+        at = at or date.today()
+        base = self._visible(
+            actor,
+            status="ACTIVE",
+            office_id=office_id,
+            region_id=region_id,
+            department_id=department_id,
+            at=at,
+        )
+
+        recent = base.filter(hire_date__gte=at - timedelta(days=30))
+        # День рождения сравнивается по дню и месяцу, а не по дате: год
+        # рождения к сегодняшнему дню отношения не имеет.
+        birthdays = base.filter(birth_date__month=at.month, birth_date__day=at.day)
+
+        scheduled = set(
+            EmployeeScheduleAssignment.objects.filter(
+                Q(valid_from__lte=at) & (Q(valid_to__isnull=True) | Q(valid_to__gte=at)),
+                employee__organization_id=actor.organization_id,
+            ).values_list("employee_id", flat=True)
+        )
+        unscheduled = [row for row in base.exclude(id__in=scheduled)]
+
+        def short(rows) -> list[dict]:
+            return [
+                {
+                    "id": str(row.id),
+                    "full_name": " ".join(
+                        part for part in
+                        (row.last_name, row.first_name, row.middle_name) if part
+                    ),
+                    "employee_number": row.employee_number,
+                    "photo": row.photo_id is not None,
+                }
+                for row in rows[:5]
+            ]
+
+        return {
+            "recent_hires": recent.count(),
+            "recent": short(list(recent.order_by("-hire_date"))),
+            "birthdays_today": birthdays.count(),
+            "birthdays": short(list(birthdays.order_by("last_name"))),
+            "without_schedule": len(unscheduled),
+            "unscheduled": short(unscheduled),
+        }
+
+    @staticmethod
+    def _page_at(queryset, *, limit: int | None, offset: int) -> Page:
+        """Страница по сдвигу, с тем же порядком, что и у курсора.
+
+        Порядок обязан совпадать: иначе первая страница, взятая курсором,
+        и вторая, взятая сдвигом, окажутся из разных списков.
+        """
+        size = normalize_limit(limit)
+        rows = list(
+            queryset.order_by("-created_at", "-id")[offset:offset + size + 1]
+        )
+        has_more = len(rows) > size
+        items = rows[:size]
+        return Page(
+            items=items,
+            next_cursor=(
+                Cursor(created_at=items[-1].created_at, id=items[-1].id).encode()
+                if has_more and items else None
+            ),
+            has_more=has_more,
+        )
 
     def counts(
         self,
@@ -208,7 +318,20 @@ class EmployeeService(BaseService):
         at: date | None = None,
         limit: int | None = None,
         cursor: str | None = None,
+        offset: int | None = None,
     ) -> Page:
+        """Страница списка сотрудников.
+
+        `offset` — для перехода на произвольную страницу. Курсор на это
+        не способен по устройству: он говорит «дальше этой записи», и
+        добраться до тридцать второй страницы им можно только пройдя
+        тридцать одну. Экран со списком страниц без сдвига показывал бы
+        номера, по которым нельзя нажать.
+
+        Курсор при этом остаётся основным способом: он устойчив к
+        вставкам между запросами, а сдвиг — нет. Когда заданы оба,
+        выигрывает сдвиг: его попросили явно.
+        """
         self.access.require(actor, "employees.read")
         at = at or date.today()
 
@@ -221,7 +344,10 @@ class EmployeeService(BaseService):
             department_id=department_id,
             at=at,
         )
-        page = paginate(queryset, limit=limit, cursor=cursor)
+        if offset:
+            page = self._page_at(queryset, limit=limit, offset=offset)
+        else:
+            page = paginate(queryset, limit=limit, cursor=cursor)
 
         # Справочники всей страницы — ОДНИМ запросом. Именно это отделяет
         # список от N+1: один оператор на страницу вместо одного на строку.
@@ -248,15 +374,18 @@ class EmployeeService(BaseService):
         # но не обновляется ни одной операцией и всегда остаётся `false`.
         # Показывать по нему «не привязан» человеку с рабочей привязкой
         # значит врать в списке.
-        accounts = dict(
-            TelegramAccount.objects.filter(
+        accounts = {
+            row[0]: row[1:]
+            for row in TelegramAccount.objects.filter(
                 employee_id__in=[e.id for e in page.items]
-            ).values_list("employee_id", "status")
-        )
+            ).values_list("employee_id", "status", "telegram_username")
+        }
         for employee in page.items:
             employee.current_assignment = assignments.get(employee.id)
             employee.current_schedule = schedules.get(employee.id)
-            employee.telegram_state = accounts.get(employee.id)
+            binding = accounts.get(employee.id)
+            employee.telegram_state = binding[0] if binding else None
+            employee.telegram_username = binding[1] if binding else None
         return page
 
     def get(
@@ -303,6 +432,12 @@ class EmployeeService(BaseService):
             .first()
         )
 
+        documents = list(
+            EmployeeDocument.objects.filter(employee_id=employee_id)
+            .select_related("file")
+            .order_by("kind", "created_at")
+        )
+
         account = TelegramAccount.objects.filter(employee_id=employee_id).first()
         telegram = TelegramBinding(
             connected=account is not None and account.status == "ACTIVE",
@@ -317,6 +452,7 @@ class EmployeeService(BaseService):
             current_schedule=schedule,
             telegram=telegram,
             assignment_history=history,
+            documents=documents,
         )
 
     def assignment_history(

@@ -171,14 +171,14 @@ describe('неудачное обновление', () => {
     render(<App />);
 
     // Кабинет открылся.
-    await screen.findByText('Сейчас в офисе');
+    await screen.findByText('В офисе');
 
     // Второе обновление падает.
     fireEvent(window, new Event('online'));
 
     await screen.findByText(/Не удалось обновить|сервер/i);
     // Главное: кабинет на месте, а не экран ошибки.
-    expect(screen.getByText('Сейчас в офисе')).toBeTruthy();
+    expect(screen.getByText('В офисе')).toBeTruthy();
     expect(screen.queryByRole('heading', { name: 'Не получилось' })).toBeNull();
   });
 
@@ -191,7 +191,7 @@ describe('неудачное обновление', () => {
     vi.stubGlobal('fetch', cabinetThen(401, { detail: 'expired' }));
 
     render(<App />);
-    await screen.findByText('Сейчас в офисе');
+    await screen.findByText('В офисе');
 
     fireEvent(window, new Event('online'));
 
@@ -209,7 +209,7 @@ describe('неудачное обновление', () => {
     );
 
     render(<App />);
-    await screen.findByText('Сейчас в офисе');
+    await screen.findByText('В офисе');
 
     fireEvent(window, new Event('online'));
 
@@ -242,6 +242,20 @@ function cabinetThen(status: number, body: unknown): typeof fetch {
       return profileCalls === 1 ? json(profileStub) : json(body, status);
     }
     if (address.includes('/me/status')) return json(statusStub);
+    if (address.includes('/me/history')) {
+      return json({
+        period: { first: '2026-09-04', last: '2026-09-04', timezone: 'Asia/Dushanbe' },
+        days: [],
+        total: 0,
+        offset: 0,
+        limit: 30,
+        has_more: false,
+      });
+    }
+    if (address.includes('/me/notifications')) {
+      return json({ unread: 0, items: [] });
+    }
+    if (address.includes('/me/absences')) return json({ requests: [], total: 0 });
     return json({ summary: null, days: [] });
   };
   return impl as unknown as typeof fetch;

@@ -19,7 +19,8 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import * as api from '../api/crm';
 import { ApiFailure, messageFor } from '../api/errors';
 import { AppShell } from '../components/AppShell';
-import { Icon, type IconName } from '../components/nav-icons';
+import { AppIcon, type AppIconName } from '../components/AppIcon';
+import { Attendance } from '../features/employee/Attendance';
 import { useSession } from '../features/auth/session';
 import { useBlock, type Block } from '../features/dashboard/data';
 import { clockOnDay, moment, shortDate } from '../features/time/zone';
@@ -34,7 +35,6 @@ import {
   duration,
   initials,
   isTab,
-  lateness,
   orDash,
   todayIso,
   type Tab,
@@ -100,7 +100,7 @@ export function EmployeePage() {
   return (
     <AppShell breadcrumb="Сотрудники" section="employees">
       <p className="crumbs crumbs--inline">
-        <Link className="link" to={back || '/employees'}>← Все сотрудники</Link>
+        <Link className="link" to={back || '/employees'}><AppIcon name="back" size={16} /> Все сотрудники</Link>
         <span className="dot">/</span>
         <span>{name || 'Карточка сотрудника'}</span>
       </p>
@@ -142,7 +142,15 @@ export function EmployeePage() {
                       onGo={open} onChanged={reload} />
           )}
           {tab === 'attendance' && (
-            <Attendance id={id} rights={rights} zone={zone} />
+            <Attendance
+              id={id}
+              rights={{
+                attendance: rights.attendance,
+                export: rights.export,
+                correct: rights.correct,
+              }}
+              zone={zone}
+            />
           )}
           {tab === 'schedule' && <Schedule id={id} />}
           {tab === 'requests' && (
@@ -168,11 +176,21 @@ function Header({ person, zone, rights }: {
   person: Person; zone: string; rights: Rights;
 }) {
   const status = text(person, 'employment_status');
+  const id = text(person, 'id');
+  // Само изображение в карточке не приходит — только признак того, что
+  // оно есть. Отдаётся оно отдельным адресом, где право спрашивается
+  // при каждом открытии.
+  const hasPhoto = person['photo'] !== null && person['photo'] !== undefined;
   return (
     <header className="who who--card">
-      <span className="avatar avatar--big" aria-hidden="true">
-        {initials(text(person, 'first_name'), text(person, 'last_name'))}
-      </span>
+      {hasPhoto && id ? (
+        <img className="avatar avatar--big avatar--photo"
+             src={api.employeePhotoUrl(id)} alt="" />
+      ) : (
+        <span className="avatar avatar--big" aria-hidden="true">
+          {initials(text(person, 'first_name'), text(person, 'last_name'))}
+        </span>
+      )}
       <span className="who__text">
         <span className="who__name">{text(person, 'full_name') ?? '—'}</span>
         <span className="who__id">
@@ -205,6 +223,82 @@ function Header({ person, zone, rights }: {
         </span>
       )}
     </header>
+  );
+}
+
+/** Анкетные значения словами. Кода в карточке человек видеть не должен. */
+const GENDER: Record<string, string> = {
+  MALE: 'Мужской',
+  FEMALE: 'Женский',
+};
+
+const MARITAL: Record<string, string> = {
+  SINGLE: 'Не женат / не замужем',
+  MARRIED: 'Женат / замужем',
+  DIVORCED: 'Разведён(а)',
+  WIDOWED: 'Вдовец / вдова',
+};
+
+const PAPER_KIND: Record<string, string> = {
+  IDENTITY: 'Паспорт или ID-карта',
+  CONTRACT: 'Трудовой договор',
+  HIRE_ORDER: 'Приказ о приёме',
+  OTHER: 'Другой документ',
+};
+
+const PAPER_STATE: Record<string, string> = {
+  MISSING: 'Не добавлен',
+  UPLOADED: 'Загружен',
+  GENERATED_LATER: 'Будет сформирован',
+  REVIEW: 'Требует проверки',
+};
+
+/**
+ * Документы сотрудника.
+ *
+ * Строка с файлом — ссылка: она открывает и позволяет сохранить. Строка
+ * без файла остаётся строкой: чек-лист показывает, чего ещё нет, и
+ * кнопка на ней обещала бы открыть несуществующее.
+ */
+function Papers({ person }: { person: Person }) {
+  const id = text(person, 'id');
+  const rows = Array.isArray(person['documents'])
+    ? (person['documents'] as Record<string, unknown>[])
+    : [];
+
+  return (
+    <section className="panel">
+      <h3 className="panel__title">Документы</h3>
+      {rows.length === 0 ? (
+        <p className="muted">Документов пока нет.</p>
+      ) : (
+        <ul className="papers">
+          {rows.map((row) => {
+            const file = row['file_id'];
+            const key = String(row['id'] ?? '');
+            const kind = String(row['kind'] ?? '');
+            const title = String(row['title'] ?? '') || PAPER_KIND[kind] || 'Документ';
+            const state = String(row['status'] ?? '');
+            return (
+              <li key={key} className="papers__row">
+                <AppIcon name="doc" size={18} />
+                <span className="papers__title">{title}</span>
+                {file && id ? (
+                  <a className="link link--go"
+                     href={api.employeeDocumentUrl(id, key)}
+                     target="_blank" rel="noreferrer">
+                    Открыть
+                    <AppIcon name="arrow" size={16} />
+                  </a>
+                ) : (
+                  <span className="muted">{PAPER_STATE[state] ?? state}</span>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
   );
 }
 
@@ -275,8 +369,13 @@ function Overview({ id, person, zone, rights, onGo, onChanged }: {
               <Fact label="Телефон" value={text(person, 'phone')} />
               <Fact label="Рабочая почта" value={text(person, 'corporate_email')} />
               <Fact label="Табельный номер" value={text(person, 'employee_number')} />
+              <Fact label="Пол" value={GENDER[text(person, 'gender') ?? ''] ?? null} />
+              <Fact label="Семейное положение"
+                    value={MARITAL[text(person, 'marital_status') ?? ''] ?? null} />
             </dl>
           </section>
+
+          <Papers person={person} />
 
           <section className="panel">
             <h3 className="panel__title">Последние заявки</h3>
@@ -340,7 +439,7 @@ function Overview({ id, person, zone, rights, onGo, onChanged }: {
  * превращается в кнопку, которая ничего не делает.
  */
 function Tile({ icon, title, note, value, hint, onGo }: {
-  icon: IconName;
+  icon: AppIconName;
   title: string;
   note: string;
   value: string;
@@ -350,7 +449,7 @@ function Tile({ icon, title, note, value, hint, onGo }: {
   const body = (
     <>
       <span className="metric__head">
-        <Icon name={icon} size={16} />
+        <AppIcon name={icon} size={16} />
         <span>{title}</span>
       </span>
       <span className="metric__value">{value}</span>
@@ -415,311 +514,6 @@ function TelegramBlock({ id, block, onChanged }: {
     </div>
   );
 }
-
-// --- вкладка «Посещаемость» --------------------------------------------------
-
-function Attendance({ id, rights, zone }: {
-  id: string; rights: Rights; zone: string;
-}) {
-  const month = useMemo(() => currentMonth(), []);
-  const [first, setFirst] = useState(month.first);
-  const [last, setLast] = useState(month.last);
-  const [state, setState] = useState('');
-  const [picked, setPicked] = useState<string | null>(null);
-
-  const [journal, reloadJournal] = useBlock(
-    (signal) => api.attendanceDaily(
-      { employee_id: id, date_from: first, date_to: last }, signal,
-    ),
-    `journal|${id}|${first}|${last}`,
-    rights.attendance,
-  );
-
-  if (!rights.attendance) {
-    return (
-      <p className="empty empty--bad">
-        Нет права на посещаемость. Это отдельное разрешение —
-        попросите <span className="mono">attendance.read</span>.
-      </p>
-    );
-  }
-
-  const report = journal.state === 'ready' ? journal.data : null;
-  const rows = (report?.days ?? []).filter(
-    (row) => !state || row.state === state,
-  );
-
-  return (
-    <>
-      <div className="toolbar toolbar--thin">
-        <label className="pick">
-          <span className="muted">С</span>
-          <input type="date" value={first} aria-label="Начало периода"
-                 onChange={(event) => setFirst(event.target.value)} />
-        </label>
-        <label className="pick">
-          <span className="muted">по</span>
-          <input type="date" value={last} aria-label="Конец периода"
-                 onChange={(event) => setLast(event.target.value)} />
-        </label>
-        <label className="pick">
-          <select value={state} aria-label="Состояние"
-                  onChange={(event) => setState(event.target.value)}>
-            <option value="">Все состояния</option>
-            <option value="IN_OFFICE">В офисе</option>
-            <option value="LEFT">Ушёл</option>
-            <option value="NOT_COME">Нет отметки</option>
-            <option value="DAY_OFF">Выходной</option>
-            <option value="NO_SCHEDULE">Без графика</option>
-            <option value="VACATION">Отпуск</option>
-            <option value="SICK_LEAVE">Больничный</option>
-          </select>
-        </label>
-        {rights.export && (
-          <Link className="btn"
-                to={`/reports?kind=sessions&employee_id=${id}&date_from=${first}&date_to=${last}`}>
-            Выгрузка
-          </Link>
-        )}
-      </div>
-
-      {journal.state === 'loading' && (
-        <p className="empty" role="status">Считаем журнал…</p>
-      )}
-      {journal.state === 'error' && (
-        <p className="empty empty--bad">
-          Не удалось получить журнал.{' '}
-          <button type="button" className="link" onClick={reloadJournal}>
-            Повторить
-          </button>
-        </p>
-      )}
-
-      {report && (
-        <>
-          {report.note && <p className="note note--dim">{report.note}</p>}
-
-          <ul className="cards cards--four" aria-label="Показатели за период">
-            {/* Без перехода: это итог периода, показанного тут же.
-                Кнопка, ведущая на саму себя, обещала бы действие. */}
-            <Tile icon="clock" title="Время в офисе" note="За весь период"
-                  value={duration(report.totals.seconds)} />
-            <Tile icon="check" title="Дней с отметками" note="За весь период"
-                  value={String(report.totals.days_with_marks)}
-                  hint={`рабочих ${report.totals.working_days}`} />
-            <Tile icon="late" title="Опозданий" note="Сверх допуска графика"
-                  value={String(report.totals.late_days)}
-                  {...(report.totals.late_minutes
-                    ? { hint: `${report.totals.late_minutes} мин` } : {})} />
-            <Tile icon="alert" title="Незакрытых сессий"
-                  note="Без отметки выхода"
-                  value={String(report.totals.open_sessions)} />
-          </ul>
-
-          <div className="split split--open">
-            <section className="panel panel--list">
-              <div className="scroller">
-                <table className="grid-table" aria-label="Журнал по дням">
-                  <thead>
-                    <tr>
-                      <th scope="col">Дата</th>
-                      <th scope="col">Первый вход</th>
-                      <th scope="col">Последний выход</th>
-                      <th scope="col">В офисе</th>
-                      <th scope="col">Сессий</th>
-                      <th scope="col">Состояние</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((row) => (
-                      <tr key={row.day}
-                          className={picked === row.day ? 'row--on' : undefined}>
-                        <td>
-                          <button type="button" className="linky"
-                                  onClick={() => setPicked(row.day)}>
-                            {row.day}
-                          </button>
-                        </td>
-                        <td>{row.first_entry_at
-                          ? clockOnDay(row.first_entry_at, row.timezone, row.day) : '—'}</td>
-                        <td>{row.last_exit_at
-                          ? clockOnDay(row.last_exit_at, row.timezone, row.day)
-                          : row.open_session_id ? 'открыта' : '—'}</td>
-                        <td>{duration(row.seconds)}</td>
-                        <td>{row.sessions || '—'}</td>
-                        <td>{dayState(row)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              {rows.length === 0 && (
-                <p className="empty">За выбранный период и состояние строк нет.</p>
-              )}
-              <HoursChart rows={report.days} today={todayIso()} />
-            </section>
-
-            <section className="panel panel--view">
-              {picked ? (
-                <DayDetails id={id} day={picked}
-                            row={report.days.find((r) => r.day === picked) ?? null}
-                            zone={zone} rights={rights}
-                            onClose={() => setPicked(null)} />
-              ) : (
-                <p className="empty">Выберите день, чтобы увидеть его отметки.</p>
-              )}
-            </section>
-          </div>
-        </>
-      )}
-    </>
-  );
-}
-
-/**
- * Компактный график часов по дням.
- *
- * Ноль и отсутствие данных различаются: у дня без отметок столбца нет
- * вовсе, а у дня с нулём — тонкая черта у основания. Будущие дни не
- * показываются пропусками, а сегодняшний помечен отдельно: он ещё
- * не кончился, и сравнивать его с полными днями нельзя.
- */
-function HoursChart({ rows, today }: { rows: api.DailyRow[]; today: string }) {
-  const shown = rows.filter((row) => row.day <= today);
-  const top = Math.max(1, ...shown.map((row) => row.seconds));
-  if (shown.length === 0) return null;
-  return (
-    <div className="spark" aria-label="Часы по дням">
-      {shown.map((row) => {
-        const height = Math.round((row.seconds / top) * 100);
-        const unfinished = row.day === today;
-        return (
-          <span key={row.day} className="spark__slot"
-                title={`${row.day} · ${duration(row.seconds)}${unfinished ? ' · день не закончен' : ''}`}>
-            <span className={`spark__bar${unfinished ? ' spark__bar--now' : ''}`}
-                  style={{ height: `${row.seconds > 0 ? Math.max(height, 2) : 0}%` }} />
-          </span>
-        );
-      })}
-    </div>
-  );
-}
-
-function DayDetails({ id, day, row, zone, rights, onClose }: {
-  id: string; day: string; row: api.DailyRow | null; zone: string;
-  rights: Rights; onClose: () => void;
-}) {
-  const [detail] = useBlock(
-    (signal) => Promise.all([
-      api.events({ employee_id: id, date_from: day, date_to: day, limit: '50' }, signal),
-      api.attendanceSessions({ employee_id: id, date_from: day, date_to: day, limit: '20' }, signal),
-    ]).then(([events, sessions]) => ({ events: events.items, sessions: sessions.items })),
-    `day|${id}|${day}`,
-  );
-
-  return (
-    <>
-      <div className="side-panel__head">
-        <h3 className="side-panel__title">{day}</h3>
-        <button type="button" className="nav" onClick={onClose} aria-label="Закрыть">
-          <Icon name="cross" size={16} />
-        </button>
-      </div>
-
-      {row && (
-        <dl className="facts">
-          <Fact label="Состояние" value={dayState(row)} />
-          <Fact label="Офис" value={row.office_name} />
-          <Fact label="Пояс дня" value={row.timezone} />
-          <Fact label="Время в офисе" value={duration(row.seconds)} />
-          <Fact label="Опоздание" value={lateness(row.late_minutes)} />
-          <Fact label="Начало по графику" value={row.scheduled_start} />
-        </dl>
-      )}
-      {row?.conflicting_marks && (
-        <p className="note note--dim">
-          В этот день есть и подтверждённое отсутствие, и отметки. Расхождение
-          разбирает человек — само оно не исчезнет.
-        </p>
-      )}
-
-      {detail.state === 'loading' && <p className="empty" role="status">Читаем отметки…</p>}
-      {detail.state === 'error' && (
-        <p className="empty empty--bad">Не удалось получить отметки дня.</p>
-      )}
-      {detail.state === 'ready' && (
-        <>
-          <h4 className="side-panel__label">Сессии</h4>
-          {detail.data.sessions.length === 0 ? (
-            <p className="muted">Сессий нет.</p>
-          ) : (
-            <ul className="marks">
-              {detail.data.sessions.map((session) => (
-                <li key={session.id} className="marks__line">
-                  <span className="marks__time">
-                    {clockOnDay(session.started_at, zone, day)} —{' '}
-                    {session.ended_at ? clockOnDay(session.ended_at, zone, day) : 'открыта'}
-                  </span>
-                  <span className="marks__what">{duration(session.duration_seconds)}</span>
-                  <span className="marks__where">{orDash(session.office_name)}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-
-          <h4 className="side-panel__label">Отметки</h4>
-          {detail.data.events.length === 0 ? (
-            <p className="muted">Событий нет.</p>
-          ) : (
-            <ul className="marks">
-              {detail.data.events.map((mark) => (
-                <li key={mark.id} className="marks__line">
-                  <span className="marks__time">
-                    {clockOnDay(mark.occurred_at, zone, day)}
-                  </span>
-                  <span className="marks__kind">
-                    {mark.event_type === 'ENTRY' ? 'Вход' : 'Выход'}
-                  </span>
-                  <span className="marks__what">
-                    {mark.source === 'MANUAL' ? 'Вручную' : mark.source}
-                  </span>
-                  <span className="marks__where">{orDash(mark.office_name)}</span>
-                  <span className="marks__check">
-                    {verification(mark)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-
-          <p className="field__hint">
-            Исправление отметки — это решение по заявке, а не правка события:
-            сырое событие не меняется никогда. Кадровик может добавить
-            недостающую отметку отдельным действием с обязательной причиной,
-            и она навсегда останется помеченной как ручная.
-          </p>
-          {rights.correct && (
-            <Link className="link" to={`/requests?kind=correction&employee_id=${id}`}>
-              Заявки на исправление →
-            </Link>
-          )}
-        </>
-      )}
-    </>
-  );
-}
-
-/** Что известно о проверке отметки. «Не проводилась» — честный ответ. */
-function verification(mark: api.EventRow): string {
-  const parts: string[] = [];
-  if (mark.verification_status) parts.push(mark.verification_status);
-  if (mark.inside_geofence === true) parts.push('в геозоне');
-  else if (mark.inside_geofence === false) parts.push('вне геозоны');
-  else parts.push('геопроверка не проводилась');
-  return parts.join(' · ');
-}
-
-// --- вкладка «График и назначения» -------------------------------------------
 
 function Schedule({ id }: { id: string }) {
   const [data, reload] = useBlock(
@@ -1078,7 +872,7 @@ function RequestDetails({ item, zone, rights, onClose, onDone }: {
           {item.kind === 'absence' ? 'Заявка на отсутствие' : 'Исправление отметки'}
         </h3>
         <button type="button" className="nav" onClick={onClose} aria-label="Закрыть">
-          <Icon name="cross" size={16} />
+          <AppIcon name="cross" size={16} />
         </button>
       </div>
 
@@ -1245,7 +1039,7 @@ function History({ id, rights, zone }: {
                 <h3 className="side-panel__title">{chosen.action}</h3>
                 <button type="button" className="nav" aria-label="Закрыть"
                         onClick={() => setPicked(null)}>
-                  <Icon name="cross" size={16} />
+                  <AppIcon name="cross" size={16} />
                 </button>
               </div>
               <dl className="facts">
@@ -1286,7 +1080,7 @@ function Diff({ before, after }: {
         <li key={key} className="marks__line">
           <span className="marks__kind">{key}</span>
           <span className="marks__what">{orDash(before?.[key])}</span>
-          <span className="marks__time">→ {orDash(after?.[key])}</span>
+          <span className="marks__time"><AppIcon name="arrow" size={16} /> {orDash(after?.[key])}</span>
         </li>
       ))}
     </ul>

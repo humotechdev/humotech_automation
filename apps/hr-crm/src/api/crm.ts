@@ -8,7 +8,7 @@
  * отвечает 301, а браузер теряет заголовки при переадресации.
  */
 
-import { request } from './client';
+import { apiUrl, request, upload } from './client';
 
 // --- дашборд ---------------------------------------------------------------
 
@@ -124,6 +124,11 @@ export type AbsenceRequestRow = {
   first_day: string | null;
   last_day: string | null;
   submitted_at: string | null;
+  /** Когда приняли решение. У ждущих заявок пусто. */
+  reviewed_at?: string | null;
+  /** Нужна ли справка по этому типу отсутствия. */
+  requires_document?: boolean;
+  documents?: { id: string; verification_status: string }[];
 };
 
 export const pendingAbsences = (signal?: AbortSignal) =>
@@ -132,9 +137,16 @@ export const pendingAbsences = (signal?: AbortSignal) =>
     signal ? { signal } : {},
   );
 
+/**
+ * Исправления отметок, ждущие решения.
+ *
+ * Статусы перечислены те, что есть у модели. Раньше здесь стоял
+ * `status=PENDING` — такого состояния у исправлений не бывает вовсе, и
+ * счётчик на главной всегда показывал ноль независимо от очереди.
+ */
 export const corrections = (signal?: AbortSignal) =>
   request<Items<{ id: string; status: string }>>(
-    '/attendance/corrections?status=PENDING',
+    '/attendance/corrections?status=SUBMITTED,IN_REVIEW',
     signal ? { signal } : {},
   );
 
@@ -143,14 +155,20 @@ export type Invitation = { id: string; status: string; employee_name?: string };
 export const invitations = (signal?: AbortSignal) =>
   request<Items<Invitation>>('/telegram/invitations/', signal ? { signal } : {});
 
+/**
+ * Обращение сотрудника, переданное кадровику.
+ *
+ * Поля — те, что действительно приходят с `/knowledge/escalations/`.
+ * Раньше тип описывал `employee_name` и `question`, которых в ответе нет
+ * вовсе: блок на главной молча показывал «Сотрудник» без имени и пустую
+ * строку вместо вопроса.
+ */
 export type Escalation = {
   id: string;
+  employee: { id: string; full_name: string; employee_number: string | null };
+  question_text: string;
   status?: string;
-  question?: string;
-  text?: string;
   created_at?: string;
-  employee_name?: string;
-  office_name?: string;
 };
 
 export const escalations = (signal?: AbortSignal) =>
@@ -203,6 +221,11 @@ export type EmployeeRow = {
   telegram_connected: boolean;
   /** Состояние привязки из самих привязок, а не из денормализованного флага. */
   telegram_state: string | null;
+  /** Имя в Telegram. `null` — привязки нет вовсе. */
+  telegram_username: string | null;
+  birth_date: string | null;
+  /** Есть ли снимок. Само изображение приходит отдельным адресом. */
+  photo: boolean;
   current_assignment: Assignment | null;
   current_schedule: Schedule | null;
 };
@@ -217,6 +240,10 @@ export type EmployeeQuery = {
   department_id?: string;
   limit?: string;
   cursor?: string;
+  /** Сдвиг для перехода на произвольную страницу. Курсор так не умеет:
+   *  он отвечает «дальше вот этой записи», и до тридцать второй страницы
+   *  им идут через тридцать одну. */
+  offset?: string;
 };
 
 export const employees = (params: EmployeeQuery, signal?: AbortSignal) =>
@@ -224,6 +251,30 @@ export const employees = (params: EmployeeQuery, signal?: AbortSignal) =>
 
 /** Счётчики вкладок. Состояние в параметры НЕ входит: иначе, выбрав
  *  «Активные», человек видел бы нули у остальных вкладок. */
+/** Короткая сводка о сотруднике — для аватаров в правой колонке. */
+export type EmployeeBrief = {
+  id: string;
+  full_name: string;
+  employee_number: string | null;
+  photo: boolean;
+};
+
+/** Новички, именинники и люди без графика — по всей видимой области. */
+export type EmployeeHighlights = {
+  recent_hires: number;
+  recent: EmployeeBrief[];
+  birthdays_today: number;
+  birthdays: EmployeeBrief[];
+  without_schedule: number;
+  unscheduled: EmployeeBrief[];
+};
+
+export const employeeHighlights = (params: EmployeeQuery, signal?: AbortSignal) =>
+  request<EmployeeHighlights>(
+    `/employees/highlights/${query({ ...params, status: undefined, cursor: undefined, limit: undefined, offset: undefined })}`,
+    signal ? { signal } : {},
+  );
+
 export const employeeCounts = (params: EmployeeQuery, signal?: AbortSignal) =>
   request<Record<string, number>>(
     `/employees/counts/${query({ ...params, status: undefined, cursor: undefined, limit: undefined })}`,
@@ -349,6 +400,8 @@ export type PresenceRow = {
   employee_number: string | null;
   office_id: string | null;
   office_name: string | null;
+  department_name: string | null;
+  position_name: string | null;
   state: string;
   first_entry_at: string | null;
   last_exit_at: string | null;
@@ -357,9 +410,22 @@ export type PresenceRow = {
   /** `null` — сравнивать не с чем, а не «не опоздал». */
   late_minutes: number | null;
   scheduled_start: string | null;
+  /** Конец смены по графику. Без него правый край шкалы дня не построить. */
+  scheduled_end: string | null;
   absence_code: string | null;
   absence_name: string | null;
   conflicting_marks: boolean;
+  /**
+   * Отрезки присутствия за день, по одному на сессию.
+   *
+   * Шкале рабочего дня их не собрать из первого входа и последнего
+   * выхода: обед между ними пропал бы, а полоса соврала бы про него.
+   * `ended_at: null` — сессия ещё открыта.
+   */
+  intervals: { started_at: string; ended_at: string | null; seconds: number }[];
+  /** Хотя бы одна отметка дня пришла из-за границы геозоны офиса.
+   *  Не нарушение само по себе — повод посмотреть. */
+  outside_geofence: boolean;
 };
 
 export type PresencePage = {
@@ -1471,3 +1537,119 @@ export const workSchedule = (id: string, signal?: AbortSignal) =>
     `/work-schedules/${id}/`,
     signal ? { signal } : {},
   );
+
+// --- приём сотрудника ------------------------------------------------------
+
+export type Position = { id: string; name: string; code?: string; status?: string };
+
+export const positions = (signal?: AbortSignal) =>
+  request<Cursored<Position>>('/positions/?limit=200', signal ? { signal } : {});
+
+export type ScheduleRow = {
+  id: string;
+  name: string;
+  timezone: string;
+  status: string;
+  weekly_minutes?: number;
+};
+
+export const workSchedules = (signal?: AbortSignal) =>
+  request<Cursored<ScheduleRow>>(
+    '/work-schedules/?status=ACTIVE&limit=200',
+    signal ? { signal } : {},
+  );
+
+/** Отделы одного офиса: состав отделов у офисов разный. */
+export const officeDepartments = (office_id: string, signal?: AbortSignal) =>
+  request<Cursored<Department>>(
+    `/departments/${query({ office_id, limit: '200' })}`,
+    signal ? { signal } : {},
+  );
+
+/** Файл, принятый сервером, но ещё ни к кому не привязанный. */
+export type AttachedFile = {
+  id: string;
+  name: string;
+  mime_type: string;
+  size_bytes: number;
+};
+
+/** Вид бумаги в чек-листе сотрудника. */
+export type EmployeeDocumentKind = 'IDENTITY' | 'CONTRACT' | 'HIRE_ORDER' | 'OTHER';
+
+/** Приложенная бумага в форме приёма: вид плюс уже загруженный файл. */
+export type EmployeeDocumentInput = {
+  kind: EmployeeDocumentKind;
+  file_id: string;
+  title?: string | null;
+};
+
+/**
+ * Отдать файл серверу до создания сотрудника.
+ *
+ * Размер и тип проверяет сервер: браузеру верить в этом нельзя, а
+ * второй набор правил в двух местах однажды разойдётся.
+ */
+export const uploadEmployeeFile = (
+  file: File,
+  purpose: 'photo' | 'document',
+  signal?: AbortSignal,
+) => {
+  const form = new FormData();
+  form.append('file', file);
+  form.append('purpose', purpose);
+  return upload<AttachedFile>('/employees/attachments/', form, signal);
+};
+
+/** Адрес фотографии. Открывается с cookie сессии, как и всё остальное. */
+export const employeePhotoUrl = (employeeId: string) =>
+  apiUrl(`/employees/${employeeId}/photo/`);
+
+/** Адрес приложенной бумаги. */
+export const employeeDocumentUrl = (employeeId: string, documentId: string) =>
+  apiUrl(`/employees/${employeeId}/documents/${documentId}/download/`);
+
+export type OnboardBody = {
+  idempotency_key: string;
+  last_name: string;
+  first_name: string;
+  middle_name?: string | null;
+  birth_date?: string | null;
+  pinfl: string;
+  phone: string;
+  corporate_email?: string | null;
+  telegram_username?: string | null;
+  hire_date: string;
+  region_id?: string | null;
+  office_id: string;
+  department_id: string;
+  position_id: string;
+  manager_employee_id?: string | null;
+  employment_type: string;
+  employment_status?: string;
+  schedule_id: string;
+  gender?: string | null;
+  marital_status?: string | null;
+  photo_file_id?: string | null;
+  documents?: EmployeeDocumentInput[];
+};
+
+export type Onboarded = {
+  employee: Record<string, unknown> & {
+    id: string;
+    employee_number: string;
+    full_name: string;
+  };
+  created: boolean;
+  schedule_assigned: boolean;
+  telegram: { state: string; link: string | null; message: string };
+  documents: { id: string; kind: string; title: string; status: string }[];
+};
+
+/**
+ * Приём сотрудника. Один адрес на всю операцию: карточка, назначение,
+ * график, документы и заготовка доступа к боту создаются вместе или не
+ * создаются вовсе.
+ */
+export const onboardEmployee = (body: OnboardBody) =>
+  request<Onboarded>('/employees/onboard/', { method: 'POST', body });

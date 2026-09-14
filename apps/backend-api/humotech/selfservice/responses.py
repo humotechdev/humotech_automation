@@ -48,6 +48,8 @@ class DaySerializer(serializers.Serializer):
     missed = serializers.BooleanField()
     absence_code = serializers.CharField(allow_null=True)
     absence_name = serializers.CharField(allow_null=True)
+    # Норма дня: 0 у выходного, null — графика на этот день нет.
+    norm_seconds = serializers.IntegerField(allow_null=True)
 
 
 class DayWithSessionsSerializer(DaySerializer):

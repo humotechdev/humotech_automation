@@ -16,7 +16,7 @@ import { useSearchParams } from 'react-router-dom';
 
 import * as api from '../api/crm';
 import { AppShell } from '../components/AppShell';
-import { Icon } from '../components/nav-icons';
+import { AppIcon } from '../components/AppIcon';
 import { AttendanceChart, toPoints } from '../components/AttendanceChart';
 import { Compare } from '../components/Compare';
 import {
@@ -149,7 +149,7 @@ export function AnalyticsPage() {
         <div className="head__filters">
           <div className="filters">
             <label className="pick pick--date">
-              <Icon name="calendar" size={16} />
+              <AppIcon name="calendar" size={16} />
               <span className="visually-hidden">Начало периода</span>
               <input type="date" value={from} aria-label="Начало периода"
                      onChange={(event) => patch({ date_from: event.target.value })} />
@@ -170,7 +170,7 @@ export function AnalyticsPage() {
             ))}
             <button type="button" className="pick pick--icon" aria-label="Обновить"
                     onClick={() => setAttempt((n) => n + 1)}>
-              <Icon name="refresh" size={16} />
+              <AppIcon name="refresh" size={16} />
             </button>
           </div>
           <p className="head__updated">
@@ -228,7 +228,7 @@ export function AnalyticsPage() {
         {can('reports.export') && (
           <button type="button" className="btn" disabled
                   title="Выгрузки аналитики в существующих отчётах пока нет">
-            <Icon name="report" size={16} />
+            <AppIcon name="report" size={16} />
             Экспорт
           </button>
         )}
@@ -335,7 +335,7 @@ export function AnalyticsPage() {
 
             <section className="panel">
               <h2 className="panel__title panel__title--row">
-                <Icon name="alert" size={18} /> Как считается явка
+                <AppIcon name="alert" size={18} /> Как считается явка
               </h2>
               <Section block={now} name="расчёт">
                 {(data) => {
@@ -360,7 +360,7 @@ export function AnalyticsPage() {
                       <p className="side-panel__text muted">{data.coverage.note}</p>
                       <a className="linky"
                          href={`/attendance?date=${to}${office ? `&office_id=${office}` : ''}`}>
-                        Открыть исходные записи →
+                        Открыть исходные записи <AppIcon name="arrow" size={16} />
                       </a>
                     </>
                   );
@@ -517,13 +517,13 @@ const sum = (
 ) => rows.reduce((total, row) => total + (row.current.totals[field] ?? 0), 0);
 
 function Card({ icon, title, value, note, delta }: {
-  icon: Parameters<typeof Icon>[0]['name'];
+  icon: Parameters<typeof AppIcon>[0]['name'];
   title: string; value: string; note: string; delta: number | null;
 }) {
   return (
     <li className="metric">
       <p className="metric__head">
-        <Icon name={icon} size={17} />
+        <AppIcon name={icon} size={16} />
         <span>{title}</span>
       </p>
       <p className="metric__value">{value}</p>

@@ -161,9 +161,10 @@ def test_business_schema_has_expected_shape():
     """
     snapshot = dump(_django_url())
     # 44 таблицы перенесены с Alembic, + telegram_link_invitations,
-    # + qr_display_devices, + export_jobs, + notification_attempts.
-    assert len(snapshot["tables"]) == 48, (
-        f"бизнес-таблиц {len(snapshot['tables'])}, ожидалось 48"
+    # + qr_display_devices, + export_jobs, + notification_attempts,
+    # + employee_documents, + employee_onboarding_keys.
+    assert len(snapshot["tables"]) == 50, (
+        f"бизнес-таблиц {len(snapshot['tables'])}, ожидалось 50"
     )
 
     counts = {"c": 0, "f": 0, "u": 0, "x": 0}
@@ -196,9 +197,23 @@ def test_business_schema_has_expected_shape():
     #   FK    137 + 1 — ссылка на уведомление;
     #   UNIQUE  21 + 0 — двух одинаковых попыток не бывает по построению:
     #                    номер выдаётся при записи.
-    assert counts["c"] == 103, f"CHECK: {counts['c']}, ожидалось 103"
-    assert counts["f"] == 138, f"FOREIGN KEY: {counts['f']}, ожидалось 138"
-    assert counts["u"] == 21, f"UNIQUE: {counts['u']}, ожидалось 21"
+    # Прибавка приёма сотрудника:
+    #   CHECK 103 + 3 — вид документа, его состояние и «у загруженного
+    #                  есть файл»;
+    #   FK    138 + 6 — по три у чек-листа документов и у ключа приёма;
+    #   UNIQUE 21 + 1 — ключ идемпотентности. Два других новых ключа
+    #                  (ПИНФЛ и вид документа) частичные — значит, индексы.
+    # Прибавка анкетных полей и фотографии:
+    #   CHECK 106 + 2 — пол и семейное положение. Оба допускают NULL:
+    #                  у заведённых раньше сотрудников значения нет, и
+    #                  ограничение обязано это разрешать.
+    #   FK    144 + 1 — фотография ссылается на файл. Отдельной таблицы
+    #                  под неё нет: это обычное вложение приватного
+    #                  хранилища, как и справка о болезни.
+    #   UNIQUE 22 + 0 — ни пол, ни фотография уникальными не бывают.
+    assert counts["c"] == 108, f"CHECK: {counts['c']}, ожидалось 108"
+    assert counts["f"] == 145, f"FOREIGN KEY: {counts['f']}, ожидалось 145"
+    assert counts["u"] == 22, f"UNIQUE: {counts['u']}, ожидалось 22"
     assert counts["x"] == 2, f"EXCLUDE: {counts['x']}, ожидалось 2"
     assert {"btree_gist", "vector"} <= set(snapshot["extensions"])
 
@@ -223,7 +238,8 @@ def test_every_foreign_key_keeps_its_on_delete_action():
         )
         rows = cursor.fetchall()
 
-    assert len(rows) == 138, f"внешних ключей {len(rows)}, ожидалось 138"
+    # +1 — фотография сотрудника (employees/0005), RESTRICT.
+    assert len(rows) == 145, f"внешних ключей {len(rows)}, ожидалось 145"
 
     # 'a' = NO ACTION: значит, действие не задано
     without_action = [f"{t}.{n}" for t, n, kind, _ in rows if kind == "a"]
@@ -245,6 +261,11 @@ def test_every_foreign_key_keeps_its_on_delete_action():
     # 113 + 2 — организация и автор у задания на выгрузку.
     # 115 + 1 — попытка отправки ссылается на уведомление: удалить строку,
     # за которой стоят состоявшиеся отправки, нельзя.
-    assert actions["r"] == 116, f"RESTRICT: {actions['r']}, ожидалось 116"
+    # 116 + 6 — ключи чек-листа документов и ключа приёма. Все RESTRICT:
+    # чек-лист — часть кадровой истории, а ключ — единственное
+    # доказательство того, что этот приём уже состоялся.
+    # 122 + 1 — фотография сотрудника (employees/0005). Тоже RESTRICT:
+    # файл, на который смотрит живая карточка, удаляет сервис, а не каскад.
+    assert actions["r"] == 123, f"RESTRICT: {actions['r']}, ожидалось 123"
     assert actions["n"] == 16, f"SET NULL: {actions['n']}, ожидалось 16"
     assert actions["c"] == 6, f"CASCADE: {actions['c']}, ожидалось 6"

@@ -26,47 +26,82 @@ export type Block<T> =
 
 export const LOADING: Block<never> = { state: 'loading' };
 
+/** Что происходит с блоком прямо сейчас, поверх уже показанных данных. */
+export type Refresh = {
+  /** Идёт запрос. Данные при этом на экране остаются. */
+  busy: boolean;
+  /** Последний запрос не удался, но прежние данные ещё показываются. */
+  failed: boolean;
+};
+
 /**
  * Один блок. `load` получает `AbortSignal` и обязан его передать дальше.
  *
  * `key` — строка, описывающая текущие фильтры: её смена начинает новый
  * запрос и отменяет прежний.
+ *
+ * **Прежние данные при новом запросе не выбрасываются.** Это не мелочь
+ * удобства: раньше здесь стоял `setBlock(LOADING)` перед каждой
+ * загрузкой, и на смену периода график исчезал со страницы вместе со
+ * своим контейнером. Панель схлопывалась с 308 пикселей до 123, всё
+ * ниже и правее прыгало вверх и обратно — и выглядело это так, будто
+ * перезагружается вся страница, хотя запрашивался только график.
+ *
+ * Теперь на экране остаётся последнее удачное состояние, а о том, что
+ * идёт обновление, говорит `Refresh.busy`. Пустой вид показывается
+ * только пока данных не было ни разу.
  */
 export function useBlock<T>(
   load: (signal: AbortSignal) => Promise<T>,
   key: string,
   enabled = true,
-): [Block<T>, () => void] {
+): [Block<T>, () => void, Refresh] {
   const [block, setBlock] = useState<Block<T>>(LOADING);
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const reload = useCallback(() => setAttempt((n) => n + 1), []);
 
   useEffect(() => {
     if (!enabled) return;
     const stop = new AbortController();
-    setBlock(LOADING);
+    setBusy(true);
+    setFailed(false);
+    setBlock((was) => (was.state === 'ready' ? was : LOADING));
     load(stop.signal)
       .then((data) => {
-        if (!stop.signal.aborted) setBlock({ state: 'ready', data });
+        if (stop.signal.aborted) return;
+        setBlock({ state: 'ready', data });
+        setBusy(false);
       })
       .catch((error) => {
         // Отменённый запрос — не ошибка: его результат просто больше
-        // никому не нужен, и показывать по нему нечего.
+        // никому не нужен, и показывать по нему нечего. Отмена же
+        // защищает от гонки: ответ прошлого периода приходит с уже
+        // прерванным сигналом и до состояния не доходит.
         if (stop.signal.aborted) return;
+        setBusy(false);
         if (error instanceof ApiFailure && error.kind === 'session') {
           setBlock({ state: 'denied' });
           return;
         }
-        setBlock({
-          state: 'error',
-          kind: error instanceof ApiFailure ? error.kind : 'server',
-        });
+        setFailed(true);
+        // Неудача не стирает то, что уже показано: человек продолжает
+        // видеть прошлые числа, а рядом — предложение повторить.
+        setBlock((was) =>
+          was.state === 'ready'
+            ? was
+            : {
+                state: 'error',
+                kind: error instanceof ApiFailure ? error.kind : 'server',
+              },
+        );
       });
     return () => stop.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, attempt, enabled]);
 
-  return [block, reload];
+  return [block, reload, { busy, failed }];
 }
 
 /** Сегодняшняя дата в виде ГГГГ-ММ-ДД по часам пользователя. */

@@ -17,7 +17,7 @@
 import { useState } from 'react';
 
 import * as api from '../api/crm';
-import { Icon } from './nav-icons';
+import { AppIcon } from './AppIcon';
 import { initials } from './AppShell';
 import { messageFor } from '../api/errors';
 import { longDate, useBlock, type Block } from '../features/dashboard/data';
@@ -46,13 +46,15 @@ export function OfficeCard({ row, canManage, onClose, onChanged }: Props) {
     <aside className="panel side-panel" aria-label="Карточка офиса">
       <header className="side-panel__head">
         <span className="avatar avatar--square">
-          <Icon name="building" size={18} />
+          <AppIcon name="building" size={18} />
         </span>
         <span className="side-panel__title side-panel__title--stack">
           <span>{office.name}</span>
           <span className="who__id">{office.region_name ?? '—'}</span>
         </span>
-        <button type="button" className="tool" aria-label="Закрыть" onClick={onClose}>✕</button>
+        <button type="button" className="tool" aria-label="Закрыть" onClick={onClose}>
+          <AppIcon name="close" size={16} />
+        </button>
       </header>
 
       <div className="side-panel__meta">
@@ -134,7 +136,7 @@ function Overview({ row, canManage, onChanged }: {
       </dl>
 
       <div className="geo">
-        <Icon name="pin" size={18} />
+        <AppIcon name="pin" size={18} />
         <span className="geo__text">
           <span className="geo__head">
             Геозона
@@ -162,7 +164,7 @@ function Overview({ row, canManage, onChanged }: {
         <ul className="queue">
           {row.points.slice(0, 3).map((point) => (
             <li key={point.id} className="queue__row">
-              <Icon name="database" size={16} />
+              <AppIcon name="database" size={16} />
               <span className="queue__text">
                 <span className="queue__title">{point.name}</span>
                 <span className="queue__note">
@@ -177,12 +179,12 @@ function Overview({ row, canManage, onChanged }: {
 
       {canManage && (
         <button type="button" className="btn btn--dark" onClick={() => setEditing(true)}>
-          <Icon name="settings" size={16} />
+          <AppIcon name="settings" size={16} />
           Редактировать офис
         </button>
       )}
       <a className="linky" href={`/attendance?office_id=${office.id}`}>
-        Открыть посещаемость →
+        Открыть посещаемость <AppIcon name="arrow" size={16} />
       </a>
     </>
   );
@@ -327,7 +329,7 @@ function Staff({ officeId }: { officeId: string }) {
   return (
     <>
       <label className="find find--wide">
-        <Icon name="search" size={16} />
+        <AppIcon name="search" size={16} />
         <input type="search" value={search} placeholder="Поиск сотрудника"
                aria-label="Поиск сотрудника офиса"
                onChange={(event) => { setSearch(event.target.value); setCursor(''); }} />
@@ -381,7 +383,7 @@ function Points({ row }: { row: OfficeStats }) {
   return (
     <>
       <div className="geo">
-        <Icon name="pin" size={18} />
+        <AppIcon name="pin" size={18} />
         <span className="geo__text">
           <span className="geo__head">
             Геозона
@@ -410,7 +412,7 @@ function Points({ row }: { row: OfficeStats }) {
                 : undefined;
             return (
               <li key={point.id} className="queue__row">
-                <Icon name="database" size={16} />
+                <AppIcon name="database" size={16} />
                 <span className="queue__text">
                   <span className="queue__title">{point.name}</span>
                   <span className="queue__note">

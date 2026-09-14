@@ -22,7 +22,7 @@ import * as api from '../api/crm';
 import { ApiFailure, messageFor } from '../api/errors';
 import { AppShell } from '../components/AppShell';
 import { AuditTab } from '../components/AuditTab';
-import { Icon } from '../components/nav-icons';
+import { AppIcon } from '../components/AppIcon';
 import { RolesTab } from '../components/RolesTab';
 import {
   Overlay,
@@ -227,7 +227,7 @@ export function AdminPage() {
           rights.users && tab === 'users' ? (
             <button type="button" className="btn btn--dark"
                     onClick={() => setCreating(true)}>
-              <Icon name="plus" size={16} />
+              <AppIcon name="plus" size={16} />
               Добавить пользователя
             </button>
           ) : null
@@ -298,7 +298,7 @@ export function AdminPage() {
             <section className="panel panel--list" aria-label="Учётные записи">
               <div className="toolbar">
                 <label className="find find--wide">
-                  <Icon name="search" size={16} />
+                  <AppIcon name="search" size={16} />
                   <input type="search" value={search}
                          placeholder="Поиск по имени или логину"
                          aria-label="Поиск по имени или логину"
@@ -426,14 +426,14 @@ function Header({ demo, action }: { demo: boolean; action?: React.ReactNode }) {
 }
 
 function Tile({ icon, title, value, note }: {
-  icon: Parameters<typeof Icon>[0]['name'];
+  icon: Parameters<typeof AppIcon>[0]['name'];
   title: string;
   value: number | undefined;
   note?: string | undefined;
 }) {
   return (
     <li className="tile">
-      <span className="tile__icon" aria-hidden="true"><Icon name={icon} size={20} /></span>
+      <span className="tile__icon" aria-hidden="true"><AppIcon name={icon} size={20} /></span>
       <span className="tile__text">
         <span className="tile__title">{title}</span>
         {/* Пока сводка не пришла — прочерк, а не ноль: ноль означал бы,
@@ -547,7 +547,7 @@ function UserTable({ page, counts, search, filtered, picked, onPick, filters }: 
                     <button type="button" className="tool tool--ghost"
                             aria-label={`Открыть ${userTitle(user)}`}
                             onClick={() => onPick(user.id)}>
-                      <Icon name="arrow" size={16} />
+                      <AppIcon name="arrow" size={16} />
                     </button>
                   </td>
                 </tr>
@@ -567,7 +567,7 @@ function UserTable({ page, counts, search, filtered, picked, onPick, filters }: 
             </button>
           )}
           <p className="sheet__hint">
-            <Icon name="alert" size={14} /> Учётные записи создают администраторы.
+            <AppIcon name="alert" size={16} /> Учётные записи создают администраторы.
           </p>
         </div>
       </div>

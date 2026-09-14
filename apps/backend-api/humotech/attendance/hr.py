@@ -85,6 +85,20 @@ PRESENCE_STATES = (
 
 
 @dataclass(frozen=True)
+class Interval:
+    """Один отрезок присутствия: вошёл и вышел.
+
+    `ended_at is None` — сессия ещё открыта, человек в офисе сейчас.
+    Подставлять вместо неё текущее время нельзя: «сейчас» у сервера и
+    у браузера разное, и конец отрезка стал бы плавающим.
+    """
+
+    started_at: datetime
+    ended_at: datetime | None
+    seconds: int
+
+
+@dataclass(frozen=True)
 class PresenceRow:
     """Один человек на выбранный день."""
 
@@ -107,12 +121,27 @@ class PresenceRow:
     # пришёл ровно вовремя, а это другое утверждение.
     late_minutes: int | None
     scheduled_start: time | None
+    # Конец смены по графику. Нужен шкале рабочего дня: без него её
+    # правый край пришлось бы выдумывать.
+    scheduled_end: time | None
 
     absence_code: str | None
     absence_name: str | None
     # Отметка есть, хотя человек числится отсутствующим. Не ошибка сама
     # по себе — повод посмотреть.
     conflicting_marks: bool
+
+    # Отрезки присутствия за день, по одному на сессию, по возрастанию
+    # времени. Нужны шкале рабочего дня: из первого входа и последнего
+    # выхода обед не восстановить, а сплошная полоса между ними соврала
+    # бы про него. Отдельного запроса не стоят — сессии дня уже прочитаны.
+    intervals: tuple[Interval, ...] = ()
+
+    # Хотя бы одна отметка дня пришла из-за пределов геозоны офиса. Не
+    # нарушение само по себе: человек мог отметиться у соседнего входа
+    # или с неточной геолокацией. Повод посмотреть — и это ровно то,
+    # что показывает очередь «требует внимания».
+    outside_geofence: bool = False
 
 
 @dataclass(frozen=True)
@@ -357,6 +386,7 @@ class AttendanceHrService(BaseService):
                     "open_session_id": row.open_session_id,
                     "late_minutes": row.late_minutes,
                     "scheduled_start": row.scheduled_start,
+                    "scheduled_end": row.scheduled_end,
                     "absence_code": row.absence_code,
                     "absence_name": row.absence_name,
                     # Отметки в день подтверждённого отсутствия — не норма,
@@ -531,7 +561,11 @@ class AttendanceHrService(BaseService):
         ).select_related("employee", "attendance_session", "reviewed_by_user")
 
         if status:
-            queryset = queryset.filter(status=status)
+            # Несколько статусов через запятую, как в общей очереди заявок.
+            # Одно значение продолжает работать: строка без запятых даёт
+            # список из одного элемента.
+            codes = [code for code in status.split(",") if code]
+            queryset = queryset.filter(status__in=codes)
         if employee_id:
             queryset = queryset.filter(employee_id=employee_id)
 
@@ -874,6 +908,10 @@ class AttendanceHrService(BaseService):
                 started_at__lt=end,
             )
             .exclude(status="INVALID")
+            # События входа и выхода нужны составу смены: по ним видно,
+            # была ли отметка внутри геозоны. Они берутся тем же запросом,
+            # а не отдельным обходом на каждую строку.
+            .select_related("entry_event", "exit_event")
             .order_by("started_at")
         )
         for row in rows:
@@ -916,8 +954,8 @@ class AttendanceHrService(BaseService):
         *,
         organization_id: uuid.UUID,
         office_ids: list[uuid.UUID],
-    ) -> tuple[dict[uuid.UUID, tuple[time | None, bool, int]], dict]:
-        """Начало смены, признак рабочего дня и допустимое опоздание — по одному запросу на всех.
+    ) -> tuple[dict[uuid.UUID, tuple[time | None, time | None, bool, int]], dict]:
+        """Границы смены, признак рабочего дня и допустимое опоздание — по одному запросу на всех.
 
         Значение `(None, False)` означает «график есть, день нерабочий»;
         отсутствие ключа — «графика нет вовсе». Это разные вещи: во втором
@@ -948,7 +986,7 @@ class AttendanceHrService(BaseService):
         for row in sorted(calendar, key=lambda r: r.office_id is not None):
             exceptions[row.office_id] = row.is_working_day
 
-        result: dict[uuid.UUID, tuple[time | None, bool, int]] = {}
+        result: dict[uuid.UUID, tuple[time | None, time | None, bool, int]] = {}
         for row in rows:
             if row.employee_id in result:
                 continue  # берём самое позднее действующее назначение
@@ -959,6 +997,7 @@ class AttendanceHrService(BaseService):
             working = bool(match and match.is_working_day)
             result[row.employee_id] = (
                 match.start_time if match and working else None,
+                match.end_time if match and working else None,
                 working,
                 row.schedule.late_grace_minutes or 0,
             )
@@ -972,7 +1011,7 @@ class AttendanceHrService(BaseService):
         tz,
         sessions: list[AttendanceSession],
         absence: EmployeeAbsence | None,
-        schedule: tuple[time | None, bool, int] | None,
+        schedule: tuple[time | None, time | None, bool, int] | None,
         calendar: dict,
     ) -> PresenceRow:
         employee = assignment.employee
@@ -986,8 +1025,8 @@ class AttendanceHrService(BaseService):
                 last_exit = candidate.ended_at
         seconds = sum(s.duration_seconds or 0 for s in sessions)
 
-        scheduled_start, is_working, grace_minutes = (
-            schedule or (None, False, 0)
+        scheduled_start, scheduled_end, is_working, grace_minutes = (
+            schedule or (None, None, False, 0)
         )
         has_schedule = schedule is not None
         # Исключение календаря сильнее графика: в праздник не приходят даже
@@ -1036,9 +1075,23 @@ class AttendanceHrService(BaseService):
             open_session_id=open_session.id if open_session else None,
             late_minutes=late_minutes,
             scheduled_start=scheduled_start,
+            scheduled_end=scheduled_end,
             absence_code=absence_code,
             absence_name=absence_name,
             conflicting_marks=bool(absence and sessions),
+            intervals=tuple(
+                Interval(
+                    started_at=one.started_at,
+                    ended_at=one.ended_at,
+                    seconds=one.duration_seconds or 0,
+                )
+                for one in sessions
+            ),
+            outside_geofence=any(
+                event is not None and event.inside_geofence is False
+                for one in sessions
+                for event in (one.entry_event, one.exit_event)
+            ),
         )
 
     def _apply_correction(self, request: AttendanceCorrectionRequest) -> dict:

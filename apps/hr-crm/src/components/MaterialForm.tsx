@@ -21,7 +21,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 import * as api from '../api/crm';
 import { ApiFailure, messageFor } from '../api/errors';
-import { Icon } from './nav-icons';
+import { AppIcon } from './AppIcon';
 import { SOURCE_TYPE } from '../features/knowledge/model';
 
 type Scope = { regions: api.Region[]; offices: api.Office[] };
@@ -190,7 +190,7 @@ export function MaterialForm({
             )}
           </span>
           <button type="button" className="tool" aria-label="Закрыть форму" onClick={close}>
-            <Icon name="cross" size={18} />
+            <AppIcon name="cross" size={18} />
           </button>
         </header>
 

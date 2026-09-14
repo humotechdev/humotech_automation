@@ -13,7 +13,7 @@
  */
 
 import type { SettingSection } from '../../api/crm';
-import type { IconName } from '../../components/nav-icons';
+import type { AppIconName } from '../../components/AppIcon';
 
 /** Значения группы: то, что показано в полях и что уйдёт на сервер. */
 export type Draft = Record<string, unknown>;
@@ -26,7 +26,7 @@ export type Tab =
   | 'integrations'
   | 'me';
 
-export const TABS: Array<{ key: Tab; title: string; icon: IconName }> = [
+export const TABS: Array<{ key: Tab; title: string; icon: AppIconName }> = [
   { key: 'org', title: 'Организация', icon: 'building' },
   { key: 'attendance', title: 'Учёт посещаемости', icon: 'clock' },
   { key: 'requests', title: 'Заявки и документы', icon: 'doc' },
@@ -35,7 +35,7 @@ export const TABS: Array<{ key: Tab; title: string; icon: IconName }> = [
 ];
 
 /** Личный раздел стоит за разделителем: он не про организацию. */
-export const PERSONAL: { key: Tab; title: string; icon: IconName } = {
+export const PERSONAL: { key: Tab; title: string; icon: AppIconName } = {
   key: 'me', title: 'Мои предпочтения', icon: 'users',
 };
 
@@ -159,7 +159,9 @@ export function stateTitle(state: string): string {
 }
 
 /**
- * Демонстрационный режим. Бейдж «Демо-данные» показывается только здесь.
+ * Демонстрационный режим. Отсюда бейдж «Демо-данные» берут
+ * «Администрирование» и «Настройки» — страницы, с которых меняют
+ * организацию. На обзорной главной его нет: там он ничего не защищает.
  *
  * Признак берётся из сборки, а не угадывается по данным: организация с
  * кодом DEMO в бою — обычная организация, и объявлять её ненастоящей

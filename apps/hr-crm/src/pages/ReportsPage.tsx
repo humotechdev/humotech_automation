@@ -21,7 +21,7 @@ import { useSearchParams } from 'react-router-dom';
 import * as api from '../api/crm';
 import { ApiFailure, messageFor } from '../api/errors';
 import { AppShell } from '../components/AppShell';
-import { Icon, type IconName } from '../components/nav-icons';
+import { AppIcon, type AppIconName } from '../components/AppIcon';
 import { formatTime, shift, today, useBlock } from '../features/dashboard/data';
 import { dayTitle, momentTitle, sizeTitle, spanTitle } from '../features/reports/format';
 import {
@@ -31,7 +31,7 @@ import {
 import { useHistory } from '../features/reports/queue';
 import { useSession } from '../features/auth/session';
 
-const ICONS: Record<Kind['icon'], IconName> = {
+const ICONS: Record<Kind['icon'], AppIconName> = {
   calendar: 'calendar',
   clock: 'clock',
   late: 'late',
@@ -39,7 +39,7 @@ const ICONS: Record<Kind['icon'], IconName> = {
   users: 'users',
 };
 
-const STATUS_ICON: Record<string, IconName> = {
+const STATUS_ICON: Record<string, AppIconName> = {
   QUEUED: 'clock',
   RUNNING: 'refresh',
   SUCCEEDED: 'check',
@@ -229,7 +229,7 @@ export function ReportsPage() {
               сетевой сбой в пустую таблицу. */}
           <button type="button" className="tool" aria-label="Обновить историю"
                   onClick={refresh}>
-            <Icon name="refresh" size={18} />
+            <AppIcon name="refresh" size={18} />
           </button>
           <p className="head__stamp">
             {/* Время двигается только после удачного ответа. */}
@@ -262,7 +262,7 @@ export function ReportsPage() {
               onClick={() => setKind(item.key)}
             >
               <span className="kind__icon" aria-hidden="true">
-                <Icon name={ICONS[item.icon]} size={19} />
+                <AppIcon name={ICONS[item.icon]} size={18} />
               </span>
               <span className="kind__text">
                 <span className="kind__title">{item.title}</span>
@@ -272,7 +272,7 @@ export function ReportsPage() {
               </span>
               {on && (
                 <span className="kind__mark" aria-hidden="true">
-                  <Icon name="check" size={18} />
+                  <AppIcon name="check" size={18} />
                 </span>
               )}
             </button>
@@ -289,7 +289,7 @@ export function ReportsPage() {
               <label className="field field--wide">
                 <span className="field__label">Период</span>
                 <span className="field__box">
-                  <Icon name="calendar" size={16} />
+                  <AppIcon name="calendar" size={16} />
                   <input type="date" value={from} aria-label="Начало периода"
                          onChange={(event) => setFrom(event.target.value)} />
                   <span aria-hidden="true">—</span>
@@ -315,7 +315,7 @@ export function ReportsPage() {
               <label className="field field--wide">
                 <span className="field__label">Состав</span>
                 <span className="field__box field__box--static">
-                  <Icon name="users" size={16} />
+                  <AppIcon name="users" size={16} />
                   Текущий состав на {dayTitle(today())}
                 </span>
                 {/* Исторического среза «на дату» у списка сотрудников нет:
@@ -370,20 +370,20 @@ export function ReportsPage() {
               </div>
             </div>
             <p className="setup__zone">
-              <Icon name="calendar" size={15} />
+              <AppIcon name="calendar" size={16} />
               {zoneNote(chosenKind, Boolean(office))}
             </p>
           </div>
 
           <p className="setup__hint">
-            <Icon name="alert" size={15} />
+            <AppIcon name="alert" size={16} />
             Большие отчёты готовятся в фоне — можно продолжить работу.
           </p>
         </div>
 
         <aside className="setup__side">
           <span className="setup__badge" aria-hidden="true">
-            <Icon name="download" size={22} />
+            <AppIcon name="download" size={20} />
           </span>
           <p className="setup__ready">Готово к формированию</p>
           <p className="setup__line">
@@ -398,7 +398,7 @@ export function ReportsPage() {
           <button type="button" className="btn btn--dark btn--wide"
                   disabled={!ready} onClick={() => void order()}>
             {ordering ? 'Отправляем…' : 'Сформировать отчёт'}
-            {!ordering && <Icon name="arrow" size={17} />}
+            {!ordering && <AppIcon name="arrow" size={16} />}
           </button>
 
           {notice ? (
@@ -437,7 +437,7 @@ export function ReportsPage() {
             )}
             <button type="button" className="tool" aria-label="Обновить историю выгрузок"
                     onClick={refresh}>
-              <Icon name="refresh" size={18} />
+              <AppIcon name="refresh" size={18} />
             </button>
           </div>
         </div>
@@ -531,7 +531,7 @@ export function ReportsPage() {
                   </button>
                 )}
                 <span className="muted sheet__lock">
-                  <Icon name="lock" size={15} />
+                  <AppIcon name="lock" size={16} />
                   Файл доступен только заказавшему и хранится ограниченное время
                 </span>
               </span>
@@ -565,7 +565,7 @@ function Row({ job, mine, offices, regions, busy, error, onCancel, onRetry, onRe
     <tr>
       <td className="grid-table__name">
         <span className="who">
-          <Icon name="sheet" size={16} />
+          <AppIcon name="sheet" size={16} />
           <b>{kindTitle(job.kind)}</b>
         </span>
       </td>
@@ -574,7 +574,7 @@ function Row({ job, mine, offices, regions, busy, error, onCancel, onRetry, onRe
       <td className="mono">{job.fmt.toUpperCase()}</td>
       <td>
         <span className={`state state--${job.status.toLowerCase()}`}>
-          <Icon name={STATUS_ICON[job.status] ?? 'clock'} size={16} />
+          <AppIcon name={STATUS_ICON[job.status] ?? 'clock'} size={16} />
           <span>
             {STATUS_TITLE[job.status] ?? job.status}
             {job.status === 'SUCCEEDED' && !gone && sizeTitle(job.size_bytes) && (
@@ -601,7 +601,7 @@ function Row({ job, mine, offices, regions, busy, error, onCancel, onRetry, onRe
           // безопасное имя, которое он и придумал.
           <a className="btn btn--small" href={api.downloadUrl(job.id)}
              target="_blank" rel="noopener noreferrer">
-            <Icon name="download" size={16} />
+            <AppIcon name="download" size={16} />
             Скачать
           </a>
         )}
@@ -621,7 +621,7 @@ function Row({ job, mine, offices, regions, busy, error, onCancel, onRetry, onRe
         {job.status === 'RUNNING' && <span className="muted">Идёт сборка</span>}
         {(job.status === 'FAILED' || job.status === 'CANCELLED') && (
           <button type="button" className="btn btn--small" disabled={busy} onClick={onRetry}>
-            <Icon name="refresh" size={16} />
+            <AppIcon name="refresh" size={16} />
             {busy ? 'Ставим…' : 'Повторить'}
           </button>
         )}

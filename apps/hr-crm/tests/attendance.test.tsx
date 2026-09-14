@@ -7,7 +7,7 @@
  * подменяет время в офисе.
  */
 
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
 
 import { USER, crm, fakeNetwork, json, renderApp } from './helpers';
@@ -17,9 +17,11 @@ const DAY = '2026-09-04';
 const CARDS = [
   ['should_work_today', 'Должны работать сегодня', 214],
   ['in_office', 'Сейчас в офисе', 193],
+  ['came', 'Пришли', 205],
   ['left', 'Уже ушли', 12],
   ['not_come', 'Не пришли', 9],
   ['late', 'Опоздали', 7],
+  ['open_sessions', 'Незакрытые сессии', 3],
 ] as const;
 
 function row(over: Partial<Record<string, unknown>> = {}) {
@@ -38,9 +40,18 @@ function row(over: Partial<Record<string, unknown>> = {}) {
     open_session_id: 's-2',
     late_minutes: null,
     scheduled_start: '09:00:00',
+    scheduled_end: '18:00:00',
+    department_name: 'Операционный отдел',
+    position_name: 'Специалист поддержки',
     absence_code: null,
     absence_name: null,
     conflicting_marks: false,
+    // Две сессии: до обеда и после. Вторая открыта — человек в офисе
+    // сейчас, и правого края у неё нет.
+    intervals: [
+      { started_at: `${DAY}T08:56:00Z`, ended_at: `${DAY}T12:04:00Z`, seconds: 2 * 3600 + 30 * 60 },
+      { started_at: `${DAY}T13:10:00Z`, ended_at: null, seconds: 2 * 3600 + 38 * 60 },
+    ],
     ...over,
   };
 }
@@ -49,10 +60,20 @@ const ROWS = [
   row(),
   row({ employee_id: 'e-2', full_name: 'Саидова Дилноза', employee_number: 'HT-004',
         state: 'NOT_COME', first_entry_at: null, last_exit_at: null, seconds: 0,
-        open_session_id: null }),
+        open_session_id: null, intervals: [] }),
   row({ employee_id: 'e-3', full_name: 'Нурматов Жавохир', employee_number: 'HT-009',
-        state: 'NO_SCHEDULE', scheduled_start: null, late_minutes: null,
-        last_exit_at: null }),
+        state: 'NO_SCHEDULE', scheduled_start: null, scheduled_end: null,
+        late_minutes: null, last_exit_at: null, intervals: [] }),
+  // Единственный опоздавший и единственный, у кого день закрыт: на нём
+  // проверяется быстрый отбор «Опоздали».
+  row({ employee_id: 'e-4', full_name: 'Рахимов Тимур', employee_number: 'HT-012',
+        state: 'LEFT', late_minutes: 14, open_session_id: null,
+        first_entry_at: `${DAY}T09:14:00Z`, last_exit_at: `${DAY}T18:02:00Z`,
+        seconds: 8 * 3600 + 48 * 60,
+        intervals: [
+          { started_at: `${DAY}T09:14:00Z`, ended_at: `${DAY}T18:02:00Z`,
+            seconds: 8 * 3600 + 48 * 60 },
+        ] }),
 ];
 
 function network(handler: (path: string, method: string) => Response | null = () => null) {
@@ -76,7 +97,7 @@ function network(handler: (path: string, method: string) => Response | null = ()
     if (path.includes('/attendance/presence')) {
       return json(200, {
         date: DAY, timezone: 'Asia/Dushanbe',
-        counts: { IN_OFFICE: 1, NOT_COME: 1, NO_SCHEDULE: 1 },
+        counts: { IN_OFFICE: 1, NOT_COME: 1, NO_SCHEDULE: 1, LEFT: 1 },
         total: ROWS.length, truncated: false, items: ROWS,
       });
     }
@@ -109,16 +130,20 @@ function network(handler: (path: string, method: string) => Response | null = ()
   });
 }
 
-describe('сводка за день', () => {
-  test('пять показателей приходят с сервера', async () => {
+describe('панель «Сегодня»', () => {
+  test('числа приходят с сервера, а не считаются по показанным строкам', async () => {
+    // В ответе состава четыре строки. Панель обязана называть 193 и 214
+    // из чисел дня: итог по тому, что поместилось в ответ, — не итог.
+    // Без даты страница открывает сегодняшний день — тот, у которого
+    // «сейчас в офисе» имеет смысл.
     network();
-    renderApp(`/attendance?date=${DAY}`);
+    renderApp('/attendance');
 
-    expect(await screen.findByText('По графику')).toBeTruthy();
-    expect(screen.getByText('214')).toBeTruthy();
-    expect(screen.getByText('193')).toBeTruthy();
-    expect(screen.getByText('Пришли позже')).toBeTruthy();
-    expect(screen.getByText('7')).toBeTruthy();
+    expect(await screen.findByText('193 из 214')).toBeTruthy();
+    expect(screen.getByText('сейчас в офисе')).toBeTruthy();
+    // Опоздавшие и незакрытые сессии — из чисел дня, а не из строк.
+    expect(screen.getAllByText('7').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('3').length).toBeGreaterThan(0);
   });
 
   test('для прошедшей даты показатель не называется «сейчас»', async () => {
@@ -128,8 +153,26 @@ describe('сводка за день', () => {
     network();
     renderApp('/attendance?date=2020-01-02');
 
-    expect(await screen.findByText('Были в офисе')).toBeTruthy();
-    expect(screen.queryByText('Сейчас в офисах')).toBeNull();
+    expect(await screen.findByText('пришли на работу')).toBeTruthy();
+    expect(screen.queryByText('сейчас в офисе')).toBeNull();
+    // У прошедшего дня «сейчас в офисе» — ноль по определению, и
+    // кольцо обязано считать пришедших, а не находящихся.
+    expect(screen.getByText('205 из 214')).toBeTruthy();
+  });
+
+  test('быстрый отбор сужает таблицу и не трогает панель', async () => {
+    network();
+    renderApp(`/attendance?date=${DAY}`);
+    await screen.findByText('Каримов Алишер');
+
+    const quick = screen.getByRole('group', { name: 'Быстрый отбор' });
+    fireEvent.click(within(quick).getByRole('button', { name: /^Опоздали/ }));
+
+    await waitFor(() => expect(screen.queryByText('Каримов Алишер')).toBeNull());
+    expect(screen.getByText('Рахимов Тимур')).toBeTruthy();
+    // Доля считается по всему составу дня: отбор в таблице — это не
+    // новое положение дел, а другой взгляд на то же самое.
+    expect(screen.getByText('205 из 214')).toBeTruthy();
   });
 });
 
@@ -156,10 +199,13 @@ describe('состав смены', () => {
   test('без графика не показывается опоздание', async () => {
     network();
     renderApp(`/attendance?date=${DAY}`);
-    await screen.findByText('Нурматов Жавохир');
+    const name = await screen.findByText('Нурматов Жавохир');
+    const line = name.closest('tr');
 
-    expect(screen.getAllByText('Не задан').length).toBeGreaterThan(0);
-    expect(screen.queryByText(/Позже на/)).toBeNull();
+    // Проверяется именно эта строка: опоздавшие в таблице есть, и
+    // «нигде нет слова "позже"» было бы проверкой не того.
+    expect(line?.textContent).toContain('График не задан');
+    expect(line?.textContent).not.toMatch(/Позже на/);
   });
 
   test('обрезанный ответ не выдаётся за полный состав', async () => {

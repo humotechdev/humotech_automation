@@ -20,7 +20,7 @@ import { useSearchParams } from 'react-router-dom';
 
 import * as api from '../api/crm';
 import { AppShell, initials } from '../components/AppShell';
-import { Icon } from '../components/nav-icons';
+import { AppIcon } from '../components/AppIcon';
 import { messageFor } from '../api/errors';
 import { useBlock, type Block } from '../features/dashboard/data';
 import { useSession } from '../features/auth/session';
@@ -166,7 +166,7 @@ export function QuestionsPage() {
         <section className="sheet">
           <div className="toolbar">
             <label className="find find--wide">
-              <Icon name="search" size={16} />
+              <AppIcon name="search" size={16} />
               <input type="search" value={draft} placeholder="Поиск обращений"
                      aria-label="Поиск обращений"
                      onChange={(event) => setDraft(event.target.value)} />
@@ -373,7 +373,7 @@ function Thread({ row, canAnswer, me, onChanged }: {
               <button type="button" className="btn btn--dark"
                       disabled={sending || text.trim().length === 0}
                       onClick={() => void send()}>
-                <Icon name="send" size={16} />
+                <AppIcon name="send" size={16} />
                 {sending ? 'Отправляем…' : 'Отправить'}
               </button>
             </div>
@@ -411,7 +411,7 @@ function Message({ who, at, text }: { who: string; at: string; text: string }) {
 function Event({ text }: { text: string }) {
   return (
     <p className="talk__event">
-      <Icon name="alert" size={14} />
+      <AppIcon name="alert" size={16} />
       {text}
     </p>
   );
@@ -462,7 +462,7 @@ function Context({ row, me }: { row: api.EscalationRow; me: string }) {
         </Body>
 
         <a className="btn" href={`/employees?employee=${row.employee.id}`}>
-          Карточка сотрудника →
+          Карточка сотрудника <AppIcon name="arrow" size={16} />
         </a>
 
         <p className="side-panel__label">Об обращении</p>

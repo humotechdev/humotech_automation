@@ -16,7 +16,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import * as api from '../api/crm';
 import { ApiFailure, messageFor } from '../api/errors';
-import { Icon } from './nav-icons';
+import { AppIcon } from './AppIcon';
 import { Overlay } from './UserCard';
 import { permissionTitle, sections } from '../features/admin/model';
 
@@ -52,7 +52,7 @@ export function RolesTab({ roles, catalog, mayManage, mine, onChanged }: Props) 
       <section className="panel panel--list" aria-label="Роли">
         <div className="toolbar">
           <label className="find find--wide">
-            <Icon name="search" size={16} />
+            <AppIcon name="search" size={16} />
             <input type="search" value={search} placeholder="Поиск роли"
                    aria-label="Поиск роли"
                    onChange={(event) => setSearch(event.target.value)} />
@@ -60,7 +60,7 @@ export function RolesTab({ roles, catalog, mayManage, mine, onChanged }: Props) 
           {mayManage && (
             <button type="button" className="btn btn--dark btn--small"
                     onClick={() => setEditing('new')}>
-              <Icon name="plus" size={15} />
+              <AppIcon name="plus" size={16} />
               Роль
             </button>
           )}
@@ -107,7 +107,7 @@ export function RolesTab({ roles, catalog, mayManage, mine, onChanged }: Props) 
         <section className="panel panel--view" aria-label="Роль">
           <div className="view__head">
             <span className="view__icon" aria-hidden="true">
-              <Icon name="admin" size={20} />
+              <AppIcon name="admin" size={20} />
             </span>
             <div className="view__who">
               <h2 className="view__title">{role.name}</h2>
@@ -125,7 +125,7 @@ export function RolesTab({ roles, catalog, mayManage, mine, onChanged }: Props) 
               <div className="view__actions">
                 <button type="button" className="btn btn--small"
                         onClick={() => setEditing('edit')}>
-                  <Icon name="pencil" size={15} />
+                  <AppIcon name="pencil" size={16} />
                   Изменить
                 </button>
               </div>
@@ -187,7 +187,7 @@ function RolePermissions({ codes, catalog }: {
             <ul className="perms__list">
               {inside.map((item) => (
                 <li key={item.code} className="perms__row">
-                  <Icon name="check" size={15} />
+                  <AppIcon name="check" size={16} />
                   <span className="perms__text">
                     <span className="perms__name">{permissionTitle(item)}</span>
                     <span className="perms__code mono">{item.code}</span>

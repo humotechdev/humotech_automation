@@ -17,6 +17,10 @@ from humotech.selfservice.absences import (
     AbsenceOptionsView,
     LeaveBalanceView,
 )
+from humotech.selfservice.notifications import (
+    NotificationListView,
+    NotificationReadView,
+)
 from humotech.selfservice.views import (
     HistoryView,
     ProfileView,
@@ -43,4 +47,10 @@ urlpatterns = [
     path("absences/<uuid:request_id>/document", AbsenceDocumentView.as_view(),
          name="self-absence-document"),
     path("leave-balance", LeaveBalanceView.as_view(), name="self-leave-balance"),
+    # Уведомления только читаются и отмечаются прочитанными: заводит их
+    # система по событиям, а не сотрудник.
+    path("notifications", NotificationListView.as_view(),
+         name="self-notifications"),
+    path("notifications/<uuid:notification_id>/read",
+         NotificationReadView.as_view(), name="self-notification-read"),
 ]
