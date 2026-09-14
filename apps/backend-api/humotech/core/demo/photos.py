@@ -84,32 +84,43 @@ def pack() -> list[Photo]:
     return out
 
 
-def plan(photos: list[Photo], numbers: list[str]) -> list[tuple[Photo, str]]:
+def plan(photos: list[Photo], people: list[tuple[str, bool]]) -> list[tuple[Photo, str]]:
     """Кому какая фотография достанется.
 
-    Правило простое и устойчивое: сначала сотрудники-сценарии — они
-    видны на всех экранах и в проверках, — затем первые строки списка.
-    Каждая фотография уходит ровно одному человеку: одно лицо у двоих
-    выглядит как ошибка данных.
+    `people` — пары «табельный номер, женщина ли» в порядке списка.
 
-    Пол сверяется: у женского табельного номера женский снимок. Если
-    подходящих по полу не осталось, человек остаётся с инициалами —
-    это честнее, чем поставить чужое лицо.
+    Правило устойчивое: сначала сотрудники-сценарии, за которыми снимок
+    закреплён в самом пакете, — они видны на всех экранах и в проверках.
+    Остаток раздаётся по порядку списка: первые строки таблиц, авторы
+    обращений и заявок оказываются в начале, и именно им фотография
+    нужнее всего.
+
+    Пол сверяется всегда. Если подходящих по полу снимков не осталось,
+    человек остаётся с инициалами — это честнее, чем поставить чужое
+    лицо, и слот при этом не меняет размера.
     """
-    wanted = [one.number for one in SHOWCASE]
-    wanted += [number for number in numbers if number not in wanted]
-
-    free = {"MALE": [p for p in photos if p.gender == "MALE"],
-            "FEMALE": [p for p in photos if p.gender == "FEMALE"]}
     fixed = {p.employee_number: p for p in photos if p.employee_number}
-
-    out: list[tuple[Photo, str]] = []
     taken: set[str] = set()
-    for number in wanted:
+    out: list[tuple[Photo, str]] = []
+
+    for number, _ in people:
         photo = fixed.get(number)
         if photo is not None and photo.file not in taken:
             out.append((photo, number))
             taken.add(photo.file)
+
+    free = {
+        "MALE": [p for p in photos if p.gender == "MALE" and p.file not in taken],
+        "FEMALE": [p for p in photos if p.gender == "FEMALE" and p.file not in taken],
+    }
+    given = {number for _, number in out}
+    for number, female in people:
+        if number in given:
+            continue
+        pool = free["FEMALE" if female else "MALE"]
+        if not pool:
+            continue
+        out.append((pool.pop(0), number))
     return out
 
 

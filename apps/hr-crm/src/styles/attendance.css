@@ -1,0 +1,1106 @@
+/*
+ * Страница «Посещаемость» — размеры сняты с эталона 1672×941.
+ * Всё под префиксом `att-`: правки не задевают другие страницы. Корень —
+ * `.attp`, а не `.att`: `.att` и `.att-side` уже заняты вкладкой
+ * посещаемости в карточке сотрудника, и её правила перебивали эти.
+ */
+
+.attp {
+  --att-ink: #13295a;
+  --att-text: #22355c;
+  --att-muted: #6b7c98;
+  --att-line: #e1e8f1;
+  --att-field: #d9e2ec;
+  --att-blue: #1673ee;
+  --att-green: #1f9d6a;
+  --att-orange: #ee8414;
+
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  /* Общее правило раздвигало блоки страницы на 16 точек: отступы здесь
+     заданы у каждого блока отдельно, по эталону. */
+  gap: 0;
+  font-family: 'Segoe UI', 'Open Sans', system-ui, sans-serif;
+  color: var(--att-text);
+}
+
+/* --- шапка ------------------------------------------------------------------ */
+
+.att-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  height: 64px;
+  flex: none;
+  padding-left: 5px;
+}
+
+.att-head__title {
+  margin: 0;
+  font-size: 33px;
+  line-height: 38px;
+  font-weight: 700;
+  color: var(--att-ink);
+}
+
+.att-head__sub {
+  margin: 2px 0 0;
+  font-size: 14px;
+  line-height: 20px;
+  color: #4d5f7d;
+}
+
+.att-head__sub i {
+  margin: 0 5px;
+  font-style: normal;
+}
+
+.att-head__side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  margin-top: 1px;
+}
+
+.att-head__tools {
+  display: flex;
+  gap: 12px;
+}
+
+.att-head__updated {
+  margin: 7px 0 0;
+  font-size: 13px;
+  color: var(--att-muted);
+}
+
+.att-date {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 170px;
+  height: 40px;
+  padding: 0 12px 0 14px;
+  border: 1px solid var(--att-field);
+  border-radius: 8px;
+  background: #ffffff;
+  color: #3b4d6c;
+}
+
+.att-date input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  color: var(--att-ink);
+}
+
+/* --- кнопки ----------------------------------------------------------------- */
+
+.att-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  height: 40px;
+  padding: 0 16px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.att-btn--light {
+  border-color: var(--att-field);
+  background: #ffffff;
+  color: #1466d8;
+}
+
+.att-btn--export {
+  width: 106px;
+}
+
+.att-btn--icon {
+  width: 42px;
+  padding: 0;
+}
+
+.att-btn--blue {
+  border-color: #0d69e8;
+  background: linear-gradient(180deg, #1a7df3 0%, #0d69e8 100%);
+  color: #ffffff;
+  box-shadow: 0 3px 10px rgba(13, 105, 232, 0.2);
+}
+
+.att-btn--outline {
+  border-color: #3a86ea;
+  background: #ffffff;
+  color: #1466d8;
+}
+
+.att-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.att-note {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+
+/* --- вкладки ---------------------------------------------------------------- */
+
+.att-tabs {
+  display: flex;
+  gap: 2px;
+  height: 36px;
+  width: 1028px;
+  max-width: 100%;
+  margin: 10px 0 12px 5px;
+  flex: none;
+  border-bottom: 1px solid var(--att-line);
+}
+
+.att-tab {
+  position: relative;
+  padding: 0 15px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 14.5px;
+  color: #4d5f7d;
+  cursor: pointer;
+}
+
+.att-tab--on {
+  color: #1466d8;
+  font-weight: 600;
+}
+
+.att-tab--on::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--att-blue);
+}
+
+/* --- сетка ------------------------------------------------------------------ */
+
+/* Высота сетки — остаток окна, а не содержимое: при `flex: 1` строка
+   `1fr` мерилась по содержимому правой колонки, и панели уходили ниже
+   нижнего поля. На низком окне сетка не сжимается меньше 560. */
+.att-grid {
+  flex: 1 1 0;
+  min-height: 560px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 367px;
+  grid-template-rows: 160px minmax(0, 1fr);
+  gap: 14px 14px;
+  /* Эталон: 1028 + 14 + 367, правый край на 1645 — в 8 точках от поля. */
+  margin: 0 8px 0 5px;
+}
+
+.att-today,
+.att-list,
+.att-attention,
+.att-person {
+  border: 1px solid rgba(221, 229, 239, 0.9);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 6px 24px rgba(30, 64, 120, 0.06);
+}
+
+.att-rail {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+
+/* --- «Сегодня» ---------------------------------------------------------------- */
+
+.att-today {
+  display: grid;
+  grid-template-columns: 250px minmax(0, 334px) minmax(0, 1fr);
+  align-items: stretch;
+  padding: 0 0 0 16px;
+}
+
+.att-today__title {
+  margin: 14px 0 0;
+  font-size: 19px;
+  line-height: 24px;
+  font-weight: 700;
+  color: var(--att-ink);
+}
+
+.att-today__ring {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 8px;
+}
+
+.att-donut {
+  flex: none;
+}
+
+.att-donut__track,
+.att-donut__fill {
+  fill: none;
+  stroke-width: 10;
+}
+
+.att-donut__track { stroke: #e3eaf2; }
+
+.att-donut__fill {
+  stroke: var(--att-green);
+  stroke-linecap: round;
+}
+
+.att-donut__text {
+  fill: var(--att-ink);
+  font-size: 19px;
+  font-weight: 700;
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+
+.att-today__sum {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding-top: 8px;
+}
+
+.att-today__live {
+  position: absolute;
+  top: 0;
+  left: 4px;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--att-green);
+}
+
+.att-today__sum strong {
+  font-size: 24px;
+  line-height: 30px;
+  font-weight: 700;
+  color: var(--att-ink);
+  white-space: nowrap;
+}
+
+.att-today__sum span {
+  font-size: 15px;
+  line-height: 20px;
+  color: var(--att-ink);
+}
+
+.att-today__sum small {
+  margin-top: 2px;
+  font-size: 13px;
+  color: var(--att-muted);
+  white-space: nowrap;
+}
+
+.att-arrivals {
+  margin: 22px 0;
+  padding: 9px 18px 0;
+  border-left: 1px solid var(--att-line);
+  border-right: 1px solid var(--att-line);
+  min-width: 0;
+}
+
+.att-arrivals__title {
+  margin: 0;
+  font-size: 13px;
+  color: var(--att-ink);
+}
+
+.att-arrivals__bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 58px;
+  margin-top: 10px;
+  border-bottom: 1px dashed #cfdae8;
+}
+
+.att-arrivals__bars span {
+  flex: 1;
+  border-radius: 2px 2px 0 0;
+  background: #8fc0f5;
+}
+
+.att-arrivals__axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 7px;
+  font-size: 11.5px;
+  color: var(--att-muted);
+}
+
+.att-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 22px 0;
+}
+
+.att-metric {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+  padding: 4px 0 0 16px;
+  border: 0;
+  border-left: 1px solid var(--att-line);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.att-metric:first-child {
+  border-left: 0;
+}
+
+.att-metric svg {
+  width: 26px;
+  height: 26px;
+}
+
+.att-metric span {
+  margin-top: 2px;
+  font-size: 13.5px;
+  color: #4d5f7d;
+  white-space: nowrap;
+}
+
+.att-metric strong {
+  font-size: 24px;
+  line-height: 28px;
+  font-weight: 700;
+}
+
+.att-metric--navy { color: var(--att-ink); }
+.att-metric--orange { color: var(--att-orange); }
+.att-metric--blue { color: var(--att-blue); }
+
+.att-metric--on span {
+  color: var(--att-ink);
+  font-weight: 600;
+}
+
+/* --- таблица ---------------------------------------------------------------- */
+
+.att-list {
+  grid-column: 1;
+  grid-row: 2;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 10px 10px 8px;
+}
+
+.att-list--log {
+  flex: 1;
+}
+
+.att-filters {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 36px;
+  flex: none;
+}
+
+.att-chips {
+  display: flex;
+  gap: 10px;
+  margin-right: 21px;
+}
+
+.att-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  height: 32px;
+  padding: 0 10px 0 13px;
+  border: 1px solid var(--att-line);
+  border-radius: 8px;
+  background: #ffffff;
+  font: inherit;
+  font-size: 14px;
+  color: var(--att-ink);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.att-chip__count {
+  min-width: 22px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.att-chip--blue .att-chip__count { background: #e4efff; color: #1466d8; }
+.att-chip--green .att-chip__count { background: #e3f5ec; color: #1b7e4c; }
+.att-chip--orange .att-chip__count { background: #fff0de; color: #c0660a; }
+
+.att-chip--on {
+  border-color: var(--att-blue);
+  background: var(--att-blue);
+  color: #ffffff;
+}
+
+.att-chip--on .att-chip__count {
+  background: rgba(255, 255, 255, 0.24);
+  color: #ffffff;
+}
+
+.att-search {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 181px;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--att-field);
+  border-radius: 8px;
+  background: #ffffff;
+  color: #50627f;
+}
+
+.att-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+}
+
+.att-select {
+  position: relative;
+  display: flex;
+  width: 142px;
+  height: 36px;
+  border: 1px solid var(--att-field);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.att-select select {
+  width: 100%;
+  padding: 0 28px 0 12px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  appearance: none;
+  font: inherit;
+  font-size: 13px;
+  color: var(--att-ink);
+  cursor: pointer;
+}
+
+.att-select__arrow {
+  position: absolute;
+  top: 9px;
+  right: 10px;
+  color: #3b4d6c;
+  pointer-events: none;
+}
+
+.att-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.att-table {
+  flex: 1;
+  min-height: 0;
+  margin: 12px -10px 0;
+  overflow-y: auto;
+}
+
+.att-table__head,
+.att-row {
+  display: grid;
+  grid-template-columns: 210px 178px 300px 110px minmax(0, 1fr) 30px;
+  align-items: center;
+  padding: 0 0 0 16px;
+}
+
+.att-table__head {
+  height: 30px;
+  font-size: 13px;
+  color: #4d5f7d;
+  border-bottom: 1px solid var(--att-line);
+}
+
+.att-row {
+  position: relative;
+  height: 52px;
+  border-bottom: 1px solid #edf1f6;
+  cursor: pointer;
+}
+
+.att-row:hover {
+  background: #f8fbff;
+}
+
+.att-row--on {
+  background: #f1f7ff;
+}
+
+.att-row--on::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 4px;
+  background: var(--att-blue);
+}
+
+.att-row__who {
+  display: flex;
+  align-items: center;
+  gap: 17px;
+  min-width: 0;
+}
+
+.att-face {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  object-fit: cover;
+  border-radius: 999px;
+  background: #e6effa;
+  color: #1c4c93;
+  font-weight: 600;
+}
+
+.att-row__face {
+  width: 44px;
+  height: 44px;
+  font-size: 15px;
+}
+
+.att-row__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.att-row__text b,
+.att-row__text span {
+  font-size: 14px;
+  line-height: 19px;
+  color: var(--att-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.att-row__text b {
+  font-weight: 600;
+}
+
+.att-row__text small {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--att-muted);
+  white-space: nowrap;
+}
+
+.att-row__time {
+  font-size: 14px;
+  color: var(--att-ink);
+  white-space: nowrap;
+}
+
+.att-row__go {
+  color: #1466d8;
+}
+
+/* --- шкала дня ---------------------------------------------------------------- */
+
+.att-line {
+  position: relative;
+  display: block;
+  width: 264px;
+  height: 34px;
+}
+
+.att-line--wide {
+  width: 100%;
+  height: 36px;
+}
+
+.att-line__track {
+  position: absolute;
+  top: 8px;
+  left: 0;
+  right: 0;
+  height: 8px;
+  border-radius: 999px;
+  background: #dfe6ef;
+}
+
+.att-line__track--empty {
+  background: repeating-linear-gradient(-45deg, #e9eef5 0 4px, #f6f8fb 4px 8px);
+  border: 1px solid #e3e9f1;
+}
+
+.att-line__part {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--att-green);
+}
+
+.att-line__late {
+  position: absolute;
+  top: -2px;
+  width: 10px;
+  height: 12px;
+  margin-left: -5px;
+  border-radius: 999px;
+  background: var(--att-orange);
+}
+
+.att-line__now {
+  position: absolute;
+  top: -3px;
+  right: -6px;
+  width: 14px;
+  height: 14px;
+  border: 3px solid var(--att-blue);
+  border-radius: 999px;
+  background: #ffffff;
+}
+
+.att-line__labels small {
+  position: absolute;
+  top: 18px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--att-ink);
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.att-line__labels small:first-child {
+  transform: translateX(-20%);
+}
+
+/* Последняя подпись («сейчас» или уход) — под концом шкалы, внутри неё. */
+.att-line__labels small:last-child:not(:first-child) {
+  transform: translateX(-100%);
+}
+
+.att-line--absent .att-line__hatch {
+  position: absolute;
+  top: 2px;
+  left: 0;
+  right: 0;
+  height: 22px;
+  border-radius: 6px;
+  background: repeating-linear-gradient(-45deg, #e3dcfb 0 5px, #f1edfd 5px 10px);
+  font-size: 13px;
+  line-height: 22px;
+  font-weight: 600;
+  color: #6b46d6;
+  text-align: center;
+}
+
+/* --- плашки состояния --------------------------------------------------------- */
+
+.att-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  justify-self: start;
+  height: 26px;
+  padding: 0 12px 0 10px;
+  border-radius: 6px;
+  font-size: 13.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.att-status::before {
+  content: '';
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+}
+
+.att-status--ok { background: #e6f6ee; color: #1b7e4c; }
+.att-status--ok::before { background: #1fa45f; }
+.att-status--idle { background: #eef2f7; color: #4f5f78; }
+.att-status--idle::before { background: #5c6f95; }
+.att-status--warn { background: #fff0e0; color: #c0660a; }
+.att-status--warn::before { background: #f08a1d; }
+.att-status--violet { background: #f0ebfd; color: #6b46d6; }
+.att-status--violet::before { background: #7c5ce6; }
+.att-status--blue { background: #e7f0ff; color: #1b5fc9; }
+.att-status--blue::before { background: #2f7ae5; }
+.att-status--grey { background: #eef2f7; color: #52627a; }
+.att-status--grey::before { background: #8391a8; }
+
+.att-empty {
+  margin: 20px 16px;
+  font-size: 13px;
+  color: var(--att-muted);
+}
+
+.att-empty--bad {
+  color: #b42318;
+}
+
+/* --- пагинация -------------------------------------------------------------- */
+
+.att-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 44px;
+  margin-top: 8px;
+  padding: 0 12px 0 6px;
+  flex: none;
+}
+
+.att-pager p {
+  margin: 0;
+  font-size: 13px;
+  color: #4d5f7d;
+}
+
+.att-pages {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.att-pages__arrow,
+.att-pages__one,
+.att-pages__next {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 34px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  color: #3b4d6c;
+  cursor: pointer;
+}
+
+.att-pages__arrow {
+  width: 32px;
+  margin-right: 4px;
+  border-color: var(--att-field);
+  background: #ffffff;
+}
+
+.att-pages__one {
+  min-width: 30px;
+}
+
+.att-pages__one--on {
+  background: var(--att-blue);
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.att-pages__next {
+  width: 32px;
+  margin-left: 20px;
+  color: #1466d8;
+}
+
+.att-pages button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* --- «Требует внимания» ------------------------------------------------------- */
+
+.att-attention {
+  flex: none;
+  padding: 14px 18px 10px;
+}
+
+.att-attention__title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 8px;
+  font-size: 18px;
+  line-height: 24px;
+  font-weight: 700;
+  color: var(--att-ink);
+}
+
+.att-attention__total {
+  padding: 1px 10px;
+  border-radius: 999px;
+  background: #e8f0fb;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1c4c93;
+}
+
+.att-attention__go {
+  margin-left: auto;
+  color: #34507f;
+}
+
+.att-attention__row {
+  display: grid;
+  grid-template-columns: 30px 1fr auto 24px;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  height: 43px;
+  padding: 0 0 0 2px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.att-attention__row svg:first-child {
+  width: 24px;
+  height: 24px;
+}
+
+.att-attention__row span {
+  font-size: 15px;
+  color: var(--att-ink);
+}
+
+.att-attention__row b {
+  min-width: 26px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.att-attention__row svg:last-child {
+  color: #34507f;
+}
+
+.att-attention__row--orange svg:first-child { color: var(--att-orange); }
+.att-attention__row--orange b { background: #fff0de; color: #c0660a; }
+.att-attention__row--navy svg:first-child { color: #34507f; }
+.att-attention__row--navy b { background: #eaf0f7; color: #34507f; }
+
+.att-attention__row:hover,
+.att-attention__row--on {
+  background: #f3f8ff;
+}
+
+/* --- выбранный сотрудник -------------------------------------------------------- */
+
+.att-person,
+.att-fix {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.att-person {
+  display: flex;
+  flex-direction: column;
+  padding: 14px 14px 14px 16px;
+}
+
+.att-person__who {
+  display: flex;
+  gap: 14px;
+}
+
+.att-person__face {
+  width: 74px;
+  height: 74px;
+  font-size: 22px;
+}
+
+.att-person__who p {
+  margin: 0;
+}
+
+.att-person__name {
+  font-size: 16px;
+  line-height: 22px;
+  font-weight: 700;
+  color: var(--att-ink);
+}
+
+.att-person__number {
+  margin-bottom: 4px !important;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--att-muted);
+}
+
+.att-person__facts {
+  display: grid;
+  grid-template-columns: 117px minmax(0, 1fr);
+  row-gap: 4px;
+  margin: 12px 0 0;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--att-line);
+}
+
+.att-person__facts dt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--att-muted);
+}
+
+.att-person__facts dt svg {
+  color: #4d6d9c;
+}
+
+.att-person__facts dd {
+  margin: 0;
+  font-size: 15px;
+  color: var(--att-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.att-person__day {
+  margin-top: 10px;
+}
+
+.att-person__label {
+  margin: 0;
+  font-size: 13px;
+  color: var(--att-muted);
+}
+
+.att-person__total {
+  margin: 2px 0 10px;
+  font-size: 21px;
+  line-height: 26px;
+  font-weight: 700;
+  color: var(--att-ink);
+}
+
+.att-events {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.att-events li {
+  position: relative;
+  display: flex;
+  gap: 18px;
+  height: 24px;
+  padding-left: 30px;
+  align-items: center;
+  font-size: 13px;
+  color: #4d5f7d;
+}
+
+.att-events li::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--att-green);
+}
+
+.att-events__out::before {
+  background: #9fb3cf !important;
+}
+
+.att-events li b {
+  font-size: 14px;
+  color: var(--att-ink);
+}
+
+.att-events__none::before {
+  display: none;
+}
+
+.att-events .att-events__none {
+  padding-left: 0;
+}
+
+.att-person__actions {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 12px;
+  margin-top: auto;
+  padding-top: 12px;
+}
+
+/* Обе подписи целиком: при 158 + остаток «Исправить отметку» не
+   помещалась и обрезалась краем панели. */
+.att-person__actions .att-btn {
+  height: 46px;
+  gap: 7px;
+  padding: 0 10px;
+  font-size: 13.5px;
+}
+
+.att-log {
+  width: 100%;
+  margin-top: 12px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.att-log th,
+.att-log td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--att-line);
+  text-align: left;
+}
+
+.att-log th {
+  color: var(--att-muted);
+  font-weight: 600;
+}

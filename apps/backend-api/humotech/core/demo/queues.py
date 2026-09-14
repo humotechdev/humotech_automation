@@ -519,10 +519,13 @@ def attach_photos(org, people, reviewer) -> int:
     if not entries:
         return 0
 
-    numbers = [one.employee.employee_number for one in people]
+    order = [
+        (one.employee.employee_number, one.employee.gender == "FEMALE")
+        for one in people
+    ]
     by_number = {one.employee.employee_number: one for one in people}
     made = 0
-    for photo, number in photo_pack.plan(entries, numbers):
+    for photo, number in photo_pack.plan(entries, order):
         person = by_number.get(number)
         if person is None:
             continue

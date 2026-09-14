@@ -1,46 +1,99 @@
 /**
- * Посещаемость: сводка за день, состав смены и журнал отметок.
+ * Страница «Посещаемость».
  *
- * Ни одна величина здесь не считается заново. Присутствие, время в
- * офисе, опоздания, отсутствия и календарные исключения считает сервер;
- * повторить эти правила в браузере значило бы завести второе место, где
- * та же цифра получается по другим правилам, — и однажды они разойдутся.
+ * Вёрстка повторяет эталон 1672×941 (`ChatGPT Image Sep 13, 2026,
+ * 04_02_47 PM.png`): сверху панель «Сегодня», под ней таблица состава
+ * смены, справа «Требует внимания» и день выбранного сотрудника. Размеры —
+ * в `styles/attendance.css`, классы с префиксом `att-`.
  *
- * Чего страница НЕ делает, намеренно:
- * — не называет «нет отметки» прогулом: причин может быть много;
- * — не считает опозданием отсутствие графика: сравнивать не с чем;
- * — не выдаёт разницу между первым входом и последним выходом за время
- *   в офисе — посещений за день может быть несколько;
- * — не называет промежуток между посещениями обедом.
+ * Ни одна величина здесь не считается заново: присутствие, время в офисе,
+ * опоздания и отсутствия считает сервер. Страница не называет «нет
+ * отметки» прогулом и не считает опозданием отсутствие графика.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 
 import * as api from '../api/crm';
+import { messageFor } from '../api/errors';
 import { AppShell, initials } from '../components/AppShell';
-import { AppIcon } from '../components/AppIcon';
-import { DayBar, atClock } from '../components/DayBar';
+import { AppIcon, type AppIconName } from '../components/AppIcon';
 import { DayCard } from '../components/DayCard';
-import {
-  formatTime, longDate, today, useBlock, type Block,
-} from '../features/dashboard/data';
+import { formatTime, longDate, today, useBlock, type Block } from '../features/dashboard/data';
 import { useSession } from '../features/auth/session';
 import { clock, clockOnDay } from '../features/time/zone';
+import '../styles/attendance.css';
 
-/** Состояния состава смены. Взаимоисключающими они не являются. */
-const STATE_TITLE: Record<string, string> = {
-  IN_OFFICE: 'В офисе',
-  LEFT: 'Ушёл',
-  NOT_COME: 'Нет отметки',
-  VACATION: 'Отпуск',
-  SICK_LEAVE: 'Больничный',
-  OTHER_ABSENCE: 'Отсутствие',
-  DAY_OFF: 'Выходной по графику',
-  NO_SCHEDULE: 'Без графика',
+const PAGE = 8;
+
+type Tone = 'ok' | 'idle' | 'warn' | 'violet' | 'blue' | 'grey';
+
+/** Как строка называется и каким цветом. Опоздавший в офисе — «Опоздал». */
+function stateOf(row: api.PresenceRow): { title: string; tone: Tone } {
+  const late = row.late_minutes ?? 0;
+  switch (row.state) {
+    case 'IN_OFFICE':
+      return late > 0 ? { title: `Опоздал на ${late} мин`, tone: 'warn' } : { title: 'В офисе', tone: 'ok' };
+    case 'LEFT':
+      return { title: 'Ушёл', tone: 'idle' };
+    case 'NOT_COME':
+      return { title: 'Нет отметки', tone: 'warn' };
+    case 'VACATION':
+      return { title: 'В отпуске', tone: 'violet' };
+    case 'SICK_LEAVE':
+      return { title: 'На больничном', tone: 'blue' };
+    case 'OTHER_ABSENCE':
+      return { title: row.absence_name ?? 'Отсутствует', tone: 'violet' };
+    case 'DAY_OFF':
+      return { title: 'Выходной', tone: 'grey' };
+    case 'NO_SCHEDULE':
+      return { title: 'Без графика', tone: 'grey' };
+    default:
+      return { title: row.state, tone: 'grey' };
+  }
+}
+
+const STATUS_OPTIONS = [
+  { id: 'IN_OFFICE', name: 'В офисе' },
+  { id: 'LEFT', name: 'Ушли' },
+  { id: 'NOT_COME', name: 'Нет отметки' },
+  { id: 'VACATION', name: 'В отпуске' },
+  { id: 'SICK_LEAVE', name: 'На больничном' },
+  { id: 'OTHER_ABSENCE', name: 'Отсутствуют' },
+  { id: 'DAY_OFF', name: 'Выходной' },
+  { id: 'NO_SCHEDULE', name: 'Без графика' },
+];
+
+/**
+ * Отбор таблицы. Один на чипы, плитки панели и «Требует внимания»:
+ * нажатие в любом месте ставит одно и то же, и подсветка совпадает.
+ * `state` понимает сервер; `flag` — признак строки, он считается по
+ * уже полученным строкам (опоздавший бывает и в офисе, и ушедшим).
+ */
+type Quick = {
+  id: string;
+  title: string;
+  state?: string;
+  flag?: 'late' | 'open' | 'geo';
 };
 
-const PAGE = 10;
+const QUICK: (Quick & { tone: string; count: (c: Counts) => number })[] = [
+  { id: 'all', title: 'Все', tone: 'blue', count: (c) => c.expected },
+  { id: 'now', title: 'Сейчас', state: 'IN_OFFICE', tone: 'green', count: (c) => c.here },
+  { id: 'none', title: 'Нет отметки', state: 'NOT_COME', tone: 'orange', count: (c) => c.none },
+  { id: 'late', title: 'Опоздали', flag: 'late', tone: 'orange', count: (c) => c.late },
+];
+
+type Counts = {
+  expected: number;
+  here: number;
+  came: number;
+  left: number;
+  none: number;
+  late: number;
+  open: number;
+  geo: number;
+};
 
 export function AttendancePage() {
   const session = useSession();
@@ -51,20 +104,17 @@ export function AttendancePage() {
   const day = params.get('date') ?? today();
   const tab = params.get('tab') === 'log' ? 'log' : 'day';
   const search = params.get('search') ?? '';
-  const region = params.get('region_id') ?? '';
   const office = params.get('office_id') ?? '';
   const state = params.get('state') ?? '';
-  // Признак строки, а не состояние сервера: опоздавший может быть
-  // и в офисе, и уже ушедшим, поэтому «Опоздали» — отдельная ось.
-  const flag = params.get('flag') === 'late' || params.get('flag') === 'open'
-    ? (params.get('flag') as 'late' | 'open')
-    : '';
-  const page = Number(params.get('page') ?? '1');
+  const rawFlag = params.get('flag');
+  const flag = rawFlag === 'late' || rawFlag === 'open' || rawFlag === 'geo' ? rawFlag : '';
+  const page = Math.max(1, Number(params.get('page') ?? '1'));
   const picked = params.get('employee') ?? '';
 
   const [draft, setDraft] = useState(search);
   const [updated, setUpdated] = useState<Date | null>(null);
   const [attempt, setAttempt] = useState(0);
+  const [fixing, setFixing] = useState(false);
   useEffect(() => setDraft(search), [search]);
 
   const patch = useCallback(
@@ -92,549 +142,739 @@ export function AttendancePage() {
   }, [draft, search, patch]);
 
   const scope = useMemo(
-    () => ({
-      date: day,
-      ...(region ? { region_id: region } : {}),
-      ...(office ? { office_id: office } : {}),
-    }),
-    [day, region, office],
+    () => ({ date: day, ...(office ? { office_id: office } : {}) }),
+    [day, office],
   );
-  // Панель и список по умолчанию смотрят на ПОЛНЫЙ состав дня: доля
-  // в офисе и динамика приходов не должны меняться от того, какой
-  // фильтр выбран в таблице.
-  const wide = `${day}|${region}|${office}|${attempt}`;
-  const key = `${wide}|${state}|${search}`;
+  const wide = `${day}|${office}|${attempt}`;
   const narrowed = Boolean(state || search);
 
-  // Пять показателей берутся у дашборда: он считает их по ВСЕМУ составу,
-  // а не по строкам, которые поместились в ответ.
+  // Показатели дня — у дашборда: он считает их по всему составу.
   const [cards] = useBlock(
-    (signal) =>
-      api.dashboard(scope, signal).then((body) => {
-        setUpdated(new Date());
-        return body;
-      }),
-    key,
-  );
-
-  const [base] = useBlock(
-    (signal) => api.presenceDay(scope, signal),
+    (signal) => api.dashboard(scope, signal).then((body) => {
+      setUpdated(new Date());
+      return body;
+    }),
     wide,
-    tab === 'day',
   );
 
-  // Второй запрос — только когда отбор действительно сужает набор.
-  // Без фильтра он повторял бы первый.
+  // Полный состав дня: по нему строится динамика приходов и «вне геозоны».
+  const [base] = useBlock((signal) => api.presenceDay(scope, signal), wide, tab === 'day');
   const [narrow] = useBlock(
-    (signal) =>
-      api.presenceDay(
-        { ...scope, ...(state ? { state } : {}), ...(search ? { search } : {}) },
-        signal,
-      ),
-    key,
+    (signal) => api.presenceDay(
+      { ...scope, ...(state ? { state } : {}), ...(search ? { search } : {}) },
+      signal,
+    ),
+    `${wide}|${state}|${search}`,
     tab === 'day' && narrowed,
   );
-
   const shift = narrowed ? narrow : base;
 
   const [directory] = useBlock(
-    (signal) =>
-      Promise.all([api.regions(signal), api.offices(signal)]).then(([r, o]) => ({
-        regions: r.items,
-        offices: o.items,
-      })),
-    'directory',
+    (signal) => api.offices(signal).then((o) => o.items.filter((one) => one.status === 'ACTIVE')),
+    'offices',
   );
 
-  const offices = useMemo(() => {
-    if (directory.state !== 'ready') return [];
-    const all = directory.data.offices.filter((o) => o.status === 'ACTIVE');
-    return region ? all.filter((o) => o.region_id === region) : all;
-  }, [directory, region]);
-
-  const found = shift.state === 'ready' ? shift.data.items : [];
-  // Опоздание и незакрытая сессия уже лежат в строке: спрашивать их у
-  // сервера отдельно значило бы сходить за тем, что пришло.
-  const rows = flag === 'late'
-    ? found.filter((row) => (row.late_minutes ?? 0) > 0)
-    : flag === 'open'
-      ? found.filter((row) => row.open_session_id !== null)
-      : found;
-  const pages = Math.max(1, Math.ceil(rows.length / PAGE));
-  const slice = rows.slice((page - 1) * PAGE, page * PAGE);
-  const current = rows.find((row) => row.employee_id === picked) ?? null;
-  const dirty = Boolean(search || region || office || state || flag);
-  const counts = cards.state === 'ready'
+  const card = cards.state === 'ready'
     ? Object.fromEntries(cards.data.cards.map((c) => [c.key, c.value]))
     : {};
+  const everyone = base.state === 'ready' ? base.data.items : [];
   const past = day < today();
+  const counts: Counts = {
+    expected: card['should_work_today'] ?? 0,
+    here: past ? (card['came'] ?? 0) : (card['in_office'] ?? 0),
+    came: card['came'] ?? 0,
+    left: card['left'] ?? 0,
+    none: card['not_come'] ?? 0,
+    late: card['late'] ?? 0,
+    open: card['open_sessions'] ?? 0,
+    geo: everyone.filter((row) => row.outside_geofence).length,
+  };
 
-  // Чипы, плитки панели и строки «Требует внимания» — один и тот же
-  // отбор, показанный в трёх местах. Нажатие в любом из них ставит то
-  // же самое, и подсветка совпадает без отдельного состояния.
-  const chosen = pickedQuick(state, flag);
+  const found = shift.state === 'ready' ? shift.data.items : [];
+  const rows = flag === 'late' ? found.filter((row) => (row.late_minutes ?? 0) > 0)
+    : flag === 'open' ? found.filter((row) => row.open_session_id !== null)
+      : flag === 'geo' ? found.filter((row) => row.outside_geofence)
+        : found;
+  const pages = Math.max(1, Math.ceil(rows.length / PAGE));
+  const slice = rows.slice((page - 1) * PAGE, page * PAGE);
+  const chosenRow = rows.find((row) => row.employee_id === picked) ?? slice[0] ?? null;
+  const zone = shift.state === 'ready' ? shift.data.timezone : '';
+
+  const chosen = flag
+    ? flag
+    : state === 'IN_OFFICE' ? 'now' : state === 'NOT_COME' ? 'none' : state === 'LEFT' ? 'left' : state ? '' : 'all';
   const choose = (item: Quick) =>
-    patch(
-      chosen === item.id && item.id !== 'all'
-        ? { state: null, flag: null }
-        : { state: item.state ?? null, flag: item.flag ?? null },
-    );
+    patch(chosen === item.id && item.id !== 'all'
+      ? { state: null, flag: null }
+      : { state: item.state ?? null, flag: item.flag ?? null });
+
+  // Выгрузка посещаемости за день — в общую очередь отчётов.
+  const [ordered, setOrdered] = useState<string | null>(null);
+  async function order() {
+    setOrdered(null);
+    try {
+      await api.orderExport({
+        kind: 'attendance', fmt: 'xlsx', date_from: day, date_to: day,
+        ...(office ? { office_id: office } : {}),
+      });
+      setOrdered('Выгрузка поставлена в очередь');
+    } catch (error) {
+      setOrdered(messageFor(error));
+    }
+  }
 
   return (
     <AppShell breadcrumb="Посещаемость" section="attendance">
-      <header className="head head--tight">
-        <div>
-          <h1 className="head__title">Посещаемость</h1>
-          <p className="head__sub">
-            {longDate(day)} <span className="dot">·</span> По данным отметок
-          </p>
-        </div>
-        <div className="head__filters">
-          <div className="filters">
-            <label className="pick pick--date">
-              <AppIcon name="calendar" size={16} />
-              <input type="date" value={day} aria-label="Дата"
-                     onChange={(event) => patch({ date: event.target.value || today() })} />
-            </label>
-            {can('reports.export') && (
-              <button type="button" className="btn" disabled
-                      title="Выгрузка появится следующим этапом">
-                <AppIcon name="report" size={16} />
-                Экспорт
-              </button>
-            )}
-            <button type="button" className="pick pick--icon" aria-label="Обновить"
-                    onClick={() => setAttempt((n) => n + 1)}>
-              <AppIcon name="refresh" size={16} />
-            </button>
+      <div className="attp">
+        <header className="att-head">
+          <div>
+            <h1 className="att-head__title">Посещаемость</h1>
+            <p className="att-head__sub">{longDate(day)} <i>·</i> По данным отметок</p>
           </div>
-          <p className="head__updated">
-            {updated ? `Обновлено в ${formatTime(updated)}` : 'Загружаем…'}
+          <div className="att-head__side">
+            <div className="att-head__tools">
+              <label className="att-date">
+                <AppIcon name="calendar" size={18} />
+                <input type="date" value={day} aria-label="Дата"
+                       onChange={(event) => patch({ date: event.target.value || null, employee: null })} />
+              </label>
+              {can('reports.export') && (
+                <button type="button" className="att-btn att-btn--light att-btn--export"
+                        onClick={() => void order()}>
+                  <AppIcon name="download" size={18} />
+                  Экспорт
+                </button>
+              )}
+              <button type="button" className="att-btn att-btn--light att-btn--icon" aria-label="Обновить"
+                      onClick={() => setAttempt((n) => n + 1)}>
+                <AppIcon name="refresh" size={18} />
+              </button>
+            </div>
+            <p className="att-head__updated">
+              {updated ? `Обновлено в ${formatTime(updated)}` : 'Загружаем…'}
+            </p>
+          </div>
+        </header>
+
+        {ordered && (
+          <p className="att-note" role="status">
+            {ordered} — <Link to="/reports">файл появится в отчётах</Link>
           </p>
+        )}
+
+        <div className="att-tabs" role="tablist">
+          {[
+            { key: 'day', title: 'За день' },
+            { key: 'log', title: 'Журнал отметок' },
+          ].map((item) => (
+            <button key={item.key} type="button" role="tab" aria-selected={item.key === tab}
+                    className={item.key === tab ? 'att-tab att-tab--on' : 'att-tab'}
+                    onClick={() => patch({ tab: item.key === 'day' ? null : item.key })}>
+              {item.title}
+            </button>
+          ))}
         </div>
-      </header>
 
-      <div className="tabs tabs--bare" role="tablist">
-        {[
-          { key: 'day', title: 'За день' },
-          { key: 'log', title: 'Журнал отметок' },
-        ].map((item) => (
-          <button key={item.key} type="button" role="tab" aria-selected={item.key === tab}
-                  className={item.key === tab ? 'tab tab--on' : 'tab'}
-                  onClick={() => patch({ tab: item.key === 'day' ? null : item.key })}>
-            {item.title}
-          </button>
-        ))}
-      </div>
+        {tab === 'log' ? (
+          <Journal day={day} office={office} />
+        ) : (
+          <div className="att-grid">
+            <Today counts={counts} past={past} rows={everyone} zone={zone}
+                   chosen={chosen} onPick={choose} block={cards} />
 
-      {tab === 'day' ? (
-        <>
-          <Section block={cards} name="показатели">
-            {(data) => (
-              <Today
-                counts={counts}
-                past={past}
-                rows={base.state === 'ready' ? base.data.items : []}
-                zone={base.state === 'ready' ? base.data.timezone : ''}
-                chosen={chosen}
-                onPick={choose}
-                date={data.date}
-              />
-            )}
-          </Section>
-
-          <div className="queue-grid">
-            <section className="sheet">
-              <div className="toolbar toolbar--day">
-                {/* Быстрые фильтры — те же состояния, что и в списке
-                    справа: один способ сузить выборку, а не два. */}
-                <div className="chips" role="group" aria-label="Быстрый отбор">
+            <section className="att-list" aria-label="Состав смены">
+              <div className="att-filters">
+                <div className="att-chips" role="group" aria-label="Быстрый отбор">
                   {QUICK.map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      className={`chip${chosen === item.id ? ' chip--on' : ''}`}
-                      aria-pressed={chosen === item.id}
-                      onClick={() => choose(item)}
-                    >
+                    <button key={item.id} type="button" aria-pressed={chosen === item.id}
+                            className={`att-chip att-chip--${item.tone}${chosen === item.id ? ' att-chip--on' : ''}`}
+                            onClick={() => choose(item)}>
                       {item.title}
-                      <span className="chip__count">{item.count(counts)}</span>
+                      <span className="att-chip__count">{item.count(counts)}</span>
                     </button>
                   ))}
                 </div>
-                <label className="find find--wide">
+                <label className="att-search">
                   <AppIcon name="search" size={16} />
                   <input type="search" value={draft} placeholder="Поиск сотрудника"
                          aria-label="Поиск сотрудника"
                          onChange={(event) => setDraft(event.target.value)} />
                 </label>
-                <Picker label="Регион" value={region} empty="Все регионы"
-                        options={directory.state === 'ready' ? directory.data.regions : []}
-                        onChange={(value) => patch({ region_id: value || null, office_id: null })} />
-                <Picker label="Офис" value={office} empty="Все офисы" options={offices}
+                <Select label="Офис" empty="Все офисы" value={office}
+                        options={directory.state === 'ready' ? directory.data : []}
                         onChange={(value) => patch({ office_id: value || null })} />
-                <label className="pick">
-                  <span className="visually-hidden">Статус</span>
-                  <select value={state}
-                          onChange={(event) =>
-                            patch({ state: event.target.value || null, flag: null })}>
-                    <option value="">Все статусы</option>
-                    {Object.entries(STATE_TITLE).map(([code, title]) => (
-                      <option key={code} value={code}>{title}</option>
-                    ))}
-                  </select>
-                </label>
-                {dirty && (
-                  <button type="button" className="btn" onClick={() =>
-                    patch({ search: null, region_id: null, office_id: null,
-                            state: null, flag: null })}>
-                    Сбросить
-                  </button>
-                )}
+                <Select label="Статус" empty="Все статусы" value={state} options={STATUS_OPTIONS}
+                        onChange={(value) => patch({ state: value || null, flag: null })} />
               </div>
 
-              <Section block={shift} name="состав смены">
-                {(data) =>
-                  rows.length === 0 ? (
-                    <p className="empty">
-                      {dirty ? 'По этим условиям никого нет.' : 'На выбранный день отметок нет.'}
+              <div className="att-table">
+                <div className="att-table__head" role="row">
+                  <span>Сотрудник</span>
+                  <span>Офис / график</span>
+                  <span>Рабочий день</span>
+                  <span>В офисе</span>
+                  <span>Статус</span>
+                </div>
+                <Section block={shift} name="состав смены">
+                  {(data) => rows.length === 0 ? (
+                    <p className="att-empty">
+                      {state || flag || search || office ? 'По этим условиям никого нет.' : 'На выбранный день отметок нет.'}
                     </p>
                   ) : (
                     <>
                       {data.truncated && (
-                        <p className="empty empty--bad">
-                          Показаны не все: состав больше, чем помещается в один ответ.
-                          Сузьте фильтры — иначе список неполон.
+                        <p className="att-empty att-empty--bad">
+                          Показаны не все: состав больше одного ответа. Сузьте фильтры.
                         </p>
                       )}
-                      <div className="scroller">
-                        <table className="people">
-                          <thead>
-                            <tr>
-                              <th>Сотрудник</th>
-                              <th>Офис / график</th>
-                              <th className="people__day">Рабочий день</th>
-                              <th>В офисе</th>
-                              <th>Статус</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {slice.map((row) => (
-                              <tr key={row.employee_id} tabIndex={0}
-                                  className={row.employee_id === picked ? 'is-picked' : undefined}
-                                  onClick={() => patch({ employee: row.employee_id }, true)}
-                                  onKeyDown={(event) =>
-                                    event.key === 'Enter' && patch({ employee: row.employee_id }, true)}>
-                                <td>
-                                  <span className="who">
-                                    <span className="avatar">{initials(row.full_name)}</span>
-                                    <span className="who__text">
-                                      <span className="who__name">{row.full_name}</span>
-                                      <span className="who__id">{row.employee_number ?? '—'}</span>
-                                    </span>
-                                  </span>
-                                </td>
-                                <td>
-                                  <span className="two">
-                                    <span className="two__first">{row.office_name ?? '—'}</span>
-                                    <span className="two__second">
-                                      {row.scheduled_start && row.scheduled_end
-                                        ? `${row.scheduled_start.slice(0, 5)} – ${row.scheduled_end.slice(0, 5)}`
-                                        : 'График не задан'}
-                                    </span>
-                                  </span>
-                                </td>
-                                <td className="people__day">
-                                  <DayBar row={row} zone={data.timezone} />
-                                </td>
-                                <td className="num">{row.seconds ? span(row.seconds) : '—'}</td>
-                                <td>
-                                  <span className="two">
-                                    <span className="state">
-                                      <i className="state__dot" />
-                                      {STATE_TITLE[row.state] ?? row.state}
-                                    </span>
-                                    {row.late_minutes !== null && row.late_minutes > 0 && (
-                                      <span className="two__second">
-                                        Позже на {row.late_minutes} мин
-                                      </span>
-                                    )}
-                                  </span>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
+                      {slice.map((row) => (
+                        <Row key={row.employee_id} row={row} zone={data.timezone} day={day}
+                             on={row.employee_id === chosenRow?.employee_id}
+                             onPick={() => { setFixing(false); patch({ employee: row.employee_id }, true); }} />
+                      ))}
                     </>
-                  )
-                }
-              </Section>
-
-              <div className="pager">
-                <p className="pager__note">
-                  {shift.state === 'ready'
-                    ? `Показано ${slice.length} из ${rows.length}`
-                    : ''}
-                </p>
-                <div className="pager__tools">
-                  <button type="button" className="btn" disabled={page <= 1}
-                          onClick={() => patch({ page: String(page - 1) }, true)}>
-                    Назад
-                  </button>
-                  <button type="button" className="btn btn--dark" disabled={page >= pages}
-                          onClick={() => patch({ page: String(page + 1) }, true)}>
-                    Далее
-                  </button>
-                </div>
+                  )}
+                </Section>
               </div>
-              <p className="sheet__hint">Нажмите на сотрудника, чтобы увидеть отметки.</p>
+
+              <footer className="att-pager">
+                <p>{shift.state === 'ready' ? `Показано ${slice.length} из ${plural(rows.length)}` : ''}</p>
+                <Pages page={page} pages={pages}
+                       onGo={(next) => patch({ page: next === 1 ? null : String(next) }, true)} />
+              </footer>
             </section>
 
-            <div className="att-side">
-              <Attention
-                counts={counts}
-                chosen={chosen}
-                onPick={choose}
-              />
-
-              {current ? (
-                <DayCard
-                row={current}
-                day={day}
-                timezone={shift.state === 'ready' ? shift.data.timezone : ''}
-                canAdd={can('attendance.manual')}
-                onClose={() => patch({ employee: null }, true)}
-                onChanged={() => setAttempt((n) => n + 1)}
-                />
+            <div className="att-rail">
+              <Attention counts={counts} chosen={chosen} onPick={choose} />
+              {chosenRow && fixing ? (
+                <div className="att-fix">
+                  <DayCard row={chosenRow} day={day} timezone={zone} canAdd={can('attendance.manual')}
+                           onClose={() => setFixing(false)}
+                           onChanged={() => { setFixing(false); setAttempt((n) => n + 1); }} />
+                </div>
               ) : (
-                <section className="panel">
-                  <p className="empty">Выберите сотрудника, чтобы увидеть его день.</p>
-                </section>
+                <Person row={chosenRow} day={day} zone={zone}
+                        canFix={can('attendance.manual')} onFix={() => setFixing(true)} />
               )}
             </div>
           </div>
-        </>
-      ) : (
-        <Journal day={day} region={region} office={office} />
-      )}
+        )}
+      </div>
     </AppShell>
   );
 }
 
-/**
- * Быстрый отбор над таблицей.
- *
- * Значения — настоящие состояния сервера, а не выдуманные ярлыки:
- * нажатие ставит тот же `state`, который принимает `/attendance/presence`.
- * «Все» — пустое значение, то есть снятый фильтр.
- */
-type Quick = {
-  /** Опознавательный знак отбора: по нему совпадает подсветка. */
-  id: string;
-  title: string;
-  /** Состояние присутствия. Его понимает сервер. */
-  state?: string;
-  /**
-   * Признак строки. Состоянием он быть не может: опоздавший бывает и
-   * в офисе, и уже ушедшим, а сессию оставляют открытой в любом из них.
-   * Считается по уже полученным строкам.
-   */
-  flag?: 'late' | 'open';
-  icon?: 'alert' | 'late' | 'clock' | 'logout';
-  count: (counts: Record<string, number>) => number;
-};
+// --- панель «Сегодня» ----------------------------------------------------------
 
-const QUICK: Quick[] = [
-  { id: 'all', title: 'Все', count: (c) => c['should_work_today'] ?? 0 },
-  { id: 'now', title: 'Сейчас', state: 'IN_OFFICE', count: (c) => c['in_office'] ?? 0 },
-  { id: 'none', title: 'Нет отметки', state: 'NOT_COME', count: (c) => c['not_come'] ?? 0 },
-  { id: 'late', title: 'Опоздали', flag: 'late', count: (c) => c['late'] ?? 0 },
+const METRICS: (Quick & { icon: AppIconName; tone: string; count: (c: Counts) => number })[] = [
+  { id: 'left', title: 'Уже ушли', state: 'LEFT', icon: 'logout', tone: 'navy', count: (c) => c.left },
+  { id: 'none', title: 'Нет отметки', state: 'NOT_COME', icon: 'alert', tone: 'orange', count: (c) => c.none },
+  { id: 'late', title: 'Опоздали', flag: 'late', icon: 'clock', tone: 'orange', count: (c) => c.late },
+  { id: 'open', title: 'Незакрытые', flag: 'open', icon: 'doc', tone: 'blue', count: (c) => c.open },
 ];
 
-/**
- * Четыре числа панели. Каждое — кнопка: она сужает таблицу, а не просто
- * повторяет цифру.
- */
-const METRICS: Quick[] = [
-  { id: 'left', title: 'Уже ушли', state: 'LEFT', icon: 'logout',
-    count: (c) => c['left'] ?? 0 },
-  { id: 'none', title: 'Нет отметки', state: 'NOT_COME', icon: 'alert',
-    count: (c) => c['not_come'] ?? 0 },
-  { id: 'late', title: 'Опоздали', flag: 'late', icon: 'late',
-    count: (c) => c['late'] ?? 0 },
-  { id: 'open', title: 'Незакрытые', flag: 'open', icon: 'clock',
-    count: (c) => c['open_sessions'] ?? 0 },
-];
-
-/**
- * Строки блока «Требует внимания». Каждая — тот же отбор таблицы.
- *
- * «Вне геозоны» в макете есть, а здесь нет: признак живёт на отметке
- * (inside_geofence), а не на строке состава, и ни одно число дня его
- * не считает. Строка с нулём утверждала бы, что таких нет, — а это
- * неизвестно.
- */
-const ATTENTION: Quick[] = [
-  { id: 'none', title: 'Нет отметки', state: 'NOT_COME', icon: 'alert',
-    count: (c) => c['not_come'] ?? 0 },
-  { id: 'late', title: 'Опоздали', flag: 'late', icon: 'late',
-    count: (c) => c['late'] ?? 0 },
-  { id: 'open', title: 'Незакрытые посещения', flag: 'open', icon: 'clock',
-    count: (c) => c['open_sessions'] ?? 0 },
-];
-
-/**
- * Какой из быстрых отборов сейчас включён.
- *
- * Ответ один на все три места: признак важнее состояния, потому что
- * «опоздали» и «незакрытые» ставятся вместе со снятым состоянием.
- */
-function pickedQuick(state: string, flag: string): string {
-  if (flag) return QUICK.concat(METRICS, ATTENTION).find((one) => one.flag === flag)?.id ?? '';
-  if (!state) return 'all';
-  return QUICK.concat(METRICS, ATTENTION).find((one) => one.state === state)?.id ?? '';
-}
-
-/**
- * Панель «Сегодня»: доля в офисе, приходы по времени и четыре числа.
- *
- * Заменяет пять отдельных карточек. Те занимали треть экрана и отвечали
- * на один вопрос — сколько человек где; здесь тот же ответ, но место
- * остаётся таблице, ради которой на страницу и заходят.
- */
-function Today({
-  counts,
-  past,
-  rows,
-  zone,
-  chosen,
-  onPick,
-  date,
-}: {
-  counts: Record<string, number>;
+function Today({ counts, past, rows, zone, chosen, onPick, block }: {
+  counts: Counts;
   past: boolean;
   rows: api.PresenceRow[];
   zone: string;
   chosen: string;
   onPick: (item: Quick) => void;
-  date: string;
+  block: Block<unknown>;
 }) {
-  const expected = counts['should_work_today'] ?? 0;
-  // У прошедшего дня «сейчас в офисе» равно нулю по определению:
-  // спрашивают у него не это, а сколько человек пришло.
-  const here = past ? (counts['came'] ?? 0) : (counts['in_office'] ?? 0);
-  // Доля считается от тех, кого ждали, а не от всей организации:
-  // выходной у половины компании иначе выглядел бы провалом.
-  const share = expected > 0 ? (here / expected) * 100 : 0;
-
+  // Доля — от тех, кого ждали сегодня, а не от всей организации.
+  const share = counts.expected > 0 ? (counts.here / counts.expected) * 100 : 0;
   return (
-    <section className="panel today">
-      <h2 className="today__title">{past ? 'Итоги дня' : 'Сегодня'}</h2>
-
-      <div className="today__body">
-        <div className="today__share">
+    <section className="att-today" aria-label="Сегодня">
+      <div className="att-today__share">
+        <h2 className="att-today__title">{past ? 'Итоги дня' : 'Сегодня'}</h2>
+        <div className="att-today__ring">
           <Donut share={share} />
-          <p className="today__sum">
-            <strong>{here} из {expected}</strong>
-            <span>{past ? 'пришли на работу' : 'сейчас в офисе'}</span>
+          <p className="att-today__sum">
+            <i className="att-today__live" />
+            <strong>{counts.here} из {counts.expected}</strong>
+            <span>{past ? 'пришли' : 'в офисе'}</span>
+            <small>{block.state === 'loading' ? 'Загружаем…' : past ? 'За выбранный день' : 'Сейчас в офисе'}</small>
           </p>
         </div>
-
-        <Arrivals rows={rows} zone={zone} past={past} />
-
-        <div className="today__metrics">
-          {METRICS.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={`today__metric${chosen === item.id ? ' today__metric--on' : ''}`}
-              onClick={() => onPick(item)}
-              aria-pressed={chosen === item.id}
-            >
-              <AppIcon name={item.icon ?? 'alert'} size={18} />
-              <span className="today__metric-title">{item.title}</span>
-              <strong className="today__metric-value">{item.count(counts)}</strong>
-            </button>
-          ))}
-        </div>
       </div>
-      <span className="visually-hidden">{date}</span>
+
+      <Arrivals rows={rows} zone={zone} past={past} />
+
+      <div className="att-metrics">
+        {METRICS.map((item) => (
+          <button key={item.id} type="button" aria-pressed={chosen === item.id}
+                  className={`att-metric att-metric--${item.tone}${chosen === item.id ? ' att-metric--on' : ''}`}
+                  onClick={() => onPick(item)}>
+            <AppIcon name={item.icon} size={20} />
+            <span>{item.title}</span>
+            <strong>{item.count(counts)}</strong>
+          </button>
+        ))}
+      </div>
     </section>
   );
 }
 
-/** Кольцо доли. Дугой, а не заливкой: так видна и сотая часть. */
 function Donut({ share }: { share: number }) {
-  const length = 2 * Math.PI * 26;
+  const radius = 42;
+  const length = 2 * Math.PI * radius;
   const filled = (Math.min(Math.max(share, 0), 100) / 100) * length;
   return (
-    <svg className="donut" viewBox="0 0 60 60" width={72} height={72}
+    <svg className="att-donut" viewBox="0 0 96 96" width={96} height={96}
          role="img" aria-label={`В офисе ${share.toFixed(1)} процента`}>
-      <circle className="donut__track" cx="30" cy="30" r="26" />
-      <circle className="donut__fill" cx="30" cy="30" r="26"
-              strokeDasharray={`${filled} ${length}`} />
-      <text className="donut__text" x="30" y="30">
-        {share.toFixed(1).replace('.', ',')}%
-      </text>
+      <circle className="att-donut__track" cx="48" cy="48" r={radius} />
+      <circle className="att-donut__fill" cx="48" cy="48" r={radius}
+              strokeDasharray={`${filled} ${length}`} transform="rotate(-90 48 48)" />
+      <text className="att-donut__text" x="48" y="49">{share.toFixed(1).replace('.', ',')}%</text>
     </svg>
   );
 }
 
 /**
- * Динамика приходов: во сколько сегодня приходили.
- *
- * Берётся ПЕРВЫЙ вход каждого человека. Все входы подряд сместили бы
- * картину к обеду: возвращение с обеда — это тоже вход.
+ * Динамика приходов: первый вход каждого человека по пятиминуткам.
+ * Все входы подряд сместили бы картину к обеду — возвращение тоже вход.
  */
-function Arrivals({ rows, zone, past }: {
-  rows: api.PresenceRow[]; zone: string; past: boolean;
-}) {
-  const step = 15;
-  const title = past ? 'Динамика приходов' : 'Динамика приходов сегодня';
+function Arrivals({ rows, zone, past }: { rows: api.PresenceRow[]; zone: string; past: boolean }) {
+  const step = 5;
+  const from = 8 * 60;
+  const to = 11 * 60;
   const values = rows
     .map((row) => minutesOf(row.first_entry_at, zone))
-    .filter((one): one is number => one !== null);
-
-  if (values.length === 0) {
-    return (
-      <div className="today__chart">
-        <p className="today__chart-title">{title}</p>
-        <p className="muted">{past ? 'Приходов в этот день нет.' : 'Приходов пока нет.'}</p>
-      </div>
-    );
-  }
-
-  const low = Math.floor(Math.min(...values) / 60) * 60;
-  const high = Math.ceil(Math.max(...values) / 60) * 60;
-  const buckets: { from: number; count: number }[] = [];
-  for (let from = low; from <= high; from += step) {
-    buckets.push({
-      from,
-      count: values.filter((one) => one >= from && one < from + step).length,
-    });
-  }
-  const top = Math.max(1, ...buckets.map((one) => one.count));
-
+    .filter((one): one is number => one !== null && one >= from && one < to + step);
+  const buckets = Array.from({ length: (to - from) / step + 1 }, (_, at) => {
+    const start = from + at * step;
+    return values.filter((one) => one >= start && one < start + step).length;
+  });
+  const top = Math.max(1, ...buckets);
   return (
-    <div className="today__chart">
-      <p className="today__chart-title">{title}</p>
-      <div className="today__bars">
-        {buckets.map((one) => (
-          <span
-            key={one.from}
-            className="today__bar"
-            style={{ height: `${Math.max((one.count / top) * 100, one.count ? 8 : 0)}%` }}
-            title={`${atClock(one.from)} – ${atClock(one.from + step)} · ${one.count}`}
-          />
+    <div className="att-arrivals">
+      <p className="att-arrivals__title">{past ? 'Динамика приходов' : 'Динамика приходов сегодня'}</p>
+      <div className="att-arrivals__bars" role="img"
+           aria-label={`Приходов с 08:00 до 11:00: ${values.length}`}>
+        {buckets.map((count, at) => (
+          <span key={at} style={{ height: `${Math.max((count / top) * 100, 4)}%` }}
+                title={`${hhmm(from + at * step)} · ${count}`} />
         ))}
       </div>
-      <div className="today__axis">
-        <span>{atClock(low)}</span>
-        <span>{atClock(high)}</span>
+      <div className="att-arrivals__axis">
+        {[0, 30, 60, 90, 120, 150, 180].map((shift) => <span key={shift}>{hhmm(from + shift)}</span>)}
       </div>
     </div>
   );
+}
+
+// --- таблица ---------------------------------------------------------------------
+
+function Row({ row, zone, day, on, onPick }: {
+  row: api.PresenceRow;
+  zone: string;
+  day: string;
+  on: boolean;
+  onPick: () => void;
+}) {
+  const status = stateOf(row);
+  return (
+    <div className={on ? 'att-row att-row--on' : 'att-row'} role="row" tabIndex={0}
+         onClick={onPick}
+         onKeyDown={(event) => { if (event.key === 'Enter') onPick(); }}>
+      <span className="att-row__who">
+        <Face id={row.employee_id} name={row.full_name} className="att-row__face" />
+        <span className="att-row__text">
+          <b>{shortName(row.full_name)}</b>
+          <small>{row.employee_number ?? '—'}</small>
+        </span>
+      </span>
+      <span className="att-row__text">
+        <span>{row.office_name ?? '—'}</span>
+        <small>{hours(row)}</small>
+      </span>
+      <DayLine row={row} zone={zone} day={day} />
+      <span className="att-row__time">{present(row, day) ? span(present(row, day)) : '—'}</span>
+      <span className={`att-status att-status--${status.tone}`}>{status.title}</span>
+      <AppIcon name="next" size={18} className="att-row__go" />
+    </div>
+  );
+}
+
+/**
+ * Шкала рабочего дня: отрезки присутствия на отрезке графика.
+ * Промежуток между посещениями не называется обедом — это просто
+ * время вне офиса.
+ */
+function DayLine({ row, zone, day, wide = false }: {
+  row: api.PresenceRow;
+  zone: string;
+  day: string;
+  wide?: boolean;
+}) {
+  if (row.state === 'VACATION' || row.state === 'SICK_LEAVE' || row.state === 'OTHER_ABSENCE') {
+    return (
+      <span className={`att-line att-line--absent${wide ? ' att-line--wide' : ''}`}>
+        <span className="att-line__hatch">{stateOf(row).title}</span>
+      </span>
+    );
+  }
+  if (row.intervals.length === 0) {
+    return (
+      <span className={`att-line${wide ? ' att-line--wide' : ''}`}>
+        <span className="att-line__track att-line__track--empty" />
+      </span>
+    );
+  }
+
+  const start = toMinutes(row.scheduled_start) ?? 9 * 60;
+  const end = toMinutes(row.scheduled_end) ?? 18 * 60;
+  const points = row.intervals.flatMap((one) => [
+    minutesOf(one.started_at, zone),
+    one.ended_at ? minutesOf(one.ended_at, zone) : nowMinutes(zone),
+  ]).filter((one): one is number => one !== null);
+  const low = Math.min(start - 20, ...points);
+  const high = Math.max(end + 20, ...points);
+  const at = (minute: number) => ((minute - low) / (high - low)) * 100;
+
+  const labels: { left: number; text: string }[] = [];
+  const late = (row.late_minutes ?? 0) > 0;
+  row.intervals.forEach((one, index) => {
+    const from = minutesOf(one.started_at, zone);
+    const to = one.ended_at ? minutesOf(one.ended_at, zone) : null;
+    if (from !== null) labels.push({ left: at(from), text: clockOnDay(one.started_at, zone, day) });
+    if (to !== null && index < row.intervals.length - 1) {
+      labels.push({ left: at(to), text: clock(one.ended_at, zone) });
+    } else if (to !== null) {
+      labels.push({ left: at(to), text: clock(one.ended_at, zone) });
+    } else {
+      labels.push({ left: 100, text: 'сейчас' });
+    }
+  });
+  // Подписи не налезают друг на друга: ближе 16 % ширины — пропуск.
+  const shown = labels.filter((one, index) =>
+    labels.slice(0, index).every((was) => Math.abs(was.left - one.left) > 16));
+
+  return (
+    <span className={`att-line${wide ? ' att-line--wide' : ''}`}>
+      <span className="att-line__track">
+        {row.intervals.map((one, index) => {
+          const from = minutesOf(one.started_at, zone);
+          const to = one.ended_at ? minutesOf(one.ended_at, zone) : nowMinutes(zone);
+          if (from === null || to === null) return null;
+          return (
+            <i key={index} className="att-line__part"
+               style={{ left: `${at(from)}%`, width: `${Math.max(at(to) - at(from), 1)}%` }} />
+          );
+        })}
+        {late && <i className="att-line__late" style={{ left: `${at(start)}%` }} />}
+        {row.open_session_id && <i className="att-line__now" />}
+      </span>
+      <span className="att-line__labels">
+        {shown.map((one) => (
+          <small key={`${one.left}-${one.text}`}
+                 style={{ left: `${Math.min(Math.max(one.left, 0), 100)}%` }}>{one.text}</small>
+        ))}
+      </span>
+    </span>
+  );
+}
+
+function Pages({ page, pages, onGo }: { page: number; pages: number; onGo: (next: number) => void }) {
+  const shown = Array.from({ length: Math.min(pages, 5) }, (_, at) => at + 1);
+  return (
+    <nav className="att-pages" aria-label="Страницы">
+      <button type="button" className="att-pages__arrow" aria-label="Предыдущая"
+              disabled={page <= 1} onClick={() => onGo(page - 1)}>
+        <AppIcon name="back" size={16} />
+      </button>
+      {shown.map((one) => (
+        <button key={one} type="button" aria-current={one === page ? 'page' : undefined}
+                className={one === page ? 'att-pages__one att-pages__one--on' : 'att-pages__one'}
+                onClick={() => onGo(one)}>
+          {one}
+        </button>
+      ))}
+      <button type="button" className="att-pages__next" aria-label="Следующая"
+              disabled={page >= pages} onClick={() => onGo(page + 1)}>
+        <AppIcon name="next" size={18} />
+      </button>
+    </nav>
+  );
+}
+
+// --- правая колонка --------------------------------------------------------------
+
+const ATTENTION: (Quick & { icon: AppIconName; tone: string; count: (c: Counts) => number })[] = [
+  { id: 'none', title: 'Нет отметки', state: 'NOT_COME', icon: 'alert', tone: 'orange', count: (c) => c.none },
+  { id: 'late', title: 'Опоздали', flag: 'late', icon: 'clock', tone: 'orange', count: (c) => c.late },
+  { id: 'open', title: 'Незакрытые', flag: 'open', icon: 'doc', tone: 'navy', count: (c) => c.open },
+  { id: 'geo', title: 'Вне геозоны', flag: 'geo', icon: 'pin', tone: 'navy', count: (c) => c.geo },
+];
+
+function Attention({ counts, chosen, onPick }: {
+  counts: Counts;
+  chosen: string;
+  onPick: (item: Quick) => void;
+}) {
+  const total = ATTENTION.reduce((sum, one) => sum + one.count(counts), 0);
+  return (
+    <section className="att-attention" aria-label="Требует внимания">
+      <h2 className="att-attention__title">
+        Требует внимания
+        <span className="att-attention__total">{total}</span>
+        <AppIcon name="next" size={18} className="att-attention__go" />
+      </h2>
+      {ATTENTION.map((item) => (
+        <button key={item.id} type="button" aria-pressed={chosen === item.id}
+                className={`att-attention__row att-attention__row--${item.tone}${chosen === item.id ? ' att-attention__row--on' : ''}`}
+                onClick={() => onPick(item)}>
+          <AppIcon name={item.icon} size={20} />
+          <span>{item.title}</span>
+          <b>{item.count(counts)}</b>
+          <AppIcon name="next" size={18} />
+        </button>
+      ))}
+    </section>
+  );
+}
+
+function Person({ row, day, zone, canFix, onFix }: {
+  row: api.PresenceRow | null;
+  day: string;
+  zone: string;
+  canFix: boolean;
+  onFix: () => void;
+}) {
+  const [events] = useBlock(
+    (signal) => row
+      ? api.events({
+        employee_id: row.employee_id, date_from: day, date_to: day,
+        verification_status: 'ACCEPTED', limit: '20',
+      }, signal)
+      : Promise.resolve({ items: [], has_more: false, next_cursor: null } as unknown as api.Cursored<api.EventRow>),
+    `events|${row?.employee_id ?? ''}|${day}`,
+  );
+
+  if (!row) {
+    return (
+      <section className="att-person">
+        <p className="att-empty">Выберите сотрудника, чтобы увидеть его день.</p>
+      </section>
+    );
+  }
+  const status = stateOf(row);
+  const list = events.state === 'ready'
+    ? [...events.data.items].sort((a, b) => a.occurred_at.localeCompare(b.occurred_at)).slice(0, 3)
+    : [];
+
+  return (
+    <section className="att-person" aria-label="Выбранный сотрудник">
+      <div className="att-person__who">
+        <Face id={row.employee_id} name={row.full_name} className="att-person__face" />
+        <div>
+          <p className="att-person__name">{shortName(row.full_name)}</p>
+          <p className="att-person__number">{row.employee_number ?? '—'}</p>
+          <span className={`att-status att-status--${status.tone}`}>{status.title}</span>
+        </div>
+      </div>
+
+      <dl className="att-person__facts">
+        <dt><AppIcon name="building" size={18} />Офис</dt>
+        <dd>{row.office_name ?? '—'}</dd>
+        <dt><AppIcon name="users" size={18} />Отдел</dt>
+        <dd>{row.department_name ?? '—'}</dd>
+        <dt><AppIcon name="calendar" size={18} />График</dt>
+        <dd>{hours(row)}</dd>
+      </dl>
+
+      <div className="att-person__day">
+        <p className="att-person__label">{day === today() ? 'Сегодня в офисе' : 'В офисе за день'}</p>
+        <p className="att-person__total">{present(row, day) ? span(present(row, day)) : '—'}</p>
+        <DayLine row={row} zone={zone} day={day} wide />
+      </div>
+
+      <p className="att-person__label">{day === today() ? 'События сегодня' : 'События дня'}</p>
+      <ul className="att-events">
+        {events.state === 'loading' && <li className="att-events__none">Загружаем…</li>}
+        {events.state === 'ready' && list.length === 0 && <li className="att-events__none">Отметок нет</li>}
+        {list.map((one) => (
+          <li key={one.id} className={one.event_type === 'ENTRY' ? 'att-events__in' : 'att-events__out'}>
+            <b>{clock(one.occurred_at, zone)}</b>
+            <span>
+              {one.event_type === 'ENTRY' ? 'Вход' : 'Выход'}
+              {one.qr_point_name ? ` · ${one.qr_point_name}` : ''}
+            </span>
+          </li>
+        ))}
+      </ul>
+
+      <div className="att-person__actions">
+        <Link className="att-btn att-btn--outline" to={`/employees/${row.employee_id}?tab=attendance`}>
+          <AppIcon name="doc" size={18} />
+          Открыть карточку
+        </Link>
+        {/* Исправление — это добавление ручной отметки с причиной, а не
+            правка существующей: форма открывается в карточке дня. */}
+        <button type="button" className="att-btn att-btn--blue" disabled={!canFix} onClick={onFix}>
+          <AppIcon name="pencil" size={18} />
+          Исправить отметку
+        </button>
+      </div>
+    </section>
+  );
+}
+
+// --- журнал отметок ------------------------------------------------------------
+
+function Journal({ day, office }: { day: string; office: string }) {
+  const [cursor, setCursor] = useState('');
+  const [direction, setDirection] = useState('');
+  const [onlyAccepted, setOnlyAccepted] = useState(true);
+
+  const [log] = useBlock(
+    (signal) => api.events({
+      date_from: day, date_to: day, limit: '20',
+      ...(office ? { office_id: office } : {}),
+      ...(direction ? { event_type: direction } : {}),
+      // Успешные отметки и отклонённые попытки — разные вещи.
+      ...(onlyAccepted ? { verification_status: 'ACCEPTED' } : {}),
+      ...(cursor ? { cursor } : {}),
+    }, signal),
+    `log|${day}|${office}|${direction}|${onlyAccepted}|${cursor}`,
+  );
+
+  return (
+    <section className="att-list att-list--log">
+      <div className="att-filters">
+        <Select label="Направление" empty="Вход и выход" value={direction}
+                options={[{ id: 'ENTRY', name: 'Только входы' }, { id: 'EXIT', name: 'Только выходы' }]}
+                onChange={(value) => { setDirection(value); setCursor(''); }} />
+        <label className="att-check">
+          <input type="checkbox" checked={onlyAccepted}
+                 onChange={(event) => { setOnlyAccepted(event.target.checked); setCursor(''); }} />
+          Только успешные отметки
+        </label>
+      </div>
+      <Section block={log} name="журнал">
+        {(data) => data.items.length === 0 ? (
+          <p className="att-empty">За выбранный день отметок нет.</p>
+        ) : (
+          <table className="att-log">
+            <thead>
+              <tr><th>Время</th><th>Офис и точка</th><th>Направление</th><th>Источник</th><th>Состояние</th></tr>
+            </thead>
+            <tbody>
+              {data.items.map((one) => (
+                <tr key={one.id}>
+                  <td>{one.occurred_at.slice(11, 16)}</td>
+                  <td>{one.office_name ?? '—'}{one.qr_point_name ? ` · ${one.qr_point_name}` : ''}</td>
+                  <td>{one.event_type === 'ENTRY' ? 'Вход' : 'Выход'}</td>
+                  <td>{one.source}</td>
+                  <td>{one.verification_status}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Section>
+      <footer className="att-pager">
+        <p />
+        <div className="att-pages">
+          <button type="button" className="att-btn att-btn--light" disabled={!cursor} onClick={() => setCursor('')}>
+            В начало
+          </button>
+          <button type="button" className="att-btn att-btn--blue"
+                  disabled={log.state !== 'ready' || !log.data.has_more}
+                  onClick={() => log.state === 'ready' && setCursor(log.data.next_cursor ?? '')}>
+            Далее
+          </button>
+        </div>
+      </footer>
+    </section>
+  );
+}
+
+// --- мелочи ------------------------------------------------------------------------
+
+/**
+ * Фото сотрудника или инициалы. Признака «фото есть» в строке состава
+ * нет, поэтому снимок запрашивается, а отказ возвращает инициалы.
+ */
+function Face({ id, name, className }: { id: string; name: string; className: string }) {
+  const [broken, setBroken] = useState(false);
+  if (broken) return <span className={`att-face att-face--none ${className}`}>{initials(name)}</span>;
+  return (
+    <img className={`att-face ${className}`} src={api.employeePhotoUrl(id)} alt=""
+         onError={() => setBroken(true)}
+         onLoad={(event) => { if (event.currentTarget.naturalWidth < 32) setBroken(true); }} />
+  );
+}
+
+function Select({ label, empty, value, options, onChange }: {
+  label: string;
+  empty: string;
+  value: string;
+  options: { id: string; name: string }[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="att-select">
+      <span className="visually-hidden">{label}</span>
+      <select value={value} onChange={(event) => onChange(event.target.value)}>
+        <option value="">{empty}</option>
+        {options.map((one) => <option key={one.id} value={one.id}>{one.name}</option>)}
+      </select>
+      <AppIcon name="chevron" size={16} className="att-select__arrow" />
+    </label>
+  );
+}
+
+function Section<T>({ block, name, children }: {
+  block: Block<T>;
+  name: string;
+  children: (data: T) => React.ReactNode;
+}) {
+  if (block.state === 'loading') return <p className="att-empty">Загружаем {name}…</p>;
+  if (block.state === 'denied') return <p className="att-empty">Нет доступа к разделу «{name}».</p>;
+  if (block.state === 'error') {
+    return <p className="att-empty att-empty--bad">Не удалось загрузить {name}.</p>;
+  }
+  return <>{children(block.data)}</>;
+}
+
+function shortName(full: string): string {
+  return full.split(' ').slice(0, 2).join(' ');
+}
+
+/**
+ * Время в офисе. Число сервера — главное: он знает про несколько
+ * посещений за день, и разница входа и выхода его не подменяет.
+ *
+ * Досчёт только в одном случае: сегодня, открытое посещение, а сервер
+ * прислал ноль. Иначе человек, который сейчас в офисе, выглядел бы
+ * пришедшим только что. У прошедшего дня открытое посещение до «сейчас»
+ * не тянется — там это были бы сутки.
+ */
+function present(row: api.PresenceRow, day: string): number {
+  if (row.seconds > 0 || day !== today()) return row.seconds;
+  return row.intervals.reduce((sum, one) => {
+    if (one.ended_at) return sum + one.seconds;
+    const started = new Date(one.started_at).getTime();
+    return Number.isNaN(started) ? sum : sum + Math.max(0, Math.round((Date.now() - started) / 1000));
+  }, 0);
+}
+
+function hours(row: api.PresenceRow): string {
+  return row.scheduled_start && row.scheduled_end
+    ? `${row.scheduled_start.slice(0, 5)} – ${row.scheduled_end.slice(0, 5)}`
+    : 'График не задан';
+}
+
+function toMinutes(time: string | null): number | null {
+  if (!time) return null;
+  const [h, m] = time.split(':').map(Number);
+  return h === undefined || m === undefined || Number.isNaN(h) || Number.isNaN(m) ? null : h * 60 + m;
+}
+
+function hhmm(minutes: number): string {
+  return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
 }
 
 /** Минуты от полуночи в поясе офиса. */
@@ -642,201 +882,31 @@ function minutesOf(at: string | null, zone: string): number | null {
   if (!at) return null;
   const date = new Date(at);
   if (Number.isNaN(date.getTime())) return null;
+  return partsInZone(date, zone);
+}
+
+function nowMinutes(zone: string): number {
+  return partsInZone(new Date(), zone) ?? 0;
+}
+
+function partsInZone(date: Date, zone: string): number | null {
   const text = new Intl.DateTimeFormat('ru-RU', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-    ...(zone ? { timeZone: zone } : {}),
+    hour: '2-digit', minute: '2-digit', hour12: false, ...(zone ? { timeZone: zone } : {}),
   }).format(date);
-  const [h, m] = text.split(':').map((part) => Number.parseInt(part, 10));
-  if (Number.isNaN(h as number) || Number.isNaN(m as number)) return null;
-  return (h as number) * 60 + (m as number);
+  return toMinutes(text);
 }
 
-/** «Требует внимания»: те же состояния, но списком и с переходом. */
-function Attention({
-  counts,
-  chosen,
-  onPick,
-}: {
-  counts: Record<string, number>;
-  chosen: string;
-  onPick: (item: Quick) => void;
-}) {
-  const total = ATTENTION.reduce((sum, one) => sum + one.count(counts), 0);
-  return (
-    <section className="panel attention">
-      <h2 className="attention__title">
-        Требует внимания
-        <span className="attention__total">{total}</span>
-      </h2>
-      <ul className="attention__rows">
-        {ATTENTION.map((item) => (
-          <li key={item.id}>
-            <button
-              type="button"
-              className={`attention__row${chosen === item.id ? ' attention__row--on' : ''}`}
-              aria-pressed={chosen === item.id}
-              onClick={() => onPick(item)}
-            >
-              <AppIcon name={item.icon ?? 'alert'} size={18} />
-              <span className="attention__name">{item.title}</span>
-              <span className="attention__count">{item.count(counts)}</span>
-              <AppIcon name="next" size={16} />
-            </button>
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
+function plural(n: number): string {
+  const form = n % 10 === 1 && n % 100 !== 11 ? 'сотрудника'
+    : 'сотрудников';
+  return `${n} ${form}`;
 }
 
-// --- журнал ----------------------------------------------------------------
-
-function Journal({ day, region, office }: { day: string; region: string; office: string }) {
-  const [cursor, setCursor] = useState('');
-  const [direction, setDirection] = useState('');
-  const [onlyAccepted, setOnlyAccepted] = useState(true);
-
-  const [log] = useBlock(
-    (signal) =>
-      api.events(
-        {
-          date_from: day,
-          date_to: day,
-          limit: '20',
-          ...(region ? { region_id: region } : {}),
-          ...(office ? { office_id: office } : {}),
-          ...(direction ? { event_type: direction } : {}),
-          // Успешные отметки и отклонённые попытки — разные вещи,
-          // и складывать их в один список нельзя.
-          ...(onlyAccepted ? { verification_status: 'ACCEPTED' } : {}),
-        },
-        signal,
-      ),
-    `log|${day}|${region}|${office}|${direction}|${onlyAccepted}|${cursor}`,
-  );
-
-  return (
-    <section className="sheet">
-      <div className="toolbar">
-        <label className="pick">
-          <span className="visually-hidden">Направление</span>
-          <select value={direction} onChange={(event) => { setDirection(event.target.value); setCursor(''); }}>
-            <option value="">Вход и выход</option>
-            <option value="ENTRY">Только входы</option>
-            <option value="EXIT">Только выходы</option>
-          </select>
-        </label>
-        <label className="remember">
-          <input type="checkbox" checked={onlyAccepted}
-                 onChange={(event) => { setOnlyAccepted(event.target.checked); setCursor(''); }} />
-          <span>Только успешные отметки</span>
-        </label>
-      </div>
-
-      <Section block={log} name="журнал">
-        {(data) =>
-          data.items.length === 0 ? (
-            <p className="empty">За выбранный день отметок нет.</p>
-          ) : (
-            <div className="scroller">
-              <table className="people">
-                <thead>
-                  <tr>
-                    <th>Время</th>
-                    <th>Сотрудник</th>
-                    <th>Офис и точка</th>
-                    <th>Направление</th>
-                    <th>Источник</th>
-                    <th>Состояние</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.items.map((event) => (
-                    <tr key={event.id}>
-                      <td className="num">{event.occurred_at.slice(11, 16)}</td>
-                      <td>{event.employee_id.slice(0, 8)}</td>
-                      <td>
-                        <span className="two">
-                          <span className="two__first">{event.office_name ?? '—'}</span>
-                          {event.qr_point_name && (
-                            <span className="two__second">{event.qr_point_name}</span>
-                          )}
-                        </span>
-                      </td>
-                      <td>{event.event_type === 'ENTRY' ? 'Вход' : 'Выход'}</td>
-                      <td>{event.source}</td>
-                      <td>{event.verification_status}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )
-        }
-      </Section>
-
-      <div className="pager">
-        <p className="pager__note" />
-        <div className="pager__tools">
-          <button type="button" className="btn" disabled={!cursor} onClick={() => setCursor('')}>
-            Назад
-          </button>
-          <button type="button" className="btn btn--dark"
-                  disabled={log.state !== 'ready' || !log.data.has_more}
-                  onClick={() => log.state === 'ready' && setCursor(log.data.next_cursor ?? '')}>
-            Далее
-          </button>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-// --- мелочи ----------------------------------------------------------------
-
-// Формат времени общий для всей CRM и живёт в `features/time/zone`.
-// Здесь он переэкспортируется, потому что карточка дня берёт его
-// отсюда: два разных способа показать одно и то же время — это ровно
-// та ошибка, из-за которой на странице стоял UTC под подписью пояса.
-export { clock, clockOnDay };
-
-
+/** «6 ч 18 мин». Используется и карточкой дня. */
 export function span(seconds: number): string {
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.round((seconds % 3600) / 60);
-  return hours ? `${hours} ч ${String(minutes).padStart(2, '0')} м` : `${minutes} м`;
+  const h = Math.floor(seconds / 3600);
+  const m = Math.round((seconds % 3600) / 60);
+  return h ? `${h} ч ${m} мин` : `${m} мин`;
 }
 
-function Picker({ label, value, empty, options, onChange }: {
-  label: string; value: string; empty: string;
-  options: { id: string; name: string }[]; onChange: (value: string) => void;
-}) {
-  return (
-    <label className="pick">
-      <span className="visually-hidden">{label}</span>
-      <select value={value} onChange={(event) => onChange(event.target.value)}>
-        <option value="">{empty}</option>
-        {options.map((option) => (
-          <option key={option.id} value={option.id}>{option.name}</option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-function Section<T>({ block, name, children }: {
-  block: Block<T>; name: string; children: (data: T) => React.ReactNode;
-}) {
-  if (block.state === 'loading') return <p className="empty">Загружаем {name}…</p>;
-  if (block.state === 'denied') return <p className="empty">Нет доступа к разделу «{name}».</p>;
-  if (block.state === 'error') {
-    return (
-      <p className="empty empty--bad">
-        Не удалось загрузить {name}. Это ошибка запроса, а не «данных нет».
-      </p>
-    );
-  }
-  return <>{children(block.data)}</>;
-}
+export { clock, clockOnDay };

@@ -367,7 +367,7 @@ class EmployeeService(BaseService):
                 Q(valid_from__lte=at)
                 & (Q(valid_to__isnull=True) | Q(valid_to__gte=at)),
                 employee_id__in=[e.id for e in page.items],
-            ).select_related("schedule")
+            ).select_related("schedule").prefetch_related("schedule__days")
         }
         # Состояние Telegram — из самих привязок, а не из флага
         # `telegram_connected`: этот флаг задумывался денормализованным,

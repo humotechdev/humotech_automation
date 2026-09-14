@@ -106,12 +106,23 @@ class EmployeeListItemSerializer(serializers.ModelSerializer):
         schedule = getattr(employee, "current_schedule", None)
         if schedule is None:
             return None
+        # Дни недели и часы смены: без них строка «Пн–Пт · 09:00 – 18:00»
+        # не собирается, а в названии графика дней нет. Дни уже
+        # прочитаны вместе со страницей (`prefetch_related`), лишнего
+        # запроса это не стоит.
+        days = sorted(
+            (one for one in schedule.days.all() if one.is_working_day),
+            key=lambda one: one.weekday,
+        )
         return {
             "id": str(schedule.id),
             "name": schedule.name,
             "timezone": schedule.timezone,
             "weekly_minutes": schedule.weekly_minutes,
             "is_flexible": schedule.is_flexible,
+            "weekdays": [one.weekday for one in days],
+            "start_time": days[0].start_time.isoformat() if days and days[0].start_time else None,
+            "end_time": days[0].end_time.isoformat() if days and days[0].end_time else None,
         }
 
 
@@ -132,6 +143,12 @@ class CurrentScheduleSerializer(serializers.Serializer):
     status = serializers.CharField()
     valid_from = serializers.DateField()
     valid_to = serializers.DateField(allow_null=True)
+    # Дни недели и часы смены. Без них строка списка «Пн–Пт · 09:00 – 18:00»
+    # не собирается: в названии графика дней нет, а угадывать их по
+    # названию значило бы показать режим, которого может не быть.
+    weekdays = serializers.ListField(child=serializers.IntegerField(), required=False)
+    start_time = serializers.TimeField(allow_null=True, required=False)
+    end_time = serializers.TimeField(allow_null=True, required=False)
 
 
 class EmployeeCardSerializer(serializers.Serializer):
@@ -190,6 +207,8 @@ class EmployeeCardSerializer(serializers.Serializer):
         row = card.current_schedule
         if row is None:
             return None
+        days = [one for one in row.schedule.days.all() if one.is_working_day]
+        days.sort(key=lambda one: one.weekday)
         return CurrentScheduleSerializer(
             {
                 "schedule_id": row.schedule_id,
@@ -198,6 +217,9 @@ class EmployeeCardSerializer(serializers.Serializer):
                 "status": row.schedule.status,
                 "valid_from": row.valid_from,
                 "valid_to": row.valid_to,
+                "weekdays": [one.weekday for one in days],
+                "start_time": days[0].start_time if days else None,
+                "end_time": days[0].end_time if days else None,
             }
         ).data
 

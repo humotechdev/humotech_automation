@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
@@ -36,15 +37,18 @@ from humotech.core.demo.catalog import SHOWCASE
 
 API = "https://api.pexels.com/v1/search"
 
-#: Запросы подобраны так, чтобы получились разные лица разного возраста,
-#: а не двадцать одинаковых портретов из одной фотосессии.
+#: Запросы подобраны под ОДИН вид кадра: голова и плечи, взгляд в
+#: камеру, деловая одежда, светлый фон. «Портрет в офисе» без этого
+#: уточнения приносит людей в полный рост и снимки с телефоном в руке —
+#: в списке сотрудников они выглядят случайным набором, а не карточками
+#: одной компании.
 QUERIES = (
-    ("MALE", "young", "young man portrait office"),
-    ("MALE", "middle", "middle aged businessman portrait"),
-    ("MALE", "senior", "senior man portrait smiling"),
-    ("FEMALE", "young", "young woman portrait office"),
-    ("FEMALE", "middle", "middle aged businesswoman portrait"),
-    ("FEMALE", "senior", "senior woman portrait smiling"),
+    ("MALE", "young", "headshot young man business suit white background"),
+    ("MALE", "middle", "corporate headshot businessman suit studio"),
+    ("MALE", "senior", "professional headshot senior businessman studio portrait"),
+    ("FEMALE", "young", "headshot young businesswoman white background"),
+    ("FEMALE", "middle", "corporate headshot businesswoman studio portrait"),
+    ("FEMALE", "senior", "professional headshot senior businesswoman studio"),
 )
 
 
@@ -179,17 +183,22 @@ class Command(BaseCommand):
 
     @staticmethod
     def _save(image, body: bytes, path: Path) -> None:
-        """Квадрат по центру, 256×256, JPEG.
+        """Квадрат вокруг лица, 256×256, JPEG.
 
-        Центр, а не лицо: распознавания лиц здесь нет и заводить его
-        ради витрины незачем. У портретных снимков лицо и так в центре
-        верхней половины, поэтому квадрат берётся со смещением вверх.
+        Распознавания лиц здесь нет и заводить его ради витрины незачем.
+        У портретного кадра лицо стоит в верхней трети, поэтому квадрат
+        берётся не по центру, а со смещением вверх на пятую часть
+        оставшейся высоты: по центру в кадр попадали бы плечи и грудь,
+        а лицо уезжало за верхнюю границу.
+
+        Пропорции не искажаются: берётся квадрат из исходника и
+        уменьшается целиком, без растяжения.
         """
         picture = image.open(BytesIO(body)).convert("RGB")
         width, height = picture.size
         side = min(width, height)
         left = (width - side) // 2
-        top = max(0, (height - side) // 3)
+        top = max(0, int((height - side) * 0.18))
         picture = picture.crop((left, top, left + side, top + side))
         picture = picture.resize((photos.SIZE, photos.SIZE), image.LANCZOS)
         picture.save(path, "JPEG", quality=photos.QUALITY, optimize=True)
@@ -214,14 +223,29 @@ class Command(BaseCommand):
 
     # --- сеть ---------------------------------------------------------------
 
-    @staticmethod
-    def _search(key: str, query: str, count: int) -> list[dict]:
-        url = f"{API}?query={urllib.parse.quote(query)}&per_page={count}&orientation=portrait"
-        request = urllib.request.Request(url, headers={"Authorization": key})
-        with urllib.request.urlopen(request, timeout=30) as answer:
-            return json.loads(answer.read()).get("photos", [])
+    #: Фотобанк отвечает 403 на запрос без опознавательной строки клиента:
+    #: `Python-urllib` он считает роботом. Строка честная — это и есть
+    #: наш инструмент, а не попытка притвориться браузером.
+    AGENT = "HUMOTECH-demo-photo-import/1.0 (+internal tooling)"
 
-    @staticmethod
-    def _fetch(url: str) -> bytes:
-        with urllib.request.urlopen(url, timeout=30) as answer:
+    def _search(self, key: str, query: str, count: int) -> list[dict]:
+        url = f"{API}?query={urllib.parse.quote(query)}&per_page={count}&orientation=portrait"
+        request = urllib.request.Request(
+            url, headers={"Authorization": key, "User-Agent": self.AGENT}
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=30) as answer:
+                return json.loads(answer.read()).get("photos", [])
+        except urllib.error.HTTPError as exc:
+            # Тело ответа содержит причину отказа и не содержит ключа:
+            # без него отличить «неверный ключ» от «исчерпан лимит»
+            # можно было бы только гаданием.
+            body = exc.read().decode("utf-8", "replace")[:200]
+            raise CommandError(
+                f"Pexels ответил {exc.code}: {body}"
+            ) from exc
+
+    def _fetch(self, url: str) -> bytes:
+        request = urllib.request.Request(url, headers={"User-Agent": self.AGENT})
+        with urllib.request.urlopen(request, timeout=30) as answer:
             return answer.read()

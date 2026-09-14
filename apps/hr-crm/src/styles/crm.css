@@ -6,6 +6,87 @@
  * приложения.
  */
 
+/*
+ * Roboto Condensed — локальными файлами, без обращения в сеть.
+ *
+ * Узкий шрифт выбран не ради вкуса: у широкого другая длина строки, и
+ * подписи таблиц, осей и карточек встали бы иначе, чем в макете. Файлы
+ * разложены по наборам знаков, поэтому латиница не тянет за собой
+ * кириллицу и наоборот.
+ *
+ * `font-display: swap` — текст виден сразу системным шрифтом и
+ * подменяется, когда файл дойдёт. Пустая страница на время загрузки
+ * шрифта хуже, чем короткая подмена начертания.
+ */
+@font-face {
+  font-family: 'Roboto Condensed';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/roboto-condensed-cyrillic-400.woff2') format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: 'Roboto Condensed';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/roboto-condensed-latin-400.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+2013-2014,
+    U+2018-201A, U+201C-201E, U+2020-2022, U+2026, U+2030, U+2039-203A, U+2122;
+}
+@font-face {
+  font-family: 'Roboto Condensed';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/fonts/roboto-condensed-cyrillic-500.woff2') format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: 'Roboto Condensed';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/fonts/roboto-condensed-latin-500.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+2013-2014,
+    U+2018-201A, U+201C-201E, U+2020-2022, U+2026, U+2030, U+2039-203A, U+2122;
+}
+@font-face {
+  font-family: 'Roboto Condensed';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('/fonts/roboto-condensed-cyrillic-600.woff2') format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: 'Roboto Condensed';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('/fonts/roboto-condensed-latin-600.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+2013-2014,
+    U+2018-201A, U+201C-201E, U+2020-2022, U+2026, U+2030, U+2039-203A, U+2122;
+}
+@font-face {
+  font-family: 'Roboto Condensed';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/roboto-condensed-cyrillic-700.woff2') format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: 'Roboto Condensed';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/roboto-condensed-latin-700.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+2013-2014,
+    U+2018-201A, U+201C-201E, U+2020-2022, U+2026, U+2030, U+2039-203A, U+2122;
+}
+
 :root {
   /*
    * Единственный источник цвета во всей CRM.
@@ -21,17 +102,18 @@
    */
 
   /* --- палитра: чернила ---------------------------------------------- */
-  --ink-strong: #0b2864;
-  --ink-primary: #102f68;
-  --ink-secondary: #5777a5;
-  --ink-tertiary: #7892b8;
+  --ink-strong: #08265c;
+  --ink-primary: #0a2b63;
+  --ink-secondary: #5577a6;
+  --ink-tertiary: #7993b7;
 
   /* --- палитра: действие --------------------------------------------- */
-  --blue-600: #0d6fdc;
-  --blue-700: #095fbe;
-  --blue-800: #074f9e;
-  --blue-050: #e9f4fe;
-  --blue-deep: #123f70;
+  --blue-600: #0878ef;
+  --blue-700: #0668d2;
+  --blue-800: #0557b2;
+  --blue-100: #e6f2ff;
+  --blue-050: #f2f8ff;
+  --blue-deep: #123d79;
   --white: #ffffff;
 
   /* --- палитра: состояния ---------------------------------------------
@@ -39,28 +121,28 @@
      нигде не остаётся единственным различием — рядом всегда слово.
      Больничный намеренно не красный: болезнь не нарушение. Отсутствие
      отметки намеренно не красное: пока это вопрос, а не прогул. */
-  --green-600: #0a8a61;
-  --green-050: #e9f8f1;
-  --amber-600: #cc7009;
-  --amber-050: #fff5e6;
-  --purple-600: #7435c3;
-  --purple-050: #f4edff;
-  --steel-600: #346b94;
-  --steel-050: #edf5fb;
-  --red-600: #d64951;
-  --red-050: #fff0f1;
-  --success-600: #087c59;
-  --success-050: #e8f7f1;
+  --green-600: #009b75;
+  --green-050: #dff6ee;
+  --amber-600: #d57200;
+  --amber-050: #fff0dc;
+  --purple-600: #7236d5;
+  --purple-050: #efe5ff;
+  --steel-600: #6686ae;
+  --steel-050: #e8f0f9;
+  --red-600: #e3484f;
+  --red-050: #ffe8ea;
+  --success-600: #009b75;
+  --success-050: #dff6ee;
 
   /* --- роли: поверхности -----------------------------------------------
      Стекло только у верхнеуровневых панелей. Вложенные элементы берут
      сплошной белый: прозрачное поверх прозрачного темнеет и тянет за
      собой второй слой размытия. */
-  --background: #eef5fc;
-  --surface-1: var(--white);
+  --background: rgba(239, 248, 255, 0.79);
+  --surface-1: rgba(255, 255, 255, 0.93);
   --surface-2: rgba(233, 244, 254, 0.92);
-  --surface-glass: rgba(255, 255, 255, 0.8);
-  --surface-glass-dense: rgba(255, 255, 255, 0.88);
+  --surface-glass: rgba(255, 255, 255, 0.93);
+  --surface-glass-dense: rgba(255, 255, 255, 0.96);
   /* Вложенный блок внутри панели: плотнее её, чтобы строки читались. */
   --surface-inset: rgba(255, 255, 255, 0.9);
   --surface-field: rgba(255, 255, 255, 0.82);
@@ -74,8 +156,9 @@
   --text-on-action: var(--white);
 
   /* --- роли: границы ------------------------------------------------ */
-  --border-default: rgba(202, 220, 237, 0.86);
-  --border-strong: rgba(165, 193, 219, 0.9);
+  --border-default: #cfdeec;
+  --border-soft: #deebf4;
+  --border-strong: #bdd2e6;
 
   /* --- роли: основное действие -------------------------------------- */
   --action-bg: var(--blue-600);
@@ -113,14 +196,14 @@
      Меню — единственный тёмный блок. Его собственные роли, потому что
      на глубоком синем «наведение» и «выбрано» строятся не так, как на
      белом: там подложка темнеет, здесь светлеет. */
-  --sidebar-top: #123f70;
-  --sidebar-middle: #174f7f;
-  --sidebar-bottom: #0d3a66;
-  --sidebar-text: #f6fbff;
-  --sidebar-muted: #a9cae6;
-  --sidebar-separator: rgba(205, 231, 249, 0.28);
-  --sidebar-hover: rgba(93, 169, 232, 0.16);
-  --sidebar-active: rgba(93, 169, 232, 0.34);
+  --sidebar-top: #185486;
+  --sidebar-middle: #174d7b;
+  --sidebar-bottom: #0f426d;
+  --sidebar-text: #f4f8fc;
+  --sidebar-muted: #a8cae5;
+  --sidebar-separator: rgba(188, 218, 239, 0.25);
+  --sidebar-hover: rgba(89, 163, 218, 0.2);
+  --sidebar-active: rgba(89, 163, 218, 0.42);
   --sidebar-active-border: #f2fbff;
 
   /* --- роли: поверх глубокого синего (подсказки, брендовый блок) ------ */
@@ -138,9 +221,7 @@
      Затемнение и тени отделены от текста и границ намеренно: они живут
      поверх любого фона, и меняться будут отдельно. */
   --scrim: rgba(11, 40, 100, 0.24);
-  --shadow-panel:
-    0 8px 24px rgba(19, 62, 104, 0.075),
-    0 1px 2px rgba(19, 62, 104, 0.05);
+  --shadow-panel: 0 4px 14px rgba(27, 72, 112, 0.08);
   --shadow-soft: rgba(19, 62, 104, 0.12);
   --shadow-lift: rgba(19, 62, 104, 0.08);
 
@@ -161,13 +242,15 @@
   --status-none-bg: rgba(233, 240, 248, 0.9);
 
   /* --- размеры каркаса -------------------------------------------------
-     Числа канонического экрана 1584×992: меню 245, верхняя панель 57,
-     поля рабочей области 18/25/22/26, промежуток между панелями 14. */
-  --side-width: 245px;
-  --topbar-height: 57px;
-  --panel-radius-lg: 16px;
-  --layout-gap: 14px;
-  --panel-radius: 13px;
+     Числа канонического экрана 1672×941: меню 212, верхняя панель 50,
+     поля рабочей области сверху 17, по бокам 20, промежуток между
+     колонками 16. Радиус панели 10: большой радиус на плотном экране
+     съедает угол таблицы. */
+  --side-width: 212px;
+  --topbar-height: 50px;
+  --panel-radius-lg: 12px;
+  --layout-gap: 16px;
+  --panel-radius: 10px;
 
   /*
    * Прежние имена оставлены псевдонимами. Их знают четыре тысячи строк
@@ -279,8 +362,9 @@ html {
   display: grid;
   grid-template-columns: var(--side-width) 1fr;
   min-height: 100dvh;
+  height: 100dvh;
   color: var(--text-body);
-  font-family: Inter, 'Segoe UI', Roboto, Arial, sans-serif;
+  font-family: 'Roboto Condensed', 'Arial Narrow', 'Segoe UI', Roboto, sans-serif;
   font-size: 15px;
   line-height: 1.35;
   -webkit-font-smoothing: antialiased;
@@ -343,15 +427,32 @@ html {
   }
 }
 
+/* Прокручивается только рабочая область. Каркас ровно в высоту окна, и
+   когда прокручивался весь документ, меню уезжало вверх вместе с ним,
+   оставляя под собой пустую фотографию. */
 .work {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  height: 100dvh;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
+/* Поля рабочей области из эталона 1672×941: панели начинаются на
+   x=232 и y=135, между ними и краем экрана 19 по бокам. Прежние 25/26
+   сдвигали содержимое вправо и вниз на шесть и двенадцать точек. */
 .canvas {
-  flex: 1;
-  padding: 18px 25px 15px 26px;
+  /* Растёт по содержимому, но не меньше остатка окна: короткая
+     страница заполняет экран, длинная — прокручивается внутри `.work`. */
+  flex: 1 0 auto;
+  /* Колонка, а не блок: страница отдаёт остаток высоты сетке, и низ
+     панели встаёт ровно на нижнее поле без прокрутки. */
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 17px 19px 20px;
   min-width: 0;
 }
 
@@ -400,15 +501,19 @@ html {
 .side__brand {
   display: flex;
   align-items: center;
-  height: 88px;
+  height: 76px;
   flex: none;
-  padding: 20px 0 18px 12px;
+  /* Блок знака уже сдвинут полем меню на 12 точек. Своих полей 8 слева
+     и 4 справа — знаку остаётся 176 из 212: почти вся ширина, как в
+     эталоне, и правый край не срезается. */
+  padding: 18px 4px 8px 8px;
 }
 
 /* Пропорции знака — из исходного файла: ширина считается от высоты по
    тому же отношению, поэтому надпись не сжимается и не растягивается. */
 .side__brand img {
-  width: 205px;
+  width: 100%;
+  max-width: 180px;
   height: 50px;
   object-fit: contain;
   object-position: left center;
@@ -428,7 +533,7 @@ html {
 }
 
 .side__group {
-  margin: 6px 12px 8px;
+  margin: 8px 12px 6px;
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.05em;
@@ -438,11 +543,11 @@ html {
 
 .side__list {
   list-style: none;
-  margin: 0 0 8px;
+  margin: 0 0 6px;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1.5px;
 }
 
 /* Размер значков задаёт `AppIcon`, а не эта таблица: раньше половина
@@ -454,17 +559,17 @@ html {
 
 .nav {
   width: 100%;
-  min-height: 48px;
+  min-height: 42px;
   text-decoration: none;
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 0 12px;
+  gap: 12px;
+  padding: 0 12px 0 14px;
   border: 0;
   border-radius: 9px;
   background: none;
   color: var(--sidebar-text);
-  font-size: 15.5px;
+  font-size: 14.5px;
   text-align: left;
   cursor: pointer;
 }
@@ -818,14 +923,14 @@ html {
   flex-wrap: wrap;
   color: var(--ink-strong);
   margin: 0;
-  font-size: 36px;
-  line-height: 1.08;
+  font-size: 34px;
+  line-height: 1.05;
   font-weight: 760;
   letter-spacing: -0.025em;
 }
 
 .head__sub {
-  margin: 7px 0 0;
+  margin: 6px 0 0;
   font-size: 14px;
   color: var(--ink-secondary);
 }
@@ -2850,7 +2955,7 @@ html {
  */
 
 .head--tight {
-  margin-bottom: 14px;
+  margin-bottom: 10px;
 }
 
 .head__actions {
@@ -2918,6 +3023,16 @@ html {
   gap: 4px;
   padding: 6px 16px 0;
   border-bottom: 1px solid var(--edge);
+}
+
+.people-layout .tabs {
+  margin-top: 16px;
+  padding: 0 12px;
+}
+
+.people-layout .tab {
+  padding: 9px 12px;
+  font-size: 14px;
 }
 
 .tab {

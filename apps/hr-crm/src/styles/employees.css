@@ -1,0 +1,1130 @@
+/*
+ * Страница «Сотрудники» — размеры сняты с эталона 1672×941.
+ *
+ * Всё под префиксом `emp-`: правки здесь не задевают другие страницы.
+ * Шрифт содержимого в эталоне обычной ширины, не узкий. Каркас (меню и
+ * верхняя панель) общий для всех страниц и остаётся как есть.
+ */
+
+.emp {
+  font-family: 'Segoe UI', 'Open Sans', system-ui, sans-serif;
+  --emp-ink: #13295a;
+  --emp-text: #22355c;
+  --emp-muted: #6b7c98;
+  --emp-line: #e1e8f1;
+  --emp-field: #d9e2ec;
+  --emp-blue: #1673ee;
+  --emp-blue-soft: #eaf3ff;
+
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  color: var(--emp-text);
+}
+
+/* --- шапка ------------------------------------------------------------------ */
+
+.emp-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  height: 69px;
+  flex: none;
+  padding-left: 4px;
+}
+
+.emp-head__title {
+  margin: 0;
+  font-size: 33px;
+  line-height: 37px;
+  font-weight: 700;
+  color: var(--emp-ink);
+  letter-spacing: -0.2px;
+}
+
+.emp-head__facts {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 5px 0 0;
+  font-size: 14px;
+  line-height: 20px;
+  color: #4d5f7d;
+}
+
+.emp-head__dot {
+  font-style: normal;
+  color: #8a99b1;
+}
+
+.emp-head__bar {
+  width: 1px;
+  height: 16px;
+  margin: 0 8px;
+  background: #c9d3e0;
+}
+
+.emp-head__when {
+  color: var(--emp-muted);
+}
+
+.emp-head__actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 1px;
+}
+
+/* --- кнопки ----------------------------------------------------------------- */
+
+.emp-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 44px;
+  padding: 0 18px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.emp-btn--light {
+  width: 142px;
+  border-color: var(--emp-field);
+  background: #ffffff;
+  color: var(--emp-ink);
+}
+
+.emp-btn--blue {
+  background: linear-gradient(180deg, #1a7df3 0%, #0d69e8 100%);
+  border-color: #0d69e8;
+  color: #ffffff;
+  box-shadow: 0 3px 10px rgba(13, 105, 232, 0.22);
+}
+
+.emp-head__actions .emp-btn--blue {
+  width: 229px;
+}
+
+.emp-btn--outline {
+  border-color: var(--emp-blue);
+  background: #ffffff;
+  color: var(--emp-blue);
+}
+
+.emp-btn:disabled,
+.emp-btn--off {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.emp-note {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+/* --- две колонки ------------------------------------------------------------ */
+
+.emp-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  /* Левая колонка забирает всю свободную ширину, правая всегда 400 и
+     прижата к правому краю. При 1672 левая выходит ровно 1003, как в
+     эталоне; на широком экране справа не остаётся пустоты. */
+  grid-template-columns: minmax(0, 1fr) 400px;
+  column-gap: 19px;
+}
+
+.emp-list,
+.emp-team {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(221, 229, 239, 0.9);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 6px 24px rgba(30, 64, 120, 0.06);
+}
+
+.emp-list {
+  margin-left: 1px;
+  padding: 17px 13px 16px;
+}
+
+/* --- отбор ------------------------------------------------------------------ */
+
+.emp-filters {
+  display: grid;
+  /* Поиск растягивается вместе с панелью; при 1672 он ровно 390. */
+  grid-template-columns: minmax(200px, 1fr) 114px 116px 118px 195px;
+  column-gap: 11px;
+  height: 40px;
+  flex: none;
+}
+
+.emp-search {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 0 14px;
+  border: 1px solid var(--emp-field);
+  border-radius: 8px;
+  background: #ffffff;
+  color: #50627f;
+}
+
+.emp-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  color: var(--emp-text);
+}
+
+.emp-search input::placeholder {
+  color: #74849d;
+}
+
+.emp-search:focus-within,
+.emp-select:focus-within {
+  border-color: var(--emp-blue);
+}
+
+.emp-select {
+  position: relative;
+  display: flex;
+  border: 1px solid var(--emp-field);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.emp-select select {
+  width: 100%;
+  min-width: 0;
+  padding: 0 26px 0 12px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  appearance: none;
+  font: inherit;
+  font-size: 13px;
+  color: var(--emp-ink);
+  cursor: pointer;
+}
+
+.emp-select__arrow {
+  position: absolute;
+  top: 11px;
+  right: 11px;
+  color: #3b4d6c;
+  pointer-events: none;
+}
+
+.emp-view {
+  display: flex;
+  border: 1px solid var(--emp-field);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.emp-view__one {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  flex: 1;
+  margin: -1px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  font: inherit;
+  font-size: 13.5px;
+  color: #5a6b86;
+  cursor: pointer;
+}
+
+.emp-view__one--on {
+  flex: none;
+  width: 100px;
+  border: 1.5px solid #3a86ea;
+  background: var(--emp-blue-soft);
+  color: #1466d8;
+}
+
+/* --- вкладки ---------------------------------------------------------------- */
+
+.emp-tabs {
+  display: flex;
+  gap: 14px;
+  height: 39px;
+  margin-top: 10px;
+  flex: none;
+  border-bottom: 1px solid var(--emp-line);
+}
+
+.emp-tab {
+  position: relative;
+  padding: 0 10px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 14.5px;
+  color: #4d5f7d;
+  cursor: pointer;
+}
+
+.emp-tab--on {
+  font-weight: 600;
+  color: #1466d8;
+}
+
+.emp-tab--on::after {
+  content: '';
+  position: absolute;
+  left: -1px;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--emp-blue);
+}
+
+/* --- карточки --------------------------------------------------------------- */
+
+.emp-body {
+  flex: 1;
+  min-height: 0;
+  padding-top: 18px;
+  /* Окно ниже 941: карточки прокручиваются внутри панели, а не
+     обрезаются под пагинацией. */
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.emp-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: 139px;
+  gap: 10px 10px;
+}
+
+.emp-card {
+  position: relative;
+  display: flex;
+  gap: 18px;
+  padding: 12px 12px 0 10px;
+  border: 1px solid var(--emp-line);
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(22, 48, 92, 0.04);
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.emp-card:hover {
+  border-color: #c7d7ea;
+}
+
+.emp-card--on {
+  border: 1.5px solid #3a86ea;
+  padding: 11.5px 11.5px 0 9.5px;
+  background: #f7fbff;
+  box-shadow: 0 4px 14px rgba(26, 110, 220, 0.1);
+}
+
+.emp-card:focus-visible {
+  outline: 2px solid #9cc4f6;
+  outline-offset: 2px;
+}
+
+.emp-photo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  object-fit: cover;
+  background: #e6effa;
+  color: #1c4c93;
+  font-weight: 600;
+}
+
+.emp-card__photo {
+  width: 90px;
+  height: 94px;
+  border-radius: 8px;
+  font-size: 26px;
+}
+
+.emp-card__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.emp-card__body p,
+.emp-card__body h3 {
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.emp-card__name {
+  padding-right: 150px;
+  font-size: 16px;
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--emp-ink);
+}
+
+.emp-card__number {
+  margin-top: 1px !important;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--emp-muted);
+}
+
+.emp-card__role {
+  margin-top: 3px !important;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--emp-text);
+}
+
+.emp-card__dept {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--emp-muted);
+}
+
+.emp-card__meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px !important;
+  margin-left: -2px !important;
+  font-size: 12.5px;
+  line-height: 20px;
+}
+
+/* Сжимается офис, график — никогда: часы важнее названия офиса. */
+.emp-card__meta .emp-bit:nth-child(1) { flex: 0 1 auto; }
+.emp-card__meta .emp-bit:nth-child(2) { flex: none; }
+.emp-card__meta .emp-bit:nth-child(3) { flex: 0 1 auto; }
+
+.emp-bit > svg {
+  width: 15px;
+  height: 15px;
+}
+
+.emp-bit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: #53647f;
+}
+
+.emp-bit > svg {
+  flex: none;
+  color: #4d6d9c;
+}
+
+.emp-bit__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.emp-bit--link,
+.emp-bit--link > svg {
+  color: #1466d8;
+}
+
+.emp-card__status {
+  position: absolute;
+  top: 17px;
+  right: 55px;
+}
+
+/* --- плашка состояния -------------------------------------------------------- */
+
+.emp-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 26px;
+  padding: 0 13px 0 11px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.emp-status::before {
+  content: '';
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.emp-status--ok { background: #e7f6ee; color: #1b7e4c; }
+.emp-status--ok::before { background: #1fa45f; }
+.emp-status--warn { background: #fff1e2; color: #c0660a; }
+.emp-status--warn::before { background: #f08a1d; }
+.emp-status--off { background: #edf1f6; color: #4f5f78; }
+.emp-status--off::before { background: #8391a8; }
+
+/* --- меню карточки ---------------------------------------------------------- */
+
+.emp-menu {
+  position: absolute;
+  top: 17px;
+  right: 12px;
+}
+
+.emp-menu__dots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.emp-menu__dots i {
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: #2b62b8;
+}
+
+.emp-menu__dots:hover {
+  background: #eef3f9;
+}
+
+.emp-menu__drop {
+  position: absolute;
+  top: 30px;
+  right: 0;
+  z-index: 5;
+  min-width: 170px;
+  padding: 5px;
+  border: 1px solid var(--emp-line);
+  border-radius: 9px;
+  background: #ffffff;
+  box-shadow: 0 8px 24px rgba(22, 48, 92, 0.12);
+}
+
+.emp-menu__drop button {
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.emp-menu__drop button:hover {
+  background: #eef3f9;
+}
+
+/* --- таблица ---------------------------------------------------------------- */
+
+.emp-table-wrap {
+  height: 100%;
+  overflow: auto;
+}
+
+.emp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.emp-table th {
+  position: sticky;
+  top: 0;
+  padding: 8px 10px;
+  background: #f6f9fc;
+  font-weight: 600;
+  color: var(--emp-muted);
+  text-align: left;
+}
+
+.emp-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--emp-line);
+  vertical-align: middle;
+}
+
+.emp-table small {
+  display: block;
+  color: var(--emp-muted);
+}
+
+.emp-table tr {
+  cursor: pointer;
+}
+
+.emp-table__on td {
+  background: #f3f8ff;
+}
+
+.emp-table__who {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.emp-table__photo {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.emp-empty {
+  margin: 24px 0;
+  color: var(--emp-muted);
+}
+
+.emp-empty--bad {
+  color: #b42318;
+}
+
+/* --- пагинация -------------------------------------------------------------- */
+
+.emp-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 40px;
+  margin-top: 14px;
+  padding-left: 3px;
+  flex: none;
+}
+
+.emp-pager__note {
+  margin: 0;
+  font-size: 13px;
+  color: #53647f;
+}
+
+.emp-pager__tools {
+  display: flex;
+  align-items: center;
+}
+
+.emp-size {
+  position: relative;
+  width: 61px;
+  height: 38px;
+  margin-right: 14px;
+  border: 1px solid var(--emp-field);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.emp-size::after {
+  content: '';
+  position: absolute;
+  top: 13px;
+  right: 14px;
+  width: 6px;
+  height: 6px;
+  border-right: 1.8px solid #2c3e5e;
+  border-bottom: 1.8px solid #2c3e5e;
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+
+.emp-size select {
+  width: 100%;
+  height: 100%;
+  padding: 0 0 0 16px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  appearance: none;
+  font: inherit;
+  font-size: 14px;
+  color: var(--emp-ink);
+  cursor: pointer;
+}
+
+.emp-pages {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.emp-pages__arrow,
+.emp-pages__one {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  border: 1px solid var(--emp-line);
+  border-radius: 6px;
+  background: #ffffff;
+  font: inherit;
+  font-size: 14px;
+  color: #2c3e5e;
+  cursor: pointer;
+}
+
+.emp-pages__arrow {
+  width: 35px;
+}
+
+.emp-pages__arrow:first-child {
+  margin-right: 1px;
+}
+
+.emp-pages__arrow:last-child {
+  margin-left: 5px;
+}
+
+.emp-pages__arrow:disabled {
+  color: #a3b0c3;
+  cursor: default;
+}
+
+.emp-pages__one {
+  min-width: 29px;
+  padding: 0 7px;
+}
+
+.emp-pages__one--on {
+  border-color: #b7d3fa;
+  background: #e4efff;
+  color: #1466d8;
+  font-weight: 600;
+}
+
+.emp-pages__gap {
+  width: 22px;
+  text-align: center;
+  color: #6b7c98;
+}
+
+/* --- правая панель ---------------------------------------------------------- */
+
+.emp-team {
+  padding: 16px 9px 0 10px;
+  overflow: hidden;
+}
+
+.emp-team__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 22px;
+  padding: 0 9px 0 8px;
+}
+
+.emp-team__title {
+  margin: 0;
+  font-size: 17px;
+  line-height: 22px;
+  font-weight: 600;
+  color: var(--emp-ink);
+}
+
+.emp-team__date {
+  font-size: 14px;
+  color: #3e4f6d;
+}
+
+.emp-team__wait {
+  margin: 12px 8px;
+  font-size: 13px;
+  color: var(--emp-muted);
+}
+
+.emp-sum {
+  display: flex;
+  align-items: flex-start;
+  height: 80px;
+  margin: 20px 0 24px;
+  padding: 0 9px 0 7px;
+}
+
+.emp-ring {
+  flex: none;
+  margin-top: -2px;
+}
+
+.emp-ring__track,
+.emp-ring__fill {
+  fill: none;
+  stroke-width: 8;
+}
+
+.emp-ring__track { stroke: #e3eaf2; }
+
+.emp-ring__fill {
+  stroke: #1f9d6a;
+  stroke-linecap: round;
+}
+
+.emp-ring__text {
+  fill: var(--emp-ink);
+  font-size: 19px;
+  font-weight: 700;
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+
+.emp-sum__main {
+  display: flex;
+  flex-direction: column;
+  margin: 17px 0 0 13px;
+}
+
+.emp-sum__main strong {
+  font-size: 20px;
+  line-height: 26px;
+  font-weight: 700;
+  color: var(--emp-ink);
+  white-space: nowrap;
+}
+
+.emp-sum__main span {
+  font-size: 12.5px;
+  line-height: 18px;
+  color: var(--emp-muted);
+  white-space: nowrap;
+}
+
+.emp-sum__legend {
+  display: flex;
+  flex-direction: column;
+  width: 128px;
+  margin: 0 0 0 auto;
+  padding: 0;
+  list-style: none;
+}
+
+.emp-sum__legend li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 26px;
+  font-size: 13px;
+  color: #4d5f7d;
+}
+
+.emp-sum__legend b {
+  margin-left: auto;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--emp-ink);
+}
+
+.emp-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  flex: none;
+}
+
+.emp-dot--ok { background: #1f9d6a; }
+.emp-dot--idle { background: #9fb3cf; }
+.emp-dot--warn { background: #f08a1d; }
+
+/* --- три перехода ----------------------------------------------------------- */
+
+.emp-tile {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 82px;
+  margin-bottom: 8px;
+  padding: 14px 44px 14px 70px;
+  border: 1px solid var(--emp-line);
+  border-radius: 10px;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.emp-tile--progress {
+  min-height: 109px;
+  align-items: flex-start;
+  padding-top: 15px;
+}
+
+.emp-tile:hover {
+  border-color: #c7d7ea;
+}
+
+.emp-tile__icon {
+  position: absolute;
+  top: 50%;
+  left: 18px;
+  display: flex;
+  transform: translateY(-50%);
+}
+
+.emp-tile--progress .emp-tile__icon {
+  top: 17px;
+  transform: none;
+}
+
+/* Крупнее ряда размеров иконок: в эталоне значок перехода около 26 px. */
+.emp-tile__icon svg {
+  width: 26px;
+  height: 26px;
+}
+
+.emp-tile__icon--blue { color: #1f6fe0; }
+.emp-tile__icon--red { color: #e0453f; }
+.emp-tile__icon--amber { color: #f08a1d; }
+
+.emp-tile__text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.emp-tile__text b {
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--emp-ink);
+}
+
+.emp-tile__text span {
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--emp-text);
+}
+
+.emp-tile__text small {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--emp-muted);
+}
+
+.emp-tile__of {
+  position: absolute;
+  right: 40px;
+  top: 58px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--emp-ink);
+}
+
+.emp-tile__bar {
+  position: absolute;
+  left: 70px;
+  right: 40px;
+  bottom: 18px;
+  height: 7px;
+  border-radius: 999px;
+  background: #e4eaf2;
+  overflow: hidden;
+}
+
+.emp-tile__bar i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: #1f9d6a;
+}
+
+.emp-tile__go {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  color: #34507f;
+  transform: translateY(-50%);
+}
+
+.emp-tile--progress .emp-tile__go {
+  top: 23px;
+  transform: none;
+}
+
+.emp-faces {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  margin-right: 22px;
+}
+
+.emp-faces__one {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  border: 2px solid #ffffff;
+  font-size: 12px;
+}
+
+.emp-faces--tight .emp-faces__one {
+  width: 34px;
+  height: 34px;
+}
+
+.emp-faces--tight .emp-faces__one + .emp-faces__one {
+  margin-left: -13px;
+}
+
+.emp-faces__rest {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin-left: 3px;
+  border-radius: 999px;
+  background: #eaf1fa;
+  font-size: 12px;
+  color: #4d5f7d;
+}
+
+/* --- выбранный сотрудник ---------------------------------------------------- */
+
+.emp-chosen {
+  margin-top: 2px;
+  padding: 16px 9px 0 8px;
+  border-top: 1px solid var(--emp-line);
+}
+
+.emp-chosen__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 24px;
+}
+
+.emp-chosen__go {
+  display: flex;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #34507f;
+  cursor: pointer;
+}
+
+.emp-chosen__who {
+  display: flex;
+  gap: 19px;
+  margin-top: 13px;
+}
+
+.emp-chosen__photo {
+  width: 82px;
+  height: 86px;
+  border-radius: 8px;
+  font-size: 24px;
+}
+
+.emp-chosen__text {
+  min-width: 0;
+}
+
+.emp-chosen__text p {
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.emp-chosen__top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 27px;
+}
+
+.emp-chosen__top b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--emp-ink);
+}
+
+.emp-chosen__number {
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--emp-muted);
+}
+
+.emp-chosen__role {
+  margin-top: 3px !important;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--emp-text);
+}
+
+.emp-chosen__dept {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--emp-muted);
+}
+
+.emp-chosen__facts {
+  margin: 8px 0 0 101px;
+}
+
+.emp-chosen__row {
+  display: flex;
+  gap: 14px;
+  height: 27px;
+  margin: 0;
+  align-items: center;
+  font-size: 13px;
+}
+
+.emp-chosen__row .emp-bit {
+  gap: 10px;
+  flex: 0 1 auto;
+}
+
+.emp-chosen__row .emp-bit:nth-child(2) {
+  flex: none;
+}
+
+.emp-chosen__row .emp-bit > svg {
+  color: #2f6fd0;
+}
+
+.emp-chosen__row .emp-bit__text {
+  color: #2c3e5e;
+}
+
+.emp-chosen__actions {
+  display: grid;
+  grid-template-columns: 194px 1fr;
+  gap: 11px;
+  margin-top: 13px;
+}
+
+.emp-chosen__actions .emp-btn {
+  height: 42px;
+  font-size: 14px;
+}

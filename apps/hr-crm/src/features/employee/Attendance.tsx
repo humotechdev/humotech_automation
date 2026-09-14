@@ -1,64 +1,61 @@
 /**
  * Вкладка «Посещаемость» в карточке сотрудника.
  *
- * Период и выбранный день лежат в адресе страницы, а не в памяти
- * компонента: человек присылает ссылку на конкретный день коллеге,
- * обновляет страницу после правки отметки и возвращается сюда кнопкой
- * «Назад» — во всех трёх случаях он обязан увидеть то же самое.
+ * Вёрстка повторяет эталон 1672×941 (`ChatGPT Image Sep 13, 2026,
+ * 03_58_06 PM.png`). Размеры — в `styles/employee-attendance.css`,
+ * классы с префиксом `ea-`.
  *
- * Ни одного правила учёта здесь нет. Время в офисе, опоздание,
- * состояние дня и границы суток считает сервер; этот экран переводит
- * его ответ в линии и столбцы. Средние и распределения — единственное,
- * что складывается на клиенте, и складывается из тех же чисел.
+ * Период и выбранный день лежат в адресе: ссылка на конкретный день,
+ * обновление страницы и кнопка «Назад» показывают то же самое. Переключатель
+ * периода живёт в шапке карточки (`AttendanceTools`), а читает тот же адрес.
  *
- * Смена периода не гасит экран: `useBlock` держит прошлые данные до
- * прихода новых, и на месте графика в это время не пустота, а прежние
- * дни с тонким индикатором обновления. Высота блоков при этом не
- * меняется — иначе страница прыгала бы под курсором.
+ * Правил учёта здесь нет. Время в офисе, опоздание и состояние дня
+ * считает сервер; на клиенте складываются только средние и распределения
+ * из тех же чисел.
  */
 
 import { useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 
 import * as api from '../../api/crm';
-import { AppIcon } from '../../components/AppIcon';
+import { AppIcon, type AppIconName } from '../../components/AppIcon';
 import { useBlock } from '../dashboard/data';
-import { clockOnDay } from '../time/zone';
+import { clock } from '../time/zone';
 import {
   type DayPoint,
   type Plan,
   hhmm,
-  histogram,
   minutesInZone,
   planByWeekday,
   points,
   segments,
   stats,
   timeBounds,
-  usual,
 } from './attendance-model';
-import { currentMonth, dayState, duration, lateness, orDash, todayIso } from './model';
+import { currentMonth, dayState, duration, todayIso } from './model';
+import '../../styles/employee-attendance.css';
 
 type Rights = { attendance: boolean; export: boolean; correct: boolean };
 
-/** Предустановленные периоды. «Период» — произвольные даты из адреса. */
 const PRESETS = [
   { key: 'week', title: 'Неделя' },
   { key: 'month', title: 'Месяц' },
   { key: 'range', title: 'Период' },
 ] as const;
 
-export function Attendance({
-  id,
-  rights,
-  zone,
-}: {
-  id: string;
-  rights: Rights;
-  zone: string;
-}) {
-  const [params, setParams] = useSearchParams();
+type PresetKey = (typeof PRESETS)[number]['key'];
 
+const WEEKDAY = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
+const MONTHS = [
+  'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+  'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря',
+];
+const MONTHS_SHORT = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+const MONTH_TITLE = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
+
+/** Период из адреса. Один источник и для шапки, и для вкладки. */
+function usePeriod() {
+  const [params, setParams] = useSearchParams();
   const patch = (changes: Record<string, string | null>) =>
     setParams(
       (was) => {
@@ -71,26 +68,61 @@ export function Attendance({
       },
       { replace: true },
     );
+  const raw = params.get('period');
+  const preset: PresetKey = PRESETS.some((one) => one.key === raw) ? (raw as PresetKey) : 'month';
+  const from = params.get('from');
+  const to = params.get('to');
+  const range = useMemo(() => bounds(preset, from, to), [preset, from, to]);
+  return { params, patch, preset, range };
+}
 
-  const preset = (params.get('period') ?? 'month') as (typeof PRESETS)[number]['key'];
-  const range = useMemo(() => bounds(preset, params.get('from'), params.get('to')), [
-    preset,
-    params,
-  ]);
-  const picked = params.get('day');
+/** Переключатель периода, даты и экспорт — справа в шапке карточки. */
+export function AttendanceTools({ id, canExport }: { id: string; canExport: boolean }) {
+  const { patch, preset, range } = usePeriod();
+  return (
+    <div className="ea-tools">
+      <div className="ea-seg" role="group" aria-label="Период">
+        {PRESETS.map((item) => (
+          <button
+            key={item.key}
+            type="button"
+            aria-pressed={preset === item.key}
+            className={preset === item.key ? 'ea-seg__one ea-seg__one--on' : 'ea-seg__one'}
+            onClick={() => patch({ period: item.key === 'month' ? null : item.key, day: null })}
+          >
+            {item.title}
+          </button>
+        ))}
+      </div>
+      <label className="ea-dates">
+        <AppIcon name="calendar" size={18} />
+        <input type="date" value={range.first} aria-label="Начало периода"
+               onChange={(event) => patch({ period: 'range', from: event.target.value, to: range.last, day: null })} />
+        <span>—</span>
+        <input type="date" value={range.last} aria-label="Конец периода"
+               onChange={(event) => patch({ period: 'range', from: range.first, to: event.target.value, day: null })} />
+      </label>
+      {canExport && (
+        <Link className="ea-export"
+              to={`/reports?kind=sessions&employee_id=${id}&date_from=${range.first}&date_to=${range.last}`}>
+          <AppIcon name="download" size={20} />
+          Экспорт
+        </Link>
+      )}
+    </div>
+  );
+}
+
+export function Attendance({ id, rights, zone }: { id: string; rights: Rights; zone: string }) {
+  const { params, patch, preset, range } = usePeriod();
 
   const [journal, reloadJournal, journalState] = useBlock(
-    (signal) =>
-      api.attendanceDaily(
-        { employee_id: id, date_from: range.first, date_to: range.last },
-        signal,
-      ),
+    (signal) => api.attendanceDaily({ employee_id: id, date_from: range.first, date_to: range.last }, signal),
     `journal|${id}|${range.first}|${range.last}`,
     rights.attendance,
   );
 
-  // График назначен сотруднику, а не периоду: он меняется редко, и
-  // перезапрашивать его при каждом переключении недели незачем.
+  // График назначен сотруднику, а не периоду: при смене недели не перезапрашивается.
   const [plan] = useBlock(
     (signal) =>
       api.employeeSchedules(id, signal).then((rows) => {
@@ -104,139 +136,81 @@ export function Attendance({
 
   if (!rights.attendance) {
     return (
-      <p className="empty empty--bad">
-        Нет права на посещаемость. Это отдельное разрешение —
-        попросите <span className="mono">attendance.read</span>.
+      <p className="ea-empty ea-empty--bad">
+        Нет права на посещаемость. Это отдельное разрешение — attendance.read.
       </p>
     );
   }
 
   const report = journal.state === 'ready' ? journal.data : null;
   const schedule = plan.state === 'ready' ? plan.data : null;
-  const plans = planByWeekday(schedule);
-  const today = todayIso();
-  const days = report ? points(report.days, plans, today) : [];
+  const days = report ? points(report.days, planByWeekday(schedule), todayIso()) : [];
   const sums = stats(days);
+  // Без выбора в адресе показывается последний прошедший день с отметками.
+  const latest = [...days].reverse().find((one) => !one.future && one.entry !== null);
+  const picked = params.get('day') ?? latest?.day ?? null;
   const chosen = days.find((one) => one.day === picked) ?? null;
+  const pick = (day: string) => patch({ day });
 
   return (
-    <div className={`att${journalState.busy ? ' att--busy' : ''}`}>
-      <div className="att__bar">
-        <div className="seg" role="group" aria-label="Период">
-          {PRESETS.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              className={`seg__one${preset === item.key ? ' seg__one--on' : ''}`}
-              aria-pressed={preset === item.key}
-              onClick={() => patch({ period: item.key === 'month' ? null : item.key })}
-            >
-              {item.title}
-            </button>
-          ))}
-        </div>
-
-        <label className="pick pick--dates">
-          <AppIcon name="calendar" size={16} />
-          <input
-            type="date"
-            value={range.first}
-            aria-label="Начало периода"
-            onChange={(event) =>
-              patch({ period: 'range', from: event.target.value, to: range.last })
-            }
-          />
-          <span className="muted">—</span>
-          <input
-            type="date"
-            value={range.last}
-            aria-label="Конец периода"
-            onChange={(event) =>
-              patch({ period: 'range', from: range.first, to: event.target.value })
-            }
-          />
-        </label>
-
-        {rights.export && (
-          <Link
-            className="btn"
-            to={`/reports?kind=sessions&employee_id=${id}&date_from=${range.first}&date_to=${range.last}`}
-          >
-            <AppIcon name="download" size={16} />
-            Экспорт
-          </Link>
-        )}
-      </div>
-
+    <div className={journalState.busy ? 'ea ea--busy' : 'ea'}>
       {journal.state === 'error' && !report && (
-        <p className="empty empty--bad">
+        <p className="ea-empty ea-empty--bad">
           Не удалось получить журнал.{' '}
-          <button type="button" className="link" onClick={reloadJournal}>
-            Повторить
-          </button>
+          <button type="button" className="link" onClick={reloadJournal}>Повторить</button>
         </p>
       )}
       {journalState.failed && report && (
-        <p className="note note--dim" role="status">
+        <p className="ea-note" role="status">
           Показаны прежние данные: обновить не удалось.{' '}
-          <button type="button" className="link" onClick={reloadJournal}>
-            Повторить
-          </button>
+          <button type="button" className="link" onClick={reloadJournal}>Повторить</button>
         </p>
       )}
-      {report?.note && <p className="note note--dim">{report.note}</p>}
+      {report?.note && <p className="ea-note">{report.note}</p>}
 
       <Metrics sums={sums} report={report} />
 
-      <div className="att__grid">
-        <div className="att__main">
-          <section className="panel att__panel">
-            <h3 className="att__title">Приход и уход</h3>
-            <Timeline days={days} picked={picked} onPick={(day) => patch({ day })} />
+      <div className="ea-grid">
+        <div className="ea-col">
+          <section className="ea-panel ea-panel--timeline">
+            <h3 className="ea-title">Приход и уход</h3>
+            <Timeline days={days} picked={picked} onPick={pick} />
           </section>
-
-          <section className="panel att__panel">
-            <h3 className="att__title">Часы по дням</h3>
-            <Hours days={days} picked={picked} onPick={(day) => patch({ day })} />
-          </section>
-
-          <section className="panel att__panel">
-            <h3 className="att__title">Журнал по дням</h3>
-            <Journal
-              days={days}
-              picked={picked}
-              onPick={(day) => patch({ day })}
-              loading={journal.state === 'loading' && !report}
-            />
+          <section className="ea-panel ea-panel--hours">
+            <h3 className="ea-title">Часы по дням</h3>
+            <Hours days={days} picked={picked} onPick={pick} />
           </section>
         </div>
-
-        <div className="att__side">
-          <Usual days={days} sums={sums} />
-          <DayPanel
-            id={id}
-            point={chosen}
-            zone={zone}
-            canCorrect={rights.correct}
-          />
+        <div className="ea-col">
+          <Usual days={days} sums={sums} preset={preset} />
+          <DayPanel id={id} point={chosen} zone={zone} />
         </div>
       </div>
+
+      <section className="ea-panel ea-panel--journal">
+        <div className="ea-journal__head">
+          <h3 className="ea-title">Журнал по дням</h3>
+          <ul className="ea-keys">
+            <li><i className="ea-key ea-key--ok" />Вовремя</li>
+            <li><i className="ea-key ea-key--late" />Опоздание</li>
+            <li><i className="ea-key ea-key--early" />Ранний уход</li>
+            <li><i className="ea-key ea-key--off" />Выходной</li>
+            <li><i className="ea-key ea-key--leave" />Отпуск</li>
+          </ul>
+        </div>
+        <Journal days={days} picked={picked} onPick={pick} loading={journal.state === 'loading' && !report} />
+      </section>
     </div>
   );
 }
 
-/** Границы периода. «Период» берёт даты из адреса, остальные — считают. */
-function bounds(
-  preset: string,
-  from: string | null,
-  to: string | null,
-): { first: string; last: string } {
+/** Границы периода. «Период» берёт даты из адреса, остальные считаются. */
+function bounds(preset: string, from: string | null, to: string | null): { first: string; last: string } {
   if (preset === 'range' && from && to) return { first: from, last: to };
   if (preset === 'week') {
     const now = new Date();
-    const shift = (now.getDay() + 6) % 7;
     const monday = new Date(now);
-    monday.setDate(now.getDate() - shift);
+    monday.setDate(now.getDate() - ((now.getDay() + 6) % 7));
     const sunday = new Date(monday);
     sunday.setDate(monday.getDate() + 6);
     return { first: iso(monday), last: iso(sunday) };
@@ -245,572 +219,446 @@ function bounds(
 }
 
 const iso = (date: Date): string =>
-  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(
-    date.getDate(),
-  ).padStart(2, '0')}`;
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 
-// --- строка показателей ------------------------------------------------------
+// --- показатели ------------------------------------------------------------------
 
-function Metrics({
-  sums,
-  report,
-}: {
-  sums: ReturnType<typeof stats>;
-  report: api.DailyReport | null;
-}) {
+function Metrics({ sums, report }: { sums: ReturnType<typeof stats>; report: api.DailyReport | null }) {
   return (
-    <div className="att__metrics" aria-label="Показатели за период">
+    <div className="ea-metrics" aria-label="Показатели за период">
       <Metric icon="users" title="Средний приход" value={hhmm(sums.averageEntry)} />
-      <Metric icon="arrow" title="Средний уход" value={hhmm(sums.averageExit)} />
-      <Metric
-        icon="clock"
-        title="Отработано"
-        value={report ? duration(report.totals.seconds) : '—'}
-      />
-      <Metric
-        icon="alert"
-        title="Опоздания"
-        value={String(sums.lateDays)}
-        tone={sums.lateDays > 0 ? 'warn' : undefined}
-      />
-      <Metric
-        icon="chart"
-        title="Выполнение графика"
-        value={sums.completion === null ? '—' : `${sums.completion}%`}
-      />
+      <Metric icon="logout" title="Средний уход" value={hhmm(sums.averageExit)} tone="green" />
+      <Metric icon="clock" title="Отработано"
+              value={report ? `${Math.round(report.totals.seconds / 3600)} ч` : '—'} />
+      <Metric icon="alert" title="Опоздания" value={String(sums.lateDays)}
+              tone={sums.lateDays > 0 ? 'warn' : undefined} />
+      <Metric icon="chart" title="Выполнение графика"
+              value={sums.completion === null ? '—' : `${sums.completion}%`} />
     </div>
   );
 }
 
-function Metric({
-  icon,
-  title,
-  value,
-  tone,
-}: {
-  icon: 'users' | 'arrow' | 'clock' | 'alert' | 'chart';
+function Metric({ icon, title, value, tone }: {
+  icon: AppIconName;
   title: string;
   value: string;
-  tone?: 'warn' | undefined;
+  tone?: 'warn' | 'green' | undefined;
 }) {
   return (
-    <div className="att__metric">
+    <div className={tone ? `ea-metric ea-metric--${tone}` : 'ea-metric'}>
       <AppIcon name={icon} size={20} />
-      <span className="att__metric-text">
-        <span className="att__metric-title">{title}</span>
-        <span className={`att__metric-value${tone ? ` att__metric-value--${tone}` : ''}`}>
-          {value}
-        </span>
+      <span className="ea-metric__text">
+        <span>{title}</span>
+        <strong>{value}</strong>
       </span>
     </div>
   );
 }
 
-// --- график «Приход и уход» --------------------------------------------------
+// --- «Приход и уход» ---------------------------------------------------------------
 
-const BOX = { w: 920, h: 260, left: 46, right: 12, top: 14, bottom: 34 };
+const TL = { w: 925, h: 192, left: 42, right: 14, top: 8, bottom: 48 };
 
-function Timeline({
-  days,
-  picked,
-  onPick,
-}: {
+function Timeline({ days, picked, onPick }: {
   days: DayPoint[];
   picked: string | null;
   onPick: (day: string) => void;
 }) {
-  if (days.length === 0) return <p className="empty">За период данных нет.</p>;
+  if (days.length === 0) return <p className="ea-empty">За период данных нет.</p>;
 
-  const { low, high } = timeBounds(days);
-  const span = Math.max(1, high - low);
-  const inner = BOX.w - BOX.left - BOX.right;
-  const step = inner / Math.max(1, days.length);
+  const data = timeBounds(days);
+  const low = Math.min(6 * 60, data.low);
+  const high = Math.max(20 * 60, data.high);
+  const plotH = TL.h - TL.top - TL.bottom;
+  const step = (TL.w - TL.left - TL.right) / days.length;
+  const x = (index: number) => TL.left + step * index + step / 2;
+  const y = (minutes: number) => TL.top + plotH * (1 - (minutes - low) / (high - low));
 
-  const x = (index: number) => BOX.left + step * index + step / 2;
-  const y = (minutes: number) =>
-    BOX.top + (BOX.h - BOX.top - BOX.bottom) * (1 - (minutes - low) / span);
-
-  // Часовые линии: каждый час, если период короткий, иначе каждые два.
-  const tick = span > 10 * 60 ? 120 : 60;
   const grid: number[] = [];
-  for (let at = Math.ceil(low / tick) * tick; at <= high; at += tick) grid.push(at);
-
+  for (let at = Math.ceil(low / 120) * 120; at <= high; at += 120) grid.push(at);
   const planStart = days.find((one) => one.plan.start !== null)?.plan.start ?? null;
   const planEnd = days.find((one) => one.plan.end !== null)?.plan.end ?? null;
+  const index = days.findIndex((one) => one.day === picked);
+  const chosen = index >= 0 ? days[index] : undefined;
 
   return (
-    <>
-      <div className="att-chart">
-        <svg viewBox={`0 0 ${BOX.w} ${BOX.h}`} className="att-chart__svg"
-             role="img" aria-label="Первый вход и последний выход по дням">
+    <div className="ea-timeline">
+      <div className="ea-chart">
+        <svg className="ea-svg" viewBox={`0 0 ${TL.w} ${TL.h}`} role="img"
+             aria-label="Первый вход и последний выход по дням">
           {grid.map((at) => (
             <g key={at}>
-              <line className="att-chart__grid" x1={BOX.left} x2={BOX.w - BOX.right}
-                    y1={y(at)} y2={y(at)} />
-              <text className="att-chart__axis" x={BOX.left - 8} y={y(at) + 4}
-                    textAnchor="end">
-                {hhmm(at)}
-              </text>
+              <line className="ea-svg__grid" x1={TL.left} x2={TL.w - TL.right} y1={y(at)} y2={y(at)} />
+              <text className="ea-svg__axis" x={TL.left - 8} y={y(at) + 4} textAnchor="end">{hhmm(at)}</text>
             </g>
           ))}
-
+          {days.map((point, at) => (
+            <line key={`v-${point.day}`} className="ea-svg__grid ea-svg__grid--v"
+                  x1={x(at)} x2={x(at)} y1={TL.top} y2={TL.top + plotH} />
+          ))}
           {planStart !== null && (
-            <line className="att-chart__plan" x1={BOX.left} x2={BOX.w - BOX.right}
+            <line className="ea-svg__plan ea-svg__plan--in" x1={TL.left} x2={TL.w - TL.right}
                   y1={y(planStart)} y2={y(planStart)} />
           )}
           {planEnd !== null && (
-            <line className="att-chart__plan" x1={BOX.left} x2={BOX.w - BOX.right}
+            <line className="ea-svg__plan ea-svg__plan--out" x1={TL.left} x2={TL.w - TL.right}
                   y1={y(planEnd)} y2={y(planEnd)} />
           )}
-
-          {/* Выбранный день — светлая полоса на всю высоту: так он виден
-              и на этом графике, и на соседнем, без второй подсветки. */}
-          {days.map((point, index) =>
-            point.day === picked ? (
-              <rect key={`on-${point.day}`} className="att-chart__pick"
-                    x={x(index) - step / 2} y={BOX.top}
-                    width={step} height={BOX.h - BOX.top - BOX.bottom} />
-            ) : null,
+          {chosen && (
+            <>
+              <rect className="ea-svg__pick" x={x(index) - step / 2} y={TL.top} width={step} height={plotH + 24} />
+              <line className="ea-svg__cursor" x1={x(index)} x2={x(index)} y1={TL.top} y2={TL.top + plotH} />
+            </>
           )}
 
-          {/* Пропуски линией не соединяются: выходной между двумя рабочими
-              днями иначе выглядел бы плавным переходом. */}
-          {segments(days, (one) => one.entry).map((run, index) => (
-            <polyline key={`in-${index}`} className="att-chart__line att-chart__line--in"
-                      points={run
-                        .map((one) => `${x(days.indexOf(one))},${y(one.entry as number)}`)
-                        .join(' ')} />
+          {/* Пропуски линией не соединяются: выходной не плавный переход. */}
+          {segments(days, (one) => one.entry).map((run, at) => (
+            <polyline key={`in-${at}`} className="ea-svg__line ea-svg__line--in"
+                      points={run.map((one) => `${x(days.indexOf(one))},${y(one.entry as number)}`).join(' ')} />
           ))}
-          {segments(days, (one) => one.exit).map((run, index) => (
-            <polyline key={`out-${index}`} className="att-chart__line att-chart__line--out"
-                      points={run
-                        .map((one) => `${x(days.indexOf(one))},${y(one.exit as number)}`)
-                        .join(' ')} />
+          {segments(days, (one) => one.exit).map((run, at) => (
+            <polyline key={`out-${at}`} className="ea-svg__line ea-svg__line--out"
+                      points={run.map((one) => `${x(days.indexOf(one))},${y(one.exit as number)}`).join(' ')} />
           ))}
 
-          {days.map((point, index) => (
+          {days.map((point, at) => (
             <g key={point.day}>
               {point.entry !== null && (
-                <circle
-                  className={`att-chart__dot${(point.late ?? 0) > 0 ? ' att-chart__dot--bad' : ' att-chart__dot--in'}`}
-                  cx={x(index)} cy={y(point.entry)} r={4}
-                />
+                <circle className={(point.late ?? 0) > 0 ? 'ea-svg__dot ea-svg__dot--bad' : 'ea-svg__dot ea-svg__dot--in'}
+                        cx={x(at)} cy={y(point.entry)} r={4.5} />
               )}
               {point.exit !== null && (
-                <circle
-                  className={`att-chart__dot${(point.early ?? 0) > 0 ? ' att-chart__dot--bad' : ' att-chart__dot--out'}`}
-                  cx={x(index)} cy={y(point.exit)} r={4}
-                />
+                <circle className={(point.early ?? 0) > 0 ? 'ea-svg__dot ea-svg__dot--bad' : 'ea-svg__dot ea-svg__dot--out'}
+                        cx={x(at)} cy={y(point.exit)} r={4.5} />
               )}
-              {/* Вся колонка — область наведения и нажатия: попасть в
-                  точку радиусом четыре пикселя мышью трудно. */}
-              <rect
-                className="att-chart__hit"
-                x={x(index) - step / 2}
-                y={BOX.top}
-                width={step}
-                height={BOX.h - BOX.top - BOX.bottom}
-                onClick={() => onPick(point.day)}
-              >
-                <title>{tip(point)}</title>
-              </rect>
-              {(index === 0 || (index + 1) % labelStep(days.length) === 0) && (
-                <text className="att-chart__axis" x={x(index)} y={BOX.h - 14}
-                      textAnchor="middle">
-                  {point.label}
-                </text>
-              )}
+              <text className={point.day === picked ? 'ea-svg__axis ea-svg__axis--on' : 'ea-svg__axis'}
+                    x={x(at)} y={TL.h - 28} textAnchor="middle">{point.label}</text>
+              {/* Вся колонка — область нажатия: в точку радиусом 4 не попасть. */}
+              <rect className="ea-svg__hit" x={x(at) - step / 2} y={TL.top} width={step} height={plotH + 24}
+                    onClick={() => onPick(point.day)} />
             </g>
           ))}
+          <text className="ea-svg__axis" x={(TL.left + TL.w - TL.right) / 2} y={TL.h - 6} textAnchor="middle">
+            {monthTitle(days)}
+          </text>
         </svg>
+
+        {chosen && chosen.entry !== null && (
+          <div
+            className={index > days.length * 0.7 ? 'ea-tip ea-tip--left' : 'ea-tip'}
+            style={{ left: `${(x(index) / TL.w) * 100}%`, top: `${(y(chosen.entry) / TL.h) * 100}%` }}
+          >
+            <b>{dayShort(chosen.day)}</b>
+            <span><i className="ea-key ea-key--in" />Приход <strong>{hhmm(chosen.entry)}</strong>
+              {(chosen.late ?? 0) > 0 && <em> · Опоздание {chosen.late} мин</em>}
+            </span>
+            <span><i className="ea-key ea-key--ok" />Уход <strong>{chosen.open ? 'не отмечен' : hhmm(chosen.exit)}</strong>
+              {(chosen.early ?? 0) > 0 && <em> · Ранний уход {chosen.early} мин</em>}
+            </span>
+          </div>
+        )}
       </div>
 
-      <ul className="att-chart__legend">
-        <li><i className="key key--in" />Первый вход</li>
-        <li><i className="key key--out" />Последний выход</li>
-        <li><i className="key key--plan" />Плановые границы графика</li>
-        <li><i className="key key--bad" />Опоздание или ранний уход</li>
+      <ul className="ea-legend">
+        <li><i className="ea-legend__line ea-legend__line--in" />Первый вход (приход)</li>
+        <li><i className="ea-legend__line ea-legend__line--out" />Последний выход (уход)</li>
+        <li><i className="ea-legend__dash" />Плановый приход{planStart !== null ? ` (${hhmm(planStart)})` : ''}</li>
+        <li><i className="ea-legend__dash ea-legend__dash--dark" />Плановый уход{planEnd !== null ? ` (${hhmm(planEnd)})` : ''}</li>
+        <li><i className="ea-key ea-key--late" />Нарушение (опоздание / ранний уход)</li>
       </ul>
-    </>
+    </div>
   );
 }
 
-const labelStep = (count: number): number => (count > 20 ? 2 : 1);
+// --- «Часы по дням» -----------------------------------------------------------------
 
-/** Подсказка дня. Ровно то, что спрашивают о дне, и ничего сверх. */
-function tip(point: DayPoint): string {
-  const parts = [`${point.day}`];
-  if (!point.working) {
-    parts.push(dayState(point.row));
-    return parts.join(' · ');
-  }
-  parts.push(`Приход ${hhmm(point.entry)}`);
-  parts.push(point.open ? 'Выход: сессия открыта' : `Уход ${hhmm(point.exit)}`);
-  if ((point.late ?? 0) > 0) parts.push(`Опоздание ${point.late} мин`);
-  if ((point.early ?? 0) > 0) parts.push(`Ранний уход ${point.early} мин`);
-  if (point.plan.start !== null && point.plan.end !== null) {
-    parts.push(`График ${hhmm(point.plan.start)}–${hhmm(point.plan.end)}`);
-  }
-  return parts.join(' · ');
-}
+const HB = { w: 925, h: 138, left: 42, right: 14, top: 6, bottom: 40 };
 
-// --- график «Часы по дням» ---------------------------------------------------
-
-function Hours({
-  days,
-  picked,
-  onPick,
-}: {
+function Hours({ days, picked, onPick }: {
   days: DayPoint[];
   picked: string | null;
   onPick: (day: string) => void;
 }) {
-  if (days.length === 0) return <p className="empty">За период данных нет.</p>;
+  if (days.length === 0) return <p className="ea-empty">За период данных нет.</p>;
 
-  const norms = days.map((one) => one.plan.norm).filter((one): one is number => one !== null);
+  const norms = days.map((one) => one.plan.norm).filter((one): one is number => one !== null && one > 0);
   const norm = norms.length ? Math.max(...norms) : 8 * 3600;
-  const top = Math.max(norm * 1.25, ...days.map((one) => one.row.seconds));
+  const top = Math.max(12 * 3600, ...days.map((one) => one.row.seconds));
+  const plotH = HB.h - HB.top - HB.bottom;
+  const step = (HB.w - HB.left - HB.right) / days.length;
+  const width = Math.max(4, step * 0.56);
+  const x = (index: number) => HB.left + step * index + step / 2;
+  const y = (seconds: number) => HB.top + plotH * (1 - Math.min(seconds, top) / top);
 
   return (
     <>
-      <div
-        className="bars"
-        style={{
-          ['--bars-count' as string]: days.length,
-          ['--bars-norm' as string]: Math.min(norm / top, 1),
-        }}
-      >
-        {days.map((point) => (
-          <button
-            key={point.day}
-            type="button"
-            className={`bars__slot${point.day === picked ? ' bars__slot--on' : ''}`}
-            onClick={() => onPick(point.day)}
-            title={barTip(point)}
-          >
-            <span className="bars__well">
-              <span
-                className={`bars__bar bars__bar--${tone(point)}`}
-                style={{ height: `${Math.max((point.row.seconds / top) * 100, point.row.seconds > 0 ? 2 : 0)}%` }}
-              />
-            </span>
-            <span className="bars__label">{point.label}</span>
-          </button>
+      <svg className="ea-svg" viewBox={`0 0 ${HB.w} ${HB.h}`} role="img" aria-label="Часы в офисе по дням">
+        {[0, 4, 8, 12].map((hours) => (
+          <text key={hours} className="ea-svg__axis" x={HB.left - 10} y={y(hours * 3600) + 4} textAnchor="end">
+            {hours ? `${hours} ч` : '0'}
+          </text>
         ))}
-        {/* Линия нормы — поверх столбцов, одна на весь график.
-            Высоту ей задаёт CSS по той же шкале, что и столбцам. */}
-        <span className="bars__norm" />
-      </div>
-
-      <ul className="att-chart__legend">
-        <li><i className="key key--ok" />Норма выполнена</li>
-        <li><i className="key key--warn" />Меньше нормы</li>
-        <li><i className="key key--over" />Переработка</li>
-        <li><i className="key key--none" />Выходной или отсутствие</li>
-        <li><i className="key key--plan" />Дневная норма</li>
+        {days.map((point, at) => {
+          const on = point.day === picked;
+          const seconds = point.row.seconds;
+          const left = x(at) - width / 2;
+          const idle = !point.working || point.future || point.plan.norm === 0;
+          return (
+            <g key={point.day}>
+              {on && <rect className="ea-svg__pick" x={x(at) - step / 2} y={HB.top} width={step} height={plotH + 22} rx={4} />}
+              {idle ? (
+                // Нерабочий день — светлая метка, а не «ноль часов».
+                <rect className="ea-bar ea-bar--off" x={left} width={width}
+                      y={y(seconds > 0 ? seconds : norm * 0.55)}
+                      height={HB.top + plotH - y(seconds > 0 ? seconds : norm * 0.55)} />
+              ) : seconds >= norm ? (
+                <>
+                  <rect className="ea-bar ea-bar--ok" x={left} width={width}
+                        y={y(Math.min(seconds, norm))} height={HB.top + plotH - y(Math.min(seconds, norm))} />
+                  {seconds > norm * 1.05 && (
+                    <rect className="ea-bar ea-bar--over" x={left} width={width}
+                          y={y(seconds)} height={y(norm) - y(seconds)} />
+                  )}
+                </>
+              ) : (
+                <rect className="ea-bar ea-bar--warn" x={left} width={width}
+                      y={y(seconds)} height={HB.top + plotH - y(seconds)} />
+              )}
+              {on && seconds > 0 && (
+                <rect className="ea-bar__outline" x={left - 2} width={width + 4}
+                      y={y(seconds) - 2} height={HB.top + plotH - y(seconds) + 2} />
+              )}
+              <text className={on ? 'ea-svg__axis ea-svg__axis--on' : 'ea-svg__axis'}
+                    x={x(at)} y={HB.h - 22} textAnchor="middle">{point.label}</text>
+              <rect className="ea-svg__hit" x={x(at) - step / 2} y={HB.top} width={step} height={plotH + 22}
+                    onClick={() => onPick(point.day)}>
+                <title>{barTip(point, norm)}</title>
+              </rect>
+            </g>
+          );
+        })}
+        <line className="ea-svg__plan ea-svg__plan--out" x1={HB.left} x2={HB.w - HB.right} y1={y(norm)} y2={y(norm)} />
+        <text className="ea-svg__axis" x={(HB.left + HB.w - HB.right) / 2} y={HB.h - 4} textAnchor="middle">
+          {monthTitle(days)}
+        </text>
+      </svg>
+      <ul className="ea-legend">
+        <li><i className="ea-key ea-key--sq ea-key--ok" />Норма (≥ {Math.round(norm / 3600)} ч)</li>
+        <li><i className="ea-key ea-key--sq ea-key--late" />Меньше нормы</li>
+        <li><i className="ea-key ea-key--sq ea-key--over" />Переработка</li>
+        <li><i className="ea-key ea-key--sq ea-key--off" />Нет рабочего дня</li>
+        <li><i className="ea-legend__dash ea-legend__dash--dark" />Норма ({Math.round(norm / 3600)} ч)</li>
       </ul>
     </>
   );
 }
 
-/** Цвет столбца. Будущий день и выходной — не «ноль часов». */
-function tone(point: DayPoint): 'ok' | 'warn' | 'over' | 'none' {
-  if (!point.working || point.future) return 'none';
-  const norm = point.plan.norm;
-  if (norm === null || norm === 0) return 'none';
-  if (point.row.seconds > norm * 1.05) return 'over';
-  return point.row.seconds >= norm ? 'ok' : 'warn';
-}
-
-function barTip(point: DayPoint): string {
+function barTip(point: DayPoint, norm: number): string {
   if (!point.working) return `${point.day} · ${dayState(point.row)}`;
-  const norm = point.plan.norm;
-  const parts = [point.day, duration(point.row.seconds)];
-  if (norm !== null && norm > 0) {
-    parts.push(`норма ${duration(norm)}`);
-    const diff = point.row.seconds - norm;
-    parts.push(`${diff >= 0 ? '+' : '−'}${duration(Math.abs(diff))}`);
-  }
-  return parts.join(' · ');
+  const diff = point.row.seconds - norm;
+  return `${point.day} · ${duration(point.row.seconds)} · ${diff >= 0 ? '+' : '−'}${duration(Math.abs(diff))}`;
 }
 
-// --- «Когда обычно» ----------------------------------------------------------
+// --- «Когда обычно» -----------------------------------------------------------------
 
-function Usual({ days, sums }: { days: DayPoint[]; sums: ReturnType<typeof stats> }) {
+function Usual({ days, sums, preset }: {
+  days: DayPoint[];
+  sums: ReturnType<typeof stats>;
+  preset: PresetKey;
+}) {
   const workdays = days.filter((one) => one.working && !one.future);
   const entries = workdays.map((one) => one.entry).filter((one): one is number => one !== null);
   const exits = workdays.map((one) => one.exit).filter((one): one is number => one !== null);
-  const inBuckets = histogram(entries);
-  const outBuckets = histogram(exits);
-
   return (
-    <section className="panel att__panel">
-      <h3 className="att__title">Когда обычно</h3>
-
-      <Distribution
-        title="Чаще приходит"
-        usual={usual(inBuckets)}
-        rightTitle="Средний приход"
-        rightValue={hhmm(sums.averageEntry)}
-        buckets={inBuckets}
-        tone="in"
-      />
-      <Distribution
-        title="Чаще уходит"
-        usual={usual(outBuckets)}
-        rightTitle="Средний уход"
-        rightValue={hhmm(sums.averageExit)}
-        buckets={outBuckets}
-        tone="out"
-      />
-
-      <div className="att__counts">
-        <Count icon="check" title="Вовремя" value={sums.onTime} unit="дней" />
-        <Count icon="alert" title="Опоздал" value={sums.lateDays} unit="дней" tone="warn" />
-        <Count icon="clock" title="Ранний уход" value={sums.earlyDays} unit="дней" />
+    <section className="ea-panel ea-panel--usual">
+      <h3 className="ea-title">Когда обычно</h3>
+      <Dist title="Чаще приходит" side="Средний приход" average={sums.averageEntry}
+            values={entries} from={7 * 60} to={11 * 60} tone="in" />
+      <Dist title="Чаще уходит" side="Средний уход" average={sums.averageExit}
+            values={exits} from={16 * 60} to={20 * 60} tone="out" />
+      <p className="ea-usual__period">
+        {preset === 'week' ? 'За неделю' : preset === 'month' ? 'За месяц' : 'За период'}
+      </p>
+      <div className="ea-counts">
+        <Count icon="check" tone="ok" title="Вовремя" value={sums.onTime} />
+        <Count icon="alert" tone="warn" title="Опоздал" value={sums.lateDays} />
+        <Count icon="clock" tone="warn" title="Ранний уход" value={sums.earlyDays} />
       </div>
     </section>
   );
 }
 
-function Distribution({
-  title,
-  usual: peak,
-  rightTitle,
-  rightValue,
-  buckets,
-  tone: colour,
-}: {
+/** Распределение по четвертям часа и самое плотное получасовое окно. */
+function Dist({ title, side, average, values, from, to, tone }: {
   title: string;
-  usual: string;
-  rightTitle: string;
-  rightValue: string;
-  buckets: { from: number; count: number }[];
+  side: string;
+  average: number | null;
+  values: number[];
+  from: number;
+  to: number;
   tone: 'in' | 'out';
 }) {
-  const top = Math.max(1, ...buckets.map((one) => one.count));
-  const best = buckets.reduce((was, one) => (one.count > was ? one.count : was), 0);
+  const step = 15;
+  const count = (to - from) / step;
+  const buckets = Array.from({ length: count }, (_, at) =>
+    values.filter((one) => one >= from + at * step && one < from + (at + 1) * step).length);
+  const top = Math.max(1, ...buckets);
+  let peak = -1;
+  let best = 0;
+  buckets.forEach((one, at) => {
+    const pair = one + (buckets[at + 1] ?? 0);
+    if (pair > best) { best = pair; peak = at; }
+  });
+  const hours = Array.from({ length: (to - from) / 60 + 1 }, (_, at) => from + at * 60);
+  const tallest = buckets.indexOf(Math.max(...buckets));
 
   return (
-    <div className="dist">
-      <div className="dist__head">
-        <span className="dist__text">
-          <span className="dist__title">{title}</span>
-          <strong className="dist__peak">{peak}</strong>
-        </span>
-        <span className="dist__text dist__text--end">
-          <span className="dist__title">{rightTitle}</span>
-          <strong className="dist__peak">{rightValue}</strong>
-        </span>
+    <div className="ea-dist">
+      <p className="ea-dist__left">
+        <span>{title}</span>
+        <strong>{peak < 0 ? '—' : `${hhmm(from + peak * step)} – ${hhmm(from + peak * step + 30)}`}</strong>
+      </p>
+      <p className="ea-dist__right">
+        <span>{side}</span>
+        <strong>{hhmm(average)}</strong>
+      </p>
+      <div className="ea-dist__plot" role="img" aria-label={`${title}: распределение по времени`}>
+        {buckets.map((one, at) => one > 0 && (
+          <i key={at}
+             className={`ea-dist__bar ea-dist__bar--${tone}${at === tallest ? ' ea-dist__bar--top' : ''}`}
+             style={{ left: `${(at / count) * 100}%`, width: `${100 / count}%`, height: `${(one / top) * 100}%` }} />
+        ))}
       </div>
-
-      {buckets.length === 0 ? (
-        <p className="muted">Данных за период нет.</p>
-      ) : (
-        <div className="dist__bars">
-          {buckets.map((one) => (
-            <span
-              key={one.from}
-              className={`dist__bar dist__bar--${colour}${one.count === best && best > 0 ? ' dist__bar--top' : ''}`}
-              style={{ height: `${Math.max((one.count / top) * 100, one.count ? 6 : 0)}%` }}
-              title={`${hhmm(one.from)} – ${hhmm(one.from + 30)} · ${one.count}`}
-            />
-          ))}
-        </div>
-      )}
+      <div className="ea-dist__axis">
+        {hours.map((at) => (
+          <span key={at} style={{ left: `${((at - from) / (to - from)) * 100}%` }}>{hhmm(at)}</span>
+        ))}
+      </div>
     </div>
   );
 }
 
-function Count({
-  icon,
-  title,
-  value,
-  unit,
-  tone: colour,
-}: {
-  icon: 'check' | 'alert' | 'clock';
+function Count({ icon, tone, title, value }: {
+  icon: AppIconName;
+  tone: 'ok' | 'warn';
   title: string;
   value: number;
-  unit: string;
-  tone?: 'warn';
 }) {
   return (
-    <div className="att__count">
-      <AppIcon name={icon} size={18} />
-      <span className="att__count-title">{title}</span>
-      <strong className={colour ? `att__count-value att__count-value--${colour}` : 'att__count-value'}>
-        {value} {unit}
-      </strong>
+    <div className={`ea-count ea-count--${tone}`}>
+      <AppIcon name={icon} size={20} />
+      <span>
+        <small>{title}</small>
+        <strong>{value} {daysWord(value)}</strong>
+      </span>
     </div>
   );
 }
 
-// --- подробности дня ---------------------------------------------------------
+// --- выбранный день ----------------------------------------------------------------------
 
-function DayPanel({
-  id,
-  point,
-  zone,
-  canCorrect,
-}: {
-  id: string;
-  point: DayPoint | null;
-  zone: string;
-  canCorrect: boolean;
-}) {
+function DayPanel({ id, point, zone }: { id: string; point: DayPoint | null; zone: string }) {
   const day = point?.day ?? '';
   const [detail] = useBlock(
-    (signal) =>
-      Promise.all([
-        api.events(
-          { employee_id: id, date_from: day, date_to: day, limit: '50' },
-          signal,
-        ),
-        api.attendanceSessions(
-          { employee_id: id, date_from: day, date_to: day, limit: '20' },
-          signal,
-        ),
-      ]).then(([events, sessions]) => ({
-        events: events.items,
-        sessions: sessions.items,
-      })),
+    (signal) => api.events(
+      { employee_id: id, date_from: day, date_to: day, limit: '50', verification_status: 'ACCEPTED' },
+      signal,
+    ),
     `day|${id}|${day}`,
     Boolean(day),
   );
 
   if (point === null) {
     return (
-      <section className="panel att__panel">
-        <h3 className="att__title">Подробности дня</h3>
-        <p className="empty">Выберите день на графике или в журнале.</p>
+      <section className="ea-panel ea-panel--day">
+        <h3 className="ea-title">Подробности дня</h3>
+        <p className="ea-empty">Выберите день на графике или в журнале.</p>
       </section>
     );
   }
 
   const zoned = point.row.timezone || zone;
+  const marks = detail.state === 'ready'
+    ? [...detail.data.items].sort((a, b) => a.occurred_at.localeCompare(b.occurred_at))
+    : [];
+  const late = point.late ?? 0;
+  const early = point.early ?? 0;
+  // Проверка подтверждена, только если была хоть одна и ни одна не провалена.
+  const confirmed = (key: 'inside_geofence' | 'inside_office_network') =>
+    marks.some((mark) => mark[key] === true) && marks.every((mark) => mark[key] !== false);
 
   return (
-    <section className="panel att__panel">
-      <h3 className="att__title">{point.day}</h3>
-
-      <p className="att__day-sum">
-        <strong>{duration(point.row.seconds)}</strong>
-        {(point.late ?? 0) > 0 && (
-          <span className="att__bad">Опоздание {point.late} мин</span>
-        )}
-        {(point.early ?? 0) > 0 && (
-          <span className="att__bad">Ранний уход {point.early} мин</span>
-        )}
-        {!point.working && <span className="muted">{dayState(point.row)}</span>}
+    <section className="ea-panel ea-panel--day">
+      <h3 className="ea-title">{dayLong(point.day)}</h3>
+      <p className="ea-day__sum">
+        <strong>{point.working ? duration(point.row.seconds) : dayState(point.row)}</strong>
+        {late > 0 && <><i>·</i><span className="ea-bad">Опоздание {late} мин</span></>}
+        {early > 0 && <><i>·</i><span className="ea-bad">Ранний уход {early} мин</span></>}
       </p>
 
-      {detail.state === 'loading' && (
-        <p className="empty" role="status">Читаем отметки…</p>
-      )}
-      {detail.state === 'error' && (
-        <p className="empty empty--bad">Не удалось получить отметки дня.</p>
-      )}
+      {detail.state === 'loading' && <p className="ea-empty" role="status">Читаем отметки…</p>}
+      {detail.state === 'error' && <p className="ea-empty ea-empty--bad">Не удалось получить отметки дня.</p>}
+      {detail.state === 'ready' && marks.length === 0 && <p className="ea-empty">Отметок за день нет.</p>}
 
-      {detail.state === 'ready' && (
+      {marks.length > 0 && (
         <>
-          {detail.data.events.length === 0 ? (
-            <p className="muted">Отметок за день нет.</p>
-          ) : (
-            <ul className="marks">
-              {detail.data.events.map((mark) => (
-                <li key={mark.id} className="marks__line">
-                  <i
-                    className={`key ${mark.event_type === 'ENTRY' ? 'key--ok' : 'key--none'}`}
-                  />
-                  <span className="marks__time">
-                    {clockOnDay(mark.occurred_at, zoned, point.day)}
-                  </span>
-                  <span className="marks__kind">
-                    {mark.event_type === 'ENTRY' ? 'Вход' : 'Выход'}
-                  </span>
-                  <span className="marks__where">{orDash(mark.office_name)}</span>
-                  <span className="marks__check">{verification(mark)}</span>
+          <ul className="ea-marks">
+            {marks.map((mark, at) => {
+              const entry = mark.event_type === 'ENTRY';
+              const previous = marks.slice(0, at).reverse().find((one) => one.event_type === 'ENTRY');
+              const aside = entry
+                ? at === 0 && late > 0 ? `${late} мин` : ''
+                : previous
+                  ? duration(Math.round((Date.parse(mark.occurred_at) - Date.parse(previous.occurred_at)) / 1000))
+                  : '';
+              const where = mark.qr_point_name ?? mark.office_name;
+              return (
+                <li key={mark.id} className={entry ? 'ea-marks__in' : 'ea-marks__out'}>
+                  <b>{clock(mark.occurred_at, zoned)}</b>
+                  <span>{entry ? 'Вход' : 'Выход'}{where ? ` · ${where}` : ''}</span>
+                  <small>{aside}</small>
                 </li>
-              ))}
-            </ul>
-          )}
-
-          {detail.data.sessions.length > 0 && (
-            <ul className="marks marks--thin">
-              {detail.data.sessions.map((session) => (
-                <li key={session.id} className="marks__line">
-                  <span className="marks__time">
-                    {clockOnDay(session.started_at, zoned, point.day)} —{' '}
-                    {session.ended_at
-                      ? clockOnDay(session.ended_at, zoned, point.day)
-                      : 'открыта'}
-                  </span>
-                  <span className="marks__what">
-                    {duration(session.duration_seconds)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
+              );
+            })}
+          </ul>
+          <div className="ea-checks">
+            <Check ok={confirmed('inside_geofence')} yes="Геозона подтверждена" no="Геозона не подтверждена" />
+            <Check ok={confirmed('inside_office_network')} yes="Сеть офиса подтверждена" no="Сеть офиса не подтверждена" />
+          </div>
         </>
       )}
 
-      {point.row.conflicting_marks && (
-        <p className="note note--dim">
-          В этот день есть и подтверждённое отсутствие, и отметки. Расхождение
-          разбирает человек — само оно не исчезнет.
-        </p>
-      )}
-
-      <Link
-        className="btn att__day-go"
-        to={`/attendance?date=${point.day}&employee_id=${id}`}
-      >
-        <AppIcon name="next" size={16} />
+      <Link className="ea-daylink" to={`/attendance?date=${point.day}&employee=${id}`}>
+        <AppIcon name="doc" size={18} />
         Открыть полный журнал дня
       </Link>
-
-      {canCorrect && (
-        <p className="field__hint">
-          Исправление отметки — это решение по заявке, а не правка события:
-          сырое событие не меняется никогда.
-        </p>
-      )}
     </section>
   );
 }
 
-/** Чем подтверждена отметка. Пусто — проверок не было, и это не «ошибка». */
-function verification(mark: api.EventRow): string {
-  const parts: string[] = [];
-  if (mark.inside_geofence === true) parts.push('геозона');
-  if (mark.inside_geofence === false) parts.push('вне геозоны');
-  if (mark.inside_office_network === true) parts.push('сеть офиса');
-  if (mark.inside_office_network === false) parts.push('чужая сеть');
-  if (mark.source === 'MANUAL') parts.push('вручную');
-  return parts.join(' · ');
+function Check({ ok, yes, no }: { ok: boolean; yes: string; no: string }) {
+  return (
+    <span className={ok ? 'ea-check ea-check--ok' : 'ea-check'}>
+      <AppIcon name={ok ? 'check' : 'alert'} size={18} />
+      {ok ? yes : no}
+    </span>
+  );
 }
 
-// --- журнал по дням ----------------------------------------------------------
+// --- журнал ------------------------------------------------------------------------------
 
-function Journal({
-  days,
-  picked,
-  onPick,
-  loading,
-}: {
+function Journal({ days, picked, onPick, loading }: {
   days: DayPoint[];
   picked: string | null;
   onPick: (day: string) => void;
   loading: boolean;
 }) {
-  if (loading) return <p className="empty" role="status">Считаем журнал…</p>;
-  if (days.length === 0) return <p className="empty">За период строк нет.</p>;
+  if (loading) return <p className="ea-empty" role="status">Считаем журнал…</p>;
+  if (days.length === 0) return <p className="ea-empty">За период строк нет.</p>;
 
   return (
-    <div className="scroller">
-      <table className="grid-table" aria-label="Журнал по дням">
+    <div className="ea-table-wrap">
+      <table className="ea-table" aria-label="Журнал по дням">
         <thead>
           <tr>
             <th scope="col">Дата</th>
@@ -819,37 +667,105 @@ function Journal({
             <th scope="col">В офисе</th>
             <th scope="col">Отклонение</th>
             <th scope="col">Статус</th>
+            <th scope="col" aria-label="Действия" />
           </tr>
         </thead>
         <tbody>
-          {days.map((point) => (
-            <tr
-              key={point.day}
-              tabIndex={0}
-              className={point.day === picked ? 'row--on' : undefined}
-              onClick={() => onPick(point.day)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') onPick(point.day);
-              }}
-            >
-              <td>{point.day}</td>
-              <td>{hhmm(point.entry)}</td>
-              <td>{point.open ? 'открыта' : hhmm(point.exit)}</td>
-              <td>{point.working ? duration(point.row.seconds) : '—'}</td>
-              <td className={(point.late ?? 0) > 0 ? 'att__bad' : undefined}>
-                {(point.late ?? 0) > 0
-                  ? lateness(point.late)
-                  : (point.early ?? 0) > 0
-                    ? `Ранний уход ${point.early} мин`
-                    : '—'}
-              </td>
-              <td>{dayState(point.row)}</td>
-            </tr>
-          ))}
+          {days.map((point) => {
+            const status = statusOf(point);
+            const late = point.late ?? 0;
+            const early = point.early ?? 0;
+            const worked = point.working && !point.future;
+            return (
+              <tr key={point.day} tabIndex={0}
+                  className={point.day === picked ? 'ea-table__on' : undefined}
+                  onClick={() => onPick(point.day)}
+                  onKeyDown={(event) => { if (event.key === 'Enter') onPick(point.day); }}>
+                <td>{dayCell(point.day)}</td>
+                <td>{worked ? hhmm(point.entry) : '—'}</td>
+                <td>{worked ? (point.open ? 'не отмечен' : hhmm(point.exit)) : '—'}</td>
+                <td>{worked && point.row.seconds > 0 ? padded(point.row.seconds) : '—'}</td>
+                <td className={late > 0 || early > 0 ? 'ea-bad' : undefined}>
+                  {late > 0 ? `Опоздание ${late} мин` : early > 0 ? `Ранний уход ${early} мин` : '—'}
+                </td>
+                <td><span className={`ea-state ea-state--${status.tone}`}>{status.title}</span></td>
+                <td>
+                  <button type="button" className="ea-dots" aria-label="Подробности дня"
+                          onClick={(event) => { event.stopPropagation(); onPick(point.day); }}>
+                    <i /><i /><i />
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
   );
+}
+
+function statusOf(point: DayPoint): { title: string; tone: string } {
+  const state = point.row.state;
+  if (point.future) return { title: 'Впереди', tone: 'off' };
+  if (state === 'VACATION' || state === 'SICK_LEAVE' || state === 'OTHER_ABSENCE') {
+    return { title: dayState(point.row), tone: 'leave' };
+  }
+  if (state === 'DAY_OFF') return { title: 'Выходной', tone: 'off' };
+  if (state === 'NO_SCHEDULE') return { title: 'Без графика', tone: 'off' };
+  if (state === 'NOT_COME') return { title: 'Нет отметки', tone: 'bad' };
+  if ((point.late ?? 0) > 0) return { title: 'Опоздание', tone: 'late' };
+  if ((point.early ?? 0) > 0) return { title: 'Ранний уход', tone: 'early' };
+  return { title: 'Вовремя', tone: 'ok' };
+}
+
+// --- мелочи -----------------------------------------------------------------------------
+
+function parts(day: string): { year: number; month: number; date: number; weekday: string } {
+  const [year = 0, month = 1, date = 1] = day.split('-').map(Number);
+  return { year, month, date, weekday: WEEKDAY[new Date(`${day}T12:00:00`).getDay()] ?? '' };
+}
+
+/** «13 сентября 2026 (Вт)». */
+function dayLong(day: string): string {
+  const p = parts(day);
+  return `${p.date} ${MONTHS[p.month - 1] ?? ''} ${p.year} (${p.weekday})`;
+}
+
+/** «13 сен 2026 (Вт)». */
+function dayShort(day: string): string {
+  const p = parts(day);
+  return `${p.date} ${MONTHS_SHORT[p.month - 1] ?? ''} ${p.year} (${p.weekday})`;
+}
+
+/** «01.09.2026 (Вт)». */
+function dayCell(day: string): string {
+  const p = parts(day);
+  return `${String(p.date).padStart(2, '0')}.${String(p.month).padStart(2, '0')}.${p.year} (${p.weekday})`;
+}
+
+/** «Сен 2026» или «Авг – Сен 2026». */
+function monthTitle(days: DayPoint[]): string {
+  const first = days[0];
+  const last = days[days.length - 1];
+  if (!first || !last) return '';
+  const a = parts(first.day);
+  const b = parts(last.day);
+  const one = MONTH_TITLE[a.month - 1] ?? '';
+  const two = MONTH_TITLE[b.month - 1] ?? '';
+  return a.month === b.month && a.year === b.year ? `${one} ${a.year}` : `${one} – ${two} ${b.year}`;
+}
+
+/** «9 ч 09 мин» — ровные колонки в журнале. */
+function padded(seconds: number): string {
+  // Сначала целые минуты, потом часы: иначе 8 ч 59,5 мин давали «8 ч 60 мин».
+  const total = Math.round(seconds / 60);
+  return `${Math.floor(total / 60)} ч ${String(total % 60).padStart(2, '0')} мин`;
+}
+
+function daysWord(n: number): string {
+  if (n % 10 === 1 && n % 100 !== 11) return 'день';
+  if ([2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100)) return 'дня';
+  return 'дней';
 }
 
 export type { Plan };

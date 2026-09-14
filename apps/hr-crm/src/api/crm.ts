@@ -205,6 +205,10 @@ export type Schedule = {
   timezone: string;
   weekly_minutes: number;
   is_flexible: boolean;
+  /** Рабочие дни недели, 1 — понедельник. Из самого графика, а не из названия. */
+  weekdays?: number[];
+  start_time?: string | null;
+  end_time?: string | null;
 };
 
 export type EmployeeRow = {
@@ -331,12 +335,23 @@ export type DocumentRow = {
   };
 };
 
+/** Шаг истории заявки. Неизменяемая запись: только добавление. */
+export type RequestStep = {
+  at: string;
+  /** `CREATED`, `SUBMITTED`, `APPROVED`, `DOCUMENT_ATTACHED` и так далее. */
+  action: string;
+  comment: string | null;
+};
+
 export type AbsenceRow = AbsenceRequestRow & {
+  /** `CREATE`, `EXTEND` или `CANCEL`: отмена — тоже заявка, со ссылкой на исходную. */
+  kind?: string;
   documents: DocumentRow[];
   requires_document: boolean;
   /** Что написал сам сотрудник. Диагноза здесь быть не должно. */
   comment: string | null;
   review_comment: string | null;
+  history?: RequestStep[];
 };
 
 export type CorrectionRow = {
@@ -346,6 +361,10 @@ export type CorrectionRow = {
   employee_id?: string;
   reason?: string | null;
   requested_change?: Record<string, unknown> | null;
+  requested_entry_at?: string | null;
+  requested_exit_at?: string | null;
+  submitted_at?: string | null;
+  review_comment?: string | null;
   created_at?: string;
 };
 
@@ -353,6 +372,8 @@ export type QueueItem = {
   kind: 'absence' | 'correction';
   id: string;
   created_at: string;
+  /** Где работает сотрудник сейчас. `null` — назначения нет. */
+  place?: { office_name: string | null; department_name: string | null } | null;
   absence?: AbsenceRow;
   correction?: CorrectionRow;
 };
@@ -361,6 +382,8 @@ export type QueueQuery = {
   kind?: string;
   status?: string;
   type?: string;
+  /** Вид заявки на отсутствие: `CREATE`, `EXTEND`, `CANCEL`. */
+  request_kind?: string;
   /** Заявки одного сотрудника. Фильтр сужает уже разрешённое. */
   employee_id?: string;
   region_id?: string;
@@ -374,6 +397,21 @@ export type QueueQuery = {
 
 export const queue = (params: QueueQuery, signal?: AbortSignal) =>
   request<Cursored<QueueItem>>(`/requests${query(params)}`, signal ? { signal } : {});
+
+/**
+ * Счётчики вкладок очереди одним ответом: `open`, `all`, `leave`, `sick`,
+ * `fixes`, `cancel`. Считает сервер по тем же фильтрам — по одной строке
+ * на вкладку их не посчитать, там видно только «есть или нет».
+ */
+export const queueCounts = (params: QueueQuery, signal?: AbortSignal) =>
+  request<Record<string, number>>(
+    `/requests/counts${query({ ...params, status: undefined, type: undefined, kind: undefined, request_kind: undefined, cursor: undefined, limit: undefined })}`,
+    signal ? { signal } : {},
+  );
+
+/** Файл справки к заявке. Право спрашивается при каждом открытии. */
+export const absenceDocumentUrl = (requestId: string, documentId: string) =>
+  apiUrl(`/absence-requests/${requestId}/documents/${documentId}/download`);
 
 /** Решение по заявке на отсутствие. `decision` — часть адреса, как у backend. */
 export const decideAbsence = (id: string, decision: 'approve' | 'reject', comment: string) =>

@@ -13,17 +13,17 @@
  * второй, посчитанный в браузере.
  */
 
-import { useCallback, useMemo, useState } from 'react';
+import { type ReactNode, useCallback, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 
 import * as api from '../api/crm';
 import { ApiFailure, messageFor } from '../api/errors';
 import { AppShell } from '../components/AppShell';
 import { AppIcon, type AppIconName } from '../components/AppIcon';
-import { Attendance } from '../features/employee/Attendance';
+import { Attendance, AttendanceTools } from '../features/employee/Attendance';
 import { useSession } from '../features/auth/session';
 import { useBlock, type Block } from '../features/dashboard/data';
-import { clockOnDay, moment, shortDate } from '../features/time/zone';
+import { clockOnDay, moment } from '../features/time/zone';
 import {
   CORRECTION_STATUS,
   DOCUMENT_STATUS,
@@ -98,12 +98,11 @@ export function EmployeePage() {
   const zone = session.status === 'authenticated' ? session.user.timezone : '';
 
   return (
-    <AppShell breadcrumb="Сотрудники" section="employees">
-      <p className="crumbs crumbs--inline">
-        <Link className="link" to={back || '/employees'}><AppIcon name="back" size={16} /> Все сотрудники</Link>
-        <span className="dot">/</span>
-        <span>{name || 'Карточка сотрудника'}</span>
-      </p>
+    <AppShell
+      breadcrumb={['Сотрудники', shortName(name) || 'Карточка сотрудника',
+        TABS.find((item) => item.key === tab)?.title ?? ''].filter(Boolean).join(' / ')}
+      section="employees"
+    >
 
       {card.state === 'loading' && (
         <p className="empty" role="status">Открываем карточку…</p>
@@ -124,13 +123,21 @@ export function EmployeePage() {
 
       {card.state === 'ready' && (
         <>
-          <Header person={person} zone={zone} rights={rights} />
+          <Header
+            person={person}
+            back={back}
+            tools={tab === 'attendance' && rights.attendance ? (
+              <AttendanceTools id={id} canExport={rights.export} />
+            ) : rights.manage ? (
+              <Link className="ep-edit" to="/employees">Редактировать</Link>
+            ) : null}
+          />
 
-          <div className="tabs tabs--bare" role="tablist" aria-label="Разделы карточки">
+          <div className="ep-tabs" role="tablist" aria-label="Разделы карточки">
             {TABS.map((item) => (
               <button key={item.key} type="button" role="tab"
                       aria-selected={tab === item.key}
-                      className={`tab${tab === item.key ? ' tab--on' : ''}`}
+                      className={tab === item.key ? 'ep-tab ep-tab--on' : 'ep-tab'}
                       onClick={() => open(item.key)}>
                 {item.title}
               </button>
@@ -172,56 +179,64 @@ type Rights = {
 
 // --- общая шапка -------------------------------------------------------------
 
-function Header({ person, zone, rights }: {
-  person: Person; zone: string; rights: Rights;
-}) {
-  const status = text(person, 'employment_status');
+/** «Мирзаева Лола» из «Мирзаева Лола Азизовна». */
+function shortName(full: string | null): string {
+  return (full ?? '').split(' ').slice(0, 2).join(' ');
+}
+
+/** Состояние занятости: подпись и цвет плашки. */
+const EMPLOYMENT: Record<string, [string, 'ok' | 'off']> = {
+  ACTIVE: ['Активен', 'ok'],
+  PROBATION: ['Испытательный срок', 'ok'],
+  SUSPENDED: ['Неактивен', 'off'],
+  TERMINATED: ['Уволен', 'off'],
+  ARCHIVED: ['В архиве', 'off'],
+};
+
+/**
+ * Шапка карточки по эталону: фото, имя, номер и должность с плашкой
+ * состояния, отдел и офис. Справа — инструменты открытой вкладки
+ * (у посещаемости это период и экспорт).
+ */
+function Header({ person, back, tools }: { person: Person; back: string; tools: ReactNode }) {
+  const status = text(person, 'employment_status') ?? '';
+  const [title, tone] = EMPLOYMENT[status] ?? [orDash(status), 'off'];
   const id = text(person, 'id');
-  // Само изображение в карточке не приходит — только признак того, что
-  // оно есть. Отдаётся оно отдельным адресом, где право спрашивается
-  // при каждом открытии.
+  // В карточке приходит только признак фото; сам снимок — отдельным
+  // адресом, где право спрашивается при каждом открытии.
   const hasPhoto = person['photo'] !== null && person['photo'] !== undefined;
+  // Должность, отдел и офис живут в текущем назначении, а не в самой
+  // карточке: на верхнем уровне этих полей нет, и строки выходили пустыми.
+  const assignment = (person['current_assignment'] ?? {}) as Person;
+  const first = [text(person, 'employee_number'), text(assignment, 'position_name')]
+    .filter(Boolean).join(' · ');
+  const second = [text(assignment, 'department_name'), text(assignment, 'office_name')]
+    .filter(Boolean).join(' · ');
   return (
-    <header className="who who--card">
-      {hasPhoto && id ? (
-        <img className="avatar avatar--big avatar--photo"
-             src={api.employeePhotoUrl(id)} alt="" />
-      ) : (
-        <span className="avatar avatar--big" aria-hidden="true">
-          {initials(text(person, 'first_name'), text(person, 'last_name'))}
-        </span>
-      )}
-      <span className="who__text">
-        <span className="who__name">{text(person, 'full_name') ?? '—'}</span>
-        <span className="who__id">
-          Табельный {orDash(text(person, 'employee_number'))}
-        </span>
-        <span className="who__where">
-          {[
-            text(person, 'position_name'),
-            text(person, 'department_name'),
-            text(person, 'office_name'),
-          ].filter(Boolean).join(' · ') || 'Назначение не указано'}
-        </span>
-      </span>
-      <span className="who__side">
-        <span className="state">
-          <span className="state__dot" aria-hidden="true" />
-          {status === 'ACTIVE' ? 'Работает'
-            : status === 'TERMINATED' ? 'Уволен'
-            : orDash(status)}
-        </span>
-        {text(person, 'hire_date') && (
-          <span className="muted">
-            В штате с {shortDate(`${text(person, 'hire_date')}T00:00:00Z`, zone)}
+    <header className="ep-head">
+      <Link className="ep-back" to={back || '/employees'}>
+        <AppIcon name="back" size={16} />
+        Все сотрудники
+      </Link>
+      <div className="ep-head__row">
+        {hasPhoto && id ? (
+          <img className="ep-photo" src={api.employeePhotoUrl(id)} alt="" />
+        ) : (
+          <span className="ep-photo" aria-hidden="true">
+            {initials(text(person, 'first_name'), text(person, 'last_name'))}
           </span>
         )}
-      </span>
-      {rights.manage && (
-        <span className="who__actions">
-          <Link className="btn btn--dark" to="/employees">Редактировать</Link>
-        </span>
-      )}
+        <div className="ep-head__text">
+          {/* Фамилия и имя, как в эталоне: отчество есть в «Обзоре». */}
+          <h1 className="ep-name">{shortName(text(person, 'full_name')) || '—'}</h1>
+          <p className="ep-line">
+            {first || 'Назначение не указано'}
+            <span className={`ep-status ep-status--${tone}`}>{title}</span>
+          </p>
+          {second && <p className="ep-line ep-line--muted">{second}</p>}
+        </div>
+        <div className="ep-head__tools">{tools}</div>
+      </div>
     </header>
   );
 }

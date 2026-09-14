@@ -1,13 +1,13 @@
 /**
- * Список сотрудников и карточка.
+ * Страница «Сотрудники».
  *
- * Состояние списка живёт в адресе страницы: вернувшись из карточки,
- * человек видит тот же поиск, тот же фильтр и ту же страницу. Хранить
- * это в памяти компонента значило бы терять при каждом обновлении.
+ * Вёрстка повторяет эталон 1672×941 (`ChatGPT Image Sep 13, 2026,
+ * 03_29_40 PM.png`): слева панель со списком, справа панель «Сегодня в
+ * команде». Все размеры — в `styles/employees.css`, классы с префиксом
+ * `emp-`, чтобы правки этой страницы не задевали остальные.
  *
- * Пагинация курсорная — так устроен backend. Номеров страниц здесь нет
- * и быть не может: сервер не считает общее число строк, и «страница 25»
- * была бы нарисованной кнопкой, ведущей неизвестно куда.
+ * Состояние списка живёт в адресе: вернувшись из карточки, человек видит
+ * тот же поиск, фильтр, вид и страницу.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -16,9 +16,10 @@ import { Link, useSearchParams } from 'react-router-dom';
 import * as api from '../api/crm';
 import { messageFor } from '../api/errors';
 import { AppShell, initials } from '../components/AppShell';
-import { AppIcon } from '../components/AppIcon';
+import { AppIcon, type AppIconName } from '../components/AppIcon';
 import { EmployeeCard } from '../components/EmployeeCard';
-import { useBlock, type Block } from '../features/dashboard/data';
+import { longDate, today as todayIso, useBlock, type Block } from '../features/dashboard/data';
+import '../styles/employees.css';
 
 /** Вкладки. Одна вкладка может покрывать несколько состояний модели. */
 const TABS = [
@@ -28,20 +29,10 @@ const TABS = [
   { key: 'left', title: 'Уволенные', statuses: ['TERMINATED', 'ARCHIVED'] },
 ] as const;
 
-/** Что считается «активным» в строке под заголовком. Та же пара, что у
- *  вкладки «Активные»: два разных ответа на один вопрос читались бы как
- *  ошибка в числах. */
 const ACTIVE_STATUSES = ['ACTIVE', 'PROBATION'];
+const SIZES = ['8', '16', '32'];
+const WEEKDAYS = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
 
-const STATUS_TITLE: Record<string, string> = {
-  ACTIVE: 'Активен',
-  PROBATION: 'Испытательный срок',
-  SUSPENDED: 'Приостановлен',
-  TERMINATED: 'Уволен',
-  ARCHIVED: 'В архиве',
-};
-
-/** Состояния привязки Telegram в подписи списка. */
 const TELEGRAM_TITLE: Record<string, string> = {
   ACTIVE: 'Привязан',
   PENDING: 'Ожидает HR',
@@ -50,62 +41,24 @@ const TELEGRAM_TITLE: Record<string, string> = {
   BLOCKED: 'Заблокирован',
 };
 
-const SIZES = ['8', '16', '32'];
-
 export function EmployeesPage() {
   const [params, setParams] = useSearchParams();
   const tab = TABS.find((t) => t.key === params.get('tab')) ?? TABS[0];
   const search = params.get('search') ?? '';
-  const region = params.get('region_id') ?? '';
   const office = params.get('office_id') ?? '';
   const department = params.get('department_id') ?? '';
   const limit = params.get('limit') ?? '8';
-  // Номер страницы, а не курсор: по макету страницы перечислены, и
-  // перейти нужно на любую. Курсором так нельзя — он ведёт только
-  // вперёд, поэтому список принимает сдвиг.
   const page = Math.max(1, Number(params.get('page') ?? '1'));
   const opened = params.get('employee') ?? '';
   const picked = params.get('picked') ?? '';
-  // Вид тоже в адресе: человек, вернувшийся из карточки, должен увидеть
-  // то же представление, из которого уходил.
-  // Карточки — основной рабочий вид списка: он даёт быстрый обзор
-  // назначения, графика и статуса без горизонтально разреженной таблицы.
-  // Таблица остаётся доступной явным переключателем и по ссылке
-  // `?view=table`, чтобы не менять привычный сценарий тех, кто работает
-  // со столбцами.
   const view = params.get('view') === 'table' ? 'table' : 'cards';
 
   const [draft, setDraft] = useState(search);
   useEffect(() => setDraft(search), [search]);
 
-  // Выгрузка ставится в общую очередь отчётов. Здесь только заказ и
-  // короткое подтверждение: готовые файлы живут на своей странице, и
-  // второе место для той же очереди разошлось бы с ней.
-  const [ordering, setOrdering] = useState(false);
-  const [ordered, setOrdered] = useState<string | null>(null);
-
-  async function order() {
-    if (ordering) return;
-    setOrdering(true);
-    setOrdered(null);
-    try {
-      await api.orderExport({
-        kind: 'employees',
-        fmt: 'xlsx',
-        ...(office ? { office_id: office } : {}),
-        ...(region ? { region_id: region } : {}),
-      });
-      setOrdered('Выгрузка поставлена в очередь');
-    } catch (error) {
-      setOrdered(messageFor(error));
-    } finally {
-      setOrdering(false);
-    }
-  }
-
   /** Меняем адрес, а не состояние: возврат из карточки ничего не теряет. */
   const patch = useCallback(
-    (changes: Record<string, string | null>, keepCursor = false) => {
+    (changes: Record<string, string | null>, keepPage = false) => {
       setParams(
         (was) => {
           const next = new URLSearchParams(was);
@@ -113,9 +66,8 @@ export function EmployeesPage() {
             if (value) next.set(key, value);
             else next.delete(key);
           }
-          // Любой новый фильтр начинает выборку заново: страница от
-          // прошлого набора указывает в чужие строки.
-          if (!keepCursor) next.delete('page');
+          // Новый отбор начинается с первой страницы.
+          if (!keepPage) next.delete('page');
           return next;
         },
         { replace: true },
@@ -124,7 +76,7 @@ export function EmployeesPage() {
     [setParams],
   );
 
-  // Ввод в поиск не бьёт по серверу на каждую букву.
+  // Поиск не бьёт по серверу на каждую букву.
   useEffect(() => {
     if (draft === search) return;
     const timer = setTimeout(() => patch({ search: draft || null }), 350);
@@ -134,13 +86,11 @@ export function EmployeesPage() {
   const filters: api.EmployeeQuery = useMemo(
     () => ({
       ...(search ? { search } : {}),
-      ...(region ? { region_id: region } : {}),
       ...(office ? { office_id: office } : {}),
       ...(department ? { department_id: department } : {}),
     }),
-    [search, region, office, department],
+    [search, office, department],
   );
-  const key = `${tab.key}|${search}|${region}|${office}|${department}|${limit}|${page}`;
   const offset = (page - 1) * Number(limit);
 
   const [list] = useBlock(
@@ -154,37 +104,25 @@ export function EmployeesPage() {
         },
         signal,
       ),
-    key,
+    `${tab.key}|${search}|${office}|${department}|${limit}|${page}`,
   );
 
   const [counts] = useBlock(
     (signal) => api.employeeCounts(filters, signal),
-    `counts|${search}|${region}|${office}|${department}`,
+    `counts|${search}|${office}|${department}`,
   );
 
   const [directory] = useBlock(
     (signal) =>
-      Promise.all([api.regions(signal), api.offices(signal), api.departments(signal)]).then(
-        ([r, o, d]) => ({ regions: r.items, offices: o.items, departments: d.items }),
-      ),
+      Promise.all([api.offices(signal), api.departments(signal)]).then(([o, d]) => ({
+        offices: o.items.filter((one) => one.status === 'ACTIVE'),
+        departments: d.items,
+      })),
     'directory',
   );
 
-  const offices = useMemo(() => {
-    if (directory.state !== 'ready') return [];
-    const all = directory.data.offices.filter((o) => o.status === 'ACTIVE');
-    return region ? all.filter((o) => o.region_id === region) : all;
-  }, [directory, region]);
+  const [presence] = useBlock((signal) => api.presence({}, signal), 'presence|today');
 
-  const officeCount = offices.length;
-
-  // Состав смены на сегодня. Свой запрос: он не зависит ни от вкладки,
-  // ни от фильтров списка, и перезапрашивать его при каждом поиске
-  // означало бы дёргать сервер ради неизменного ответа.
-  const [today] = useBlock((signal) => api.presence({}, signal), 'presence|today');
-
-  // Новички, именинники и люди без графика — вопрос про всю организацию,
-  // а не про показанную страницу. Считает сервер, одним ответом.
   const [highlights] = useBlock(
     (signal) => api.employeeHighlights(
       { ...(office ? { office_id: office } : {}), ...(department ? { department_id: department } : {}) },
@@ -193,535 +131,639 @@ export function EmployeesPage() {
     `highlights|${office}|${department}`,
   );
 
-  // Время последнего ответа: по макету оно стоит в подзаголовке. Берётся
-  // от прихода данных, а не от открытия страницы, — иначе оно врало бы
-  // после каждого фильтра.
   const [updated, setUpdated] = useState<Date | null>(null);
   useEffect(() => {
     if (list.state === 'ready') setUpdated(new Date());
   }, [list]);
 
-  // Всего в выборке — из счётчиков вкладок: по одной странице этого не
-  // видно, а номера страниц без общего числа не построить.
-  const total = counts.state === 'ready' ? count(counts.data, tab.statuses) : 0;
+  // Выгрузка ставится в общую очередь отчётов.
+  const [ordering, setOrdering] = useState(false);
+  const [ordered, setOrdered] = useState<string | null>(null);
+  async function order() {
+    if (ordering) return;
+    setOrdering(true);
+    setOrdered(null);
+    try {
+      await api.orderExport({ kind: 'employees', fmt: 'xlsx', ...(office ? { office_id: office } : {}) });
+      setOrdered('Выгрузка поставлена в очередь');
+    } catch (error) {
+      setOrdered(messageFor(error));
+    } finally {
+      setOrdering(false);
+    }
+  }
 
-  const chosen =
-    list.state === 'ready'
-      ? list.data.items.find((one) => one.id === picked) ?? null
-      : null;
+  const total = counts.state === 'ready' ? count(counts.data, tab.statuses) : 0;
+  const pages = Math.max(1, Math.ceil(total / Number(limit)));
+  const items = list.state === 'ready' ? list.data.items : [];
+  const chosen = items.find((one) => one.id === picked) ?? items[0] ?? null;
 
   return (
     <AppShell breadcrumb="Сотрудники" section="employees">
-      <header className="head head--tight">
-        <div>
-          <h1 className="head__title">Сотрудники</h1>
-          {/* Одна строка вместо четырёх карточек наверху: те же три числа
-              читаются здесь за один взгляд и не отодвигают список вниз. */}
-          <p className="head__sub head__sub--facts">
-            {counts.state === 'ready' && (
-              <>
-                <span>{plural(count(counts.data, []), 'сотрудник')}</span>
-                <span>{count(counts.data, ACTIVE_STATUSES)} активных</span>
-              </>
-            )}
-            {directory.state === 'ready' && (
-              <span>{plural(officeCount, 'офис')}</span>
-            )}
-            {updated && <span className="head__when">{ago(updated)}</span>}
-          </p>
-        </div>
-        <div className="head__actions">
-          <button type="button" className="btn" onClick={() => void order()}
-                  disabled={ordering}>
-            <AppIcon name="report" size={16} />
-            {ordering ? 'Ставим в очередь…' : 'Экспорт'}
-          </button>
-          <Link className="btn btn--dark" to="/employees/new">
-            <AppIcon name="plus" size={16} />
-            Добавить сотрудника
-          </Link>
-        </div>
-      </header>
-
-      {ordered && (
-        <p className="note note--wide" role="status">
-          {ordered}
-          {' — '}
-          <Link to="/reports">файл появится в отчётах</Link>
-        </p>
-      )}
-
-      <div className="grid">
-       <div className="grid__main">
-        <section className="sheet">
-        <div className="toolbar">
-          <label className="find find--wide">
-            <AppIcon name="search" size={16} />
-            <input
-              type="search"
-              value={draft}
-              placeholder="Поиск по ФИО, должности или Telegram"
-              aria-label="Поиск по ФИО, должности или Telegram"
-              onChange={(event) => setDraft(event.target.value)}
-            />
-          </label>
-          <Picker label="Офис" value={office} empty="Все офисы" options={offices}
-                  onChange={(value) => patch({ office_id: value || null })} />
-          <Picker
-            label="Отдел"
-            value={department}
-            empty="Все отделы"
-            options={directory.state === 'ready' ? directory.data.departments : []}
-            onChange={(value) => patch({ department_id: value || null })}
-          />
-          {/* Статус и вкладки — одна и та же ось отбора, а не две. Список
-              меняет вкладку, вкладка меняет список: два независимых
-              состояния для одного признака однажды разошлись бы. */}
-          <Picker
-            label="Статус"
-            value={tab.key === 'all' ? '' : tab.key}
-            empty="Все статусы"
-            options={TABS.filter((one) => one.key !== 'all')
-              .map((one) => ({ id: one.key, name: one.title }))}
-            onChange={(value) => patch({ tab: value || null })}
-          />
-          {/* Переключатель вида. Таблица и карточки показывают ОДИН и тот
-              же ответ сервера — это способ смотреть, а не второй запрос. */}
-          <div className="modes modes--right" role="group" aria-label="Вид списка">
-            <button
-              type="button"
-              className={view === 'table' ? 'mode mode--on' : 'mode'}
-              aria-pressed={view === 'table'}
-              onClick={() => patch({ view: 'table' }, true)}
-            >
-              <AppIcon name="list" size={16} />
-              Таблица
-            </button>
-            <button
-              type="button"
-              className={view === 'cards' ? 'mode mode--on' : 'mode'}
-              aria-pressed={view === 'cards'}
-              onClick={() => patch({ view: null }, true)}
-            >
-              <AppIcon name="grid" size={16} />
-              Карточки
-            </button>
-          </div>
-        </div>
-
-        <div className="tabs" role="tablist">
-          {TABS.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              role="tab"
-              aria-selected={item.key === tab.key}
-              className={item.key === tab.key ? 'tab tab--on' : 'tab'}
-              onClick={() => patch({ tab: item.key === 'all' ? null : item.key })}
-            >
-              {item.title}
+      <div className="emp">
+        <header className="emp-head">
+          <div className="emp-head__text">
+            <h1 className="emp-head__title">Сотрудники</h1>
+            <p className="emp-head__facts">
               {counts.state === 'ready' && (
-                <span className="tab__count">{count(counts.data, item.statuses)}</span>
+                <>
+                  <span>{plural(count(counts.data, []), 'сотрудник')}</span>
+                  <i className="emp-head__dot">•</i>
+                  <span>{count(counts.data, ACTIVE_STATUSES)} активных</span>
+                </>
               )}
-            </button>
-          ))}
-        </div>
-
-        <Rows block={list}>
-          {(data) =>
-            data.items.length === 0 ? (
-              <p className="empty">
-                {search || region || office || department
-                  ? 'По этим условиям никого не нашлось.'
-                  : 'В доступной области нет сотрудников.'}
-              </p>
-            ) : view === 'cards' ? (
-              <div className="people-cards">
-                {data.items.map((person) => (
-                  <PersonCard
-                    key={person.id}
-                    person={person}
-                    chosen={person.id === picked}
-                    onPick={() => patch({ picked: person.id }, true)}
-                  />
-                ))}
-              </div>
-            ) : (
-              <div className="scroller">
-                <table className="people">
-                  <thead>
-                    <tr>
-                      <th>Сотрудник</th>
-                      <th>Должность / отдел</th>
-                      <th>Офис</th>
-                      <th>График</th>
-                      <th>Telegram</th>
-                      <th>Статус</th>
-                      <th aria-label="Открыть" />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.items.map((person) => (
-                      <tr
-                        key={person.id}
-                        tabIndex={0}
-                        onClick={() => patch({ picked: person.id }, true)}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter') patch({ picked: person.id }, true);
-                        }}
-                        className={person.id === picked ? 'people__row--on' : undefined}
-                      >
-                        <td>
-                          <span className="who">
-                            <span className="avatar">{initials(person.full_name)}</span>
-                            <span className="who__text">
-                              <span className="who__name">{person.full_name}</span>
-                              <span className="who__id">{person.employee_number ?? '—'}</span>
-                            </span>
-                          </span>
-                        </td>
-                        <td>
-                          <Two
-                            first={person.current_assignment?.position_name}
-                            second={person.current_assignment?.department_name}
-                          />
-                        </td>
-                        <td>
-                          <Two
-                            first={person.current_assignment?.office_name}
-                            second={person.current_assignment?.region_name}
-                          />
-                        </td>
-                        <td>
-                          {person.current_schedule ? (
-                            <Two
-                              first={person.current_schedule.name}
-                              second={hours(person.current_schedule.weekly_minutes)}
-                            />
-                          ) : (
-                            <span className="muted">Не назначен</span>
-                          )}
-                        </td>
-                        <td>
-                          {person.telegram_state === 'ACTIVE' ? (
-                            <span className="pill">
-                              <AppIcon name="send" size={16} />
-                              Привязан
-                            </span>
-                          ) : person.telegram_state ? (
-                            <span className="pill">
-                              <AppIcon name="clock" size={16} />
-                              {TELEGRAM_TITLE[person.telegram_state] ?? person.telegram_state}
-                            </span>
-                          ) : (
-                            <span className="muted">Не привязан</span>
-                          )}
-                        </td>
-                        <td>
-                          <span className="state">
-                            <i className="state__dot" />
-                            {STATUS_TITLE[person.employment_status] ?? person.employment_status}
-                          </span>
-                        </td>
-                        <td className="people__go">
-                          <AppIcon name="arrow" size={16} />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )
-          }
-        </Rows>
-
-        <div className="pager">
-          <p className="pager__note">
-            {list.state === 'ready'
-              ? `Показано ${list.data.items.length} из ${plural(total, 'сотрудник')}`
-              : ''}
-          </p>
-          <div className="pager__tools">
-            <label className="pick pick--small">
-              <span className="visually-hidden">Строк на странице</span>
-              <select value={limit} onChange={(event) => patch({ limit: event.target.value })}>
-                {SIZES.map((size) => (
-                  <option key={size} value={size}>{size}</option>
-                ))}
-              </select>
-            </label>
-            <Pages
-              page={page}
-              pages={Math.max(1, Math.ceil(total / Number(limit)))}
-              onGo={(next) => patch({ page: next === 1 ? null : String(next) }, true)}
-            />
+              {directory.state === 'ready' && (
+                <>
+                  <i className="emp-head__dot">•</i>
+                  <span>{plural(directory.data.offices.length, 'офис')}</span>
+                </>
+              )}
+              {updated && (
+                <>
+                  <i className="emp-head__bar" />
+                  <span className="emp-head__when">{ago(updated)}</span>
+                </>
+              )}
+            </p>
           </div>
-        </div>
-        <p className="sheet__hint">
-          Нажмите на сотрудника, чтобы увидеть его справа.
-        </p>
-        </section>
-       </div>
+          <div className="emp-head__actions">
+            <button type="button" className="emp-btn emp-btn--light"
+                    onClick={() => void order()} disabled={ordering}>
+              <AppIcon name="download" size={20} />
+              {ordering ? 'В очереди…' : 'Экспорт'}
+            </button>
+            <Link className="emp-btn emp-btn--blue" to="/employees/new">
+              <AppIcon name="plus" size={20} />
+              Добавить сотрудника
+            </Link>
+          </div>
+        </header>
 
-       <div className="grid__side">
-        <Today block={today} />
-        <Highlights block={highlights} />
-        <Chosen
-          person={chosen}
-          onOpen={() => chosen && patch({ employee: chosen.id }, true)}
-        />
-       </div>
+        {ordered && (
+          <p className="emp-note" role="status">
+            {ordered} — <Link to="/reports">файл появится в отчётах</Link>
+          </p>
+        )}
+
+        <div className="emp-grid">
+          <section className="emp-list" aria-label="Список сотрудников">
+            <div className="emp-filters">
+              <label className="emp-search">
+                <AppIcon name="search" size={18} />
+                <input
+                  type="search"
+                  value={draft}
+                  placeholder="Поиск по ФИО, должности или Telegram"
+                  aria-label="Поиск по ФИО, должности или Telegram"
+                  onChange={(event) => setDraft(event.target.value)}
+                />
+              </label>
+              <Select label="Офис" empty="Все офисы" value={office}
+                      options={directory.state === 'ready' ? directory.data.offices : []}
+                      onChange={(value) => patch({ office_id: value || null })} />
+              <Select label="Отдел" empty="Все отделы" value={department}
+                      options={directory.state === 'ready' ? directory.data.departments : []}
+                      onChange={(value) => patch({ department_id: value || null })} />
+              {/* Статус и вкладки — одна ось отбора: список меняет вкладку. */}
+              <Select label="Статус" empty="Все статусы" value={tab.key === 'all' ? '' : tab.key}
+                      options={TABS.filter((one) => one.key !== 'all')
+                        .map((one) => ({ id: one.key, name: one.title }))}
+                      onChange={(value) => patch({ tab: value || null })} />
+              <div className="emp-view" role="group" aria-label="Вид списка">
+                <button type="button" aria-pressed={view === 'table'}
+                        className={view === 'table' ? 'emp-view__one emp-view__one--on' : 'emp-view__one'}
+                        onClick={() => patch({ view: 'table' }, true)}>
+                  <AppIcon name="list" size={18} />
+                  Таблица
+                </button>
+                <button type="button" aria-pressed={view === 'cards'}
+                        className={view === 'cards' ? 'emp-view__one emp-view__one--on' : 'emp-view__one'}
+                        onClick={() => patch({ view: null }, true)}>
+                  <AppIcon name="grid" size={18} />
+                  Карточки
+                </button>
+              </div>
+            </div>
+
+            <div className="emp-tabs" role="tablist">
+              {TABS.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={item.key === tab.key}
+                  className={item.key === tab.key ? 'emp-tab emp-tab--on' : 'emp-tab'}
+                  onClick={() => patch({ tab: item.key === 'all' ? null : item.key })}
+                >
+                  {item.title}
+                  {counts.state === 'ready' && ` ${count(counts.data, item.statuses)}`}
+                </button>
+              ))}
+            </div>
+
+            <div className="emp-body">
+              <Rows block={list}>
+                {(data) =>
+                  data.items.length === 0 ? (
+                    <p className="emp-empty">
+                      {search || office || department
+                        ? 'По этим условиям никого не нашлось.'
+                        : 'В доступной области нет сотрудников.'}
+                    </p>
+                  ) : view === 'cards' ? (
+                    <div className="emp-cards">
+                      {data.items.map((person) => (
+                        <PersonCard
+                          key={person.id}
+                          person={person}
+                          chosen={person.id === chosen?.id}
+                          onPick={() => patch({ picked: person.id }, true)}
+                          onOpen={() => patch({ employee: person.id }, true)}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <PeopleTable rows={data.items} chosen={chosen?.id ?? ''}
+                                 onPick={(id) => patch({ picked: id }, true)} />
+                  )
+                }
+              </Rows>
+            </div>
+
+            <footer className="emp-pager">
+              <p className="emp-pager__note">
+                {list.state === 'ready'
+                  ? `Показано ${items.length} из ${plural(total, 'сотрудник')}`
+                  : ''}
+              </p>
+              <div className="emp-pager__tools">
+                <label className="emp-size">
+                  <span className="visually-hidden">Строк на странице</span>
+                  <select value={limit} onChange={(event) => patch({ limit: event.target.value })}>
+                    {SIZES.map((size) => <option key={size} value={size}>{size}</option>)}
+                  </select>
+                </label>
+                <Pages page={page} pages={pages}
+                       onGo={(next) => patch({ page: next === 1 ? null : String(next) }, true)} />
+              </div>
+            </footer>
+          </section>
+
+          <TeamPanel
+            presence={presence}
+            highlights={highlights}
+            person={chosen}
+            onOpen={() => chosen && patch({ employee: chosen.id }, true)}
+          />
+        </div>
       </div>
 
-      {opened && (
-        <EmployeeCard id={opened} onClose={() => patch({ employee: null }, true)} />
-      )}
+      {opened && <EmployeeCard id={opened} onClose={() => patch({ employee: null }, true)} />}
     </AppShell>
   );
 }
 
-// --- правая колонка --------------------------------------------------------
+// --- список ----------------------------------------------------------------
 
-/** Подписи состояний смены. Ровно те, что считает сервер. */
-const PRESENCE_TITLE: [string, string][] = [
-  ['IN_OFFICE', 'На месте'],
-  ['LEFT', 'Ушли'],
-  ['NOT_COME', 'Нет на месте'],
-  ['VACATION', 'В отпуске'],
-  ['SICK_LEAVE', 'На больничном'],
-  ['OTHER_ABSENCE', 'Другое отсутствие'],
-  ['DAY_OFF', 'Выходной'],
-  ['NO_SCHEDULE', 'Без графика'],
-];
-
-function Today({ block }: { block: Block<api.Presence> }) {
-  return (
-    <section className="panel">
-      <h2 className="panel__title panel__title--row">
-        <span className="panel__mark" aria-hidden="true">
-          <AppIcon name="users" size={20} />
-        </span>
-        Сегодня в команде
-      </h2>
-
-      {block.state !== 'ready' ? (
-        <p className="empty">
-          {block.state === 'error' || block.state === 'denied'
-            ? 'Состав смены недоступен'
-            : 'Считаем…'}
-        </p>
-      ) : (
-        <TodayBody data={block.data} />
-      )}
-    </section>
-  );
-}
-
-function TodayBody({ data }: { data: api.Presence }) {
-  // Тело без `counts` — не повод уронить страницу: панель состава смены
-  // стоит рядом со списком, и её сбой не должен уносить список с собой.
-  const counts: Record<string, number> = data.counts ?? {};
-  const here = counts['IN_OFFICE'] ?? 0;
-  // Доля считается от тех, у кого сегодня рабочий день: выходные и людей
-  // без графика в знаменателе превратили бы обычную субботу в провал
-  // посещаемости.
-  const expected =
-    (data.total ?? 0) - (counts['DAY_OFF'] ?? 0) - (counts['NO_SCHEDULE'] ?? 0);
-  const share = expected > 0 ? Math.round((here / expected) * 100) : 0;
-  const rows = PRESENCE_TITLE.filter(([key]) => (counts[key] ?? 0) > 0);
-
-  return (
-    <div className="shift">
-      <div className="shift__top">
-        <Ring share={share} />
-        <p className="shift__sum">
-          <strong>{here} из {expected}</strong>
-          <span>{expected > 0 ? 'на месте сейчас' : 'сегодня рабочих дней нет'}</span>
-        </p>
-      </div>
-      <ul className="shift__rows">
-        {rows.map(([key, title]) => (
-          <li key={key}>
-            <i className={`shift__dot shift__dot--${key.toLowerCase()}`} />
-            <span className="shift__name">{title}</span>
-            <span className="shift__count">{counts[key]}</span>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-/** Кольцо доли. Дугой, а не заливкой: так видна и сотая часть. */
-function Ring({ share }: { share: number }) {
-  const length = 2 * Math.PI * 26;
-  return (
-    <svg className="ring" viewBox="0 0 60 60" width={64} height={64}
-         role="img" aria-label={`На месте ${share} процентов`}>
-      <circle className="ring__track" cx="30" cy="30" r="26" />
-      <circle
-        className="ring__fill"
-        cx="30"
-        cy="30"
-        r="26"
-        strokeDasharray={`${(Math.min(share, 100) / 100) * length} ${length}`}
-      />
-      <text className="ring__text" x="30" y="30">{share}%</text>
-    </svg>
-  );
-}
-
-function Chosen({
-  person,
-  onOpen,
-}: {
-  person: api.EmployeeRow | null;
+function PersonCard({ person, chosen, onPick, onOpen }: {
+  person: api.EmployeeRow;
+  chosen: boolean;
+  onPick: () => void;
   onOpen: () => void;
 }) {
+  const at = person.current_assignment;
+  const telegram = person.telegram_username;
   return (
-    <section className="panel">
-      <h2 className="panel__title panel__title--row">
-        <span className="panel__mark" aria-hidden="true">
-          <AppIcon name="user" size={20} />
-        </span>
-        Выбранный сотрудник
-      </h2>
+    <article
+      className={chosen ? 'emp-card emp-card--on' : 'emp-card'}
+      tabIndex={0}
+      aria-current={chosen || undefined}
+      onClick={onPick}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onPick();
+        }
+      }}
+    >
+      <Photo id={person.id} name={person.full_name} has={person.photo} className="emp-card__photo" />
+      <div className="emp-card__body">
+        <h3 className="emp-card__name">{shortName(person.full_name)}</h3>
+        <p className="emp-card__number">{person.employee_number ?? '—'}</p>
+        <p className="emp-card__role">{at?.position_name ?? 'Должность не назначена'}</p>
+        <p className="emp-card__dept">{at?.department_name ?? '—'}</p>
+        <p className="emp-card__meta">
+          <Bit icon="pin" text={at?.office_name ?? '—'} />
+          <Bit icon="clock" text={scheduleLine(person.current_schedule)} />
+          {telegram
+            ? <Bit icon="send" text={`@${telegram}`} tone="link" />
+            : <Bit icon="doc" text={telegramShort(person.telegram_state)} />}
+        </p>
+      </div>
+      <Status person={person} className="emp-card__status" />
+      <CardMenu onOpen={onOpen} />
+    </article>
+  );
+}
 
-      {person === null ? (
-        <p className="empty">Выберите сотрудника в списке.</p>
-      ) : (
-        <div className="chosen">
-          <div className="chosen__head">
-            <span className="avatar avatar--big">{initials(person.full_name)}</span>
-            <span className="chosen__who">
-              <span className="chosen__name">{person.full_name}</span>
-              <span className="who__id">{person.employee_number ?? '—'}</span>
-              <span className="chosen__role">
-                {person.current_assignment?.position_name ?? 'Должность не назначена'}
-              </span>
-              {person.current_assignment?.department_name && (
-                <span className="two__second">
-                  {person.current_assignment.department_name}
-                </span>
-              )}
-            </span>
-            <Status value={person.employment_status} />
-          </div>
+function Bit({ icon, text, tone }: { icon: AppIconName; text: string; tone?: 'link' }) {
+  return (
+    <span className={tone ? `emp-bit emp-bit--${tone}` : 'emp-bit'}>
+      <AppIcon name={icon} size={16} />
+      <span className="emp-bit__text">{text}</span>
+    </span>
+  );
+}
 
-          <div className="chosen__facts">
-            <Fact icon="pin" value={person.current_assignment?.office_name} />
-            <Fact
-              icon="clock"
-              value={
-                person.current_schedule
-                  ? person.current_schedule.name
-                  : 'График не назначен'
-              }
-            />
-            <Fact icon="send" value={telegramTitle(person.telegram_state)} />
-          </div>
-
-          {/* Одна кнопка, а не две: написать сотруднику из CRM пока нечем —
-              отправки сообщений в API нет, и вторая кнопка была бы
-              нарисованной. */}
-          <button type="button" className="btn btn--dark chosen__open" onClick={onOpen}>
+function CardMenu({ onOpen }: { onOpen: () => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="emp-menu">
+      <button type="button" className="emp-menu__dots" aria-label="Действия" aria-expanded={open}
+              onClick={(event) => { event.stopPropagation(); setOpen((was) => !was); }}>
+        <i /><i /><i />
+      </button>
+      {open && (
+        <span className="emp-menu__drop" role="menu">
+          <button type="button" role="menuitem"
+                  onClick={(event) => { event.stopPropagation(); setOpen(false); onOpen(); }}>
             Открыть профиль
           </button>
-        </div>
+        </span>
       )}
-    </section>
+    </span>
   );
 }
-
-function Fact({
-  icon,
-  value,
-}: {
-  icon: 'pin' | 'clock' | 'send';
-  value: string | null | undefined;
-}) {
-  return (
-    <div className="chosen__fact">
-      <AppIcon name={icon} size={16} />
-      <span>{value || '—'}</span>
-    </div>
-  );
-}
-
-// --- карточка в списке -----------------------------------------------------
 
 /**
- * Лицо или инициалы.
- *
- * Снимок живёт в приватном хранилище и приходит отдельным адресом:
- * в строке списка лежит только признак того, что он есть. Если снимка
- * нет — инициалы, и это не заглушка, а обычное состояние.
+ * Состояние одной плашкой. Показывается то, что мешает раньше всего:
+ * уволенного не называют «без графика».
  */
-function Avatar({ id, name, has, size = 'card' }: {
+function Status({ person, className }: { person: api.EmployeeRow; className: string }) {
+  const status = person.employment_status;
+  const [tone, title] =
+    status === 'TERMINATED' || status === 'ARCHIVED' ? ['off', 'Уволен']
+      : status === 'SUSPENDED' ? ['off', 'Неактивен']
+        : !person.current_schedule ? ['warn', 'Без графика']
+          : person.telegram_state !== 'ACTIVE' ? ['warn', 'Не подключён']
+            : ['ok', 'Активен'];
+  return <span className={`emp-status emp-status--${tone} ${className}`}>{title}</span>;
+}
+
+/** Лицо или инициалы. Слот одного размера в обоих случаях. */
+function Photo({ id, name, has, className }: {
   id: string;
   name: string;
   has: boolean;
-  size?: 'card' | 'row' | 'big';
+  className: string;
 }) {
   const [broken, setBroken] = useState(false);
-  const shape = `avatar avatar--${size}`;
   if (!has || broken) {
-    return <span className={shape} aria-hidden="true">{initials(name)}</span>;
+    return <span className={`emp-photo emp-photo--none ${className}`} aria-hidden="true">{initials(name)}</span>;
   }
   return (
     <img
-      className={`${shape} avatar--photo`}
+      className={`emp-photo ${className}`}
       src={api.employeePhotoUrl(id)}
       alt=""
-      // Битый или удалённый снимок не должен оставлять пустое место:
-      // карточка возвращается к инициалам.
       onError={() => setBroken(true)}
+      // Файл размером в точку — заглушка тестовой загрузки, а не портрет.
+      onLoad={(event) => { if (event.currentTarget.naturalWidth < 32) setBroken(true); }}
     />
   );
 }
 
-/** Номера страниц. Середина сворачивается многоточием, как в макете. */
-function Pages({ page, pages, onGo }: {
-  page: number;
-  pages: number;
-  onGo: (next: number) => void;
+function PeopleTable({ rows, chosen, onPick }: {
+  rows: api.EmployeeRow[];
+  chosen: string;
+  onPick: (id: string) => void;
 }) {
-  if (pages <= 1) return null;
+  return (
+    <div className="emp-table-wrap">
+      <table className="emp-table">
+        <thead>
+          <tr>
+            <th>Сотрудник</th>
+            <th>Должность / отдел</th>
+            <th>Офис</th>
+            <th>График</th>
+            <th>Telegram</th>
+            <th>Статус</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((person) => (
+            <tr key={person.id} tabIndex={0}
+                className={person.id === chosen ? 'emp-table__on' : undefined}
+                onClick={() => onPick(person.id)}
+                onKeyDown={(event) => { if (event.key === 'Enter') onPick(person.id); }}>
+              <td>
+                <span className="emp-table__who">
+                  <Photo id={person.id} name={person.full_name} has={person.photo} className="emp-table__photo" />
+                  <span>
+                    <b>{shortName(person.full_name)}</b>
+                    <small>{person.employee_number ?? '—'}</small>
+                  </span>
+                </span>
+              </td>
+              <td>
+                {person.current_assignment?.position_name ?? '—'}
+                <small>{person.current_assignment?.department_name ?? ''}</small>
+              </td>
+              <td>{person.current_assignment?.office_name ?? '—'}</td>
+              <td>{scheduleLine(person.current_schedule)}</td>
+              <td>{person.telegram_username ? `@${person.telegram_username}` : telegramShort(person.telegram_state)}</td>
+              <td><Status person={person} className="" /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** Номера страниц: первые пять, соседи текущей и последняя. */
+function Pages({ page, pages, onGo }: { page: number; pages: number; onGo: (next: number) => void }) {
   const shown: (number | 'gap')[] = [];
   for (let at = 1; at <= pages; at += 1) {
     if (at <= 5 || at === pages || Math.abs(at - page) <= 1) shown.push(at);
     else if (shown[shown.length - 1] !== 'gap') shown.push('gap');
   }
   return (
-    <nav className="pages" aria-label="Страницы списка">
-      <button type="button" className="pick pick--icon" aria-label="Предыдущая"
+    <nav className="emp-pages" aria-label="Страницы списка">
+      <button type="button" className="emp-pages__arrow" aria-label="Предыдущая"
               disabled={page <= 1} onClick={() => onGo(page - 1)}>
-        <AppIcon name="chevron" size={16} className="rot-r" />
+        <AppIcon name="back" size={16} />
       </button>
       {shown.map((item, at) =>
         item === 'gap' ? (
-          <span key={`gap-${at}`} className="pages__gap">…</span>
+          <span key={`gap-${at}`} className="emp-pages__gap">…</span>
         ) : (
-          <button
-            key={item}
-            type="button"
-            className={item === page ? 'pages__one pages__one--on' : 'pages__one'}
-            aria-current={item === page ? 'page' : undefined}
-            onClick={() => onGo(item)}
-          >
+          <button key={item} type="button"
+                  className={item === page ? 'emp-pages__one emp-pages__one--on' : 'emp-pages__one'}
+                  aria-current={item === page ? 'page' : undefined}
+                  onClick={() => onGo(item)}>
             {item}
           </button>
         ),
       )}
-      <button type="button" className="pick pick--icon" aria-label="Следующая"
+      <button type="button" className="emp-pages__arrow" aria-label="Следующая"
               disabled={page >= pages} onClick={() => onGo(page + 1)}>
-        <AppIcon name="chevron" size={16} className="rot-l" />
+        <AppIcon name="next" size={16} />
       </button>
     </nav>
   );
 }
 
-/** «5 минут назад» — подпись о свежести данных. */
+// --- правая панель -----------------------------------------------------------
+
+function TeamPanel({ presence, highlights, person, onOpen }: {
+  presence: Block<api.Presence>;
+  highlights: Block<api.EmployeeHighlights>;
+  person: api.EmployeeRow | null;
+  onOpen: () => void;
+}) {
+  const counts = presence.state === 'ready' ? presence.data.counts : {};
+  const here = counts['IN_OFFICE'] ?? 0;
+  const left = counts['LEFT'] ?? 0;
+  const away = (counts['NOT_COME'] ?? 0) + (counts['VACATION'] ?? 0)
+    + (counts['SICK_LEAVE'] ?? 0) + (counts['OTHER_ABSENCE'] ?? 0);
+  const total = here + left + away;
+  const share = total ? Math.round((here / total) * 100) : 0;
+  const day = todayIso();
+
+  return (
+    <aside className="emp-team" aria-label="Сегодня в команде">
+      <div className="emp-team__head">
+        <h2 className="emp-team__title">Сегодня в команде</h2>
+        <span className="emp-team__date">
+          {longDate(day)}, {WEEKDAYS[new Date(`${day}T12:00:00`).getDay()]}
+        </span>
+      </div>
+
+      <div className="emp-sum">
+        <Ring share={share} />
+        <p className="emp-sum__main">
+          <strong>{here} из {total}</strong>
+          <span>сотрудников на месте</span>
+        </p>
+        <ul className="emp-sum__legend">
+          <li><i className="emp-dot emp-dot--ok" />На месте<b>{here}</b></li>
+          <li><i className="emp-dot emp-dot--idle" />Ушли<b>{left}</b></li>
+          <li><i className="emp-dot emp-dot--warn" />Нет на месте<b>{away}</b></li>
+        </ul>
+      </div>
+
+      {highlights.state === 'ready' ? (
+        <>
+          <Tile icon="user" tone="blue" title="Онбординг"
+                line={plural(highlights.data.recent_hires, 'новый')}
+                note="за последние 30 дней"
+                // Ход приёма: у скольких новичков уже назначен график.
+                progress={{
+                  done: Math.max(highlights.data.recent_hires - highlights.data.without_schedule, 0),
+                  of: highlights.data.recent_hires,
+                }} />
+          <Tile icon="calendar" tone="red" title="Дни рождения"
+                line={highlights.data.birthdays_today
+                  ? plural(highlights.data.birthdays_today, 'сотрудник') : 'Сегодня никого'}
+                note={highlights.data.birthdays_today ? 'сегодня' : ''}
+                faces={highlights.data.birthdays} total={highlights.data.birthdays_today} />
+          <Tile icon="clock" tone="amber" title="Нет графика"
+                line={highlights.data.without_schedule
+                  ? plural(highlights.data.without_schedule, 'сотрудник') : 'У всех назначен'}
+                note={highlights.data.without_schedule ? 'требуют настройки' : ''}
+                faces={highlights.data.unscheduled} total={highlights.data.without_schedule} />
+        </>
+      ) : (
+        <p className="emp-team__wait">
+          {highlights.state === 'loading' ? 'Загружаем…' : 'Не удалось загрузить сводку.'}
+        </p>
+      )}
+
+      <div className="emp-chosen">
+        <div className="emp-chosen__head">
+          <h2 className="emp-team__title">Выбранный сотрудник</h2>
+          <button type="button" className="emp-chosen__go" aria-label="Открыть профиль"
+                  onClick={onOpen} disabled={!person}>
+            <AppIcon name="next" size={20} />
+          </button>
+        </div>
+        {person ? <Chosen person={person} onOpen={onOpen} /> : (
+          <p className="emp-team__wait">Выберите сотрудника в списке.</p>
+        )}
+      </div>
+    </aside>
+  );
+}
+
+function Ring({ share }: { share: number }) {
+  const radius = 35;
+  const length = 2 * Math.PI * radius;
+  const filled = (Math.min(Math.max(share, 0), 100) / 100) * length;
+  return (
+    <svg className="emp-ring" viewBox="0 0 80 80" width={80} height={80}
+         role="img" aria-label={`На месте ${share} процентов`}>
+      <circle className="emp-ring__track" cx="40" cy="40" r={radius} />
+      <circle className="emp-ring__fill" cx="40" cy="40" r={radius}
+              strokeDasharray={`${filled} ${length}`} transform="rotate(-90 40 40)" />
+      <text className="emp-ring__text" x="40" y="41">{share}%</text>
+    </svg>
+  );
+}
+
+function Tile({ icon, tone, title, line, note, faces, total, progress }: {
+  icon: AppIconName;
+  tone: 'blue' | 'red' | 'amber';
+  title: string;
+  line: string;
+  note: string;
+  faces?: api.EmployeeBrief[];
+  total?: number;
+  progress?: { done: number; of: number };
+}) {
+  return (
+    <div className={progress ? 'emp-tile emp-tile--progress' : 'emp-tile'} role="group" aria-label={title}>
+      <span className={`emp-tile__icon emp-tile__icon--${tone}`}>
+        <AppIcon name={icon} size={20} />
+      </span>
+      <span className="emp-tile__text">
+        <b>{title}</b>
+        <span>{line}</span>
+        {note && <small>{note}</small>}
+      </span>
+      {faces && <Faces rows={faces} total={total ?? 0} />}
+      {progress && (
+        <>
+          <span className="emp-tile__of">{progress.done} из {progress.of}</span>
+          <span className="emp-tile__bar" role="img"
+                aria-label={`Оформлено ${progress.done} из ${progress.of}`}>
+            <i style={{ width: `${progress.of ? Math.round((progress.done / progress.of) * 100) : 0}%` }} />
+          </span>
+        </>
+      )}
+      <AppIcon name="next" size={20} className="emp-tile__go" />
+    </div>
+  );
+}
+
+function Faces({ rows, total }: { rows: api.EmployeeBrief[]; total: number }) {
+  if (rows.length === 0) return null;
+  const shown = rows.slice(0, 3);
+  const rest = total - shown.length;
+  return (
+    <span className={shown.length > 2 ? 'emp-faces emp-faces--tight' : 'emp-faces'}>
+      {shown.map((one) => (
+        <Photo key={one.id} id={one.id} name={one.full_name} has={one.photo} className="emp-faces__one" />
+      ))}
+      {rest > 0 && <span className="emp-faces__rest">+{rest}</span>}
+    </span>
+  );
+}
+
+function Chosen({ person, onOpen }: { person: api.EmployeeRow; onOpen: () => void }) {
+  const at = person.current_assignment;
+  const email = person.corporate_email;
+  return (
+    <>
+      <div className="emp-chosen__who">
+        <Photo id={person.id} name={person.full_name} has={person.photo} className="emp-chosen__photo" />
+        <div className="emp-chosen__text">
+          <p className="emp-chosen__top">
+            <b>{shortName(person.full_name)}</b>
+            <Status person={person} className="" />
+          </p>
+          <p className="emp-chosen__number">{person.employee_number ?? '—'}</p>
+          <p className="emp-chosen__role">{at?.position_name ?? 'Должность не назначена'}</p>
+          <p className="emp-chosen__dept">{at?.department_name ?? '—'}</p>
+        </div>
+      </div>
+
+      <div className="emp-chosen__facts">
+        <p className="emp-chosen__row">
+          <Bit icon="pin" text={at?.office_name ?? '—'} />
+          <Bit icon="clock" text={scheduleLine(person.current_schedule)} />
+        </p>
+        <p className="emp-chosen__row">
+          <Bit icon="send" text={person.telegram_username
+            ? `@${person.telegram_username}` : telegramShort(person.telegram_state)} />
+        </p>
+        <p className="emp-chosen__row">
+          <Bit icon="inbox" text={email ?? 'Почта не указана'} />
+        </p>
+      </div>
+
+      <div className="emp-chosen__actions">
+        <button type="button" className="emp-btn emp-btn--outline" onClick={onOpen}>
+          Открыть профиль
+        </button>
+        {/* «Написать» ведёт на почту: другого канала из CRM нет. */}
+        <a className={email ? 'emp-btn emp-btn--blue' : 'emp-btn emp-btn--blue emp-btn--off'}
+           href={email ? `mailto:${email}` : undefined}
+           aria-disabled={email ? undefined : true}>
+          Написать
+        </a>
+      </div>
+    </>
+  );
+}
+
+// --- мелочи ------------------------------------------------------------------
+
+function Select({ label, empty, value, options, onChange }: {
+  label: string;
+  empty: string;
+  value: string;
+  options: { id: string; name: string }[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="emp-select">
+      <span className="visually-hidden">{label}</span>
+      <select value={value} onChange={(event) => onChange(event.target.value)}>
+        <option value="">{empty}</option>
+        {options.map((one) => <option key={one.id} value={one.id}>{one.name}</option>)}
+      </select>
+      <AppIcon name="chevron" size={16} className="emp-select__arrow" />
+    </label>
+  );
+}
+
+function Rows<T>({ block, children }: { block: Block<T>; children: (data: T) => React.ReactNode }) {
+  if (block.state === 'loading') return <p className="emp-empty">Загружаем список…</p>;
+  if (block.state === 'denied') return <p className="emp-empty">Нет доступа к списку сотрудников.</p>;
+  if (block.state === 'error') {
+    return <p className="emp-empty emp-empty--bad">Не удалось загрузить список.</p>;
+  }
+  return <>{children(block.data)}</>;
+}
+
+/** «Мирзаева Лола» из «Мирзаева Лола Азизовна»: отчество в карточку не входит. */
+function shortName(full: string): string {
+  return full.split(' ').slice(0, 2).join(' ');
+}
+
+/** «Пн–Пт 09:00–18:00» из дней и часов графика, а не из его названия. */
+function scheduleLine(schedule: api.Schedule | null): string {
+  if (!schedule) return 'Нет графика';
+  const names = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+  const days = schedule.weekdays ?? [];
+  const label = (weekday: number | undefined) =>
+    weekday === undefined ? undefined : names.at(weekday - 1);
+  const first = label(days.at(0));
+  const last = label(days.at(-1));
+  const range = !first ? '' : days.length === 1 ? first : `${first}–${last ?? first}`;
+  const clock = schedule.start_time && schedule.end_time
+    ? `${schedule.start_time.slice(0, 5)}–${schedule.end_time.slice(0, 5)}`
+    : '';
+  return [range, clock].filter(Boolean).join(' ') || schedule.name;
+}
+
+function telegramShort(state: string | null | undefined): string {
+  if (!state) return 'Не привязан';
+  return TELEGRAM_TITLE[state] ?? state;
+}
+
 function ago(moment: Date): string {
   const minutes = Math.round((Date.now() - moment.getTime()) / 60000);
   if (minutes < 1) return 'Обновлено только что';
@@ -729,228 +771,23 @@ function ago(moment: Date): string {
   return `Обновлено в ${moment.getHours()}:${String(moment.getMinutes()).padStart(2, '0')}`;
 }
 
-/**
- * Три сводки правой колонки: новички, именинники и люди без графика.
- *
- * Блок с нулём не прячется: «сегодня именинников нет» — это ответ, а
- * исчезнувший блок читается как поломка.
- */
-function Highlights({ block }: { block: Block<api.EmployeeHighlights> }) {
-  if (block.state !== 'ready') {
-    return (
-      <section className="panel">
-        <p className="muted">{block.state === 'loading' ? 'Загружаем…' : 'Не удалось загрузить.'}</p>
-      </section>
-    );
-  }
-  const data = block.data;
-  return (
-    <>
-      <section className="panel mark">
-        <span className="mark__icon mark__icon--blue">
-          <AppIcon name="user" size={20} />
-        </span>
-        <span className="mark__text">
-          <span className="mark__title">Онбординг</span>
-          <span className="mark__sub">
-            {plural(data.recent_hires, 'новый')} за последние 30 дней
-          </span>
-        </span>
-        <Link className="mark__go" to="/employees/new" aria-label="Добавить сотрудника">
-          <AppIcon name="next" size={16} />
-        </Link>
-      </section>
-
-      <section className="panel mark">
-        <span className="mark__icon mark__icon--pink">
-          <AppIcon name="calendar" size={20} />
-        </span>
-        <span className="mark__text">
-          <span className="mark__title">Дни рождения</span>
-          <span className="mark__sub">
-            {data.birthdays_today ? `${plural(data.birthdays_today, 'сотрудник')} сегодня`
-              : 'Сегодня никого'}
-          </span>
-        </span>
-        <Faces rows={data.birthdays} total={data.birthdays_today} />
-      </section>
-
-      <section className="panel mark">
-        <span className="mark__icon mark__icon--amber">
-          <AppIcon name="clock" size={20} />
-        </span>
-        <span className="mark__text">
-          <span className="mark__title">Нет графика</span>
-          <span className="mark__sub">
-            {data.without_schedule
-              ? `${plural(data.without_schedule, 'сотрудник')} требуют настройки`
-              : 'У всех назначен график'}
-          </span>
-        </span>
-        <Faces rows={data.unscheduled} total={data.without_schedule} />
-      </section>
-    </>
-  );
-}
-
-/** Несколько лиц и «+N» — сколько не поместилось. */
-function Faces({ rows, total }: { rows: api.EmployeeBrief[]; total: number }) {
-  if (rows.length === 0) return null;
-  const rest = total - rows.length;
-  return (
-    <span className="faces">
-      {rows.slice(0, 3).map((one) => (
-        <Avatar key={one.id} id={one.id} name={one.full_name} has={one.photo} size="row" />
-      ))}
-      {rest > 0 && <span className="faces__rest">+{rest}</span>}
-    </span>
-  );
-}
-
-function PersonCard({
-  person,
-  chosen,
-  onPick,
-}: {
-  person: api.EmployeeRow;
-  chosen: boolean;
-  onPick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      className={chosen ? 'person person--on' : 'person'}
-      aria-pressed={chosen}
-      onClick={onPick}
-    >
-      <span className="avatar avatar--big">{initials(person.full_name)}</span>
-
-      <span className="person__body">
-        <span className="person__top">
-          <span className="person__name">{person.full_name}</span>
-          <Status value={person.employment_status} />
-        </span>
-        <span className="who__id">{person.employee_number ?? '—'}</span>
-
-        <span className="person__role">
-          {person.current_assignment?.position_name ?? 'Должность не назначена'}
-        </span>
-        {person.current_assignment?.department_name && (
-          <span className="two__second">
-            {person.current_assignment.department_name}
-          </span>
-        )}
-
-        <span className="person__meta">
-          <span className="person__bit">
-            <AppIcon name="pin" size={16} />
-            {person.current_assignment?.office_name ?? '—'}
-          </span>
-          <span className="person__bit">
-            <AppIcon name="clock" size={16} />
-            {person.current_schedule ? person.current_schedule.name : 'Нет графика'}
-          </span>
-          <span className="person__bit">
-            <AppIcon name="send" size={16} />
-            {telegramShort(person.telegram_state)}
-          </span>
-        </span>
-      </span>
-    </button>
-  );
-}
-
-/** Состояние сотрудника словом и цветом. */
-function Status({ value }: { value: string }) {
-  const tone =
-    value === 'ACTIVE' || value === 'PROBATION'
-      ? 'ok'
-      : value === 'TERMINATED' || value === 'ARCHIVED'
-        ? 'off'
-        : 'wait';
-  return (
-    <span className={`state state--${tone}`}>
-      <i className="state__dot" />
-      {STATUS_TITLE[value] ?? value}
-    </span>
-  );
-}
-
-const telegramShort = (state: string | null | undefined): string =>
-  state === 'ACTIVE'
-    ? 'Привязан'
-    : state
-      ? TELEGRAM_TITLE[state] ?? state
-      : 'Не привязан';
-
-const telegramTitle = (state: string | null | undefined): string =>
-  state === 'ACTIVE' ? 'Telegram привязан' : `Telegram: ${telegramShort(state).toLowerCase()}`;
-
-// --- мелочи ---------------------------------------------------------------
-
 function count(counts: Record<string, number>, statuses: readonly string[]): number {
   if (statuses.length === 0) return counts['total'] ?? 0;
   return statuses.reduce((sum, key) => sum + (counts[key] ?? 0), 0);
 }
 
-const hours = (minutes: number) => `${Math.round(minutes / 60)} ч в неделю`;
-
-/** Склонения, которые встречаются на этой странице. */
 const FORMS: Record<string, [string, string, string]> = {
   'сотрудник': ['сотрудник', 'сотрудника', 'сотрудников'],
   'офис': ['офис', 'офиса', 'офисов'],
+  'новый': ['новый сотрудник', 'новых сотрудника', 'новых сотрудников'],
 };
 
-/** «252 сотрудника», «12 офисов». Число вместе со словом. */
-function plural(n: number, word: keyof typeof FORMS): string {
-  const forms = FORMS[word] as [string, string, string];
+/** «252 сотрудника», «12 офисов». */
+function plural(n: number, word: string): string {
+  const forms = FORMS[word] ?? [word, word, word];
   const form =
-    n % 10 === 1 && n % 100 !== 11
-      ? forms[0]
-      : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100)
-        ? forms[1]
+    n % 10 === 1 && n % 100 !== 11 ? forms[0]
+      : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? forms[1]
         : forms[2];
   return `${n} ${form}`;
-}
-
-function Two({ first, second }: { first?: string | null | undefined; second?: string | null | undefined }) {
-  return (
-    <span className="two">
-      <span className="two__first">{first ?? '—'}</span>
-      {second && <span className="two__second">{second}</span>}
-    </span>
-  );
-}
-
-function Picker({ label, value, empty, options, onChange }: {
-  label: string;
-  value: string;
-  empty: string;
-  options: { id: string; name: string }[];
-  onChange: (value: string) => void;
-}) {
-  return (
-    <label className="pick">
-      <span className="visually-hidden">{label}</span>
-      <select value={value} onChange={(event) => onChange(event.target.value)}>
-        <option value="">{empty}</option>
-        {options.map((option) => (
-          <option key={option.id} value={option.id}>{option.name}</option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-function Rows<T>({ block, children }: { block: Block<T>; children: (data: T) => React.ReactNode }) {
-  if (block.state === 'loading') return <p className="empty">Загружаем список…</p>;
-  if (block.state === 'denied') return <p className="empty">Нет доступа к списку сотрудников.</p>;
-  if (block.state === 'error') {
-    return (
-      <p className="empty empty--bad">
-        Не удалось загрузить список. Это ошибка запроса, а не «сотрудников нет».
-      </p>
-    );
-  }
-  return <>{children(block.data)}</>;
 }
