@@ -128,9 +128,30 @@ EXPORT_JOB_STATUSES = (
 SCOPE_LEVEL_GLOBAL = 1
 SCOPE_LEVEL_REGION = 2
 SCOPE_LEVEL_OFFICE = 3
-QUESTION_STATUSES = (
-    "NEW", "AI_ANSWERED", "ESCALATED_TO_HR", "HR_ANSWERED", "CLOSED",
+# --- обращения сотрудников ---
+# NEW — никто не взял; IN_PROGRESS — у ответственного; WAITING_EMPLOYEE —
+# кадровик спросил уточнение и ждёт человека; CLOSED — вопрос снят.
+QUESTION_STATUSES = ("NEW", "IN_PROGRESS", "WAITING_EMPLOYEE", "CLOSED")
+QUESTION_PRIORITIES = ("LOW", "NORMAL", "HIGH", "URGENT")
+# Тема вопроса, а не вид заявки: отпуск и больничный здесь — о чём
+# спрашивают, оформляются они по-прежнему в «Заявках».
+QUESTION_CATEGORIES = (
+    "VACATION", "SICK_LEAVE", "ATTENDANCE", "SCHEDULE", "SALARY",
+    "DOCUMENTS", "TELEGRAM", "OTHER",
 )
+QUESTION_MESSAGE_KINDS = ("EMPLOYEE", "HR", "SYSTEM")
+QUESTION_MESSAGE_SOURCES = ("TELEGRAM", "CRM", "SYSTEM")
+# Системные события ленты. Каждое изменение состояния или ответственного
+# оставляет строку — лента и журнал аудита рассказывают одно и то же.
+QUESTION_EVENTS = (
+    "CREATED", "TAKEN", "ASSIGNED", "TRANSFERRED", "PRIORITY", "CATEGORY",
+    "WAITING_EMPLOYEE", "RESUMED", "CLOSED", "REOPENED",
+)
+# Чем кончилась попытка ассистента подготовить черновик.
+QUESTION_DRAFT_STATUSES = ("READY", "LOW_CONFIDENCE", "CONFLICT", "NO_SOURCES")
+# Доставка ответа HR глазами кадровика — выводится из строки очереди.
+# UNKNOWN — ответ перенесён из времён до очереди, строки у него нет.
+QUESTION_DELIVERY_STATUSES = ("QUEUED", "DELIVERED", "READ", "FAILED", "UNKNOWN")
 NOTIFICATION_CHANNELS = ("TELEGRAM", "EMAIL", "PUSH", "IN_APP")
 # Очередь отправки (transactional outbox). PENDING — это и есть «в очереди»:
 # заводить отдельный QUEUED значило бы иметь два имени одного состояния.

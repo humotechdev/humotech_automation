@@ -518,5 +518,15 @@ SPECTACULAR_SETTINGS = {
         # и в схеме он должен быть одним именованным перечислением.
         "KnowledgeSourceStatus": "humotech.core.enums.KNOWLEDGE_SOURCE_STATUSES",
         "KnowledgeSourceType": "humotech.core.enums.KNOWLEDGE_SOURCE_TYPES",
+        # Обращения: у строки очереди, карточки, истории, черновика и
+        # доставки своё поле `status` — и у каждого свой набор значений.
+        "QuestionStatus": "humotech.core.enums.QUESTION_STATUSES",
+        "QuestionPriority": "humotech.core.enums.QUESTION_PRIORITIES",
+        "QuestionCategory": "humotech.core.enums.QUESTION_CATEGORIES",
+        "QuestionDraftStatus": "humotech.core.enums.QUESTION_DRAFT_STATUSES",
+        "QuestionDeliveryStatus": "humotech.core.enums.QUESTION_DELIVERY_STATUSES",
+        "QuestionMessageKind": "humotech.core.enums.QUESTION_MESSAGE_KINDS",
+        "QuestionMessageSource": "humotech.core.enums.QUESTION_MESSAGE_SOURCES",
+        "QuestionEvent": "humotech.core.enums.QUESTION_EVENTS",
     },
 }

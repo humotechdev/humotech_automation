@@ -5,15 +5,15 @@
 он отвечает на всё, что не разобрали остальные, чтобы человек не получал
 молчание.
 
-Роутеров сотрудника здесь три. Прежние разделы — «мои отметки»,
-«статистика», «исправить отметку», «вопрос в HR», HR-панель — сняты: часть
-из них была заглушками без backend, а всё, что работало, вошло в меню.
-Держать рядом две системы меню значило бы иметь два места, где чинить
-одну ошибку.
+Прежние разделы — «мои отметки», «статистика», «исправить отметку»,
+HR-панель — сняты: часть из них была заглушками без backend, а всё, что
+работало, вошло в меню. «Написать в HR» вернулся уже поверх настоящей
+очереди обращений: вопрос ложится в CRM, ответ HR приходит в этот чат.
 """
 
 from aiogram import Router
 
+from src.handlers.ask_hr import router as ask_hr_router
 from src.handlers.attendance import router as attendance_router
 from src.handlers.fallback import router as fallback_router
 from src.handlers.menu import router as menu_router
@@ -29,6 +29,10 @@ def build_root_router() -> Router:
     # сообщение съедалось бы ответом «не понял».
     root.include_router(attendance_router)
     root.include_router(menu_router)
+    # После меню: кнопка меню, нажатая во время ввода вопроса, остаётся
+    # кнопкой меню и не уходит в HR текстом. До `fallback`: он ловит
+    # любой текст без состояния, в том числе ответ на сообщение HR.
+    root.include_router(ask_hr_router)
     root.include_router(fallback_router)   # обязан быть последним
     return root
 

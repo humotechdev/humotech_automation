@@ -956,6 +956,15 @@ class Command(BaseCommand):
         EmployeeQuestion.objects.filter(
             organization=org, employee_id__in=ids
         ).delete()
+        # Документы базы знаний витрины: на них ссылались черновики
+        # обращений, поэтому снимаются после самих обращений. Чужие
+        # документы метки витрины не несут и не трогаются.
+        from humotech.core.demo.catalog import PREFIX as DEMO_PREFIX
+        from humotech.knowledge.models import KnowledgeSource
+
+        KnowledgeSource.objects.filter(
+            organization=org, meta__demo=DEMO_PREFIX
+        ).delete()
         Notification.objects.filter(
             organization=org, employee_id__in=ids
         ).delete()

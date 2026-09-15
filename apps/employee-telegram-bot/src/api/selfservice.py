@@ -69,6 +69,22 @@ class SelfServiceClient:
     async def leave_balance(self, telegram_id: int) -> dict:
         return await self._get("/me/leave-balance", telegram_id)
 
+    async def ask_hr(
+        self, telegram_id: int, *, text: str, message_id: int | None = None
+    ) -> dict:
+        """Сообщение в отдел кадров.
+
+        В какое обращение оно ляжет — в открытое, переоткрытое или новое, —
+        решает backend. `message_id` защищает от дубля, если бот отправит
+        то же сообщение повторно после сбоя сети.
+        """
+        return await self._request(
+            "POST",
+            "/me/questions/messages",
+            headers={EMPLOYEE_HEADER: str(telegram_id)},
+            json={"text": text, "telegram_message_id": message_id},
+        )
+
     async def scan(
         self,
         *,

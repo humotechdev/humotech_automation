@@ -128,6 +128,7 @@ async function failure(response: Response): Promise<ApiFailure> {
     response.status,
     fieldsOf(body),
     fieldOf(body),
+    typeof body.code === 'string' ? body.code : null,
   );
 }
 

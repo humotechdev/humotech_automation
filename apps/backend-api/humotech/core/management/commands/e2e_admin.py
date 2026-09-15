@@ -51,6 +51,11 @@ PERMISSIONS = (
     "knowledge.read",
 )
 
+#: С `--answer` — ещё и работа с обращениями: взять, передать, ответить,
+#: закрыть. Отдельная роль и отдельная учётка: проверка чтения не должна
+#: получать права на запись заодно.
+ANSWER_PERMISSIONS = PERMISSIONS + ("questions.answer",)
+
 
 class Command(BaseCommand):
     help = "Заводит учётку для браузерной проверки на изолированном стенде"
@@ -66,6 +71,11 @@ class Command(BaseCommand):
             help="файл, в который записать адрес и пароль. Больше никуда "
                  "они не выводятся.",
         )
+        parser.add_argument(
+            "--answer", action="store_true",
+            help="учётка кадровика: ещё и отвечать на обращения "
+                 "(questions.answer). Используйте с отдельным --email.",
+        )
 
     @transaction.atomic
     def handle(self, *args, **options) -> None:
@@ -75,7 +85,13 @@ class Command(BaseCommand):
         if org is None:
             raise CommandError(f"Организация {options['code']} не найдена")
 
-        role = self._role(org)
+        role = (
+            self._role(org, "E2E_SHOTS_ANSWER", "Браузерная проверка (обращения)",
+                       ANSWER_PERMISSIONS)
+            if options["answer"]
+            else self._role(org, "E2E_SHOTS", "Браузерная проверка (только чтение)",
+                            PERMISSIONS)
+        )
         user = User.objects.filter(organization=org, email=options["email"]).first()
         if user is None:
             user = User(organization=org, email=options["email"], status="ACTIVE")
@@ -122,12 +138,11 @@ class Command(BaseCommand):
                 "в рабочей базе — это чужой доступ, а не удобство проверки."
             )
 
-    def _role(self, org) -> Role:
+    def _role(self, org, code: str, name: str, permissions: tuple[str, ...]) -> Role:
         role, _ = Role.objects.get_or_create(
-            organization=org, code="E2E_SHOTS",
-            defaults={"name": "Браузерная проверка (только чтение)"},
+            organization=org, code=code, defaults={"name": name},
         )
-        for code in PERMISSIONS:
+        for code in permissions:
             permission = Permission.objects.filter(code=code).first()
             if permission is not None:
                 RolePermission.objects.get_or_create(role=role, permission=permission)

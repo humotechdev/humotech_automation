@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import uuid
 from datetime import date, datetime, time, timedelta
+from decimal import Decimal
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 
@@ -27,17 +28,19 @@ from humotech.absences.models import (
 from humotech.attendance.models import AttendanceCorrectionRequest, AttendanceSession
 from humotech.core.demo import images, papers as paper_texts, photos as photo_pack
 from humotech.core.demo.catalog import (
-    AI_ANSWERS,
-    HR_ANSWERS,
+    DEMO_SOURCES,
     NOTICES,
     PREFIX,
     QUESTIONS,
+    DemoQuestion,
 )
 from humotech.employees.models import Employee, EmployeeDocument
 from humotech.files.models import File
 from humotech.files.storage import private_storage, store
+from humotech.knowledge.models import KnowledgeSource
 from humotech.notifications.models import Notification
-from humotech.questions.models import EmployeeQuestion
+from humotech.questions.inbox import REPLY_HEADER, SLA, _person, next_number
+from humotech.questions.models import EmployeeQuestion, QuestionMessage
 from humotech.telegram.models import TelegramAccount, TelegramLinkInvitation
 
 #: Каталог приватного хранилища, в который витрина кладёт свои файлы.
@@ -387,45 +390,180 @@ def telegram(org, people, now, reviewer) -> None:
 
 
 def questions(org, people, now, reviewer) -> None:
-    """Обращения сотрудников во всех состояниях модели.
+    """Обращения сотрудников во всех состояниях, с перепиской.
 
-    Переписки из нескольких сообщений здесь нет и быть не может: у
-    обращения три текстовых поля — вопрос, ответ ассистента и ответ
-    кадровой службы, — а отдельной таблицы сообщений в проекте нет.
-    Изображать диалог, складывая реплики в одно поле, значило бы
-    показать то, чего система не умеет.
+    Каждое обращение собирается так, как его собрала бы сама система:
+    первое сообщение сотрудника и событие «создано», взятие в работу,
+    ответы HR со строкой очереди отправки, запрос уточнения, возврат в
+    работу, закрытие с причиной. Ответ HR без строки очереди не
+    заводится: в CRM он выглядел бы отправленным, а в Telegram его нет.
+
+    Обращения с перепиской достаются людям с живой привязкой Telegram,
+    одно — человеку без неё: на нём видно, что ответить нельзя.
     """
-    rows = []
-    for at, (text, status, days_ago) in enumerate(QUESTIONS):
-        person = _pick(people, "in_office" if at % 2 == 0 else "left", at)
-        ai = None
-        hr = None
-        answered = None
-        if status in ("AI_ANSWERED",):
-            ai = AI_ANSWERS[at % len(AI_ANSWERS)]
-            answered = now - timedelta(days=days_ago, hours=1)
-        if status in ("HR_ANSWERED", "CLOSED"):
-            hr = HR_ANSWERS[at % len(HR_ANSWERS)]
-            answered = now - timedelta(days=days_ago, hours=2)
-        rows.append(EmployeeQuestion(
+    sources = _demo_sources(org, now, reviewer)
+    connected = set(
+        TelegramAccount.objects.filter(organization=org, status="ACTIVE")
+        .values_list("employee_id", flat=True)
+    )
+    pool = sorted(
+        (one for one in people
+         if one.scenario is None and one.employee.employment_status == "ACTIVE"),
+        key=lambda one: one.employee.employee_number,
+    )
+    linked = [one for one in pool if one.employee.id in connected] or pool
+    unlinked = [one for one in pool if one.employee.id not in connected] or pool
+
+    first_number = next_number(org.id)
+    for at, item in enumerate(QUESTIONS):
+        group = linked if item.telegram else unlinked
+        person = group[item.who % len(group)]
+        _question(org, person.employee, item, first_number + at, now, reviewer, sources)
+
+
+def _demo_sources(org, now, reviewer) -> dict[str, KnowledgeSource]:
+    """Опубликованные документы, на которые ссылаются черновики обращений."""
+    result = {}
+    for one in DEMO_SOURCES:
+        published = now - timedelta(days=one.days_ago)
+        row = KnowledgeSource.objects.create(
             organization=org,
-            employee=person.employee,
-            question_text=text,
-            status=status,
-            ai_answer_text=ai,
-            ai_confidence=0.82 if ai else None,
-            hr_answer_text=hr,
-            assigned_to_user=reviewer if status in ("ESCALATED_TO_HR", "HR_ANSWERED") else None,
-            answered_at=answered,
-        ))
-    EmployeeQuestion.objects.bulk_create(rows, batch_size=200)
-    # Дата создания у модели проставляется автоматически, а витрине
-    # нужен разброс по месяцу: без него все обращения приходят одной
-    # секундой и «последние» теряют смысл.
-    for row, (_, _, days_ago) in zip(rows, QUESTIONS):
-        EmployeeQuestion.objects.filter(id=row.id).update(
-            created_at=now - timedelta(days=days_ago, hours=3)
+            title=one.title,
+            source_type=one.source_type,
+            language="ru",
+            content=one.content,
+            content_hash=hashlib.sha256(one.content.encode()).hexdigest(),
+            status="ACTIVE",
+            created_by_user=reviewer,
+            approved_by_user=reviewer,
+            approved_at=published,
+            published_at=published,
+            # По этой метке витрина снимает свои документы при повторе.
+            meta={"demo": PREFIX},
         )
+        KnowledgeSource.objects.filter(id=row.id).update(
+            created_at=published, updated_at=published
+        )
+        result[one.key] = row
+    return result
+
+
+def _question(org, employee, item: DemoQuestion, number, now, reviewer, sources) -> None:
+    steps = len(item.thread)
+    last = now - timedelta(minutes=item.minutes_ago)
+    gap = timedelta(minutes=max(3, min(item.minutes_ago // 8, 180)))
+    first = last - gap * (steps - 1) - timedelta(minutes=2)
+    moments = [first + timedelta(minutes=2) + gap * index for index in range(steps)]
+
+    closed = item.status == "CLOSED"
+    awaiting = item.thread[-1][0] == "E" and not closed
+    replies = [at for at, (who, _) in zip(moments, item.thread) if who != "E"]
+    closed_at = last + timedelta(minutes=10) if closed else None
+    draft_sources = [str(sources[key].id) for key in item.sources]
+
+    question = EmployeeQuestion.objects.create(
+        organization=org,
+        employee=employee,
+        number=number,
+        question_text=item.thread[0][1],
+        normalized_topic=item.topic,
+        status=item.status,
+        priority=item.priority,
+        category=item.category,
+        assigned_to_user=reviewer if item.assigned else None,
+        due_at=(
+            last + SLA[item.priority]
+            if awaiting and item.status in ("NEW", "IN_PROGRESS") else None
+        ),
+        last_message_at=last,
+        unread=item.unread and not closed,
+        awaiting_reply=awaiting,
+        first_response_at=replies[0] if replies else None,
+        closed_at=closed_at,
+        closed_by_user=reviewer if closed else None,
+        close_reason=item.close_reason if closed else None,
+        ai_status=item.draft,
+        ai_answer_text=item.answer,
+        ai_confidence=(
+            Decimal(str(item.confidence)) if item.confidence is not None else None
+        ),
+        ai_source_ids=draft_sources or None,
+        answer_source=sources[item.sources[0]] if item.sources else None,
+        ai_generated_at=first + timedelta(minutes=1) if item.draft else None,
+    )
+    EmployeeQuestion.objects.filter(id=question.id).update(created_at=first)
+
+    hr = _person(reviewer)
+    hr_json = {"id": str(hr["id"]), "name": hr["name"]}
+    rows = [_event(question, "CREATED", first, None, {"source": "TELEGRAM"})]
+    if item.assigned:
+        rows.append(_event(
+            question, "TAKEN", moments[0] + timedelta(minutes=1), reviewer,
+            {"from": None, "to": hr_json, "status_from": "NEW",
+             "status_to": "IN_PROGRESS"},
+        ))
+
+    previous = None
+    for at, (who, text) in zip(moments, item.thread):
+        if who == "E":
+            if previous == "W":
+                rows.append(_event(
+                    question, "RESUMED", at, None,
+                    {"from": "WAITING_EMPLOYEE", "to": "IN_PROGRESS"},
+                ))
+            rows.append(QuestionMessage(
+                organization=org, question=question, kind="EMPLOYEE",
+                source="TELEGRAM", body=text, author_employee=employee,
+                created_at=at,
+            ))
+        else:
+            message_id = uuid.uuid4()
+            read = closed or at < now - timedelta(hours=6)
+            notification = Notification.objects.create(
+                organization=org,
+                employee=employee,
+                channel="TELEGRAM",
+                notification_type="question.reply",
+                title=f"Ответ на обращение №{number}",
+                body=f"{REPLY_HEADER.format(number=number)}\n\n{text}",
+                status="READ" if read else "SENT",
+                sent_at=at + timedelta(seconds=20),
+                read_at=at + timedelta(minutes=4) if read else None,
+                idempotency_key=f"question.reply:{message_id}",
+                related_entity_type="employee_questions",
+                related_entity_id=question.id,
+            )
+            rows.append(QuestionMessage(
+                id=message_id, organization=org, question=question, kind="HR",
+                source="CRM", body=text, author_user=reviewer,
+                notification=notification, created_at=at,
+            ))
+            if who == "W":
+                rows.append(_event(
+                    question, "WAITING_EMPLOYEE", at + timedelta(seconds=1),
+                    reviewer, {"from": "IN_PROGRESS", "to": "WAITING_EMPLOYEE"},
+                ))
+        previous = who
+
+    if closed:
+        rows.append(_event(
+            question, "CLOSED", closed_at, reviewer,
+            {"from": "IN_PROGRESS", "to": "CLOSED", "reason": item.close_reason},
+        ))
+    QuestionMessage.objects.bulk_create(rows)
+
+
+def _event(question, event, at, user, details) -> QuestionMessage:
+    return QuestionMessage(
+        organization_id=question.organization_id,
+        question=question,
+        kind="SYSTEM",
+        source="SYSTEM" if user is None else "CRM",
+        event=event,
+        details=details,
+        author_user=user,
+        created_at=at,
+    )
 
 
 # --- уведомления -------------------------------------------------------------

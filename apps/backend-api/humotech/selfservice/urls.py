@@ -21,6 +21,7 @@ from humotech.selfservice.notifications import (
     NotificationListView,
     NotificationReadView,
 )
+from humotech.selfservice.questions import QuestionMessageView
 from humotech.selfservice.views import (
     HistoryView,
     ProfileView,
@@ -47,6 +48,9 @@ urlpatterns = [
     path("absences/<uuid:request_id>/document", AbsenceDocumentView.as_view(),
          name="self-absence-document"),
     path("leave-balance", LeaveBalanceView.as_view(), name="self-leave-balance"),
+    # Вопрос в HR. Сообщение ложится в обращение по правилам очереди.
+    path("questions/messages", QuestionMessageView.as_view(),
+         name="self-question-message"),
     # Уведомления только читаются и отмечаются прочитанными: заводит их
     # система по событиям, а не сотрудник.
     path("notifications", NotificationListView.as_view(),

@@ -59,6 +59,11 @@ const TARGETS = {
     ready: '.rq-row',
     reference: 'requests-reference-1672x941.png',
   },
+  questions: {
+    url: process.env.QUESTIONS_URL ?? '/questions',
+    ready: '.qs-msg',
+    reference: 'questions-reference-1672x941.png',
+  },
   hire: {
     url: '/employees/new',
     ready: 'form',

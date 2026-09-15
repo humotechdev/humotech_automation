@@ -257,23 +257,16 @@ export const invitations = (signal?: AbortSignal) =>
   request<Items<Invitation>>('/telegram/invitations/', signal ? { signal } : {});
 
 /**
- * Обращение сотрудника, переданное кадровику.
+ * Обращения, которые ждут кадровика, — для главной.
  *
- * Поля — те, что действительно приходят с `/knowledge/escalations/`.
- * Раньше тип описывал `employee_name` и `question`, которых в ответе нет
- * вовсе: блок на главной молча показывал «Сотрудник» без имени и пустую
- * строку вместо вопроса.
+ * Состояния заданы явно: без них сервер отдаёт очередь целиком, вместе
+ * с закрытыми, и счётчик на главной показывал бы архив.
  */
-export type Escalation = {
-  id: string;
-  employee: { id: string; full_name: string; employee_number: string | null };
-  question_text: string;
-  status?: string;
-  created_at?: string;
-};
-
 export const escalations = (signal?: AbortSignal) =>
-  request<Items<Escalation>>('/knowledge/escalations/', signal ? { signal } : {});
+  request<Cursored<QuestionRow>>(
+    `/knowledge/escalations/${query({ status: 'NEW,IN_PROGRESS', limit: '50' })}`,
+    signal ? { signal } : {},
+  );
 
 export const sessions = (filters: Filters, signal?: AbortSignal) =>
   request<Items<{ id: string }>>(
@@ -728,67 +721,211 @@ export const qrDevices = (signal?: AbortSignal) =>
 
 // --- обращения -------------------------------------------------------------
 
-export type EscalationRow = {
+/*
+ * Обращение — переписка сотрудника с HR через Telegram. Не заявка: отпуск
+ * и больничный оформляются в «Заявках», здесь о них только спрашивают.
+ *
+ * Любое действие возвращает обращение целиком — с лентой и тем, что
+ * с ним можно сделать дальше. Интерфейс не угадывает, что изменилось.
+ */
+
+export type QuestionStatus = 'NEW' | 'IN_PROGRESS' | 'WAITING_EMPLOYEE' | 'CLOSED';
+export type QuestionPriority = 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT';
+export type QuestionCategory =
+  | 'VACATION' | 'SICK_LEAVE' | 'ATTENDANCE' | 'SCHEDULE' | 'SALARY'
+  | 'DOCUMENTS' | 'TELEGRAM' | 'OTHER';
+export type Person = { id: string; name: string };
+
+export type QuestionRow = {
   id: string;
-  employee: { id: string; full_name: string; employee_number: string | null };
-  question_text: string;
-  normalized_topic: string | null;
-  status: string;
-  ai_answer_text: string | null;
-  hr_answer_text: string | null;
-  assigned_to_user_id: string | null;
-  answered_at: string | null;
+  number: number;
+  employee: { id: string; full_name: string; employee_number: string | null; has_photo: boolean };
+  office: { id: string; name: string } | null;
+  topic: string;
+  /** Последнее сообщение сотрудника или HR, коротко. */
+  snippet: string;
+  last_message_kind: 'EMPLOYEE' | 'HR';
+  category: QuestionCategory;
+  priority: QuestionPriority;
+  status: QuestionStatus;
+  unread: boolean;
+  /** Последнее слово за сотрудником, ответа на него не было. */
+  awaiting_reply: boolean;
+  due_at: string | null;
+  overdue: boolean;
+  last_message_at: string;
   created_at: string;
+  assignee: Person | null;
+};
+
+export type DeliveryStatus = 'QUEUED' | 'DELIVERED' | 'READ' | 'FAILED' | 'UNKNOWN';
+
+export type QuestionMessage = {
+  id: string;
+  kind: 'EMPLOYEE' | 'HR' | 'SYSTEM';
+  source: 'TELEGRAM' | 'CRM' | 'SYSTEM';
+  body: string | null;
+  event: string | null;
+  details: Record<string, unknown> | null;
+  author: { type: 'user' | 'employee' | 'system'; id: string | null; name: string };
+  created_at: string;
+  delivery: {
+    status: DeliveryStatus;
+    sent_at: string | null;
+    read_at: string | null;
+    error: string | null;
+  } | null;
+};
+
+export type KnowledgeRef = {
+  id: string;
+  title: string;
+  source_type: string;
+  version: number;
+  status: string;
+  published_at: string | null;
   updated_at: string;
 };
 
-export type EscalationQuery = {
+export type QuestionDraft = {
+  status: 'READY' | 'LOW_CONFIDENCE' | 'CONFLICT' | 'NO_SOURCES';
+  text: string | null;
+  /** Десятичная строка 0…1 — оценка поиска, а не самооценка модели. */
+  confidence: string | null;
+  generated_at: string | null;
+  /** Документ черновика снят с публикации. */
+  outdated: boolean;
+  sources: KnowledgeRef[];
+};
+
+export type QuestionActions = Record<
+  'take' | 'assign' | 'priority' | 'category' | 'wait' | 'close' | 'reopen' | 'reply' | 'draft',
+  boolean
+>;
+
+export type Question = QuestionRow & {
+  question_text: string;
+  channel: string;
+  first_response_at: string | null;
+  closed_at: string | null;
+  closed_by: Person | null;
+  close_reason: string | null;
+  telegram: { connected: boolean; reason: string | null; status: string | null };
+  messages: QuestionMessage[];
+  draft: QuestionDraft | null;
+  actions: QuestionActions;
+};
+
+export type QuestionCounts = {
+  statuses: Record<QuestionStatus, number>;
+  total: number;
+  quick: { all: number; unanswered: number; mine: number; urgent: number; unread: number };
+};
+
+export type QuestionQuery = {
   status?: string;
-  employee_id?: string;
   office_id?: string;
-  assigned_to_me?: string;
+  /** `me`, `none` или идентификатор пользователя. */
+  assignee?: string;
+  category?: string;
+  priority?: string;
+  date_from?: string;
+  date_to?: string;
   search?: string;
+  quick?: string;
   limit?: string;
   cursor?: string;
 };
 
-export const escalationList = (params: EscalationQuery, signal?: AbortSignal) =>
-  request<Cursored<EscalationRow>>(
-    `/knowledge/escalations/${query(params)}`,
+export type QuestionContext = {
+  employee: {
+    id: string;
+    full_name: string;
+    employee_number: string | null;
+    employment_status: string;
+    has_photo: boolean;
+    position: string | null;
+    department: string | null;
+    office: { id: string; name: string } | null;
+    schedule: { name: string; flexible: boolean; summary: string | null } | null;
+    telegram: { connected: boolean; reason: string | null; status: string | null; username: string | null };
+  };
+  links: { employee_card: boolean; attendance: boolean; requests: boolean };
+  /** `null` — нет права видеть раздел; пустой список — видеть можно, но нечего. */
+  requests: {
+    id: string; type: string; type_code: string; kind: string; status: string;
+    start: string | null; end: string | null; created_at: string;
+  }[] | null;
+  balance: {
+    type: string; year: number; allocated_days: number; used_days: number;
+    reserved_days: number; available_days: number;
+  }[] | null;
+  corrections: {
+    id: string; status: string; submitted_at: string;
+    requested_entry_at: string | null; requested_exit_at: string | null; reason: string;
+  }[] | null;
+  documents: {
+    id: string; title: string; kind: string; status: string; has_file: boolean; updated_at: string;
+  }[] | null;
+  history: {
+    total: number;
+    closed: number;
+    open: number;
+    recent: { id: string; number: number; topic: string; status: QuestionStatus; created_at: string }[];
+  };
+  materials: KnowledgeRef[] | null;
+};
+
+export type ReplyAfter = 'KEEP' | 'WAIT' | 'CLOSE';
+
+const QUESTIONS = '/knowledge/escalations';
+
+export const questionList = (params: QuestionQuery, signal?: AbortSignal) =>
+  request<Cursored<QuestionRow>>(`${QUESTIONS}/${query(params)}`, signal ? { signal } : {});
+
+/** Вкладки — без учёта состояния, быстрые фильтры — внутри выбранного. */
+export const questionCounts = (params: QuestionQuery, signal?: AbortSignal) =>
+  request<QuestionCounts>(
+    `${QUESTIONS}/counts/${query({ ...params, quick: undefined, cursor: undefined, limit: undefined })}`,
     signal ? { signal } : {},
   );
 
-/** Счётчики вкладок. Состояние в параметры не входит намеренно. */
-export const escalationCounts = (
-  params: { office_id?: string; search?: string },
-  signal?: AbortSignal,
-) =>
-  request<Record<string, number>>(
-    `/knowledge/escalations/counts/${query(params)}`,
-    signal ? { signal } : {},
-  );
+export const questionAssignees = (signal?: AbortSignal) =>
+  request<Items<Person>>(`${QUESTIONS}/assignees/`, signal ? { signal } : {});
 
-export const escalation = (id: string, signal?: AbortSignal) =>
-  request<EscalationRow>(`/knowledge/escalations/${id}/`, signal ? { signal } : {});
+export const question = (id: string, signal?: AbortSignal) =>
+  request<Question>(`${QUESTIONS}/${id}/`, signal ? { signal } : {});
 
-/** Ответ уходит сотруднику в чат той же транзакцией, что и сохранение. */
-export const answerEscalation = (id: string, answer: string) =>
-  request<EscalationRow>(`/knowledge/escalations/${id}/answer/`, {
-    method: 'POST',
-    body: { answer },
-  });
+export const questionContext = (id: string, signal?: AbortSignal) =>
+  request<QuestionContext>(`${QUESTIONS}/${id}/context/`, signal ? { signal } : {});
 
-export const assignEscalation = (id: string, user_id?: string) =>
-  request<EscalationRow>(`/knowledge/escalations/${id}/assign/`, {
-    method: 'POST',
-    body: user_id ? { user_id } : {},
-  });
+export const readQuestion = (id: string) =>
+  request<{ id: string; unread: boolean }>(`${QUESTIONS}/${id}/read/`, { method: 'POST', body: {} });
 
-export const closeEscalation = (id: string) =>
-  request<EscalationRow>(`/knowledge/escalations/${id}/close/`, {
-    method: 'POST',
-    body: {},
-  });
+const questionAction = (id: string, action: string, body: Record<string, unknown> = {}) =>
+  request<Question>(`${QUESTIONS}/${id}/${action}/`, { method: 'POST', body });
+
+export const takeQuestion = (id: string) => questionAction(id, 'take');
+export const assignQuestion = (id: string, toUserId: string) =>
+  questionAction(id, 'assign', { to_user_id: toUserId });
+export const setQuestionPriority = (id: string, priority: QuestionPriority) =>
+  questionAction(id, 'priority', { priority });
+export const setQuestionCategory = (id: string, category: QuestionCategory) =>
+  questionAction(id, 'category', { category });
+export const waitForEmployee = (id: string) => questionAction(id, 'wait');
+export const closeQuestion = (id: string, reason: string) =>
+  questionAction(id, 'close', { reason });
+export const reopenQuestion = (id: string) => questionAction(id, 'reopen');
+export const refreshQuestionDraft = (id: string) => questionAction(id, 'draft');
+
+/**
+ * Ответ в Telegram. `client_request_id` — ключ повтора: второе нажатие
+ * с тем же ключом не даёт второго сообщения человеку.
+ */
+export const replyQuestion = (
+  id: string,
+  body: { text: string; after: ReplyAfter; client_request_id: string; close_reason?: string },
+) => questionAction(id, 'reply', body);
 
 // --- аналитика: доли с числителем и знаменателем ---------------------------
 

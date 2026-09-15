@@ -570,16 +570,15 @@ export function DashboardPage() {
                             {initialsOf(item.employee?.full_name)}
                           </span>
                           <span className="feed__text">
-                            <span className="feed__title">{item.question_text}</span>
+                            <span className="feed__title">{item.topic}</span>
                             <span className="feed__note">
                               {item.employee?.full_name ?? 'Сотрудник'}
                             </span>
                           </span>
-                          {/* Время показывается, только когда сервер его
-                              прислал: «только что» по умолчанию было бы
-                              выдумкой. */}
-                          {item.created_at && (
-                            <span className="feed__when">{ago(item.created_at)}</span>
+                          {/* Время последнего сообщения: по нему видно,
+                              сколько человек ждёт. */}
+                          {item.last_message_at && (
+                            <span className="feed__when">{ago(item.last_message_at)}</span>
                           )}
                           <AppIcon name="next" size={20} className="feed__go" />
                         </Link>

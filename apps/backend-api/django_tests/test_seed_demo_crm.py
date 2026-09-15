@@ -52,7 +52,7 @@ from humotech.files.storage import open_stored
 from humotech.notifications.models import Notification
 from humotech.offices.models import Office
 from humotech.organizations.models import Organization
-from humotech.questions.models import EmployeeQuestion
+from humotech.questions.models import EmployeeQuestion, QuestionMessage
 from humotech.rbac.models import Permission, Role, RolePermission
 from humotech.schedules.models import EmployeeScheduleAssignment, WorkSchedule
 from humotech.telegram.models import TelegramAccount
@@ -524,16 +524,28 @@ def test_questions_and_notifications_cover_their_states(showcase):
         EmployeeQuestion.objects.filter(organization=showcase)
         .values_list("status", flat=True)
     )
-    assert statuses == {"NEW", "AI_ANSWERED", "ESCALATED_TO_HR", "HR_ANSWERED",
-                        "CLOSED"}, statuses
-    assert 12 <= EmployeeQuestion.objects.filter(organization=showcase).count() <= 20
+    assert statuses == {"NEW", "IN_PROGRESS", "WAITING_EMPLOYEE", "CLOSED"}, statuses
+    assert 20 <= EmployeeQuestion.objects.filter(organization=showcase).count() <= 30
 
-    # Ответ там, где он обещан состоянием: «HR ответил» без текста
-    # ответа — это неправда о состоянии.
+    for row in EmployeeQuestion.objects.filter(organization=showcase):
+        # У обращения всегда есть с чего оно началось.
+        assert row.messages.filter(kind="EMPLOYEE").exists(), row.normalized_topic
+        # Закрытое знает когда и почему; «ждём сотрудника» — после ответа HR.
+        if row.status == "CLOSED":
+            assert row.closed_at and row.close_reason, row.normalized_topic
+        if row.status == "WAITING_EMPLOYEE":
+            assert row.messages.filter(kind="HR").exists(), row.normalized_topic
+
+    # Ответ HR без строки очереди выглядел бы отправленным и не был бы им.
+    assert not QuestionMessage.objects.filter(
+        question__organization=showcase, kind="HR", notification__isnull=True
+    ).exists()
+    # Черновик опирается только на опубликованный документ.
     for row in EmployeeQuestion.objects.filter(
-        organization=showcase, status__in=("HR_ANSWERED", "CLOSED")
+        organization=showcase, ai_status__in=("READY", "LOW_CONFIDENCE")
     ):
-        assert row.hr_answer_text, row.question_text
+        assert row.answer_source is not None
+        assert row.answer_source.status == "ACTIVE"
 
     notices = Notification.objects.filter(organization=showcase)
     assert {"READ", "SENT"} == set(notices.values_list("status", flat=True))

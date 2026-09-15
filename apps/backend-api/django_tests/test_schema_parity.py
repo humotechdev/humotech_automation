@@ -162,9 +162,10 @@ def test_business_schema_has_expected_shape():
     snapshot = dump(_django_url())
     # 44 таблицы перенесены с Alembic, + telegram_link_invitations,
     # + qr_display_devices, + export_jobs, + notification_attempts,
-    # + employee_documents, + employee_onboarding_keys.
-    assert len(snapshot["tables"]) == 50, (
-        f"бизнес-таблиц {len(snapshot['tables'])}, ожидалось 50"
+    # + employee_documents, + employee_onboarding_keys,
+    # + employee_question_messages.
+    assert len(snapshot["tables"]) == 51, (
+        f"бизнес-таблиц {len(snapshot['tables'])}, ожидалось 51"
     )
 
     counts = {"c": 0, "f": 0, "u": 0, "x": 0}
@@ -211,9 +212,16 @@ def test_business_schema_has_expected_shape():
     #                  под неё нет: это обычное вложение приватного
     #                  хранилища, как и справка о болезни.
     #   UNIQUE 22 + 0 — ни пол, ни фотография уникальными не бывают.
-    assert counts["c"] == 108, f"CHECK: {counts['c']}, ожидалось 108"
-    assert counts["f"] == 145, f"FOREIGN KEY: {counts['f']}, ожидалось 145"
-    assert counts["u"] == 22, f"UNIQUE: {counts['u']}, ожидалось 22"
+    # Прибавка переписки обращений:
+    #   CHECK 108 + 8 — у обращения приоритет, категория, итог черновика и
+    #                  «у закрытого есть дата»; у сообщения вид, источник,
+    #                  событие и «текст либо событие»;
+    #   FK    145 + 6 — закрывший у обращения и пять ключей сообщения;
+    #   UNIQUE 22 + 1 — номер обращения в организации. Ключ повтора ответа
+    #                  частичный — значит, индекс.
+    assert counts["c"] == 116, f"CHECK: {counts['c']}, ожидалось 116"
+    assert counts["f"] == 151, f"FOREIGN KEY: {counts['f']}, ожидалось 151"
+    assert counts["u"] == 23, f"UNIQUE: {counts['u']}, ожидалось 23"
     assert counts["x"] == 2, f"EXCLUDE: {counts['x']}, ожидалось 2"
     assert {"btree_gist", "vector"} <= set(snapshot["extensions"])
 
@@ -239,7 +247,8 @@ def test_every_foreign_key_keeps_its_on_delete_action():
         rows = cursor.fetchall()
 
     # +1 — фотография сотрудника (employees/0005), RESTRICT.
-    assert len(rows) == 145, f"внешних ключей {len(rows)}, ожидалось 145"
+    # +6 — переписка обращений (questions/0003).
+    assert len(rows) == 151, f"внешних ключей {len(rows)}, ожидалось 151"
 
     # 'a' = NO ACTION: значит, действие не задано
     without_action = [f"{t}.{n}" for t, n, kind, _ in rows if kind == "a"]
@@ -266,6 +275,9 @@ def test_every_foreign_key_keeps_its_on_delete_action():
     # доказательство того, что этот приём уже состоялся.
     # 122 + 1 — фотография сотрудника (employees/0005). Тоже RESTRICT:
     # файл, на который смотрит живая карточка, удаляет сервис, а не каскад.
-    assert actions["r"] == 123, f"RESTRICT: {actions['r']}, ожидалось 123"
-    assert actions["n"] == 16, f"SET NULL: {actions['n']}, ожидалось 16"
-    assert actions["c"] == 6, f"CASCADE: {actions['c']}, ожидалось 6"
+    # 123 + 2 RESTRICT, 16 + 3 SET NULL, 6 + 1 CASCADE — переписка
+    # обращений: организация и автор-сотрудник держат историю, учётная
+    # запись HR и строка очереди — нет, сообщения живут с обращением.
+    assert actions["r"] == 125, f"RESTRICT: {actions['r']}, ожидалось 125"
+    assert actions["n"] == 19, f"SET NULL: {actions['n']}, ожидалось 19"
+    assert actions["c"] == 7, f"CASCADE: {actions['c']}, ожидалось 7"

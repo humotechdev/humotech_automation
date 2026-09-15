@@ -53,12 +53,19 @@ export class ApiFailure extends Error {
    * править. Текст при этом остаётся наш — сюда попадает только имя поля.
    */
   readonly field: string | null;
+  /**
+   * Код сервера (`error.code`) как есть. Вид отказа отвечает «что делать
+   * человеку», код — «что именно случилось»: 409 бывает и «уже закрыто»,
+   * и «Telegram не подключён», и совет у них разный.
+   */
+  readonly code: string | null;
 
   constructor(
     kind: FailureKind,
     status = 0,
     fields: Record<string, string[]> = {},
     field: string | null = null,
+    code: string | null = null,
   ) {
     super(kind);
     this.name = 'ApiFailure';
@@ -66,6 +73,7 @@ export class ApiFailure extends Error {
     this.status = status;
     this.fields = fields;
     this.field = field;
+    this.code = code;
   }
 }
 

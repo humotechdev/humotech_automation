@@ -62,7 +62,10 @@ BTN_HISTORY = "🕘 История посещений"
 BTN_SICK_LEAVE = "🤒 Больничный"
 BTN_VACATION = "🏖 Отпуск"
 BTN_MY_REQUESTS = "📄 Мои заявки"
+BTN_ASK_HR = "✍️ Написать в HR"
 BTN_HELP = "❓ Помощь"
+#: Выход из ввода вопроса. В общем меню её нет: она нужна только там.
+BTN_CANCEL = "✖️ Отмена"
 
 # Все подписи разом — по ним фильтруются хендлеры, и список должен быть один.
 #
@@ -72,7 +75,8 @@ BTN_HELP = "❓ Помощь"
 ALL_BUTTONS = (
     BTN_SCAN, BTN_OPEN,
     BTN_CABINET, BTN_WHERE_AM_I, BTN_TODAY, BTN_WEEK, BTN_MONTH,
-    BTN_HISTORY, BTN_SICK_LEAVE, BTN_VACATION, BTN_MY_REQUESTS, BTN_HELP,
+    BTN_HISTORY, BTN_SICK_LEAVE, BTN_VACATION, BTN_MY_REQUESTS, BTN_ASK_HR,
+    BTN_HELP,
 )
 
 #: Путь быстрой отметки. Домен не хранится нигде в коде — приходит из
@@ -137,7 +141,8 @@ def employee_menu(
             [KeyboardButton(text=BTN_HISTORY)],
             [KeyboardButton(text=BTN_SICK_LEAVE),
              KeyboardButton(text=BTN_VACATION)],
-            [KeyboardButton(text=BTN_MY_REQUESTS), KeyboardButton(text=BTN_HELP)],
+            [KeyboardButton(text=BTN_MY_REQUESTS), KeyboardButton(text=BTN_ASK_HR)],
+            [KeyboardButton(text=BTN_HELP)],
         ]
     )
     return ReplyKeyboardMarkup(
@@ -145,6 +150,15 @@ def employee_menu(
         resize_keyboard=True,
         is_persistent=True,
         one_time_keyboard=False,
+    )
+
+
+def cancel_menu() -> ReplyKeyboardMarkup:
+    """Клавиатура на время ввода вопроса: только выход из него."""
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text=BTN_CANCEL)]],
+        resize_keyboard=True,
+        one_time_keyboard=True,
     )
 
 
