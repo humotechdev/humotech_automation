@@ -192,6 +192,43 @@ class TestPreview:
         response = preview(api_client, office_ids=[str(other_office.id)])
         assert response.status_code == 403
 
+    def test_without_filters_only_visible_offices_are_exported(
+        self, api_client, organization, employee, office, other_office
+    ):
+        """Путь, которым идёт страница: офисы не выбраны — берётся область."""
+        from humotech.employees.models import Employee, EmployeeAssignment
+
+        stranger = Employee.objects.create(
+            organization=organization, employee_number="EMP-0002",
+            first_name="Пётр", last_name="Чужой", hire_date=date(2024, 2, 1),
+            employment_status="ACTIVE",
+        )
+        EmployeeAssignment.objects.create(
+            organization=organization, employee=stranger, office=other_office,
+            employment_type="FULL_TIME", work_mode="ONSITE", is_primary=True,
+            valid_from=date(2024, 2, 1),
+        )
+        user, _ = create_actor(organization, permissions=PERMISSIONS, office=office)
+        api_client.force_authenticate(user=user)
+
+        data = preview(api_client, kind="employees").json()
+        assert data["offices"] == 1
+        assert data["employees"] == 1
+        names = [row[0]["text"] for row in data["rows"]]
+        assert names == ["Иванов Иван"]
+
+    def test_an_empty_scope_is_explained(self, api_client, organization, employee):
+        from humotech.regions.models import Region
+
+        empty = Region.objects.create(organization=organization, code="EMPTY",
+                                      name="Пустой", status="ACTIVE")
+        user, _ = create_actor(organization, permissions=PERMISSIONS, region=empty)
+        api_client.force_authenticate(user=user)
+
+        data = preview(api_client).json()
+        assert data["offices"] == 0 and data["rows"] == []
+        assert "Под этими фильтрами нет доступных офисов" in data["warnings"]
+
     def test_the_data_permission_is_required(self, api_client, make_user, organization):
         user = make_user(organization, permissions=("reports.export", "employees.read"))
         api_client.force_authenticate(user=user)

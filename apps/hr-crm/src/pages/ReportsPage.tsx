@@ -982,7 +982,10 @@ function HistoryRow({ job, mine, params, busy, error, onAct, onOpen }: RowProps)
             <AppIcon name="refresh" size={16} />{busy ? 'Ставим…' : 'Повторить'}
           </button>
         )}
-        {status === 'EXPIRED' && (
+        {/* Повторить истёкший можно только заказ конструктора: у старого
+            заказа параметров для нового задания нет, а сервер повтор
+            готового отклонит. Ему остаётся «Открыть параметры». */}
+        {status === 'EXPIRED' && builder && (
           <button type="button" className="rp-action" disabled={busy} onClick={() => onAct('repeat')}>
             <AppIcon name="refresh" size={16} />{busy ? 'Ставим…' : 'Повторить'}
           </button>
