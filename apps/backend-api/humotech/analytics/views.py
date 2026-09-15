@@ -10,6 +10,8 @@ from rest_framework.views import APIView
 
 from humotech.analytics.dashboard import DashboardService
 from humotech.analytics.metrics import AnalyticsService
+from humotech.analytics.overview import OverviewService
+from humotech.core.errors import ValidationFailed
 from humotech.attendance.views import _date_param, _uuid_param
 from humotech.core.rbac import Actor
 
@@ -241,6 +243,72 @@ class ComparisonView(APIView):
             right_last=_date_param(request, "right_last"),
         )
         return Response(result)
+
+
+class OverviewResponseSerializer(serializers.Serializer):
+    period = serializers.DictField()
+    previous_period = serializers.DictField()
+    weekday = serializers.IntegerField(allow_null=True)
+    generated_at = serializers.DateTimeField()
+    timezones = serializers.ListField(child=serializers.CharField())
+    summary = serializers.DictField()
+    days = serializers.ListField(child=serializers.DictField())
+    previous_days = serializers.ListField(child=serializers.DictField())
+    offices = serializers.ListField(child=serializers.DictField())
+    arrivals = serializers.DictField()
+    weekdays = serializers.DictField()
+
+
+class AnalyticsOverviewView(APIView):
+    """Всё для страницы «Аналитика» одним ответом.
+
+    Сводка с предыдущим равным периодом, каждый день периода, рейтинг
+    офисов, ритм прихода и дни недели. Правила — те же, что у `/analytics`.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Обзор аналитики",
+        description=(
+            "Доли приходят с числителем и знаменателем; percent = null — "
+            "нулевой знаменатель, а не ноль процентов. Выходные, дни без "
+            "графика, оформленные отсутствия и будущие дни в неявку не "
+            "входят. Среднее время — только по закрытым посещениям. Сдвиг "
+            "прихода считается от начала личной смены сотрудника, сутки — в "
+            "поясе его офиса."
+        ),
+        parameters=PERIOD_PARAMS
+        + [
+            OpenApiParameter("region_id", str),
+            OpenApiParameter("office_id", str),
+            OpenApiParameter(
+                "weekday", int,
+                description="Детализация по дню недели: 1 — понедельник … 7",
+            ),
+        ],
+        responses=OverviewResponseSerializer,
+        tags=["Аналитика"],
+    )
+    def get(self, request):
+        actor = Actor.from_user(request.user)
+        first, last = _period(request)
+        raw = request.query_params.get("weekday")
+        try:
+            weekday = int(raw) if raw else None
+        except ValueError:
+            raise ValidationFailed(
+                "День недели — число от 1 до 7", details={"weekday": raw}
+            ) from None
+        body = OverviewService().overview(
+            actor,
+            first=first,
+            last=last,
+            region_id=_uuid_param(request, "region_id"),
+            office_id=_uuid_param(request, "office_id"),
+            weekday=weekday,
+        )
+        return Response(body)
 
 
 def _period(request):

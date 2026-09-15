@@ -21,6 +21,7 @@ from humotech.accounts.rbac_views import (
 from humotech.audit.views import AuditLogView
 from humotech.core.queue_views import RequestCountsView, RequestQueueView
 from humotech.analytics.views import (
+    AnalyticsOverviewView,
     AnalyticsView,
     ComparisonView,
     DashboardView,
@@ -187,6 +188,9 @@ urlpatterns = [
     # словесным определением формулы: процент без них проверить нечем.
     path("analytics", AnalyticsView.as_view(), name="analytics"),
     path("analytics/compare", ComparisonView.as_view(), name="analytics-compare"),
+    # Всё для страницы «Аналитика» одним ответом: сводка с прошлым
+    # периодом, дни, рейтинг офисов, ритм прихода, дни недели.
+    path("analytics/overview", AnalyticsOverviewView.as_view(), name="analytics-overview"),
     # Выгрузки. Право reports.export проверяется отдельно от прав на сами
     # данные: выгрузка не должна быть обходным путём к закрытому экрану.
     path("reports/<str:kind>/export", ExportView.as_view(), name="report-export"),

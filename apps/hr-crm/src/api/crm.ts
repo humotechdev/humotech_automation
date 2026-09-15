@@ -72,6 +72,107 @@ export const analytics = (
     signal ? { signal } : {},
   );
 
+// --- обзор аналитики -------------------------------------------------------
+
+/** Доля с числителем и знаменателем. `percent: null` — знаменатель ноль. */
+export type Share = { numerator: number; denominator: number; percent: number | null };
+
+export type OverviewDay = {
+  day: string;
+  /** 1 — понедельник … 7 — воскресенье. */
+  weekday: number;
+  /** Рабочий ли день: по графику кого-то ждали. */
+  working: boolean;
+  /** День ещё не наступил. */
+  future: boolean;
+  /** Входит ли день в детализацию по дню недели. */
+  in_detail: boolean;
+  expected: number;
+  attended: number;
+  percent: number | null;
+  on_time: number;
+  on_time_percent: number | null;
+  late: number;
+  missed: number;
+  vacation: number;
+  sick_leave: number;
+  other_absence: number;
+  average_seconds: number | null;
+};
+
+export type OverviewOffice = {
+  id: string;
+  name: string;
+  position: number;
+  attendance: Share;
+  previous_attendance: Share;
+  difference_points: number | null;
+};
+
+export type ArrivalBucket = {
+  /** Минуты от начала личной смены: −60 … +90. */
+  from: number;
+  to: number;
+  /** До начала смены. */
+  early: number;
+  /** После начала, но в пределах допуска. */
+  grace: number;
+  /** Позже допуска. */
+  late: number;
+};
+
+export type Overview = {
+  period: { first: string; last: string; days: number };
+  previous_period: { first: string; last: string };
+  weekday: number | null;
+  generated_at: string;
+  timezones: string[];
+  summary: {
+    attendance: Share;
+    previous_attendance: Share;
+    difference_points: number | null;
+    on_time: Share;
+    late: Share;
+    /** Только по дням с закрытыми посещениями. */
+    average_seconds: number | null;
+    open_sessions: number;
+    missed_days: number;
+    vacation_days: number;
+    sick_leave_days: number;
+    other_absence_days: number;
+  };
+  days: OverviewDay[];
+  previous_days: { day: string; attended: number; expected: number; percent: number | null }[];
+  offices: OverviewOffice[];
+  arrivals: {
+    bucket_minutes: number;
+    from_minutes: number;
+    to_minutes: number;
+    buckets: ArrivalBucket[];
+    start_time: string | null;
+    uniform_start: boolean;
+    /** Медиана времени первого входа, минуты от полуночи. */
+    median_minutes: number | null;
+    after_start: number;
+    late: Share;
+  };
+  weekdays: {
+    days: { weekday: number; attendance: Share; on_time: Share; average_seconds: number | null }[];
+    best: number | null;
+  };
+};
+
+export type OverviewQuery = {
+  date_from: string;
+  date_to: string;
+  region_id?: string;
+  office_id?: string;
+  weekday?: string;
+};
+
+export const analyticsOverview = (params: OverviewQuery, signal?: AbortSignal) =>
+  request<Overview>(`/analytics/overview${query(params)}`, signal ? { signal } : {});
+
 // --- справочники -----------------------------------------------------------
 
 export type Region = { id: string; code: string; name: string; status: string };

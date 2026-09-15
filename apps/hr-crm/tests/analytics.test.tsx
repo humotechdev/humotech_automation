@@ -6,7 +6,7 @@
  * знаменатель и повторные входы.
  */
 
-import { screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
 
 import {
@@ -97,119 +97,178 @@ describe('ряд графика', () => {
 
 // --- страница --------------------------------------------------------------
 
-const TOTALS = {
-  employees: 12,
-  expected_working_days: 4800,
-  attended_days: 4608,
-  missed_days: 192,
-  late_arrivals: 230,
-  worked_seconds: 4608 * (7 * 3600 + 48 * 60),
-  expected_seconds: 4800 * 8 * 3600,
-};
+const ratio = (numerator: number, denominator: number) => ({
+  numerator, denominator, percent: denominator ? Math.round((numerator * 1000) / denominator) / 10 : null,
+});
 
-function report(over: Partial<typeof TOTALS> = {}, name = 'Организация') {
-  const totals = { ...TOTALS, ...over };
+function day(date: string, weekday: number, over: Record<string, unknown> = {}) {
+  const working = weekday <= 5;
   return {
-    scope: { kind: 'organization', id: null, name },
-    period: { first: '2026-08-01', last: '2026-08-31', timezone: 'Asia/Tashkent' },
-    generated_at: '2026-09-01T09:00:00Z',
-    headcount: 12,
-    coverage: {
-      employees_total: 12, employees_with_schedule: 12, percent: 100,
-      note: 'Сотрудники без графика в знаменатели не входят.',
-    },
-    totals,
-    ratios: [
-      {
-        key: 'attendance', title: 'Посещаемость',
-        percent: (totals.attended_days / totals.expected_working_days) * 100,
-        numerator: totals.attended_days, denominator: totals.expected_working_days,
-        formula: 'дни с отметками / рабочие дни по графику',
-        unit: 'days',
-      },
-    ],
-    series: [
-      { day: '2026-08-01', worked_seconds: 1, attended: 222, expected: 230, late: 3 },
-      { day: '2026-08-02', worked_seconds: 1, attended: 225, expected: 230, late: 2 },
-    ],
+    day: date, weekday, working, future: false, in_detail: true,
+    expected: working ? 230 : 0, attended: working ? 222 : 0,
+    percent: working ? 96.5 : null, on_time: working ? 200 : 0, on_time_percent: working ? 90.1 : null,
+    late: working ? 22 : 0, missed: working ? 8 : 0, vacation: 0, sick_leave: 0, other_absence: 0,
+    average_seconds: working ? 8 * 3600 : null,
+    ...over,
   };
 }
 
-function network(handler: (path: string) => Response | null = () => null) {
-  return fakeNetwork((path) => {
-    const own = handler(path);
+/** Понедельник 3 — воскресенье 9 августа 2026. */
+const OVERVIEW = {
+  period: { first: '2026-08-03', last: '2026-08-09', days: 7 },
+  previous_period: { first: '2026-07-27', last: '2026-08-02' },
+  weekday: null,
+  generated_at: '2026-08-10T09:00:00Z',
+  timezones: ['Asia/Tashkent'],
+  summary: {
+    attendance: ratio(4608, 4800),
+    previous_attendance: ratio(4536, 4800),
+    difference_points: 1.5,
+    on_time: ratio(4378, 4608),
+    late: ratio(230, 4608),
+    average_seconds: 7 * 3600 + 48 * 60,
+    open_sessions: 3,
+    missed_days: 192,
+    vacation_days: 0,
+    sick_leave_days: 0,
+    other_absence_days: 0,
+  },
+  days: [
+    day('2026-08-03', 1), day('2026-08-04', 2), day('2026-08-05', 3),
+    day('2026-08-06', 4), day('2026-08-07', 5, { percent: 91.3, attended: 210, missed: 20 }),
+    day('2026-08-08', 6), day('2026-08-09', 7),
+  ],
+  previous_days: [],
+  offices: [
+    { id: 'o-1', name: 'Бухара', position: 1, attendance: ratio(97, 100), previous_attendance: ratio(91, 100), difference_points: 6 },
+    { id: 'o-2', name: 'Самарканд', position: 2, attendance: ratio(94, 100), previous_attendance: ratio(96, 100), difference_points: -2 },
+  ],
+  arrivals: {
+    bucket_minutes: 10, from_minutes: -60, to_minutes: 90,
+    buckets: Array.from({ length: 15 }, (_, index) => ({
+      from: -60 + index * 10, to: -50 + index * 10,
+      early: index < 6 ? 10 : 0, grace: index === 6 ? 4 : 0, late: index > 6 ? 2 : 0,
+    })),
+    start_time: '09:00', uniform_start: true, median_minutes: 537, after_start: 20,
+    late: ratio(16, 80),
+  },
+  weekdays: {
+    days: [1, 2, 3, 4, 5].map((weekday) => ({
+      weekday, attendance: ratio(90 + weekday, 100), on_time: ratio(75, 100), average_seconds: 8 * 3600,
+    })),
+    best: 5,
+  },
+};
+
+const REGIONS = { items: [{ id: 'r-1', code: 'C', name: 'Центр', status: 'ACTIVE' }] };
+
+function network(handler: (path: string, method: string) => Response | null = () => null) {
+  return fakeNetwork((path, call) => {
+    const own = handler(path, call.method);
     if (own) return own;
     if (path.includes('/auth/')) return json(200, USER);
-    if (path.includes('/analytics/compare')) {
-      return json(200, {
-        kind: 'office',
-        left: report({}, 'Ташкент'),
-        right: report({ expected_working_days: 510, attended_days: 485 }, 'Самарканд'),
-        differences: [
-          {
-            key: 'attendance', title: 'Посещаемость',
-            left: { key: 'attendance', title: 'Посещаемость', percent: 96, numerator: 4608,
-                    denominator: 4800, formula: 'f', unit: 'days' },
-            right: { key: 'attendance', title: 'Посещаемость', percent: 95.1, numerator: 485,
-                     denominator: 510, formula: 'f', unit: 'days' },
-            points: 0.9, comparable: true,
-          },
-          {
-            key: 'punctuality', title: 'Приход вовремя',
-            left: { key: 'punctuality', title: 'Приход вовремя', percent: null, numerator: 0,
-                    denominator: 0, formula: 'f', unit: 'days' },
-            right: { key: 'punctuality', title: 'Приход вовремя', percent: 90, numerator: 9,
-                     denominator: 10, formula: 'f', unit: 'days' },
-            points: null, comparable: false,
-          },
-        ],
-      });
-    }
-    if (path.includes('/analytics')) return json(200, report());
+    if (path.includes('/analytics/overview')) return json(200, OVERVIEW);
+    if (path.includes('/regions/')) return json(200, REGIONS);
     return crm(path) ?? json(200, { items: [], next_cursor: null, has_more: false });
   });
 }
 
-describe('обзор', () => {
-  test('процент показан вместе с исходными числами и единицей', async () => {
+const PAGE = '/analytics?from=2026-08-03&to=2026-08-09';
+const overviewCalls = (calls: { url: string }[]) => calls.filter((c) => c.url.includes('/analytics/overview'));
+
+describe('сводка', () => {
+  test('явка показана с сотрудника-днями и разницей в пунктах', async () => {
     network();
-    renderApp('/analytics?date_from=2026-08-01&date_to=2026-08-31');
+    renderApp(PAGE);
 
     expect(await screen.findByText('96,0%')).toBeTruthy();
-    expect(screen.getAllByText(/4 608 из 4 800 сотрудник-дней/).length).toBeGreaterThan(0);
-    expect(screen.getByText(/230 из 4 608 явок/)).toBeTruthy();
-  });
-
-  test('«нет отметки» не называется прогулом', async () => {
-    network();
-    renderApp('/analytics?date_from=2026-08-01&date_to=2026-08-31');
-
-    expect(await screen.findByText('Нет отметки')).toBeTruthy();
-    expect(screen.queryByText(/[Пп]рогул/)).toBeNull();
+    expect(screen.getByText(/4 608 из 4 800 сотрудника-дней/)).toBeTruthy();
+    expect(screen.getByText('+1,5 п.п.')).toBeTruthy();
+    // Опоздания и «вовремя» — доли первых входов, а не всех ожидаемых дней.
+    expect(screen.getByText('5,0%')).toBeTruthy();
+    expect(screen.getByText('7 ч 48 мин')).toBeTruthy();
   });
 
   test('ошибка не превращается в нулевые показатели', async () => {
-    network((path) =>
-      path.includes('/analytics') && !path.includes('compare')
-        ? json(500, { error: {} })
-        : null,
-    );
-    renderApp('/analytics');
+    network((path) => (path.includes('/analytics/overview') ? json(500, { error: {} }) : null));
+    renderApp(PAGE);
 
-    expect(await screen.findByText(/Не удалось загрузить показатели/)).toBeTruthy();
+    expect((await screen.findAllByText(/Не удалось загрузить аналитику/)).length).toBeGreaterThan(0);
     expect(screen.queryByText('0,0%')).toBeNull();
   });
 });
 
-describe('сравнение', () => {
-  test('разница приходит в пунктах, а несравнимое так и подписано', async () => {
-    network();
-    renderApp('/analytics?tab=compare&date_from=2026-08-01&date_to=2026-08-31');
+describe('фильтры', () => {
+  test('быстрый выбор и регион уходят в запрос обзора', async () => {
+    const calls = network();
+    renderApp(PAGE);
+    await screen.findByText('96,0%');
 
-    await waitFor(() => expect(screen.queryByText(/Считаем сравнение/)).toBeNull(), {
-      timeout: 3000,
+    fireEvent.click(screen.getByRole('button', { name: '7 дней' }));
+    await waitFor(() => {
+      const last = overviewCalls(calls).pop();
+      expect(last?.url).toContain('date_to=');
+      expect(last?.url).not.toContain('date_from=2026-08-03');
     });
-    expect(await screen.findByText('+0,9 п.п.')).toBeTruthy();
-    expect(screen.getByText('Не сравнимо')).toBeTruthy();
+
+    fireEvent.change(await screen.findByLabelText('Регион'), { target: { value: 'r-1' } });
+    await waitFor(() => expect(overviewCalls(calls).pop()?.url).toContain('region_id=r-1'));
+  });
+
+  test('офис из рейтинга применяется ко всей странице', async () => {
+    const calls = network();
+    renderApp(PAGE);
+
+    fireEvent.click(await screen.findByRole('button', { name: /Бухара/ }));
+
+    await waitFor(() => expect(overviewCalls(calls).pop()?.url).toContain('office_id=o-1'));
+  });
+
+  test('экспорт заказывается с текущими фильтрами', async () => {
+    const calls = network((path, method) =>
+      method === 'POST' && path.includes('/export-jobs/') ? json(201, { id: 'j-1', status: 'QUEUED' }) : null,
+    );
+    renderApp(`${PAGE}&office_id=o-1`);
+    await screen.findByText('96,0%');
+
+    fireEvent.click(screen.getByRole('button', { name: /Экспорт/ }));
+
+    await waitFor(() =>
+      expect(calls.filter((c) => c.method === 'POST' && c.url.includes('/export-jobs/'))).toHaveLength(1),
+    );
+    expect(await screen.findByText(/с текущими фильтрами/)).toBeTruthy();
+  });
+});
+
+describe('календарь', () => {
+  test('выходной не выбирается и не показывает процент', async () => {
+    network();
+    renderApp(PAGE);
+    await screen.findByText('96,0%');
+
+    // Выходной есть в календаре подписью, но не выбирается как рабочий день.
+    // Та же дата может стоять и на оси графика, поэтому подписей несколько.
+    expect(screen.queryByRole('gridcell', { name: /8 авг/ })).toBeNull();
+    expect(screen.getAllByText('8 авг').length).toBeGreaterThan(0);
+  });
+
+  test('день открывает детали и ссылку в посещаемость с теми же фильтрами', async () => {
+    network();
+    renderApp(`${PAGE}&region_id=r-1`);
+
+    fireEvent.click(await screen.findByRole('gridcell', { name: /7 авг/ }));
+
+    const panel = await screen.findByRole('complementary', { name: 'Выбранный день' });
+    await waitFor(() => expect(panel.textContent).toContain('91,3%'));
+    const link = screen.getByRole('link', { name: /Открыть день в посещаемости/ });
+    expect(link.getAttribute('href')).toBe('/attendance?date=2026-08-07&region_id=r-1');
+  });
+
+  test('«нет отметки» не называется прогулом', async () => {
+    network();
+    renderApp(PAGE);
+
+    expect(await screen.findByText('Нет отметки')).toBeTruthy();
+    expect(screen.queryByText(/[Пп]рогул/)).toBeNull();
   });
 });
