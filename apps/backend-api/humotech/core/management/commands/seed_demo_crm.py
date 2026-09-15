@@ -63,6 +63,7 @@ from humotech.core.demo.catalog import (
     EMPLOYEE_PREFIX,
     EMPLOYEE_PREFIXES,
     FEMALE_NAMES,
+    GEOFENCE_RADIUS_M,
     HABITS,
     MAIN_SCHEDULE,
     MALE_NAMES,
@@ -319,6 +320,14 @@ class Command(BaseCommand):
                     "address": f"г. {item.city}, {item.address}",
                     "timezone": org.default_timezone,
                     "status": "ACTIVE",
+                    # Координаты центра города: по ним офис стоит на карте
+                    # сети. Без них маркер пришлось бы ставить по названию
+                    # региона, то есть наугад.
+                    "latitude": item.latitude,
+                    "longitude": item.longitude,
+                    "geofence_radius_m": (
+                        GEOFENCE_RADIUS_M if item.latitude is not None else None
+                    ),
                 },
             )
             # Отметка приходит с точки на двери: событие QR без точки

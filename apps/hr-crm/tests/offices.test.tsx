@@ -1,9 +1,10 @@
 /**
- * Офисы и регионы.
+ * Офисы и регионы: карта сети, лента, список, карточка офиса и регионы.
  *
  * Главное, что проверяется: статус офиса и состояние его настройки —
- * разные величины, привязанный экран не называется доступным, а
- * заполнение координат не включает обязательность геолокации у точки.
+ * разные величины; офис без координат на карту не ставится; маркер стоит
+ * по координатам, а не по названию региона; отказ сервера не выдаётся за
+ * ноль; привязанный экран не называется доступным.
  */
 
 import { fireEvent, screen, waitFor } from '@testing-library/react';
@@ -20,6 +21,9 @@ const OFFICE = {
   status: 'ACTIVE', opened_at: null, closed_at: null,
 };
 
+/** Тот же офис, но с настоящими координатами центра Ташкента. */
+const PLACED = { ...OFFICE, latitude: '41.2995', longitude: '69.2401', geofence_radius_m: 150 };
+
 const POINT = {
   id: 'q-1', office_id: 'o-1', office_name: 'Главный офис', code: 'D1',
   name: 'Главный вход', direction_mode: 'BOTH', qr_mode: 'ROTATING',
@@ -27,13 +31,35 @@ const POINT = {
   is_active: true,
 };
 
-function network(handler: (path: string, method: string) => Response | null = () => null) {
+/**
+ * Одна «область» — квадрат вокруг Ташкента. Обход против часовой, как в
+ * настоящем GeoJSON: страница обязана развернуть кольцо сама.
+ */
+const GEO = {
+  type: 'FeatureCollection',
+  features: [
+    {
+      type: 'Feature',
+      properties: { shapeISO: 'UZ-TK', shapeName: 'Tashkent' },
+      geometry: {
+        type: 'Polygon',
+        coordinates: [[[69, 41], [70, 41], [70, 42], [69, 42], [69, 41]]],
+      },
+    },
+  ],
+};
+
+function network(
+  handler: (path: string, method: string) => Response | null = () => null,
+  office: Record<string, unknown> = OFFICE,
+) {
   return fakeNetwork((path, call) => {
     const own = handler(path, call.method);
     if (own) return own;
     if (path.includes('/auth/')) {
       return json(200, { ...USER, permissions: ['offices.read', 'offices.manage'] });
     }
+    if (path.includes('/geo/')) return json(200, GEO);
     if (path.includes('/qr-points/')) return json(200, { items: [POINT] });
     if (path.includes('/qr/devices')) {
       return json(200, [
@@ -65,36 +91,81 @@ function network(handler: (path: string, method: string) => Response | null = ()
       });
     }
     if (path.includes('/offices/')) {
-      return json(200, { items: [OFFICE], next_cursor: null, has_more: false });
+      return json(200, { items: [office], next_cursor: null, has_more: false });
     }
     return crm(path) ?? json(200, { items: [], next_cursor: null, has_more: false });
   });
 }
 
-describe('список офисов', () => {
-  test('сводка и строка берут числа с сервера', async () => {
+describe('карта сети', () => {
+  test('лента берёт числа с сервера: в офисе из тех, кого ждали', async () => {
+    // 32 в офисе, по графику 32 + 2 ушли + 2 не пришли = 36.
     network();
     renderApp('/offices');
 
-    expect(await screen.findByText('Главный офис')).toBeTruthy();
+    expect(await screen.findByText('32 из 36')).toBeTruthy();
     expect(screen.getAllByText('42').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('32').length).toBeGreaterThan(0);
+  });
+
+  test('офис без координат на карту не ставится', async () => {
+    network();
+    renderApp('/offices');
+
+    await screen.findByText('32 из 36');
+    await waitFor(() => expect(screen.getByText('Без координат: 1')).toBeTruthy());
+    expect(screen.queryByRole('button', { name: 'Офис Главный офис' })).toBeNull();
+  });
+
+  test('маркер стоит по координатам и открывает карточку офиса', async () => {
+    network(() => null, PLACED);
+    renderApp('/offices');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Офис Главный офис' }));
+
+    expect(await screen.findByRole('complementary', { name: 'Карточка офиса' })).toBeTruthy();
+  });
+
+  test('нажатие на область выбирает её, повторное — снимает', async () => {
+    network(() => null, PLACED);
+    renderApp('/offices');
+
+    const area = await screen.findByRole('button', { name: 'город Ташкент' });
+    fireEvent.click(area);
+
+    await waitFor(() => expect(area.getAttribute('aria-pressed')).toBe('true'));
+    fireEvent.click(area);
+    await waitFor(() => expect(area.getAttribute('aria-pressed')).toBe('false'));
   });
 
   test('активный офис может требовать настройки', async () => {
-    // Статус и состояние настройки — разные величины: точка требует
-    // геолокацию, а координат у офиса нет, и проверка молча не работает.
+    // Статус и настройка — разные величины: точка требует геолокацию,
+    // а координат у офиса нет, и проверка молча не работает.
     network();
     renderApp('/offices');
 
-    expect(await screen.findByText(/Требует настройки · 1/)).toBeTruthy();
-    expect(screen.getAllByText('Активен').length).toBeGreaterThan(0);
-    expect(screen.getByText('Нет геозоны')).toBeTruthy();
+    expect(await screen.findByText('Геозона не настроена')).toBeTruthy();
   });
 
+  test('отказ в QR-точках не выдаётся за ноль', async () => {
+    network((path) => (path.includes('/qr-points/') ? json(403, { error: {} }) : null));
+    renderApp('/offices');
+
+    expect(await screen.findByText('QR-точки: нет доступа')).toBeTruthy();
+    expect(screen.queryByText(/0 QR-точек/)).toBeNull();
+  });
+
+  test('ошибка не превращается в «офисов нет»', async () => {
+    network((path) => (path.includes('/offices/') ? json(500, { error: {} }) : null));
+    renderApp('/offices');
+
+    expect((await screen.findAllByText(/Не удалось загрузить офисы/)).length).toBeGreaterThan(0);
+  });
+});
+
+describe('список', () => {
   test('кнопка «Требует настройки» не выглядит применённой до нажатия', async () => {
     network();
-    renderApp('/offices');
+    renderApp('/offices?view=list');
 
     const button = await screen.findByRole('button', { name: /Требует настройки/ });
     expect(button.getAttribute('aria-pressed')).toBe('false');
@@ -105,15 +176,6 @@ describe('список офисов', () => {
         screen.getByRole('button', { name: /Требует настройки/ }).getAttribute('aria-pressed'),
       ).toBe('true'),
     );
-  });
-
-  test('ошибка не превращается в «офисов нет»', async () => {
-    network((path) =>
-      path.includes('/offices/') ? json(500, { error: {} }) : null,
-    );
-    renderApp('/offices');
-
-    expect(await screen.findByText(/Не удалось загрузить офисы/)).toBeTruthy();
   });
 });
 
@@ -144,13 +206,10 @@ describe('карточка офиса', () => {
 
   test('без права управления кнопки правки нет', async () => {
     network((path) =>
-      path.includes('/auth/')
-        ? json(200, { ...USER, permissions: ['offices.read'] })
-        : null,
+      path.includes('/auth/') ? json(200, { ...USER, permissions: ['offices.read'] }) : null,
     );
     renderApp('/offices?office=o-1');
 
-    // Название есть и в строке списка, и в шапке карточки.
     await screen.findAllByText('Главный офис');
     expect(screen.queryByRole('button', { name: /Редактировать офис/ })).toBeNull();
   });
@@ -182,7 +241,7 @@ describe('регионы', () => {
         ? json(200, { ...USER, permissions: ['offices.read', 'regions.manage'] })
         : null,
     );
-    renderApp('/offices?tab=regions');
+    renderApp('/offices?view=regions');
 
     expect(await screen.findByText('Центральный регион')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Отключить' })).toBeTruthy();
@@ -191,7 +250,6 @@ describe('регионы', () => {
 
 describe('правило настройки', () => {
   test('необязательное пустое поле ошибкой настройки не считается', () => {
-    // Пустой адрес ничему не мешает: в «требует настройки» он не входит.
     const ready = {
       office: { ...OFFICE, latitude: '41.3', longitude: '69.2', geofence_radius_m: 100 },
       counts: {},
@@ -202,6 +260,12 @@ describe('правило настройки', () => {
     expect(
       needsSetup({ office: OFFICE, counts: {},
                    points: [{ ...POINT, require_geolocation: false }] } as never),
+    ).toBe(false);
+  });
+
+  test('неизвестные точки настройку не обвиняют', () => {
+    expect(
+      needsSetup({ office: OFFICE, counts: {}, points: [], pointsKnown: false } as never),
     ).toBe(false);
   });
 });

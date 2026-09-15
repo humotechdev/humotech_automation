@@ -44,6 +44,11 @@ const TARGETS = {
     ready: '.people tbody tr',
     reference: 'attendance-reference-1672x941.png',
   },
+  offices: {
+    url: '/offices',
+    ready: '.map__area',
+    reference: 'offices-reference-1672x941.png',
+  },
   requests: {
     url: '/requests',
     ready: '.rq-row',

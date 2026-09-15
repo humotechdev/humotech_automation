@@ -195,6 +195,24 @@ def test_twelve_offices_with_regions_and_points(showcase):
     assert head.qr_points.count() >= 3
 
 
+def test_offices_stand_on_real_coordinates_inside_uzbekistan(showcase):
+    """Карта сети ставит офис по координатам, а не по названию региона.
+
+    Без координат маркер пришлось бы рисовать наугад. Проверяется, что они
+    есть у каждого офиса витрины, лежат в границах страны (грубо, по
+    описывающему прямоугольнику) и что геозона при этом настроена.
+    """
+    offices = Office.objects.filter(organization=showcase, status="ACTIVE")
+    for office in offices:
+        assert office.latitude is not None and office.longitude is not None, office.name
+        assert 37.1 <= float(office.latitude) <= 45.6, office.name
+        assert 55.9 <= float(office.longitude) <= 73.2, office.name
+        assert (office.geofence_radius_m or 0) > 0, office.name
+    tashkent = offices.get(name="Головной офис")
+    assert round(float(tashkent.latitude), 1) == 41.3
+    assert round(float(tashkent.longitude), 1) == 69.2
+
+
 def test_structure_is_not_a_uniform_grid(showcase):
     """Отделы и должности разные, а не один набор на все офисы."""
     departments = Department.objects.filter(organization=showcase, status="ACTIVE")
