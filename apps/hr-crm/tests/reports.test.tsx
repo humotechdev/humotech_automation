@@ -399,6 +399,22 @@ describe('история', () => {
     expect(screen.getByText(/автоматически удаляются через 3 дня/)).toBeTruthy();
   });
 
+  test('чужой готовый файл скачивается только с reports.download_any', async () => {
+    const foreign = { ...JOB, id: 'j-9', requested_by_user_id: 'someone-else', requested_by: 'hr2@humotech.local' };
+    network({ items: [foreign] });
+    const view = renderApp('/reports');
+    await screen.findByText('hr2@humotech.local');
+    expect(screen.queryByRole('link', { name: /Скачать/ })).toBeNull();
+    expect(screen.getByText('Готов')).toBeTruthy();
+    view.unmount();
+
+    network({ items: [foreign], permissions: [...ALL, 'reports.download_any'] });
+    renderApp('/reports');
+    await screen.findByText('hr2@humotech.local');
+    expect(screen.getByRole('link', { name: /Скачать/ }).getAttribute('href'))
+      .toContain('/export-jobs/j-9/download/');
+  });
+
   test('ошибку повторяет сервер, а не новая строка', async () => {
     const calls = network();
     renderApp('/reports');

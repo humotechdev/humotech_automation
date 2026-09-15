@@ -32,7 +32,7 @@ from django.db.models import Count, Q
 from django.utils import timezone
 
 from humotech.core.enums import EXPORT_JOB_STATUSES
-from humotech.core.errors import Conflict, NotFound, ValidationFailed
+from humotech.core.errors import Conflict, NotFound, PermissionDenied, ValidationFailed
 from humotech.core.pagination import Page, paginate
 from humotech.core.rbac import Actor, snapshot
 from humotech.core.service import BaseService
@@ -344,40 +344,146 @@ class ExportJobService(BaseService):
                 after={**snapshot(locked, EXPORT_FIELDS), "hidden": True},
             )
 
-    def open_file(self, actor: Actor, job_id: uuid.UUID):
-        """Файл готовой выгрузки: поток, имя и размер.
+    def open_file(
+        self,
+        actor: Actor,
+        job_id: uuid.UUID,
+        *,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ):
+        """Файл готовой выгрузки: поток и задание.
 
-        Три условия, и каждое закрывает свою дыру: нет права скачать —
-        чужая область видимости; не SUCCEEDED — файла нет; просрочено —
-        файл уже удалён или вот-вот будет.
+        Каждая попытка — удачная и отклонённая — пишется в security-аудит
+        (`security.export.download.granted` / `.denied`) с причиной, адресом
+        и клиентом. Отказ пишется ДО исключения и вне транзакции запроса:
+        журнал отказов, который откатывается вместе с отказом, пуст.
         """
-        self.access.require(actor, "reports.export")
-        job = self._require(actor, job_id)
-        self._require_download(actor, job)
+        job, refusal = self._check_download(actor, job_id)
+        if refusal is not None:
+            reason, error = refusal
+            self._security(actor, job_id, job=job, granted=False, reason=reason,
+                           ip_address=ip_address, user_agent=user_agent)
+            raise error
+
+        stream = storage.open_export(job.storage_key)
+        by_owner = job.requested_by_user_id == actor.user_id
+        self._security(actor, job_id, job=job, granted=True,
+                       reason="owner" if by_owner else "download_any",
+                       ip_address=ip_address, user_agent=user_agent)
+        return stream, job
+
+    def _check_download(self, actor: Actor, job_id):
+        """Задание и отказ: `(job, None)` или `(job | None, (причина, ошибка))`.
+
+        Порядок проверок — часть правила. Сначала право на выгрузку
+        (403), потом существование в СВОЕЙ организации, потом право на
+        чужой файл и покрытие его области (404) — и только затем состояние
+        файла. Иначе посторонний по ответам 409 и «срок истёк» узнал бы,
+        что чужая выгрузка существует и в каком она состоянии.
+        """
+        from humotech.reports.models import ExportJob
+
+        if not self.access.has(actor, "reports.export"):
+            return None, ("no_export_permission", PermissionDenied(
+                "Нужно разрешение reports.export",
+                details={"permission": "reports.export"},
+            ))
+
+        missing = NotFound("Выгрузка не найдена")
+        try:
+            wanted = uuid.UUID(str(job_id))
+        except ValueError:
+            return None, ("not_found", missing)
+        job = (
+            ExportJob.objects.select_related("requested_by_user")
+            .filter(id=wanted, organization_id=actor.organization_id)
+            .first()
+        )
+        if job is None:
+            return None, ("not_found", missing)
+
+        if job.requested_by_user_id != actor.user_id:
+            if not self.access.has(actor, "reports.download_any"):
+                return job, ("not_owner", missing)
+            if not self._covers_report(actor, job):
+                return job, ("scope_not_covered", missing)
 
         if job.status != "SUCCEEDED" or not job.storage_key:
-            raise Conflict(
-                "Файл ещё не готов",
-                details={"status": job.status},
-            )
+            return job, ("not_ready", Conflict(
+                "Файл ещё не готов", details={"status": job.status},
+            ))
         if job.expires_at is not None and job.expires_at <= timezone.now():
-            raise NotFound("Срок хранения файла истёк, закажите выгрузку заново")
+            return job, ("expired", NotFound(
+                "Срок хранения файла истёк, закажите выгрузку заново"))
         if not storage.exists(job.storage_key):
-            raise NotFound("Файл выгрузки удалён, закажите её заново")
+            return job, ("file_missing", NotFound(
+                "Файл выгрузки удалён, закажите её заново"))
+        return job, None
 
+    def _covers_report(self, actor: Actor, job) -> bool:
+        """Видит ли скачивающий ВСЕ офисы, данные которых могут быть в файле.
+
+        Офисы берутся из параметров заказа. Заказ без офисов и без региона
+        собран по всей области автора, а какой она была в момент сборки,
+        уже не восстановить, — такой файл отдаётся только тому, кто видит
+        всю организацию. Офис, которого нет в организации, не покрыт.
+        """
+        from humotech.offices.models import Office
+
+        scope = self.access.scope(actor)
+        if scope.all_offices:
+            return True
+        filters = job.filters or {}
+        raw = list(filters.get("office_ids") or [])
+        if filters.get("office_id"):
+            raw.append(filters["office_id"])
+        offices = Office.objects.filter(organization_id=job.organization_id)
+        try:
+            wanted = {uuid.UUID(str(value)) for value in raw}
+            if wanted:
+                needed = set(offices.filter(id__in=wanted).values_list("id", flat=True))
+                if needed != wanted:
+                    return False
+            elif filters.get("region_id"):
+                region = uuid.UUID(str(filters["region_id"]))
+                needed = set(offices.filter(region_id=region).values_list("id", flat=True))
+            else:
+                return False
+        except ValueError:
+            return False
+        return bool(needed) and needed <= set(scope.office_ids)
+
+    def _security(self, actor: Actor, job_id, *, job, granted: bool, reason: str,
+                  ip_address: str | None, user_agent: str | None) -> None:
+        """Запись security-аудита о скачивании.
+
+        Про задание, которого нет в организации скачивающего, в запись не
+        попадает ничего, кроме запрошенного идентификатора: журнал не
+        должен рассказывать о выгрузках соседей.
+        """
+        details: dict = {"result": "granted" if granted else "denied", "reason": reason}
+        if job is not None:
+            details.update(
+                kind=job.kind,
+                fmt=job.fmt,
+                status=job.status,
+                owner_user_id=str(job.requested_by_user_id),
+                by_owner=job.requested_by_user_id == actor.user_id,
+            )
+        try:
+            entity_id = uuid.UUID(str(job_id))
+        except ValueError:
+            entity_id = uuid.UUID(int=0)
         self.audit.record(
             actor,
-            action="export.job.download",
+            action=f"security.export.download.{'granted' if granted else 'denied'}",
             entity_type="export_jobs",
-            entity_id=job.id,
-            after={
-                "kind": job.kind,
-                "fmt": job.fmt,
-                "owner_user_id": str(job.requested_by_user_id),
-                "by_owner": job.requested_by_user_id == actor.user_id,
-            },
+            entity_id=entity_id,
+            after=details,
+            ip_address=ip_address,
+            user_agent=user_agent,
         )
-        return storage.open_export(job.storage_key), job
 
     # ------------------------------------------------------------------ внутри
 
@@ -393,22 +499,6 @@ class ExportJobService(BaseService):
             # Чужая организация отвечает как отсутствие записи.
             raise NotFound("Выгрузка не найдена")
         return job
-
-    def _require_download(self, actor: Actor, job) -> None:
-        """Скачать может автор — или тот, кому видно всё, что видно автору.
-
-        Файл собран по области видимости заказчика. Коллега получает его,
-        только если у него есть право читать журнал (оно же открывает
-        чужие выгрузки в истории) И область на всю организацию: иначе
-        скачанный файл показал бы офисы, закрытые для него на экране.
-        Отказ выглядит как отсутствие записи — ровно как у автора другой
-        организации.
-        """
-        if job.requested_by_user_id == actor.user_id:
-            return
-        if self.access.has(actor, "audit.read") and self.access.scope(actor).all_offices:
-            return
-        raise NotFound("Выгрузка не найдена")
 
     def _require_owner(self, actor: Actor, job) -> None:
         if job.requested_by_user_id != actor.user_id:

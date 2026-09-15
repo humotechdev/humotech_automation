@@ -77,6 +77,12 @@ PERMISSIONS: tuple[tuple[str, str, str], ...] = (
     # аналитика и администрирование
     ("analytics.read", "Аналитика", "Дашборды и сводные показатели"),
     ("reports.export", "Выгрузка отчётов", "Экспорт данных в файлы"),
+    # Чужой файл собран по чужой области видимости. Право скачивать его —
+    # отдельное решение, а не побочный эффект чтения журнала: `audit.read`
+    # открывает строку истории, но не содержимое файла.
+    ("reports.download_any", "Скачивание чужих выгрузок",
+     "Скачивать отчёты других пользователей, если область видимости "
+     "покрывает все данные отчёта"),
     ("users.manage", "Управление пользователями", "Создавать учётные записи CRM"),
     ("roles.manage", "Управление ролями", "Назначать роли и области видимости"),
     ("settings.manage", "Настройки организации", "Изменять organization_settings"),
@@ -108,7 +114,7 @@ _HR_FULL = (
     "absences.documents", "leave_balances.manage",
     "knowledge.read", "knowledge.write", "knowledge.publish", "knowledge.index",
     "questions.read", "questions.answer",
-    "analytics.read", "reports.export", "ai.metrics.read",
+    "analytics.read", "reports.export", "reports.download_any", "ai.metrics.read",
     "notifications.read", "notifications.manage",
     # Кадровый администратор читает журнал изменений — но только своей
     # организации: область проверяется отдельно от разрешения. Прав на

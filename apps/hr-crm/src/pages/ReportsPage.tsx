@@ -46,6 +46,8 @@ export function ReportsPage() {
   const me = session.status === 'authenticated' ? session.user.id : null;
   const mayExport = can('reports.export');
   const maySeeOthers = can('audit.read');
+  // Чужой файл скачивается по отдельному праву; область проверяет сервер.
+  const mayDownloadAny = mayExport && can('reports.download_any');
 
   // --- справочники ----------------------------------------------------------
 
@@ -600,6 +602,7 @@ export function ReportsPage() {
                           key={job.id}
                           job={job}
                           mine={job.requested_by_user_id === me}
+                          mayDownload={job.requested_by_user_id === me || mayDownloadAny}
                           params={jobParams(job, allOffices, regions)}
                           busy={Boolean(rowBusy[job.id])}
                           error={rowError?.id === job.id ? rowError.text : null}
@@ -913,6 +916,8 @@ function SaveTemplate({ spec, fmt, onSaved }: {
 type RowProps = {
   job: api.ExportJob;
   mine: boolean;
+  /** Своё — всегда; чужое — только с `reports.download_any`. */
+  mayDownload: boolean;
   params: string;
   busy: boolean;
   error: string | null;
@@ -920,11 +925,12 @@ type RowProps = {
   onOpen: () => void;
 };
 
-function HistoryRow({ job, mine, params, busy, error, onAct, onOpen }: RowProps) {
+function HistoryRow({ job, mine, mayDownload, params, busy, error, onAct, onOpen }: RowProps) {
   const [menu, setMenu] = useState(false);
   const status = job.display_status;
   const percent = progressPercent(job);
   const ready = status === 'SUCCEEDED';
+  const downloadable = ready && mayDownload;
   const size = sizeTitle(job.size_bytes);
   const builder = job.filters?.builder === 2;
 
@@ -966,7 +972,7 @@ function HistoryRow({ job, mine, params, busy, error, onAct, onOpen }: RowProps)
         )}
       </td>
       <td>
-        {ready && (
+        {downloadable && (
           <a className="rp-action" href={api.downloadUrl(job.id)} target="_blank" rel="noopener noreferrer">
             <AppIcon name="download" size={16} />Скачать
           </a>
@@ -1000,7 +1006,7 @@ function HistoryRow({ job, mine, params, busy, error, onAct, onOpen }: RowProps)
           </button>
           {menu && (
             <Popover onClose={() => setMenu(false)} className="rp-menu">
-              {ready && (
+              {downloadable && (
                 <a className="rp-menu__item" href={api.downloadUrl(job.id)} target="_blank" rel="noopener noreferrer"
                    onClick={() => setMenu(false)}>
                   Скачать

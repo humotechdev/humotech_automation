@@ -15,6 +15,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from humotech.core.api import ServiceViewSet, validated
+from humotech.core.clientip import client_ip
 from humotech.core.enums import EXPORT_JOB_STATUSES
 from humotech.reports.builder import is_builder_order
 from humotech.reports.builder_views import ReportSpecSerializer, spec_from
@@ -331,8 +332,11 @@ class ExportJobViewSet(ServiceViewSet):
     @extend_schema(
         summary="Скачать готовый файл",
         description=(
-            "Доступно только заказчику и только пока не истёк срок "
-            "хранения. Просроченный файл удаляется: выгрузка кадровых "
+            "Автору — с reports.export; чужой файл — с reports.export и "
+            "reports.download_any, если область видимости покрывает все "
+            "офисы отчёта. Остальным 404, без reports.export — 403. "
+            "Каждая попытка пишется в security-аудит. Доступно только пока "
+            "не истёк срок хранения. Просроченный файл удаляется: выгрузка кадровых "
             "данных, лежащая вечно, — это утечка, отложенная во времени."
         ),
         responses={
@@ -343,7 +347,11 @@ class ExportJobViewSet(ServiceViewSet):
     )
     @action(detail=True, methods=["get"])
     def download(self, request, pk=None):
-        stream, job = self.service.open_file(self.actor, pk)
+        stream, job = self.service.open_file(
+            self.actor, pk,
+            ip_address=client_ip(request),
+            user_agent=request.META.get("HTTP_USER_AGENT"),
+        )
         response = FileResponse(
             stream,
             as_attachment=True,
