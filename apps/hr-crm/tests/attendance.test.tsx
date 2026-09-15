@@ -11,7 +11,7 @@
  */
 
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { USER, crm, fakeNetwork, json, renderApp } from './helpers';
 
@@ -239,7 +239,18 @@ describe('состав смены', () => {
 });
 
 describe('выбранный сотрудник', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   test('показывает отметки дня с точками и незакрытое посещение', async () => {
+    // Незакрытое посещение тянется до «сейчас», а «сейчас» — это часы
+    // машины. Без закреплённого времени подпись то появлялась, то
+    // сливалась с началом последнего отрезка, смотря когда запущен тест.
+    // Время ставится на вечер того же дня: открытое посещение бывает
+    // только сегодня.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(`${DAY}T15:30:00Z`));
     network();
     renderApp(`/attendance?date=${DAY}&employee=e-1`);
 

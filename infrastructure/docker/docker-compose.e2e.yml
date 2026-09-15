@@ -42,6 +42,12 @@ x-backend-env: &backend_env
   NOTIFICATIONS_RETRY_MAX_SECONDS: "4"
   NOTIFICATIONS_MAX_ATTEMPTS: "3"
 
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   postgres-e2e:
     image: pgvector/pgvector:pg18
@@ -99,6 +105,9 @@ services:
       - --error-logfile
       - "-"
     environment: *backend_env
+    volumes:
+      # Общий с исполнителем выгрузок: он пишет файл, backend отдаёт.
+      - e2e_exports:/app/private-exports
     healthcheck:
       test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "-H", "Host: backend-e2e", "http://127.0.0.1:8000/readyz"]
       interval: 5s
@@ -139,8 +148,44 @@ services:
       - e2e
     restart: "no"
 
+  # Исполнитель очереди выгрузок стенда. Тот же образ и та же команда,
+  # что в бою; база и том — стенда. Постоянный: без него заказанный на
+  # стенде отчёт навсегда остаётся «в очереди».
+  export-worker-e2e:
+    build:
+      context: ../../apps/backend-api
+    image: humotech/backend:local
+    container_name: humotech_e2e_export_worker
+    command:
+      - python
+      - manage.py
+      - run_export_worker
+      - --loop=5
+    environment: *backend_env
+    volumes:
+      - e2e_exports:/app/private-exports
+    # Признак жизни: исполнитель трогает файл на каждом проходе и на
+    # каждом шаге сборки. Проверка без Django и без базы — см.
+    # humotech/reports/heartbeat.py. Упавший процесс перезапускает
+    # `restart`, зависший — видно по unhealthy.
+    healthcheck:
+      test: ["CMD", "python", "-m", "humotech.reports.heartbeat"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+    depends_on:
+      migrate-e2e:
+        condition: service_completed_successfully
+    networks:
+      - e2e
+    restart: unless-stopped
+    stop_grace_period: 30s
+    logging: *logging
+
 volumes:
   e2e_postgres:
+  e2e_exports:
 
 networks:
   e2e:

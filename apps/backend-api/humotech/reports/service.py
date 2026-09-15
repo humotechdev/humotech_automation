@@ -347,13 +347,13 @@ class ExportJobService(BaseService):
     def open_file(self, actor: Actor, job_id: uuid.UUID):
         """Файл готовой выгрузки: поток, имя и размер.
 
-        Три условия, и каждое закрывает свою дыру: не заказчик — чужая
-        область видимости; не SUCCEEDED — файла нет; просрочено — файл
-        уже удалён или вот-вот будет.
+        Три условия, и каждое закрывает свою дыру: нет права скачать —
+        чужая область видимости; не SUCCEEDED — файла нет; просрочено —
+        файл уже удалён или вот-вот будет.
         """
         self.access.require(actor, "reports.export")
         job = self._require(actor, job_id)
-        self._require_owner(actor, job)
+        self._require_download(actor, job)
 
         if job.status != "SUCCEEDED" or not job.storage_key:
             raise Conflict(
@@ -370,7 +370,12 @@ class ExportJobService(BaseService):
             action="export.job.download",
             entity_type="export_jobs",
             entity_id=job.id,
-            after={"kind": job.kind, "fmt": job.fmt},
+            after={
+                "kind": job.kind,
+                "fmt": job.fmt,
+                "owner_user_id": str(job.requested_by_user_id),
+                "by_owner": job.requested_by_user_id == actor.user_id,
+            },
         )
         return storage.open_export(job.storage_key), job
 
@@ -388,6 +393,22 @@ class ExportJobService(BaseService):
             # Чужая организация отвечает как отсутствие записи.
             raise NotFound("Выгрузка не найдена")
         return job
+
+    def _require_download(self, actor: Actor, job) -> None:
+        """Скачать может автор — или тот, кому видно всё, что видно автору.
+
+        Файл собран по области видимости заказчика. Коллега получает его,
+        только если у него есть право читать журнал (оно же открывает
+        чужие выгрузки в истории) И область на всю организацию: иначе
+        скачанный файл показал бы офисы, закрытые для него на экране.
+        Отказ выглядит как отсутствие записи — ровно как у автора другой
+        организации.
+        """
+        if job.requested_by_user_id == actor.user_id:
+            return
+        if self.access.has(actor, "audit.read") and self.access.scope(actor).all_offices:
+            return
+        raise NotFound("Выгрузка не найдена")
 
     def _require_owner(self, actor: Actor, job) -> None:
         if job.requested_by_user_id != actor.user_id:

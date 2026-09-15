@@ -36,7 +36,7 @@ from django.utils import timezone
 
 from humotech.core.errors import DomainError, PermissionDenied, ValidationFailed
 from humotech.core.rbac import Actor
-from humotech.reports import storage
+from humotech.reports import heartbeat, storage
 from humotech.reports.builder import (
     Progress, ReportBuilderService, ReportSpec, is_builder_order,
 )
@@ -159,6 +159,9 @@ def run_once(now: datetime | None = None) -> bool:
         job = claim_job(now)
     if job is None:
         return False
+    logger.info(
+        "взята выгрузка %s: %s.%s, попытка %s", job.id, job.kind, job.fmt, job.attempts,
+    )
     process_job(job)
     return True
 
@@ -177,6 +180,7 @@ def _process_builder_job(job: ExportJob) -> bool:
         ExportJob.objects.filter(id=job.id).update(progress_total=steps, progress_done=0)
 
     def sink(done: int, rows: int) -> None:
+        heartbeat.beat()
         ExportJob.objects.filter(id=job.id).update(
             progress_done=done, progress_rows=rows, locked_at=timezone.now(),
         )
@@ -233,6 +237,7 @@ def _counting(chunks, job: ExportJob):
     for chunk in chunks:
         written += 1
         if written % every == 0:
+            heartbeat.beat()
             ExportJob.objects.filter(id=job.id).update(progress_rows=written)
         yield chunk
     ExportJob.objects.filter(id=job.id).update(progress_rows=written)

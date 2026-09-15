@@ -197,6 +197,16 @@ services:
         condition: service_completed_successfully
     networks:
       - humotech
+    # Признак жизни: исполнитель трогает файл на каждом проходе и на
+    # каждом шаге сборки. Проверка без Django и без базы — см.
+    # humotech/reports/heartbeat.py. Упавший процесс перезапускает
+    # `restart`, зависший — видно по unhealthy.
+    healthcheck:
+      test: ["CMD", "python", "-m", "humotech.reports.heartbeat"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
     restart: unless-stopped
     # Незавершённая сборка не портит данные: задание останется в
     # RUNNING и вернётся в очередь по времени (`reclaim_stale`).

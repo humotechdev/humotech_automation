@@ -18,7 +18,7 @@
  */
 
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, test, vi } from 'vitest';
+import { describe, expect, test, vi, afterEach } from 'vitest';
 
 import {
   accessNote,
@@ -784,11 +784,27 @@ describe('журнал действий', () => {
 });
 
 describe('демонстрационный режим', () => {
+  // Признак берётся из сборки. Контейнер разработки собран с
+  // VITE_DEMO_MODE=true, и без явной подмены проверка зависела бы от
+  // того, где запущены тесты, а не от кода.
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   test('метка «Демо-данные» без явного включения не показывается', async () => {
+    vi.stubEnv('VITE_DEMO_MODE', '');
     network();
     renderApp('/admin');
     await opened();
     expect(screen.queryByText('Демо-данные')).toBeNull();
+  });
+
+  test('при явном включении метка показывается', async () => {
+    vi.stubEnv('VITE_DEMO_MODE', 'true');
+    network();
+    renderApp('/admin');
+    await opened();
+    expect(await screen.findByText('Демо-данные')).toBeTruthy();
   });
 });
 

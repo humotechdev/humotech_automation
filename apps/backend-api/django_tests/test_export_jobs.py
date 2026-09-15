@@ -332,6 +332,79 @@ class TestDownload:
 
         assert response.status_code == 404
 
+    def test_an_anonymous_request_gets_nothing(self, exporter, employee):
+        from rest_framework.test import APIClient
+
+        job_id = order(exporter).json()["id"]
+        run_once()
+
+        response = APIClient().get(f"{API}/export-jobs/{job_id}/download/")
+
+        assert response.status_code in (401, 403)
+        assert not hasattr(response, "streaming_content")
+
+    def test_audit_without_the_whole_organization_is_not_enough(
+        self, exporter, employee, api_client, organization, office
+    ):
+        """Журнал открыт, но область — один офис: файл по всей организации не отдаётся."""
+        from django_tests.conftest import create_actor
+
+        job_id = order(exporter).json()["id"]
+        run_once()
+        user, _ = create_actor(
+            organization, permissions=EXPORTER + ("audit.read",), office=office,
+        )
+        api_client.force_authenticate(user=user)
+
+        response = api_client.get(f"{API}/export-jobs/{job_id}/download/")
+
+        assert response.status_code == 404
+
+    def test_an_auditor_of_the_whole_organization_gets_it(
+        self, exporter, employee, api_client, make_user, organization
+    ):
+        job_id = order(exporter).json()["id"]
+        run_once()
+        auditor = make_user(organization, permissions=EXPORTER + ("audit.read",))
+        api_client.force_authenticate(user=auditor)
+
+        response = api_client.get(f"{API}/export-jobs/{job_id}/download/")
+
+        assert response.status_code == 200
+        b"".join(response.streaming_content)
+        record = AuditLog.objects.get(
+            action="export.job.download", entity_id=job_id, actor_user_id=auditor.id,
+        )
+        assert record.new_values["by_owner"] is False
+
+    def test_another_organization_never_gets_it(self, exporter, employee, api_client, make_user):
+        job_id = order(exporter).json()["id"]
+        run_once()
+        foreign = Organization.objects.create(
+            code=f"ORG{uuid.uuid4().hex[:8]}", name="Чужая", default_timezone="Asia/Dushanbe",
+            status="ACTIVE",
+        )
+        api_client.force_authenticate(
+            user=make_user(foreign, permissions=EXPORTER + ("audit.read",))
+        )
+
+        response = api_client.get(f"{API}/export-jobs/{job_id}/download/")
+
+        assert response.status_code == 404
+
+    def test_download_needs_the_export_permission(
+        self, exporter, employee, api_client, make_user, organization
+    ):
+        job_id = order(exporter).json()["id"]
+        run_once()
+        api_client.force_authenticate(
+            user=make_user(organization, permissions=("audit.read", "employees.read"))
+        )
+
+        response = api_client.get(f"{API}/export-jobs/{job_id}/download/")
+
+        assert response.status_code == 403
+
     def test_an_unfinished_job_has_nothing_to_download(self, exporter):
         job_id = order(exporter).json()["id"]
 
