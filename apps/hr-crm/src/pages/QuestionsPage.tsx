@@ -714,8 +714,6 @@ function Conversation({
           </p>
         </div>
 
-        <Deadline question={question} now={now} />
-
         <div className="qs-talk__actions">
           {actions.assign && (
             <div className="qs-pop">
@@ -843,6 +841,9 @@ function Conversation({
           <span className="qs-pill qs-pill--quiet">
             {question.assignee ? `Ответственный: ${question.assignee.name}` : 'Без ответственного'}
           </span>
+          {/* Срок — рядом с состоянием, а не в шапке: там он отнимал место
+              у имени человека, которому отвечают. */}
+          <Deadline question={question} now={now} />
         </div>
       </div>
 

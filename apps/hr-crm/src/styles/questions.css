@@ -760,6 +760,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  margin-left: auto;
   font-size: 13px;
   color: var(--qs-green);
   white-space: nowrap;
@@ -767,7 +768,7 @@
 
 .qs-deadline span {
   display: flex;
-  flex-direction: column;
+  gap: 6px;
 }
 
 .qs-deadline b {
