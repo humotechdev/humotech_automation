@@ -64,6 +64,11 @@ const TARGETS = {
     ready: '.qs-msg',
     reference: 'questions-reference-1672x941.png',
   },
+  reports: {
+    url: '/reports',
+    ready: '.rp-kind',
+    reference: 'reports-reference-1672x941.png',
+  },
   hire: {
     url: '/employees/new',
     ready: 'form',

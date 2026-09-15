@@ -991,17 +991,21 @@ export const compare = (
 /**
  * Состояние задания очереди — ровно то, что отдаёт `/export-jobs/`.
  *
- * `total_rows` объявлено полем ответа, но исполнитель его нигде не
- * пишет, а `progress_rows` считается только у CSV. Процента готовности
- * из этого не получится, и выдумывать его нельзя: «43%» рядом с
- * неизвестной величиной — это не оценка, а неправда.
+ * Процент готовности — `progress_done / progress_total`. Знаменатель
+ * сервер пишет до первой строки, и только у заказов конструктора; у
+ * старых заказов его нет, и процента на экране тоже нет.
  */
 export type ExportJob = {
   id: string;
   kind: string;
   fmt: 'csv' | 'xlsx';
   status: 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED';
-  filters: Record<string, string> | null;
+  /** SUCCEEDED с прошедшим сроком хранения приходит как EXPIRED. */
+  display_status: 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED' | 'EXPIRED';
+  filters: ExportFilters | null;
+  title: string | null;
+  progress_done: number;
+  progress_total: number | null;
   requested_by_user_id: string;
   requested_by: string | null;
   attempts: number;
@@ -1017,6 +1021,23 @@ export type ExportJob = {
   updated_at: string;
 };
 
+/** Параметры заказа. У заказа конструктора `builder === 2`. */
+export type ExportFilters = {
+  builder?: number;
+  date?: string;
+  date_from?: string;
+  date_to?: string;
+  period?: ReportPeriod;
+  region_id?: string | null;
+  office_id?: string | null;
+  office_ids?: string[];
+  department_ids?: string[];
+  employee_id?: string | null;
+  include_inactive?: boolean;
+  fields?: string[];
+  name?: string | null;
+};
+
 export type ExportCounts = {
   total: number;
   QUEUED: number;
@@ -1024,6 +1045,7 @@ export type ExportCounts = {
   SUCCEEDED: number;
   FAILED: number;
   CANCELLED: number;
+  EXPIRED: number;
 };
 
 export type ExportQuery = {
@@ -1046,7 +1068,8 @@ export const exportCounts = (params: ExportQuery, signal?: AbortSignal) =>
 export const exportJob = (id: string, signal?: AbortSignal) =>
   request<ExportJob>(`/export-jobs/${id}/`, signal ? { signal } : {});
 
-export type ExportOrder = {
+/** Короткий заказ со страниц разделов: вид, формат и один офис или регион. */
+export type SimpleExportOrder = {
   kind: string;
   fmt: 'csv' | 'xlsx';
   date?: string;
@@ -1056,6 +1079,15 @@ export type ExportOrder = {
   region_id?: string;
 };
 
+/** Заказ конструктора: поля, несколько офисов и отделов, ключ повтора. */
+export type BuilderExportOrder = ReportSpec & {
+  fmt: 'csv' | 'xlsx';
+  builder: true;
+  client_request_id: string;
+};
+
+export type ExportOrder = SimpleExportOrder | BuilderExportOrder;
+
 export const orderExport = (body: ExportOrder) =>
   request<ExportJob>('/export-jobs/', { method: 'POST', body });
 
@@ -1064,6 +1096,99 @@ export const cancelExport = (id: string) =>
 
 export const retryExport = (id: string) =>
   request<ExportJob>(`/export-jobs/${id}/retry/`, { method: 'POST', body: {} });
+
+/** Убрать из своей истории. Файл сервер удаляет сразу. */
+export const hideExport = (id: string) =>
+  request<null>(`/export-jobs/${id}/hide/`, { method: 'POST', body: {} });
+
+// --- конструктор отчётов ---------------------------------------------------
+
+export type ReportKindKey = 'attendance' | 'worktime' | 'lateness' | 'absences' | 'employees';
+export type ReportPeriod = 'custom' | 'this_month' | 'last_month';
+
+export type ReportField = {
+  key: string;
+  title: string;
+  default: boolean;
+  columns: string[];
+};
+
+export type ReportCatalog = {
+  kinds: { key: ReportKindKey; title: string; permission: string; fields: ReportField[] }[];
+  max_period_days: number;
+  xlsx_max_rows: number;
+  retention_hours: number;
+  preview_min_rows: number;
+  preview_max_rows: number;
+};
+
+export type ReportSpec = {
+  kind: ReportKindKey;
+  date_from: string;
+  date_to: string;
+  period: ReportPeriod;
+  region_id: string | null;
+  office_ids: string[];
+  department_ids: string[];
+  employee_id: string | null;
+  include_inactive: boolean;
+  fields: string[];
+  name: string | null;
+};
+
+export type ReportCell = { text: string | null; tone: string | null };
+
+export type ReportPreview = {
+  kind: ReportKindKey;
+  title: string;
+  date_from: string;
+  date_to: string;
+  fmt: 'csv' | 'xlsx';
+  file_name: string;
+  offices: number;
+  employees: number;
+  employee_name: string | null;
+  days: number | null;
+  rows_estimate: number;
+  estimate_exact: boolean;
+  sampled_days: number | null;
+  columns: { key: string; title: string; type: string }[];
+  rows: ReportCell[][];
+  sheets: string[];
+  timezones: string[];
+  warnings: string[];
+};
+
+export const reportCatalog = (signal?: AbortSignal) =>
+  request<ReportCatalog>('/reports/catalog', signal ? { signal } : {});
+
+export const reportPreview = (
+  body: ReportSpec & { fmt: 'csv' | 'xlsx'; limit: number },
+  signal?: AbortSignal,
+) =>
+  request<ReportPreview>('/reports/preview', {
+    method: 'POST', body, ...(signal ? { signal } : {}),
+  });
+
+export type ReportTemplate = {
+  id: string;
+  name: string;
+  kind: ReportKindKey;
+  fmt: 'csv' | 'xlsx';
+  filters: ExportFilters;
+  created_at: string;
+  updated_at: string;
+};
+
+export const reportTemplates = (signal?: AbortSignal) =>
+  request<{ items: ReportTemplate[] }>('/report-templates/', signal ? { signal } : {});
+
+export const saveReportTemplate = (
+  body: ReportSpec & { fmt: 'csv' | 'xlsx'; template_name: string },
+) => request<ReportTemplate>('/report-templates/', { method: 'POST', body });
+
+export const deleteReportTemplate = (id: string) =>
+  request<null>(`/report-templates/${id}/`, { method: 'DELETE' });
 
 /**
  * Адрес готового файла.

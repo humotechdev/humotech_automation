@@ -56,6 +56,10 @@ PERMISSIONS = (
 #: получать права на запись заодно.
 ANSWER_PERMISSIONS = PERMISSIONS + ("questions.answer",)
 
+#: С `--export` — ещё и выгрузка отчётов. Файл уходит из системы, и это
+#: отдельное право: учётке только для снимков оно не нужно.
+EXPORT_PERMISSIONS = ANSWER_PERMISSIONS + ("reports.export",)
+
 
 class Command(BaseCommand):
     help = "Заводит учётку для браузерной проверки на изолированном стенде"
@@ -76,6 +80,11 @@ class Command(BaseCommand):
             help="учётка кадровика: ещё и отвечать на обращения "
                  "(questions.answer). Используйте с отдельным --email.",
         )
+        parser.add_argument(
+            "--export", action="store_true",
+            help="учётка кадровика с выгрузкой отчётов (reports.export). "
+                 "Используйте с отдельным --email.",
+        )
 
     @transaction.atomic
     def handle(self, *args, **options) -> None:
@@ -86,8 +95,11 @@ class Command(BaseCommand):
             raise CommandError(f"Организация {options['code']} не найдена")
 
         role = (
-            self._role(org, "E2E_SHOTS_ANSWER", "Браузерная проверка (обращения)",
-                       ANSWER_PERMISSIONS)
+            self._role(org, "E2E_SHOTS_EXPORT", "Браузерная проверка (отчёты)",
+                       EXPORT_PERMISSIONS)
+            if options["export"]
+            else self._role(org, "E2E_SHOTS_ANSWER", "Браузерная проверка (обращения)",
+                            ANSWER_PERMISSIONS)
             if options["answer"]
             else self._role(org, "E2E_SHOTS", "Браузерная проверка (только чтение)",
                             PERMISSIONS)

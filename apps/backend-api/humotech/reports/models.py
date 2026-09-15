@@ -79,10 +79,26 @@ class ExportJob(UUIDPrimaryKeyModel, OrganizationScopedModel, TimestampedModel):
     #: в сообщении об ошибке выгрузки нет ни путей, ни SQL, ни секретов.
     error_message = models.TextField(null=True, blank=True)
 
+    #: Прогресс в шагах сборки: «офис × день» для отчётов по дням, запись —
+    #: для остальных. Знаменатель известен до первой строки, поэтому
+    #: процент на экране — не выдумка.
+    progress_done = models.IntegerField(db_default=0)
+    progress_total = models.IntegerField(null=True, blank=True)
+    #: Скрыто заказчиком из своей истории. Запись остаётся ради журнала,
+    #: файл удаляется сразу.
+    hidden_at = models.DateTimeField(null=True, blank=True)
+    #: Ключ повтора от страницы: двойной щелчок не ставит второй отчёт.
+    client_request_id = models.UUIDField(null=True, blank=True)
+
     class Meta:
         db_table = "export_jobs"
         constraints = [
             status_check("status", EXPORT_JOB_STATUSES, "ck_export_jobs_status"),
+            models.UniqueConstraint(
+                fields=["requested_by_user", "client_request_id"],
+                condition=models.Q(client_request_id__isnull=False),
+                name="uq_export_jobs_client_request",
+            ),
         ]
         indexes = [
             models.Index(
@@ -105,4 +121,43 @@ class ExportJob(UUIDPrimaryKeyModel, OrganizationScopedModel, TimestampedModel):
         return f"{self.kind}.{self.fmt} [{self.status}]"
 
 
-__all__ = ["ExportJob"]
+REPORT_TEMPLATE_KINDS = ("attendance", "worktime", "lateness", "absences", "employees")
+REPORT_TEMPLATE_FORMATS = ("csv", "xlsx")
+
+
+class ReportTemplate(UUIDPrimaryKeyModel, OrganizationScopedModel, TimestampedModel):
+    """Сохранённые настройки конструктора: вид, фильтры, поля, формат.
+
+    Шаблон личный: в фильтрах лежат офисы и отделы одного человека, и
+    чужой области видимости они не касаются — при сборке всё равно
+    проверяются права того, кто заказывает.
+    """
+
+    owner_user = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.CASCADE,
+        related_name="report_templates",
+    )
+    name = models.CharField(max_length=120)
+    kind = models.CharField(max_length=30, choices=choices(REPORT_TEMPLATE_KINDS))
+    fmt = models.CharField(max_length=10, choices=choices(REPORT_TEMPLATE_FORMATS))
+    filters = models.JSONField()
+
+    class Meta:
+        db_table = "report_templates"
+        constraints = [
+            status_check("kind", REPORT_TEMPLATE_KINDS, "ck_report_templates_kind"),
+            status_check("fmt", REPORT_TEMPLATE_FORMATS, "ck_report_templates_fmt"),
+            models.UniqueConstraint(
+                fields=["owner_user", "name"], name="uq_report_templates_owner_name"
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["organization"], name="ix_report_templates_org_id"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - для админки
+        return self.name
+
+
+__all__ = ["ExportJob", "ReportTemplate"]

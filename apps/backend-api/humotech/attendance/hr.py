@@ -183,8 +183,17 @@ class AttendanceHrService(BaseService):
         schedule_id: uuid.UUID | None = None,
         state: str | None = None,
         search: str | None = None,
+        department_ids: list[uuid.UUID] | None = None,
+        employee_id: uuid.UUID | None = None,
+        include_inactive: bool = False,
     ) -> PresenceReport:
         """Кто где на выбранный день.
+
+        `department_ids`, `employee_id` и `include_inactive` нужны
+        конструктору отчётов: там выбирают несколько отделов, одного
+        человека и просят включить уже не работающих. Неактивный попадает
+        в день, только если его назначение на этот день ещё действовало, —
+        после увольнения строк за ним не появляется.
 
         Постраничного вывода здесь нет намеренно: по этому ответу
         считаются карточки дашборда и строится выгрузка, а итог по первым
@@ -219,6 +228,9 @@ class AttendanceHrService(BaseService):
             position_id=position_id,
             schedule_id=schedule_id,
             search=search,
+            department_ids=department_ids,
+            employee_id=employee_id,
+            include_inactive=include_inactive,
         )
         if not rows:
             return PresenceReport(day=day, timezone=str(tz), rows=[])
@@ -861,6 +873,9 @@ class AttendanceHrService(BaseService):
         position_id: uuid.UUID | None,
         schedule_id: uuid.UUID | None,
         search: str | None,
+        department_ids: list[uuid.UUID] | None = None,
+        employee_id: uuid.UUID | None = None,
+        include_inactive: bool = False,
     ) -> dict[uuid.UUID, EmployeeAssignment]:
         if not offices:
             return {}
@@ -869,11 +884,16 @@ class AttendanceHrService(BaseService):
             current_primary_assignment_filter(at),
             office_id__in=[office.id for office in offices],
             employee__organization_id=actor.organization_id,
-            employee__employment_status="ACTIVE",
         ).select_related("employee", "office", "department", "position")
+        if not include_inactive:
+            assignments = assignments.filter(employee__employment_status="ACTIVE")
 
         if department_id:
             assignments = assignments.filter(department_id=department_id)
+        if department_ids:
+            assignments = assignments.filter(department_id__in=department_ids)
+        if employee_id:
+            assignments = assignments.filter(employee_id=employee_id)
         if position_id:
             assignments = assignments.filter(position_id=position_id)
         if search:

@@ -65,6 +65,11 @@ from humotech.questions.views import (
     UnansweredQuestionViewSet,
 )
 from humotech.regions.views import RegionViewSet
+from humotech.reports.builder_views import (
+    ReportCatalogView,
+    ReportPreviewView,
+    ReportTemplateViewSet,
+)
 from humotech.reports.job_views import ExportJobViewSet
 from humotech.reports.views import ExportView
 from humotech.schedules.calendar_views import CalendarExceptionViewSet
@@ -114,6 +119,8 @@ router.register(
 # Фоновые выгрузки. Мгновенная выгрузка ниже остаётся: короткий отчёт
 # незачем прогонять через заказ, ожидание и скачивание.
 router.register("export-jobs", ExportJobViewSet, basename="export-job")
+# Личные шаблоны конструктора отчётов.
+router.register("report-templates", ReportTemplateViewSet, basename="report-template")
 router.register(
     "calendar-exceptions", CalendarExceptionViewSet, basename="calendar-exception"
 )
@@ -193,6 +200,9 @@ urlpatterns = [
     path("analytics/overview", AnalyticsOverviewView.as_view(), name="analytics-overview"),
     # Выгрузки. Право reports.export проверяется отдельно от прав на сами
     # данные: выгрузка не должна быть обходным путём к закрытому экрану.
+    # Конструктор отчётов: поля видов и предпросмотр до заказа файла.
+    path("reports/catalog", ReportCatalogView.as_view(), name="report-catalog"),
+    path("reports/preview", ReportPreviewView.as_view(), name="report-preview"),
     path("reports/<str:kind>/export", ExportView.as_view(), name="report-export"),
     # Журнал изменений. Только чтение: метода записи здесь нет намеренно,
     # единственный способ появиться в журнале — быть записанным сервисом,

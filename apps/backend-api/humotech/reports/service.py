@@ -37,10 +37,19 @@ from humotech.core.pagination import Page, paginate
 from humotech.core.rbac import Actor, snapshot
 from humotech.core.service import BaseService
 from humotech.reports import storage
+from humotech.reports.builder import ReportBuilderService, ReportSpec
+from humotech.reports.catalog import REPORT_KINDS
 from humotech.reports.sheets import EXPORT_KINDS
 from humotech.reports.views import FORMATS
 
 EXPORT_FIELDS = ("kind", "fmt", "status", "attempts", "file_name")
+
+#: Все виды очереди: старые построители и виды конструктора.
+JOB_KINDS = tuple(dict.fromkeys(EXPORT_KINDS + REPORT_KINDS))
+
+#: Состояния списка. EXPIRED — не колонка, а готовое задание, чей срок
+#: хранения прошёл: вкладка «Готовы» не должна обещать файл, которого нет.
+LIST_STATUSES = EXPORT_JOB_STATUSES + ("EXPIRED",)
 
 #: Состояния, из которых задание можно отменить.
 #:
@@ -90,16 +99,19 @@ class ExportJobService(BaseService):
         показывают не набор, а сами себя.
         """
         rows = self._visible(actor, status=None, kind=kind, mine_only=mine_only)
-        totals = {name: 0 for name in EXPORT_JOB_STATUSES}
+        totals = {name: 0 for name in LIST_STATUSES}
         for row in rows.values("status").annotate(number=Count("id")):
             totals[row["status"]] = row["number"]
         totals["total"] = sum(totals.values())
+        expired = rows.filter(_expired_q()).count()
+        totals["SUCCEEDED"] -= expired
+        totals["EXPIRED"] = expired
         return totals
 
     def _visible(self, actor: Actor, *, status, kind, mine_only: bool):
         """Задания, доступные этому человеку под этими фильтрами."""
         self.access.require(actor, "reports.export")
-        rows = ExportJobQuerySet(actor).base()
+        rows = ExportJobQuerySet(actor).base().filter(hidden_at__isnull=True)
         # Чужие заказы видит только тот, кому положено видеть журнал.
         # Без права список молча остаётся своим: отказывать в ответ на
         # флаг, которого человек не выбирал, — плохая замена умолчанию.
@@ -110,14 +122,21 @@ class ExportJobService(BaseService):
             # это QUEUED и RUNNING, и склеивать их на клиенте значило бы
             # смешивать две страницы в одну.
             wanted = [
-                _known(part, "status", EXPORT_JOB_STATUSES)
+                _known(part, "status", LIST_STATUSES)
                 for part in status.split(",")
                 if part
             ]
             if wanted:
-                rows = rows.filter(status__in=wanted)
+                condition = Q(status__in=[
+                    item for item in wanted if item not in ("SUCCEEDED", "EXPIRED")
+                ])
+                if "SUCCEEDED" in wanted:
+                    condition |= Q(status="SUCCEEDED") & ~_expired_q()
+                if "EXPIRED" in wanted:
+                    condition |= _expired_q()
+                rows = rows.filter(condition)
         if kind is not None:
-            rows = rows.filter(kind=_known(kind, "kind", EXPORT_KINDS))
+            rows = rows.filter(kind=_known(kind, "kind", JOB_KINDS))
         return rows
 
     def get(self, actor: Actor, job_id: uuid.UUID):
@@ -125,19 +144,46 @@ class ExportJobService(BaseService):
         return self._require(actor, job_id)
 
     def create(
-        self, actor: Actor, *, kind: str, fmt: str, filters: dict | None = None
+        self, actor: Actor, *, kind: str, fmt: str, filters: dict | None = None,
+        spec: ReportSpec | None = None, client_request_id: uuid.UUID | None = None,
     ):
         """Поставить выгрузку в очередь.
 
         Параметры проверяются здесь, а не в исполнителе: ошибка в них,
         замеченная через минуту, приходит человеку, который уже ушёл
         с экрана, — и приходит в виде задания со статусом FAILED.
+
+        `spec` — заказ конструктора. Для него права на вид и офисы
+        проверяются сразу: кнопка, гарантированно рождающая красную строку
+        в истории, хуже понятного отказа. При сборке они проверятся ещё раз.
+
+        `client_request_id` — ключ повтора. Второй запрос с тем же ключом
+        (двойной щелчок, повтор после обрыва сети) возвращает уже
+        поставленное задание, а не ставит второе.
         """
         from humotech.reports.models import ExportJob
 
         self.access.require(actor, "reports.export")
-        kind = _known(kind, "kind", EXPORT_KINDS)
+        kind = _known(kind, "kind", JOB_KINDS)
         fmt = _known(fmt, "fmt", FORMATS)
+
+        if client_request_id is not None:
+            existing = ExportJob.objects.filter(
+                organization_id=actor.organization_id,
+                requested_by_user_id=actor.user_id,
+                client_request_id=client_request_id,
+            ).first()
+            if existing is not None:
+                return self._require(actor, existing.id)
+
+        if spec is not None:
+            ReportBuilderService().check(actor, spec)
+            filters = spec.to_filters()
+        elif kind not in EXPORT_KINDS:
+            raise ValidationFailed(
+                "Для этого отчёта нужны параметры конструктора",
+                details={"kind": ["Укажите период и поля отчёта"]},
+            )
 
         pending = ExportJob.objects.filter(
             organization_id=actor.organization_id,
@@ -158,8 +204,9 @@ class ExportJobService(BaseService):
                 requested_by_user_id=actor.user_id,
                 kind=kind,
                 fmt=fmt,
-                filters=_serialize(filters or {}),
+                filters=filters if spec is not None else _serialize(filters or {}),
                 status="QUEUED",
+                client_request_id=client_request_id,
             )
             self.audit.record(
                 actor,
@@ -235,6 +282,9 @@ class ExportJobService(BaseService):
             locked.finished_at = None
             locked.error_message = None
             locked.progress_rows = 0
+            locked.progress_done = 0
+            locked.progress_total = None
+            locked.total_rows = None
             locked.storage_key = None
             locked.file_name = None
             locked.size_bytes = None
@@ -249,6 +299,50 @@ class ExportJobService(BaseService):
                 after=snapshot(locked, EXPORT_FIELDS),
             )
         return self._require(actor, job_id)
+
+    def hide(self, actor: Actor, job_id: uuid.UUID) -> None:
+        """Убрать выгрузку из своей истории.
+
+        Запись остаётся — по ней журнал отвечает, кто что выгружал. Файл
+        удаляется сразу: скрытая выгрузка, которую всё ещё можно скачать,
+        была бы тем самым забытым файлом. Собираемую прямо сейчас убрать
+        нельзя — исполнитель допишет её после; стоящая в очереди сначала
+        отменяется.
+        """
+        from humotech.reports.models import ExportJob
+
+        self.access.require(actor, "reports.export")
+        job = self._require(actor, job_id)
+        self._require_owner(actor, job)
+
+        with self.atomic():
+            locked = ExportJob.objects.select_for_update().get(id=job.id)
+            if locked.hidden_at is not None:
+                return
+            if locked.status == "RUNNING":
+                raise Conflict(
+                    "Отчёт ещё формируется — удалить его можно после окончания",
+                    details={"status": locked.status},
+                )
+            before = snapshot(locked, EXPORT_FIELDS)
+            now = timezone.now()
+            if locked.status == "QUEUED":
+                locked.status = "CANCELLED"
+                locked.finished_at = now
+                locked.next_attempt_at = None
+            storage.delete(locked.storage_key)
+            locked.storage_key = None
+            locked.size_bytes = None
+            locked.hidden_at = now
+            locked.save()
+            self.audit.record(
+                actor,
+                action="export.job.hide",
+                entity_type="export_jobs",
+                entity_id=locked.id,
+                before=before,
+                after={**snapshot(locked, EXPORT_FIELDS), "hidden": True},
+            )
 
     def open_file(self, actor: Actor, job_id: uuid.UUID):
         """Файл готовой выгрузки: поток, имя и размер.
@@ -314,6 +408,11 @@ class ExportJobQuerySet:
         ).select_related("requested_by_user")
 
 
+def _expired_q() -> Q:
+    """Готовое задание, срок хранения файла которого уже прошёл."""
+    return Q(status="SUCCEEDED", expires_at__lte=timezone.now())
+
+
 def retention_deadline(now=None):
     """До какого момента хранится файл, готовый прямо сейчас."""
     return (now or timezone.now()) + timedelta(
@@ -370,6 +469,8 @@ def _known(value: str, field: str, allowed) -> str:
 
 __all__ = [
     "CANCELLABLE",
+    "JOB_KINDS",
+    "LIST_STATUSES",
     "RETRYABLE",
     "ExportJobService",
     "purge_expired",

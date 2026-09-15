@@ -163,9 +163,9 @@ def test_business_schema_has_expected_shape():
     # 44 таблицы перенесены с Alembic, + telegram_link_invitations,
     # + qr_display_devices, + export_jobs, + notification_attempts,
     # + employee_documents, + employee_onboarding_keys,
-    # + employee_question_messages.
-    assert len(snapshot["tables"]) == 51, (
-        f"бизнес-таблиц {len(snapshot['tables'])}, ожидалось 51"
+    # + employee_question_messages, + report_templates.
+    assert len(snapshot["tables"]) == 52, (
+        f"бизнес-таблиц {len(snapshot['tables'])}, ожидалось 52"
     )
 
     counts = {"c": 0, "f": 0, "u": 0, "x": 0}
@@ -219,9 +219,14 @@ def test_business_schema_has_expected_shape():
     #   FK    145 + 6 — закрывший у обращения и пять ключей сообщения;
     #   UNIQUE 22 + 1 — номер обращения в организации. Ключ повтора ответа
     #                  частичный — значит, индекс.
-    assert counts["c"] == 116, f"CHECK: {counts['c']}, ожидалось 116"
-    assert counts["f"] == 151, f"FOREIGN KEY: {counts['f']}, ожидалось 151"
-    assert counts["u"] == 23, f"UNIQUE: {counts['u']}, ожидалось 23"
+    # Прибавка шаблонов отчётов:
+    #   CHECK 116 + 2 — вид и формат шаблона;
+    #   FK    151 + 2 — организация и владелец;
+    #   UNIQUE 23 + 1 — название шаблона у владельца. Ключ повтора заказа
+    #                  выгрузки частичный — значит, индекс.
+    assert counts["c"] == 118, f"CHECK: {counts['c']}, ожидалось 118"
+    assert counts["f"] == 153, f"FOREIGN KEY: {counts['f']}, ожидалось 153"
+    assert counts["u"] == 24, f"UNIQUE: {counts['u']}, ожидалось 24"
     assert counts["x"] == 2, f"EXCLUDE: {counts['x']}, ожидалось 2"
     assert {"btree_gist", "vector"} <= set(snapshot["extensions"])
 
@@ -248,7 +253,7 @@ def test_every_foreign_key_keeps_its_on_delete_action():
 
     # +1 — фотография сотрудника (employees/0005), RESTRICT.
     # +6 — переписка обращений (questions/0003).
-    assert len(rows) == 151, f"внешних ключей {len(rows)}, ожидалось 151"
+    assert len(rows) == 153, f"внешних ключей {len(rows)}, ожидалось 153"
 
     # 'a' = NO ACTION: значит, действие не задано
     without_action = [f"{t}.{n}" for t, n, kind, _ in rows if kind == "a"]
@@ -278,6 +283,8 @@ def test_every_foreign_key_keeps_its_on_delete_action():
     # 123 + 2 RESTRICT, 16 + 3 SET NULL, 6 + 1 CASCADE — переписка
     # обращений: организация и автор-сотрудник держат историю, учётная
     # запись HR и строка очереди — нет, сообщения живут с обращением.
-    assert actions["r"] == 125, f"RESTRICT: {actions['r']}, ожидалось 125"
+    # 125 + 1 RESTRICT, 7 + 1 CASCADE — организация и владелец шаблона
+    # отчёта: шаблон — личная настройка и уходит вместе с учётной записью.
+    assert actions["r"] == 126, f"RESTRICT: {actions['r']}, ожидалось 126"
     assert actions["n"] == 19, f"SET NULL: {actions['n']}, ожидалось 19"
-    assert actions["c"] == 7, f"CASCADE: {actions['c']}, ожидалось 7"
+    assert actions["c"] == 8, f"CASCADE: {actions['c']}, ожидалось 8"

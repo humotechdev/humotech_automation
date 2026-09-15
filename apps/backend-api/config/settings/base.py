@@ -508,6 +508,10 @@ SPECTACULAR_SETTINGS = {
     "ENUM_NAME_OVERRIDES": {
         "AttendanceEventType": "humotech.core.enums.ATTENDANCE_EVENT_TYPES",
         "ExportKind": "humotech.reports.sheets.EXPORT_KINDS",
+        # Очередь берёт и старые виды, и виды конструктора; каталог,
+        # предпросмотр и шаблоны — только виды конструктора.
+        "ExportJobKind": "humotech.reports.service.JOB_KINDS",
+        "ReportKind": "humotech.reports.catalog.REPORT_KINDS",
         # ACTIVE/INACTIVE/ARCHIVED — один и тот же набор у организации,
         # региона, отдела, должности и графика. Это не совпадение, а одно
         # состояние справочной записи, и в схеме оно должно быть одним
