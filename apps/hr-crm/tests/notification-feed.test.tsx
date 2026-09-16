@@ -58,8 +58,9 @@ describe('относительное время', () => {
     const yesterday = new Date(now.getTime() - 26 * 3600_000);
     expect(since(yesterday.toISOString(), now)).toBe('Вчера');
     // Дальше недели относительная подпись ничего не значит — дата.
+    // `\w` в JS — только латиница, поэтому «7 сен» ей не соответствует.
     const old = new Date(now.getTime() - 9 * 86400_000);
-    expect(since(old.toISOString(), now)).toMatch(/\d+ \w+/);
+    expect(since(old.toISOString(), now)).toMatch(/^\d+ \S+$/);
   });
 
   test('длительность открытой сессии словами', () => {

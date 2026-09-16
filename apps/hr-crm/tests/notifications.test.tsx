@@ -310,6 +310,15 @@ function network(
   });
 }
 
+/**
+ * Очередь отправки — вторая вкладка страницы.
+ *
+ * Первой открывается лента событий кадровика (её проверяет
+ * `notification-feed.test.tsx`), поэтому сюда приходят по адресу
+ * вкладки. Тот же адрес стоит в уведомлениях об ошибке доставки.
+ */
+const QUEUE = '/notifications?view=delivery';
+
 const opened = () => screen.findByText('Тестовое событие');
 
 describe('список', () => {
@@ -317,7 +326,7 @@ describe('список', () => {
     const calls = network(undefined, {
       counts: { ...COUNTS, total: 57, sent: 40, queued: 10, failed: 5, cancelled: 2 },
     });
-    renderApp('/notifications');
+    renderApp(QUEUE);
     await opened();
 
     const summary = screen.getByLabelText('Сводка по состояниям');
@@ -332,7 +341,7 @@ describe('список', () => {
 
   test('вкладка запрашивает ровно те состояния, что считает', async () => {
     const calls = network();
-    renderApp('/notifications');
+    renderApp(QUEUE);
     await opened();
 
     fireEvent.click(screen.getByRole('tab', { name: /Отправлено/ }));
@@ -350,7 +359,7 @@ describe('список', () => {
 
   test('поиск, область и период уходят на сервер', async () => {
     const calls = network();
-    renderApp('/notifications');
+    renderApp(QUEUE);
     await opened();
 
     fireEvent.change(screen.getByLabelText('Поиск сообщения или сотрудника'), {
@@ -376,7 +385,7 @@ describe('список', () => {
 
   test('смена региона сбрасывает несовместимый офис', async () => {
     const calls = network();
-    renderApp('/notifications');
+    renderApp(QUEUE);
     await opened();
 
     const offices = screen.getByLabelText('Офис') as HTMLSelectElement;
@@ -396,7 +405,7 @@ describe('список', () => {
 
   test('офис в строке — тот, что вернул сервер', async () => {
     network();
-    renderApp('/notifications');
+    renderApp(QUEUE);
     await opened();
 
     // Исторический офис считает сервер; интерфейс его не подменяет.
@@ -409,7 +418,7 @@ describe('список', () => {
         ? json(500, { error: { code: 'server_error', message: 'x' } })
         : null,
     );
-    renderApp('/notifications');
+    renderApp(QUEUE);
 
     expect(await screen.findByText(/это ошибка запроса, а не пустая история/i))
       .toBeTruthy();
@@ -417,15 +426,15 @@ describe('список', () => {
 
   test('без права страница объясняет отказ и не ходит за списком', async () => {
     const calls = network(undefined, { permissions: ['employees.read'] });
-    renderApp('/notifications');
+    renderApp(QUEUE);
 
-    expect(await screen.findByText(/Нет права на просмотр уведомлений/)).toBeTruthy();
+    expect(await screen.findByText(/Нет права на просмотр очереди отправки/)).toBeTruthy();
     expect(calls.some((c) => clean(c.url).endsWith('/notifications/'))).toBe(false);
   });
 
   test('под списком честное количество', async () => {
     network();
-    renderApp('/notifications');
+    renderApp(QUEUE);
     await opened();
 
     // На странице две строки, а в наборе четыре — подпись говорит правду.
@@ -437,7 +446,7 @@ describe('список', () => {
 describe('карточка', () => {
   test('показывает содержимое, историю попыток и связанный объект', async () => {
     network();
-    renderApp('/notifications');
+    renderApp(QUEUE);
     await opened();
     fireEvent.click(screen.getByText('Тестовое событие'));
 
@@ -455,7 +464,7 @@ describe('карточка', () => {
 
   test('ни chat_id, ни сырого кода ошибки в карточке нет', async () => {
     network();
-    renderApp('/notifications');
+    renderApp(QUEUE);
     await opened();
     fireEvent.click(screen.getByText('Тестовое событие'));
 
@@ -467,7 +476,7 @@ describe('карточка', () => {
 
   test('у отправленного оба действия выключены и объяснены', async () => {
     const calls = network();
-    renderApp('/notifications');
+    renderApp(QUEUE);
     await opened();
     fireEvent.click(screen.getByText('Тестовое отправленное'));
 
@@ -495,7 +504,7 @@ describe('карточка', () => {
       }
       return null;
     });
-    renderApp('/notifications');
+    renderApp(QUEUE);
     await opened();
     fireEvent.click(screen.getByText('Тестовое событие'));
     const card = await screen.findByLabelText('Выбранное уведомление');
@@ -514,7 +523,7 @@ describe('карточка', () => {
         ? new Promise<Response>(() => {})
         : null,
     );
-    renderApp('/notifications');
+    renderApp(QUEUE);
     await opened();
     fireEvent.click(screen.getByText('Тестовое событие'));
     const card = await screen.findByLabelText('Выбранное уведомление');
@@ -545,7 +554,7 @@ describe('карточка', () => {
       }
       return null;
     });
-    renderApp('/notifications');
+    renderApp(QUEUE);
     await opened();
     fireEvent.click(screen.getByText('Тестовое событие'));
     const card = await screen.findByLabelText('Выбранное уведомление');
@@ -568,7 +577,7 @@ describe('карточка', () => {
         ? json(200, { items: [], kept: false })
         : null,
     );
-    renderApp('/notifications');
+    renderApp(QUEUE);
     await opened();
     fireEvent.click(screen.getByText('Тестовое событие'));
 
@@ -587,7 +596,7 @@ describe('карточка', () => {
       }
       return null;
     });
-    renderApp('/notifications');
+    renderApp(QUEUE);
     await opened();
 
     fireEvent.click(screen.getByText('Тестовое событие'));
