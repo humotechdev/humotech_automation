@@ -532,5 +532,10 @@ SPECTACULAR_SETTINGS = {
         "QuestionMessageKind": "humotech.core.enums.QUESTION_MESSAGE_KINDS",
         "QuestionMessageSource": "humotech.core.enums.QUESTION_MESSAGE_SOURCES",
         "QuestionEvent": "humotech.core.enums.QUESTION_EVENTS",
+        # Лента событий кадровика: у её `type` и `priority` свои наборы,
+        # не совпадающие ни с видом уведомления в очереди, ни с
+        # важностью обращения.
+        "FeedEventType": "humotech.notifications.feed.FEED_TYPES",
+        "FeedPriority": "humotech.notifications.feed.FEED_PRIORITIES",
     },
 }

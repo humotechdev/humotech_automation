@@ -1185,4 +1185,86 @@ class _ContextFromRequest:
         return office_zone(self.office)
 
 
-__all__ = ["AbsenceService", "BalanceView", "RequestView"]
+#: Заявка, которая ещё держит минуты в остатке: резерв (до решения) или
+#: израсходованное (после одобрения). Отклонённая и отменённая их вернула.
+HOLDING_STATUSES = ("DRAFT", "SUBMITTED", "IN_REVIEW", "APPROVED")
+
+
+def hr_period_summary(request: AbsenceRequest) -> dict:
+    """Дни заявки, пересечение и остаток отпуска до и после — для кадровика.
+
+    Живёт здесь, а не у вызывающего: и рабочие дни, и остаток считаются
+    по правилам отсутствий, и второй расчёт рядом с ними означал бы два
+    разных ответа на один вопрос.
+
+    Остаток берётся из текущего состояния баланса, а не пересчитывается
+    заново. Минуты нерассмотренной заявки уже лежат в резерве
+    (`_reserve`), одобрение переносит их в израсходованное —
+    ДОСТУПНЫЙ остаток при этом не меняется. Поэтому «до заявки» — это
+    доступно плюс запрошено, «после» — доступно, и обе величины верны
+    и для поданной заявки, и для одобренной. У отклонённой и отменённой
+    минуты уже возвращены, и «до» равно доступному.
+    """
+    first = request.requested_start_at.date() if request.requested_start_at else None
+    last = request.requested_end_at.date() if request.requested_end_at else None
+    if first is None or last is None:
+        return {
+            "calendar_days": None,
+            "working_days": None,
+            "balance_before_days": None,
+            "balance_after_days": None,
+            "overlaps": False,
+        }
+
+    context = _ContextFromRequest(request)
+    working = AbsenceService()._working_days(context, first, last)
+
+    overlaps = (
+        EmployeeAbsence.objects.filter(
+            employee_id=request.employee_id,
+            status__in=("PLANNED", "ACTIVE"),
+            start_at__lt=request.requested_end_at,
+            end_at__gt=request.requested_start_at,
+        )
+        .exclude(origin_request_id=request.id)
+        .exists()
+        or AbsenceRequest.objects.filter(
+            employee_id=request.employee_id,
+            request_kind__in=("CREATE", "EXTEND"),
+            status__in=OPEN_STATUSES,
+            requested_start_at__lt=request.requested_end_at,
+            requested_end_at__gt=request.requested_start_at,
+        )
+        .exclude(id=request.id)
+        .exists()
+    )
+
+    before = after = None
+    if request.absence_type.deducts_leave_balance:
+        balance = LeaveBalance.objects.filter(
+            employee_id=request.employee_id,
+            absence_type_id=request.absence_type_id,
+            year=first.year,
+        ).first()
+        if balance is not None:
+            available = (
+                balance.allocated_minutes
+                + balance.adjustment_minutes
+                - balance.used_minutes
+                - balance.reserved_minutes
+            )
+            needed = working * MINUTES_PER_WORKING_DAY
+            held = available + needed if request.status in HOLDING_STATUSES else available
+            before = round(held / MINUTES_PER_WORKING_DAY, 1)
+            after = round((held - needed) / MINUTES_PER_WORKING_DAY, 1)
+
+    return {
+        "calendar_days": (last - first).days + 1,
+        "working_days": working,
+        "balance_before_days": before,
+        "balance_after_days": after,
+        "overlaps": overlaps,
+    }
+
+
+__all__ = ["AbsenceService", "BalanceView", "RequestView", "hr_period_summary"]

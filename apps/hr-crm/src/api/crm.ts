@@ -1500,6 +1500,193 @@ export const cancelNotification = (id: string) =>
     body: {},
   });
 
+// --- лента событий кадровика ------------------------------------------------
+
+/**
+ * Лента — НЕ очередь отправки выше.
+ *
+ * Очередь отвечает на вопрос «ушло ли сообщение сотруднику»; лента — на
+ * вопрос «что случилось в кадровом контуре и ждёт человека». Разные
+ * данные, разные адреса, и складывать их в один список нельзя.
+ */
+export type FeedType =
+  | 'absence_request'
+  | 'sick_leave'
+  | 'absence_cancel'
+  | 'absence_document'
+  | 'attendance_correction'
+  | 'attendance_open'
+  | 'question'
+  | 'delivery_error'
+  | 'report_ready'
+  | 'employee_added';
+
+export type FeedGroup =
+  | 'requests' | 'documents' | 'attendance' | 'questions' | 'system';
+
+export type FeedEvent = {
+  /** Составной ключ «вид:запись»: событий своей таблицы у ленты нет. */
+  id: string;
+  type: FeedType;
+  group: FeedGroup;
+  title: string;
+  short_text: string;
+  employee_id: string | null;
+  employee_name: string;
+  office_id: string | null;
+  office_name: string | null;
+  status: string;
+  status_label: string;
+  priority: 'NORMAL' | 'HIGH' | 'CRITICAL';
+  requires_action: boolean;
+  created_at: string;
+  /** Прочтение ЭТОГО пользователя. У коллеги оно своё. */
+  read_at: string | null;
+  related_entity_type: string;
+  related_entity_id: string;
+  action_url: string;
+  action_title: string;
+};
+
+export type FeedCounts = {
+  all: number;
+  unread: number;
+  action: number;
+  requests: number;
+  documents: number;
+  attendance: number;
+  questions: number;
+  system: number;
+};
+
+export type FeedPage = {
+  items: FeedEvent[];
+  counts: FeedCounts;
+  next_cursor: string | null;
+  has_more: boolean;
+  window_days: number;
+};
+
+/** Безопасные сведения о приложенном файле. Самого файла здесь нет. */
+export type FeedDocument = {
+  id: string;
+  document_type: string;
+  verification_status: string;
+  verification_label: string;
+  verified_at: string | null;
+  file_name: string;
+  size_bytes: number;
+  uploaded_at: string;
+  scan_status: string;
+};
+
+export type FeedPerson = { id: string; name: string };
+
+export type FeedDetail = FeedEvent & {
+  employee: {
+    id: string;
+    full_name: string;
+    office_id?: string | null;
+    office_name?: string | null;
+    department_name?: string | null;
+    position_name?: string | null;
+  } | null;
+  author: FeedPerson | null;
+  comment: string | null;
+  occurred_at: string;
+  absence?: {
+    type_name: string;
+    type_code: string;
+    request_kind: string;
+    is_extension: boolean;
+    first_day: string | null;
+    last_day: string | null;
+    requires_document: boolean;
+    document: FeedDocument | null;
+    review_comment: string | null;
+    calendar_days: number | null;
+    working_days: number | null;
+    balance_before_days: number | null;
+    balance_after_days: number | null;
+    overlaps: boolean;
+  };
+  correction?: {
+    day: string | null;
+    current_entry_at: string | null;
+    current_exit_at: string | null;
+    requested_entry_at: string | null;
+    requested_exit_at: string | null;
+    event_kind: string;
+    review_comment: string | null;
+    has_document: boolean;
+  };
+  session?: {
+    started_at: string;
+    open_minutes: number;
+    office_name: string | null;
+    schedule_name: string | null;
+    qr_point_name: string | null;
+    last_event_at: string | null;
+    last_event_type: string | null;
+  };
+  question?: {
+    topic: string | null;
+    channel: string;
+    category: string;
+    priority: string;
+    last_message_at: string;
+    assigned_to: FeedPerson | null;
+  };
+  delivery?: {
+    channel: string;
+    notification_type: string;
+    attempts: number;
+    last_attempt_at: string;
+    next_attempt_at: string | null;
+    will_retry: boolean;
+  };
+  report?: {
+    kind: string;
+    fmt: string;
+    file_name: string | null;
+    size_bytes: number | null;
+    expires_at: string | null;
+    rows: number | null;
+  };
+  new_employee?: {
+    employee_number: string;
+    hire_date: string;
+    employment_status: string;
+    telegram_connected: boolean;
+  };
+};
+
+export type FeedQuery = { scope?: string; limit?: string; cursor?: string };
+
+export const feed = (params: FeedQuery = {}, signal?: AbortSignal) =>
+  request<FeedPage>(`/notification-feed${query(params)}`, signal ? { signal } : {});
+
+export const feedCounts = (signal?: AbortSignal) =>
+  request<FeedCounts>('/notification-feed/counts', signal ? { signal } : {});
+
+export const feedEvent = (id: string, signal?: AbortSignal) =>
+  request<FeedDetail>(
+    `/notification-feed/${encodeURIComponent(id)}`,
+    signal ? { signal } : {},
+  );
+
+export const readFeedEvent = (id: string) =>
+  request<FeedCounts>(`/notification-feed/${encodeURIComponent(id)}`, {
+    method: 'POST',
+    body: {},
+  });
+
+export const readAllFeed = () =>
+  request<FeedCounts & { marked: number }>('/notification-feed/read-all', {
+    method: 'POST',
+    body: {},
+  });
+
 // --- администрирование: учётные записи, роли, журнал ------------------------
 
 /** Назначение в строке списка: роль и область, без подробностей. */

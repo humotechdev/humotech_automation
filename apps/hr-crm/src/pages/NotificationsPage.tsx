@@ -1,8 +1,17 @@
 /**
- * Уведомления: что уходило сотрудникам и что с этим стало.
+ * Уведомления: события кадровика и очередь отправки сотрудникам.
  *
- * Страница отвечает на два вопроса, и оба — про правду, а не про
- * оформление:
+ * Две вкладки, потому что это два разных вопроса.
+ *
+ *   ЛЕНТА СОБЫТИЙ — что произошло в кадровом контуре и ждёт человека:
+ *   заявки, справки, исправления отметок, незакрытые выходы, обращения.
+ *   То же самое показывает колокольчик в шапке, здесь — целиком;
+ *
+ *   ОЧЕРЕДЬ ОТПРАВКИ — что уходило сотрудникам в Telegram и что с этим
+ *   стало. Своя область данных, свои права (`notifications.read`) и своя
+ *   ответственность, поэтому она осталась ровно такой, какой была.
+ *
+ * Про очередь — два вопроса, и оба про правду, а не про оформление:
  *
  *   УШЛО ЛИ. Статус берётся из очереди, а не выводится из нажатия.
  *   Успешный ответ отправщика означает «передано в Telegram», и
@@ -17,13 +26,15 @@
  * только просит сервер вернуть строку в очередь.
  */
 
-import { useCallback, useMemo, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 
 import * as api from '../api/crm';
 import { ApiFailure, messageFor } from '../api/errors';
 import { AppShell } from '../components/AppShell';
 import { AppIcon } from '../components/AppIcon';
+import { FeedCard, FeedRow } from '../components/FeedParts';
+import { FEED_FILTERS, filterTitle } from '../features/notifications/feed-model';
 import { useFeed } from '../features/live/feed';
 import {
   CHANNEL, STATUS, TABS, attemptTitle, cancelBlockedBecause, deliveryNote,
@@ -52,6 +63,11 @@ export function NotificationsPage() {
   const picked = params.get('id') ?? '';
   const tab = (TABS.find((item) => item.key === params.get('tab'))?.key ??
     'all') as Tab;
+  // Вкладка страницы. Отдельный параметр от `tab`: тот уже занят
+  // состояниями очереди, и ссылки вида `?tab=failed` обязаны продолжать
+  // работать — они разосланы по системе и стоят в старых уведомлениях.
+  const view = params.get('view') === 'delivery' ? 'delivery' : 'feed';
+  const onQueue = view === 'delivery';
 
   const [updated, setUpdated] = useState<Date | null>(null);
   const [acting, setActing] = useState(false);
@@ -86,7 +102,7 @@ export function NotificationsPage() {
         offices: o.items.filter((item) => item.status === 'ACTIVE'),
       })),
     'notifications-directory',
-    mayRead,
+    mayRead && onQueue,
   );
   const scope = directory.state === 'ready'
     ? directory.data
@@ -144,7 +160,7 @@ export function NotificationsPage() {
   const { live, loadMore, more: tail, replace, refresh } = useFeed<
     api.Notification,
     api.NotificationCounts
-  >({ key, load, more, waiting: moving, onFresh, enabled: mayRead });
+  >({ key, load, more, waiting: moving, onFresh, enabled: mayRead && onQueue });
 
   const counts = live.state === 'ready' ? live.data.counts : null;
   const zone = counts?.timezone ?? '';
@@ -155,12 +171,12 @@ export function NotificationsPage() {
   const [card] = useBlock(
     (signal) => api.notification(picked, signal),
     `card|${picked}|${attempt}`,
-    mayRead && Boolean(picked),
+    mayRead && onQueue && Boolean(picked),
   );
   const [attempts] = useBlock(
     (signal) => api.notificationAttempts(picked, signal),
     `attempts|${picked}|${attempt}`,
-    mayRead && Boolean(picked),
+    mayRead && onQueue && Boolean(picked),
   );
 
   // --- действия --------------------------------------------------------------
@@ -198,6 +214,36 @@ export function NotificationsPage() {
     }
   }
 
+  const tabs = (
+    <div className="tabs tabs--page" role="tablist" aria-label="Раздел уведомлений">
+      <button type="button" role="tab" aria-selected={!onQueue}
+              className={onQueue ? 'tab' : 'tab tab--on'}
+              onClick={() => patch({ view: null, id: null })}>
+        Лента событий
+      </button>
+      <button type="button" role="tab" aria-selected={onQueue}
+              className={onQueue ? 'tab tab--on' : 'tab'}
+              onClick={() => patch({ view: 'delivery', id: null })}>
+        Очередь отправки
+      </button>
+    </div>
+  );
+
+  if (!onQueue) {
+    return (
+      <AppShell breadcrumb="Уведомления" section="notifications">
+        <header className="head head--tight">
+          <div>
+            <h1 className="head__title">Уведомления</h1>
+            <p className="head__sub">События, которые ждут кадровика</p>
+          </div>
+        </header>
+        {tabs}
+        <FeedBoard opened={picked} onOpen={(id) => patch({ id: id || null })} />
+      </AppShell>
+    );
+  }
+
   if (!mayRead) {
     return (
       <AppShell breadcrumb="Уведомления" section="notifications">
@@ -207,9 +253,11 @@ export function NotificationsPage() {
             <p className="head__sub">История сообщений сотрудникам и статусы отправки</p>
           </div>
         </header>
+        {tabs}
         <p className="empty empty--bad">
-          Нет права на просмотр уведомлений. В них видно, что писали конкретным
-          людям, поэтому это отдельное разрешение — попросите его у администратора.
+          Нет права на просмотр очереди отправки. В ней видно, что писали
+          конкретным людям, поэтому это отдельное разрешение — попросите его
+          у администратора.
         </p>
       </AppShell>
     );
@@ -248,6 +296,8 @@ export function NotificationsPage() {
           </p>
         </div>
       </header>
+
+      {tabs}
 
       <ul className="summary" aria-label="Сводка по состояниям">
         <Tile icon="doc" title="Всего" value={counts?.total} />
@@ -588,6 +638,197 @@ function Attempts({ block, zone }: {
 }
 
 // --- мелочи -----------------------------------------------------------------
+
+/**
+ * Лента событий целиком — то же, что в колокольчике, но без потолка в
+ * семь строк и с подгрузкой по курсору.
+ *
+ * Выбранное событие держится в адресе: ссылку на разбор можно переслать
+ * коллеге, и она откроет ровно то же самое. Отметка прочтения ставится
+ * при нажатии на строку, и только для того, кто нажал.
+ */
+const BOARD_PAGE = '20';
+
+function FeedBoard({
+  opened,
+  onOpen,
+}: {
+  opened: string;
+  onOpen: (id: string) => void;
+}) {
+  const navigate = useNavigate();
+  const [filter, setFilter] = useState<string>('all');
+  const [page, setPage] = useState<api.FeedPage | null>(null);
+  const [rows, setRows] = useState<api.FeedEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [tail, setTail] = useState(false);
+  const [card, setCard] = useState<api.FeedDetail | null>(null);
+  const [cardFailed, setCardFailed] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    const stop = new AbortController();
+    setLoading(true);
+    api
+      .feed({ scope: filter, limit: BOARD_PAGE }, stop.signal)
+      .then((data) => {
+        setPage(data);
+        setRows(data.items);
+        setFailed(null);
+      })
+      .catch((error: unknown) => {
+        if (stop.signal.aborted) return;
+        setFailed(messageFor(error));
+      })
+      .finally(() => {
+        if (!stop.signal.aborted) setLoading(false);
+      });
+    return () => stop.abort();
+  }, [filter, attempt]);
+
+  useEffect(() => {
+    if (!opened) {
+      setCard(null);
+      return;
+    }
+    const stop = new AbortController();
+    setCardFailed(null);
+    api
+      .feedEvent(opened, stop.signal)
+      .then(setCard)
+      .catch((error: unknown) => {
+        if (stop.signal.aborted) return;
+        setCard(null);
+        setCardFailed(
+          error instanceof ApiFailure && error.status === 404
+            ? 'Событие больше недоступно: запись изменилась или закрыта'
+            : messageFor(error),
+        );
+      });
+    return () => stop.abort();
+  }, [opened]);
+
+  function choose(event: api.FeedEvent) {
+    onOpen(event.id);
+    if (event.read_at) return;
+    const before = rows;
+    const moment = new Date().toISOString();
+    setRows((was) =>
+      was.map((one) => (one.id === event.id ? { ...one, read_at: moment } : one)),
+    );
+    setPage((was) =>
+      was ? { ...was, counts: { ...was.counts, unread: Math.max(0, was.counts.unread - 1) } } : was,
+    );
+    setNote(null);
+    void api.readFeedEvent(event.id).catch((error: unknown) => {
+      // Возврат к прежнему состоянию: показывать прочитанным то, что
+      // сервер прочитанным не считает, нельзя.
+      setRows(before);
+      setNote(messageFor(error));
+    });
+  }
+
+  function readAll() {
+    setNote(null);
+    void api
+      .readAllFeed()
+      .then(() => setAttempt((n) => n + 1))
+      .catch((error: unknown) => setNote(messageFor(error)));
+  }
+
+  function loadMore() {
+    const cursor = page?.next_cursor;
+    if (!cursor) return;
+    setTail(true);
+    api
+      .feed({ scope: filter, limit: BOARD_PAGE, cursor })
+      .then((data) => {
+        setPage(data);
+        setRows((was) => [...was, ...data.items]);
+      })
+      .catch((error: unknown) => setNote(messageFor(error)))
+      .finally(() => setTail(false));
+  }
+
+  const counts = page?.counts ?? null;
+  const unread = counts?.unread ?? 0;
+
+  return (
+    <div className="nf nf--page">
+      <div className="nf__pageHead">
+        <div className="tabs" role="tablist" aria-label="Отбор событий">
+          {FEED_FILTERS.map((one) => {
+            const on = one.key === filter;
+            const count = counts ? counts[one.key] : null;
+            return (
+              <button key={one.key} type="button" role="tab" aria-selected={on}
+                      className={on ? 'tab tab--on' : 'tab'}
+                      onClick={() => setFilter(one.key)}>
+                {one.title}
+                {count !== null && <span className="tab__count">{count}</span>}
+              </button>
+            );
+          })}
+        </div>
+        <button type="button" className="nf__link nf__link--action"
+                onClick={readAll} disabled={unread === 0}>
+          Прочитать все
+        </button>
+      </div>
+
+      {note && <p className="nf__note">{note}</p>}
+
+      <div className="nf__body nf__body--page">
+        <div className="nf__list">
+          {loading && rows.length === 0 && <p className="nf__empty">Загружаем ленту…</p>}
+          {!loading && failed && rows.length === 0 && (
+            <p className="nf__empty nf__empty--bad">
+              {failed}
+              <button type="button" className="nf__retry"
+                      onClick={() => setAttempt((n) => n + 1)}>
+                Повторить
+              </button>
+            </p>
+          )}
+          {!loading && !failed && rows.length === 0 && (
+            <p className="nf__empty">
+              {filter === 'all'
+                ? `За последние ${page?.window_days ?? 30} дней событий не было`
+                : `В отборе «${filterTitle(filter)}» событий нет`}
+            </p>
+          )}
+
+          {rows.map((event) => (
+            <FeedRow key={event.id} event={event} active={event.id === opened}
+                     onPick={choose} />
+          ))}
+
+          {page?.has_more && (
+            <button type="button" className="btn btn--small nf__more"
+                    disabled={tail} onClick={loadMore}>
+              {tail ? 'Читаем…' : 'Показать ещё'}
+            </button>
+          )}
+        </div>
+
+        <div className="nf__card">
+          {cardFailed && <p className="nf__empty nf__empty--bad">{cardFailed}</p>}
+          {!cardFailed && !card && (
+            <p className="nf__empty">
+              {rows.length === 0 ? 'Событий нет' : 'Выберите событие слева'}
+            </p>
+          )}
+          {card && (
+            <FeedCard card={card} onFollow={(url) => navigate(url)} />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 function Tile({ icon, title, value }: {
   icon: Parameters<typeof AppIcon>[0]['name'];

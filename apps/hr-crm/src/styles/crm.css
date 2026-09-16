@@ -861,21 +861,11 @@ html {
   cursor: pointer;
 }
 
-/* Колокольчик с точкой: непрочитанное видно до того, как открыл список. */
+/* Колокольчик. Точка сама по себе ничего не утверждала: она горела
+   всегда. Вместо неё — настоящее число непрочитанного (`.nf__badge`),
+   и когда непрочитанного нет, у колокольчика нет ничего. */
 .tool--bell {
   position: relative;
-}
-
-.tool--bell::after {
-  content: '';
-  position: absolute;
-  top: 7px;
-  right: 8px;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #f0402f;
-  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.85);
 }
 
 /* «RU» стоит на своей полупрозрачной плашке: иначе надпись висит прямо
@@ -8004,4 +7994,603 @@ html {
 
 .toolbar--day .pick select {
   min-width: 0;
+}
+
+/* --- уведомления: колокольчик и выпадающее окно ---------------------------
+ *
+ * Окно висит под колокольчиком и перекрывает страницу, поэтому фон под
+ * ним слегка притемняется: без этого две сетки — страницы и окна —
+ * читаются как одна. Затемнение лежит ОТДЕЛЬНЫМ слоем под панелью, а не
+ * тенью на ней: тень не перехватывает нажатие, а закрыть окно щелчком
+ * мимо человек ждёт.
+ *
+ * Ширина 620 и две колонки 268 + остальное — из образца. Список
+ * рассчитан на семь строк; дальше ведёт «История уведомлений».
+ */
+
+.nf {
+  position: relative;
+  display: inline-flex;
+}
+
+.nf__scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(11, 40, 100, 0.16);
+  animation: nf-fade 0.14s ease-out;
+}
+
+.nf__badge {
+  position: absolute;
+  top: 3px;
+  right: 2px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #f0402f;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 17px;
+  text-align: center;
+}
+
+.nf__panel {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: -6px;
+  z-index: 41;
+  width: 620px;
+  max-width: calc(100vw - 32px);
+  border: 1px solid var(--border-soft);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 18px 44px rgba(19, 62, 104, 0.18);
+  transform-origin: top right;
+  animation: nf-open 0.16s ease-out;
+}
+
+@keyframes nf-open {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.985);
+  }
+}
+
+@keyframes nf-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nf__panel,
+  .nf__scrim {
+    animation: none;
+  }
+}
+
+.nf__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 18px 12px;
+}
+
+.nf__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  color: var(--text-heading);
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.nf__count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #f0402f;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.nf__tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.nf__filter {
+  position: relative;
+}
+
+.nf__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--action-text);
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.nf__link:hover {
+  color: var(--blue-700);
+}
+
+.nf__link:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+.nf__sep {
+  width: 1px;
+  height: 15px;
+  background: var(--border-default);
+}
+
+.nf__menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 12;
+  width: 210px;
+  margin: 0;
+  padding: 5px;
+  list-style: none;
+  border: 1px solid var(--border-default);
+  border-radius: 11px;
+  background: #fff;
+  box-shadow: var(--shadow-panel);
+  animation: drop-in 0.16s ease-out;
+}
+
+.nf__option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--ink-primary);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nf__option:hover {
+  background: var(--hover-bg);
+}
+
+.nf__option--on {
+  background: var(--selection-bg);
+  color: var(--selection-text);
+  font-weight: 600;
+}
+
+.nf__optionCount {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* Сообщение о неудавшемся действии. Строкой в окне, а не окном поверх
+   окна: человек уже здесь, и прерывать его нечем. */
+.nf__note {
+  margin: 0 18px 8px;
+  padding: 7px 10px;
+  border-radius: 9px;
+  background: rgba(240, 64, 47, 0.08);
+  color: #b3261e;
+  font-size: 12.5px;
+}
+
+.nf__body {
+  display: grid;
+  grid-template-columns: 268px minmax(0, 1fr);
+  border-top: 1px solid var(--border-soft);
+}
+
+.nf__list {
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  border-right: 1px solid var(--border-soft);
+}
+
+.nf__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 10px;
+  border: 0;
+  border-left: 3px solid transparent;
+  border-radius: 10px;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nf__row + .nf__row {
+  border-top: 1px solid var(--border-soft);
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.nf__row:hover {
+  background: var(--hover-bg);
+}
+
+.nf__row--on {
+  border-left-color: var(--action-bg);
+  background: var(--selection-bg);
+}
+
+.nf__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: var(--blue-100);
+  color: var(--blue-700);
+}
+
+.nf__icon--red {
+  background: rgba(240, 64, 47, 0.12);
+  color: #c33227;
+}
+
+.nf__icon--orange {
+  background: rgba(240, 150, 30, 0.14);
+  color: #b26a04;
+}
+
+.nf__icon--green {
+  background: rgba(0, 155, 117, 0.12);
+  color: #00795a;
+}
+
+.nf__text {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Длинный заголовок и длинное ФИО переносятся на вторую строку, а не
+   режутся сразу: фамилию в списке читают целиком. Третьей строки не
+   бывает — дальше отточие. */
+.nf__rowTitle {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  color: var(--text-heading);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.nf__rowWho {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  color: var(--text-body);
+  font-size: 12.5px;
+  line-height: 1.3;
+}
+
+.nf__rowWhen {
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+
+.nf__dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border-radius: 999px;
+  background: var(--action-bg);
+}
+
+/* Красный — только у критичного: ошибка доставки, забытый выход за
+   половину суток. Если им метить всё, он перестаёт значить что-либо. */
+.nf__dot--red {
+  background: #f0402f;
+}
+
+.nf__history {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: auto;
+  padding: 11px 0 8px;
+  border-top: 1px solid var(--border-soft);
+  color: var(--action-text);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.nf__history:hover {
+  color: var(--blue-700);
+}
+
+.nf__card {
+  display: flex;
+  flex-direction: column;
+  min-height: 300px;
+  padding: 16px 18px 18px;
+}
+
+.nf__cardHead {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.nf__cardWho {
+  min-width: 0;
+}
+
+.nf__cardTitle {
+  margin: 0;
+  color: var(--text-heading);
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.nf__cardName {
+  margin: 4px 0 0;
+  color: var(--text-body);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.nf__cardPlace {
+  margin: 2px 0 0;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+
+.nf__facts {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 16px 0 0;
+}
+
+.nf__fact {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.nf__factIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--blue-050);
+  color: var(--blue-700);
+}
+
+.nf__fact dt {
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.nf__fact dd {
+  margin: 1px 0 0;
+  color: var(--text-heading);
+  font-size: 13.5px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.nf__state {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 7px;
+  background: rgba(240, 150, 30, 0.16);
+  color: #9a5b02;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.nf__state--green {
+  background: rgba(0, 155, 117, 0.14);
+  color: #00795a;
+}
+
+.nf__state--red {
+  background: rgba(240, 64, 47, 0.12);
+  color: #b3261e;
+}
+
+.nf__state--grey {
+  background: rgba(233, 240, 248, 0.9);
+  color: var(--text-muted);
+}
+
+.nf__comment {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.nf__commentTitle {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.nf__commentText {
+  margin: 4px 0 0;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  color: var(--text-body);
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+
+.nf__author {
+  margin: 10px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.nf__go {
+  width: 100%;
+  margin-top: auto;
+  padding: 12px 16px;
+  border: 0;
+  border-radius: 11px;
+  background: var(--action-bg);
+  color: var(--text-on-action);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.nf__go:hover {
+  background: var(--action-bg-hover);
+}
+
+.nf__empty {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 18px 12px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.nf__empty--bad {
+  color: #b3261e;
+}
+
+.nf__retry {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--action-text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* Узкий экран: две колонки не помещаются, и карточка уезжает под
+   список. Перекрывать ими друг друга нельзя — правая область важна
+   ровно настолько же, насколько левая. */
+@media (max-width: 720px) {
+  .nf__panel {
+    position: fixed;
+    top: calc(var(--topbar-height) + 8px);
+    right: 16px;
+    left: 16px;
+    width: auto;
+  }
+
+  .nf__body {
+    grid-template-columns: minmax(0, 1fr);
+    max-height: calc(100vh - var(--topbar-height) - 90px);
+    overflow-y: auto;
+  }
+
+  .nf__list {
+    border-right: 0;
+    border-bottom: 1px solid var(--border-soft);
+  }
+}
+
+/* Лента событий страницей: то же окно, развёрнутое во всю рабочую
+   область. Классы те же — иначе строка в колокольчике и строка на
+   странице разошлись бы по виду и стали бы читаться как разные вещи. */
+
+.tabs--page {
+  margin-bottom: 14px;
+}
+
+.nf--page {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--panel-radius);
+  background: #fff;
+  box-shadow: var(--shadow-panel);
+}
+
+.nf__pageHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+}
+
+.nf__body--page {
+  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+  min-height: 420px;
+}
+
+.nf__body--page .nf__list {
+  padding: 8px;
+  max-height: 620px;
+  overflow-y: auto;
+}
+
+.nf__body--page .nf__card {
+  padding: 18px 22px 22px;
+}
+
+.nf__more {
+  align-self: center;
+  margin: 10px 0 4px;
+}
+
+@media (max-width: 900px) {
+  .nf__body--page {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .nf__body--page .nf__list {
+    border-right: 0;
+    border-bottom: 1px solid var(--border-soft);
+  }
 }

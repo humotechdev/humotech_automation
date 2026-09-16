@@ -14,6 +14,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 
 import { BrandLockup } from './Logo';
+import { NotificationBell } from './NotificationBell';
 import { backdropImage } from '../features/shell/backdrop';
 import { AppIcon, ICON_SIZE, type AppIconName } from './AppIcon';
 import { useSession } from '../features/auth/session';
@@ -112,7 +113,7 @@ export function AppShell({ children, badges = {}, breadcrumb, section = 'home' }
           </p>
           <div className="topbar__tools">
             <EmployeeSearch />
-            <Bell />
+            <NotificationBell />
             <Language />
             <span className="avatar avatar--sm" aria-hidden="true">
               {initials(user?.email)}
@@ -189,15 +190,6 @@ function EmployeeSearch() {
         aria-label="Поиск сотрудника"
       />
     </label>
-  );
-}
-
-/** Уведомления. Числа нет: право `notifications.read` есть не у всех. */
-function Bell() {
-  return (
-    <button type="button" className="tool tool--bell" aria-label="Уведомления">
-      <AppIcon name="bell" size={ICON_SIZE.title} />
-    </button>
   );
 }
 

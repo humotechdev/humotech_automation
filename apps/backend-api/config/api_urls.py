@@ -46,6 +46,12 @@ from humotech.knowledge.views import (
     KnowledgeIndexJobViewSet,
     KnowledgeSourceViewSet,
 )
+from humotech.notifications.feed_views import (
+    FeedCountsView,
+    FeedItemView,
+    FeedReadAllView,
+    FeedView,
+)
 from humotech.notifications.views import NotificationViewSet
 from humotech.offices.views import OfficeViewSet
 from humotech.organizations.views import (
@@ -187,6 +193,27 @@ urlpatterns = [
     # Общая очередь заявок: отсутствия и исправления отметок одним
     # списком. Склеить две страницы на клиенте нельзя — получилась бы
     # не очередь, а произвольная смесь двух её половин.
+    # Лента событий кадровика. Не очередь отправки (`notifications`):
+    # та отвечает, ушло ли сообщение сотруднику, а эта — что случилось
+    # в кадровом контуре и ждёт человека.
+    path("notification-feed", FeedView.as_view(), name="notification-feed"),
+    path(
+        "notification-feed/counts",
+        FeedCountsView.as_view(),
+        name="notification-feed-counts",
+    ),
+    path(
+        "notification-feed/read-all",
+        FeedReadAllView.as_view(),
+        name="notification-feed-read-all",
+    ),
+    # Ключ события составной («вид:запись»), поэтому в адресе он
+    # строкой: UUID-конвертер такой ключ не пропустит.
+    path(
+        "notification-feed/<str:event_id>",
+        FeedItemView.as_view(),
+        name="notification-feed-item",
+    ),
     path("requests", RequestQueueView.as_view(), name="requests-queue"),
     # Счётчики вкладок очереди одним ответом: по одной строке на вкладку
     # видно только «есть или нет», а не сколько.
