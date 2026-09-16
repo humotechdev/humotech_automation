@@ -179,6 +179,23 @@ input {
   color: var(--text-on-deep-muted);
 }
 
+.brand__logo .brand__full {
+  /* Пропорции — из самого файла: ширина считается от высоты, надпись не
+     сжимается. Тот же приём, что у знака в боковом меню CRM. */
+  height: clamp(44px, 4vw, 60px);
+  width: auto;
+  max-width: 100%;
+  object-fit: contain;
+  object-position: left center;
+  display: block;
+}
+
+/* Узкого варианта здесь нет: панель входа либо показана целиком,
+   либо скрыта вовсе. */
+.brand__logo .brand__mark {
+  display: none;
+}
+
 .brand__head {
   display: flex;
   flex-direction: column;
