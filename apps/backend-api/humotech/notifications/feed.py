@@ -698,7 +698,7 @@ class FeedService(BaseService):
             entity_id=row.id,
             created_at=row.finished_at or row.created_at,
             title="Отчёт готов",
-            short_text=f"{row.kind} · {row.fmt.upper()}",
+            short_text=f"{_report_title(row.kind)} · {row.fmt.upper()}",
             status=row.status,
             status_label="Готов",
             priority="NORMAL",
@@ -1020,7 +1020,7 @@ class FeedService(BaseService):
             entity_id=row.id,
             created_at=row.finished_at or row.created_at,
             title="Отчёт готов",
-            short_text=f"{row.kind} · {row.fmt.upper()}",
+            short_text=f"{_report_title(row.kind)} · {row.fmt.upper()}",
             status=row.status,
             status_label="Готов",
             priority="NORMAL",
@@ -1177,6 +1177,18 @@ class FeedService(BaseService):
                 "Некорректный идентификатор события",
                 details={"field": "id", "value": event_id},
             ) from exc
+
+
+def _report_title(kind: str) -> str:
+    """Название вида выгрузки словами.
+
+    В ленте не место техническому ключу: «employees» — это то, чем вид
+    назван в коде, а кадровик заказывал «Сотрудников». Неизвестный ключ
+    показывается как есть: придумывать ему название нельзя.
+    """
+    from humotech.reports.catalog import KIND_TITLES
+
+    return KIND_TITLES.get(kind, kind)
 
 
 def _document_json(row: AbsenceDocument | None) -> dict | None:
