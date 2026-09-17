@@ -24,6 +24,7 @@ import {
   formatPercent, formatTime, longDate, percent, shift, today, useBlock,
   type Block,
 } from '../features/dashboard/data';
+import '../styles/dashboard.css';
 
 const RANGES = [
   { key: '7', title: '7 дней', days: 7 },
@@ -229,437 +230,441 @@ export function DashboardPage() {
 
   return (
     <AppShell breadcrumb="Главная" badges={badges}>
-      <header className="head">
-        <div>
-          {/* Бейджа «Демо-данные» здесь нет намеренно. Он остался в
-              «Администрировании» и «Настройках» — там он предупреждает
-              перед действиями над организацией, и это его работа. На
-              обзорной странице он ничего не защищает, а заголовок
-              главной — первое, что видно в CRM. */}
-          <h1 className="head__title">Обзор на сегодня</h1>
-          <p className="head__sub">
-            {longDate(day)} <span className="dot">·</span> По данным отметок
-          </p>
-        </div>
-
-        <div className="head__filters">
-          <div className="filters">
-            <Dropdown
-              label="Регион"
-              value={region}
-              empty="Все регионы"
-              options={
-                directory.state === 'ready'
-                  ? directory.data.regions.map((r) => ({ id: r.id, name: r.name }))
-                  : []
-              }
-              onChange={(value) => {
-                setRegion(value);
-                // Офис другого региона перестал быть допустимым выбором.
-                setOffice('');
-              }}
-            />
-            <Dropdown
-              label="Офис"
-              value={office}
-              empty={`Все офисы${visibleOffices.length ? ` · ${visibleOffices.length}` : ''}`}
-              options={visibleOffices.map((o) => ({ id: o.id, name: o.name }))}
-              onChange={setOffice}
-            />
-            <DatePicker
-              label="Дата"
-              value={day}
-              now={today()}
-              onChange={setDay}
-            />
-            <button
-              type="button"
-              className="pick pick--icon"
-              aria-label="Обновить"
-              onClick={() => setAttempt((n) => n + 1)}
-            >
-              <AppIcon name="refresh" size={16} />
-            </button>
+      {/* Корень страницы: по нему `dashboard.css` находит главную и
+          не задевает общие `.head`, `.cards` и `.panel` других разделов. */}
+      <div className="dash">
+        <header className="head">
+          <div>
+            {/* Бейджа «Демо-данные» здесь нет намеренно. Он остался в
+                «Администрировании» и «Настройках» — там он предупреждает
+                перед действиями над организацией, и это его работа. На
+                обзорной странице он ничего не защищает, а заголовок
+                главной — первое, что видно в CRM. */}
+            <h1 className="head__title">Обзор на сегодня</h1>
+            <p className="head__sub">
+              {longDate(day)} <span className="dot">·</span> По данным отметок
+            </p>
           </div>
-          <p className="head__updated">
-            {updated ? `Обновлено в ${formatTime(updated)}` : 'Загружаем…'}
-          </p>
-        </div>
-      </header>
 
-      <Section block={cards} name="показатели">
-        {(data) => (
-          <ul className="cards">
-            {CARDS.map((card) => {
-              const found = data.cards.find((c) => c.key === card.key);
-              if (!found) return null;
-              const share =
-                card.key === 'in_office'
-                  ? percent(found.value, counts['should_work_today'] ?? 0)
-                  : null;
-              const past = day < today();
-              const href = cardLink(found);
-              const note =
-                card.key === 'in_office'
-                  ? share === null
-                    ? 'Сравнивать не с чем'
-                    : `из ${counts['should_work_today']} · ${formatPercent(share)}`
-                  : (past && card.pastNote) || card.note;
-              const inside = (
-                <>
-                  <p className="metric__head">
-                    <span className="metric__mark" aria-hidden="true">
-                      <AppIcon name={card.icon} size={18} />
-                    </span>
-                    <span>{(past && card.past) || card.title}</span>
-                  </p>
-                  <p className="metric__value">{found.value}</p>
-                  <p className="metric__note">
-                    <span>{note}</span>
-                    {/* Стрелка стоит только там, где нажатие действительно
-                        открывает список. Карточка без адреса остаётся
-                        текстом и не притворяется кнопкой. */}
-                    {href && <AppIcon name="arrow" size={16} />}
-                  </p>
-                </>
-              );
-              const shape = card.tone
-                ? `metric metric--${card.tone}${TINTED.has(card.tone) ? ' metric--tone' : ''}`
-                : 'metric';
-              return (
-                <li key={card.key}>
-                  {href ? (
-                    <Link to={href} className={`${shape} metric--go`}>{inside}</Link>
-                  ) : (
-                    <div className={shape}>{inside}</div>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </Section>
-
-      <div className="grid">
-        <div className="grid__main">
-          <section className="panel panel--chart">
-            <div className="panel__head">
-              <div>
-                <h2 className="panel__title">Явка за {range.title.toLowerCase()}</h2>
-                <p className="panel__sub">Отметились хотя бы один раз за день</p>
-              </div>
-              <PeriodSwitch value={range.key} onChange={setRange} />
+          <div className="head__filters">
+            <div className="filters">
+              <Dropdown
+                label="Регион"
+                value={region}
+                empty="Все регионы"
+                options={
+                  directory.state === 'ready'
+                    ? directory.data.regions.map((r) => ({ id: r.id, name: r.name }))
+                    : []
+                }
+                onChange={(value) => {
+                  setRegion(value);
+                  // Офис другого региона перестал быть допустимым выбором.
+                  setOffice('');
+                }}
+              />
+              <Dropdown
+                label="Офис"
+                value={office}
+                empty={`Все офисы${visibleOffices.length ? ` · ${visibleOffices.length}` : ''}`}
+                options={visibleOffices.map((o) => ({ id: o.id, name: o.name }))}
+                onChange={setOffice}
+              />
+              <DatePicker
+                label="Дата"
+                value={day}
+                now={today()}
+                onChange={setDay}
+              />
+              <button
+                type="button"
+                className="pick pick--icon"
+                aria-label="Обновить"
+                onClick={() => setAttempt((n) => n + 1)}
+              >
+                <AppIcon name="refresh" size={16} />
+              </button>
             </div>
-            {/* Тонкая полоса под заголовком вместо затемнения панели:
-                обновление видно, а читать прежние числа не мешает. */}
-            <span
-              className={chartRefresh.busy ? 'panel__progress panel__progress--on'
-                                           : 'panel__progress'}
-              aria-hidden="true"
-            />
-            {chartRefresh.failed && chart.state === 'ready' && (
-              <p className="panel__retry" role="status">
-                Не удалось обновить данные
-                <button type="button" className="link link--go" onClick={reloadChart}>
-                  Повторить
-                </button>
-              </p>
-            )}
-            <Section block={chart} name="график">
-              {(data) => (
-                <>
-                  <AttendanceChart
-                    points={data.points}
-                    previous={comparable(data.points, data.previous)}
-                    label={`Явка за ${range.title.toLowerCase()}`}
-                  />
-                  <div className="legend">
-                    <span><i className="legend__solid" /> Явка</span>
-                    {comparable(data.points, data.previous).length > 0 && (
-                      <span><i className="legend__dashed" /> Предыдущий период</span>
+            <p className="head__updated">
+              {updated ? `Обновлено в ${formatTime(updated)}` : 'Загружаем…'}
+            </p>
+          </div>
+        </header>
+
+        <Section block={cards} name="показатели">
+          {(data) => (
+            <ul className="cards">
+              {CARDS.map((card) => {
+                const found = data.cards.find((c) => c.key === card.key);
+                if (!found) return null;
+                const share =
+                  card.key === 'in_office'
+                    ? percent(found.value, counts['should_work_today'] ?? 0)
+                    : null;
+                const past = day < today();
+                const href = cardLink(found);
+                const note =
+                  card.key === 'in_office'
+                    ? share === null
+                      ? 'Сравнивать не с чем'
+                      : `из ${counts['should_work_today']} · ${formatPercent(share)}`
+                    : (past && card.pastNote) || card.note;
+                const inside = (
+                  <>
+                    <p className="metric__head">
+                      <span className="metric__mark" aria-hidden="true">
+                        <AppIcon name={card.icon} size={18} />
+                      </span>
+                      <span>{(past && card.past) || card.title}</span>
+                    </p>
+                    <p className="metric__value">{found.value}</p>
+                    <p className="metric__note">
+                      <span>{note}</span>
+                      {/* Стрелка стоит только там, где нажатие действительно
+                          открывает список. Карточка без адреса остаётся
+                          текстом и не притворяется кнопкой. */}
+                      {href && <AppIcon name="arrow" size={16} />}
+                    </p>
+                  </>
+                );
+                const shape = card.tone
+                  ? `metric metric--${card.tone}${TINTED.has(card.tone) ? ' metric--tone' : ''}`
+                  : 'metric';
+                return (
+                  <li key={card.key}>
+                    {href ? (
+                      <Link to={href} className={`${shape} metric--go`}>{inside}</Link>
+                    ) : (
+                      <div className={shape}>{inside}</div>
                     )}
-                    <span className="legend__tail">
-                      {counts['left'] !== undefined && counts['left'] > 0 && (
-                        <span className="legend__note">
-                          Отметились и вышли: <b>{counts['left']}</b>
-                        </span>
-                      )}
-                      <Link className="link link--go" to="/analytics">
-                        Подробная аналитика <AppIcon name="arrow" size={16} />
-                      </Link>
-                    </span>
-                  </div>
-                </>
-              )}
-            </Section>
-          </section>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </Section>
 
-          <section className="panel panel--dense">
-            <div className="panel__head">
-              <div>
-                <h2 className="panel__title">
-                  Офисы <span className="chip">{visibleOffices.length}</span>
-                </h2>
-                <p className="panel__sub">{longDate(day)} · сводка по всем офисам</p>
+        <div className="grid">
+          <div className="grid__main">
+            <section className="panel panel--chart">
+              <div className="panel__head">
+                <div>
+                  <h2 className="panel__title">Явка за {range.title.toLowerCase()}</h2>
+                  <p className="panel__sub">Отметились хотя бы один раз за день</p>
+                </div>
+                <PeriodSwitch value={range.key} onChange={setRange} />
               </div>
-              <div className="panel__tools">
-                {/* Отбор идёт по уже загруженным строкам: запрашивать
-                    сервер заново незачем, сводка целиком уже здесь. */}
-                <label className="find">
-                  <AppIcon name="search" size={16} />
-                  <input
-                    type="search"
-                    value={officeSearch}
-                    placeholder="Поиск офиса"
-                    aria-label="Поиск офиса"
-                    onChange={(event) => setOfficeSearch(event.target.value)}
-                  />
-                </label>
-                <Link className="link link--go" to="/analytics">
-                  Сравнить офисы <AppIcon name="arrow" size={16} />
-                </Link>
+              {/* Тонкая полоса под заголовком вместо затемнения панели:
+                  обновление видно, а читать прежние числа не мешает. */}
+              <span
+                className={chartRefresh.busy ? 'panel__progress panel__progress--on'
+                                             : 'panel__progress'}
+                aria-hidden="true"
+              />
+              {chartRefresh.failed && chart.state === 'ready' && (
+                <p className="panel__retry" role="status">
+                  Не удалось обновить данные
+                  <button type="button" className="link link--go" onClick={reloadChart}>
+                    Повторить
+                  </button>
+                </p>
+              )}
+              <Section block={chart} name="график">
+                {(data) => (
+                  <>
+                    <AttendanceChart
+                      points={data.points}
+                      previous={comparable(data.points, data.previous)}
+                      label={`Явка за ${range.title.toLowerCase()}`}
+                    />
+                    <div className="legend">
+                      <span><i className="legend__solid" /> Явка</span>
+                      {comparable(data.points, data.previous).length > 0 && (
+                        <span><i className="legend__dashed" /> Предыдущий период</span>
+                      )}
+                      <span className="legend__tail">
+                        {counts['left'] !== undefined && counts['left'] > 0 && (
+                          <span className="legend__note">
+                            Отметились и вышли: <b>{counts['left']}</b>
+                          </span>
+                        )}
+                        <Link className="link link--go" to="/analytics">
+                          Подробная аналитика <AppIcon name="arrow" size={16} />
+                        </Link>
+                      </span>
+                    </div>
+                  </>
+                )}
+              </Section>
+            </section>
+
+            <section className="panel panel--dense">
+              <div className="panel__head">
+                <div>
+                  <h2 className="panel__title">
+                    Офисы <span className="chip">{visibleOffices.length}</span>
+                  </h2>
+                  <p className="panel__sub">{longDate(day)} · сводка по всем офисам</p>
+                </div>
+                <div className="panel__tools">
+                  {/* Отбор идёт по уже загруженным строкам: запрашивать
+                      сервер заново незачем, сводка целиком уже здесь. */}
+                  <label className="find">
+                    <AppIcon name="search" size={16} />
+                    <input
+                      type="search"
+                      value={officeSearch}
+                      placeholder="Поиск офиса"
+                      aria-label="Поиск офиса"
+                      onChange={(event) => setOfficeSearch(event.target.value)}
+                    />
+                  </label>
+                  <Link className="link link--go" to="/analytics">
+                    Сравнить офисы <AppIcon name="arrow" size={16} />
+                  </Link>
+                </div>
               </div>
-            </div>
-            <Section block={table} name="офисы">
-              {(all) => {
-                const needle = officeSearch.trim().toLowerCase();
-                const rows = needle
-                  ? all.filter((r) => r.office.name.toLowerCase().includes(needle))
-                  : all;
-                return rows.length === 0 ? (
-                  <p className="empty">
-                    {needle
-                      ? `Офис «${officeSearch.trim()}» не найден среди доступных.`
-                      : 'В выбранной области нет доступных офисов.'}
-                  </p>
-                ) : (
-                  <div className="scroller scroller--rows">
-                    <table className="grid-table">
-                      <thead>
-                        <tr>
-                          <th>Офис</th>
-                          <th>В штате</th>
-                          <th>По графику</th>
-                          <th>В офисе</th>
-                          <th>Нет отметки</th>
-                          <th>Отпуск</th>
-                          <th>Больничный</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {rows.map(({ office: item, counts: c }) => (
-                          <tr key={item.id}>
-                            <td className="grid-table__name">
-                              <AppIcon name="building" size={16} />
-                              {item.name}
-                            </td>
-                            <td>{staff(c)}</td>
-                            <td>{expected(c)}</td>
+              <Section block={table} name="офисы">
+                {(all) => {
+                  const needle = officeSearch.trim().toLowerCase();
+                  const rows = needle
+                    ? all.filter((r) => r.office.name.toLowerCase().includes(needle))
+                    : all;
+                  return rows.length === 0 ? (
+                    <p className="empty">
+                      {needle
+                        ? `Офис «${officeSearch.trim()}» не найден среди доступных.`
+                        : 'В выбранной области нет доступных офисов.'}
+                    </p>
+                  ) : (
+                    <div className="scroller scroller--rows">
+                      <table className="grid-table">
+                        <thead>
+                          <tr>
+                            <th>Офис</th>
+                            <th>В штате</th>
+                            <th>По графику</th>
+                            <th>В офисе</th>
+                            <th>Нет отметки</th>
+                            <th>Отпуск</th>
+                            <th>Больничный</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rows.map(({ office: item, counts: c }) => (
+                            <tr key={item.id}>
+                              <td className="grid-table__name">
+                                <AppIcon name="building" size={16} />
+                                {item.name}
+                              </td>
+                              <td>{staff(c)}</td>
+                              <td>{expected(c)}</td>
+                              {COLUMNS.map((state) => (
+                                <td key={state}>
+                                  <Count
+                                    value={c[state] ?? 0}
+                                    state={state}
+                                    day={day}
+                                    office={item.id}
+                                  />
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot>
+                          <tr>
+                            <td>Итого</td>
+                            <td>{counts['active_employees'] ?? '—'}</td>
+                            <td>{counts['should_work_today'] ?? '—'}</td>
                             {COLUMNS.map((state) => (
                               <td key={state}>
                                 <Count
-                                  value={c[state] ?? 0}
+                                  value={counts[TOTAL_KEY[state] as string]}
                                   state={state}
                                   day={day}
-                                  office={item.id}
+                                  office={office}
+                                  region={region}
                                 />
                               </td>
                             ))}
                           </tr>
-                        ))}
-                      </tbody>
-                      <tfoot>
-                        <tr>
-                          <td>Итого</td>
-                          <td>{counts['active_employees'] ?? '—'}</td>
-                          <td>{counts['should_work_today'] ?? '—'}</td>
-                          {COLUMNS.map((state) => (
-                            <td key={state}>
-                              <Count
-                                value={counts[TOTAL_KEY[state] as string]}
-                                state={state}
-                                day={day}
-                                office={office}
-                                region={region}
-                              />
-                            </td>
-                          ))}
-                        </tr>
-                      </tfoot>
-                    </table>
+                        </tfoot>
+                      </table>
+                    </div>
+                  );
+                }}
+              </Section>
+              <p className="panel__foot">Числа открывают списки сотрудников.</p>
+            </section>
+          </div>
+
+          <aside className="grid__side">
+            <section className="panel">
+              <h2 className="panel__title panel__title--row">
+                <span className="panel__mark panel__mark--pending" aria-hidden="true">
+                  <AppIcon name="alert" size={20} />
+                </span>
+                Требует внимания
+                {queues.state === 'ready' && (
+                  <span className="chip chip--count">{waiting(queues.data)}</span>
+                )}
+              </h2>
+              <Section block={queues} name="очереди">
+                {(data) => (
+                  <div className="queue-box">
+                    <ul className="queue">
+                      <Row icon="doc" title="Справки на проверку" note="Новые документы"
+                           count={data.absences.requests.filter(hasNewDocument).length}
+                           to="/requests?tab=sick&status=open" />
+                      <Row icon="sheet" title="Ожидаем справку" note="Больничные без документа"
+                           count={data.absences.requests.filter(waitsDocument).length}
+                           to="/requests?tab=sick&status=open" />
+                      <Row icon="calendar" title="Заявки на отпуск" note="Ожидают решения"
+                           count={data.absences.requests.filter(isLeave).length}
+                           to="/requests?tab=leave&status=open" />
+                      <Row icon="clock" title="Исправления отметок" note="Запросы сотрудников"
+                           count={data.fixes.items.length}
+                           to="/requests?tab=fixes&status=open" />
+                      {/* Подтверждение привязки живёт на карточке человека:
+                          отдельного списка ожидающих в системе нет, поэтому
+                          строка ведёт в список сотрудников. */}
+                      <Row icon="send" title="Привязки Telegram" note="Нужно подтверждение"
+                           count={data.invites.items.filter(pendingInvite).length}
+                           to="/employees?tab=active" />
+                    </ul>
+                    <Link className="btn btn--dark btn--wide" to="/requests?status=open">
+                      Открыть заявки <AppIcon name="arrow" size={18} />
+                    </Link>
                   </div>
-                );
-              }}
-            </Section>
-            <p className="panel__foot">Числа открывают списки сотрудников.</p>
-          </section>
-        </div>
+                )}
+              </Section>
+            </section>
 
-        <aside className="grid__side">
-          <section className="panel">
-            <h2 className="panel__title panel__title--row">
-              <span className="panel__mark panel__mark--pending" aria-hidden="true">
-                <AppIcon name="alert" size={20} />
-              </span>
-              Требует внимания
-              {queues.state === 'ready' && (
-                <span className="chip chip--count">{waiting(queues.data)}</span>
-              )}
-            </h2>
-            <Section block={queues} name="очереди">
-              {(data) => (
-                <div className="queue-box">
-                  <ul className="queue">
-                    <Row icon="doc" title="Справки на проверку" note="Новые документы"
-                         count={data.absences.requests.filter(hasNewDocument).length}
-                         to="/requests?tab=sick&status=open" />
-                    <Row icon="sheet" title="Ожидаем справку" note="Больничные без документа"
-                         count={data.absences.requests.filter(waitsDocument).length}
-                         to="/requests?tab=sick&status=open" />
-                    <Row icon="calendar" title="Заявки на отпуск" note="Ожидают решения"
-                         count={data.absences.requests.filter(isLeave).length}
-                         to="/requests?tab=leave&status=open" />
-                    <Row icon="clock" title="Исправления отметок" note="Запросы сотрудников"
-                         count={data.fixes.items.length}
-                         to="/requests?tab=fixes&status=open" />
-                    {/* Подтверждение привязки живёт на карточке человека:
-                        отдельного списка ожидающих в системе нет, поэтому
-                        строка ведёт в список сотрудников. */}
-                    <Row icon="send" title="Привязки Telegram" note="Нужно подтверждение"
-                         count={data.invites.items.filter(pendingInvite).length}
-                         to="/employees?tab=active" />
-                  </ul>
-                  <Link className="btn btn--dark btn--wide" to="/requests?status=open">
-                    Открыть заявки <AppIcon name="arrow" size={18} />
-                  </Link>
-                </div>
-              )}
-            </Section>
-          </section>
-
-          <section className="panel">
-            <h2 className="panel__title panel__title--row">
-              <span className="panel__mark" aria-hidden="true">
-                <AppIcon name="chat" size={20} />
-              </span>
-              Обращения
-              {talks.state === 'ready' && (
-                <span className="chip chip--count">{talks.data.items.length}</span>
-              )}
-              <Link className="link link--go panel__aside" to="/questions">
-                Все обращения <AppIcon name="arrow" size={16} />
-              </Link>
-            </h2>
-            <Section block={talks} name="обращения">
-              {(data) =>
-                data.items.length === 0 ? (
-                  <p className="empty">Обращений, ждущих ответа, нет.</p>
-                ) : (
-                  <ul className="feed">
-                    {data.items.slice(0, 2).map((item) => (
-                      <li key={item.id}>
-                        {/* Нажимается вся строка, а не заголовок внутри
-                            неё: попасть в строку списка мышью легко, в
-                            строчку текста внутри — нет. Ссылка ведёт
-                            сразу в это обращение, а не в общий список. */}
-                        <Link
-                          className="feed__row"
-                          to={`/questions?id=${encodeURIComponent(item.id)}`}
-                        >
-                          <span className="avatar avatar--sm" aria-hidden="true">
-                            {initialsOf(item.employee?.full_name)}
-                          </span>
-                          <span className="feed__text">
-                            <span className="feed__title">{item.topic}</span>
-                            <span className="feed__note">
-                              {item.employee?.full_name ?? 'Сотрудник'}
-                            </span>
-                          </span>
-                          {/* Время последнего сообщения: по нему видно,
-                              сколько человек ждёт. */}
-                          {item.last_message_at && (
-                            <span className="feed__when">{ago(item.last_message_at)}</span>
-                          )}
-                          <AppIcon name="next" size={20} className="feed__go" />
-                        </Link>
-                      </li>
-                    ))}
-                  </ul>
-                )
-              }
-            </Section>
-          </section>
-
-          <section className="panel">
-            <h2 className="panel__title panel__title--row">
-              <span className="panel__mark" aria-hidden="true">
-                <AppIcon name="check" size={20} />
-              </span>
-              Последние решения
-              <Link
-                className="link link--go panel__aside"
-                to="/requests?status=APPROVED,REJECTED"
-              >
-                Все решения <AppIcon name="arrow" size={16} />
-              </Link>
-            </h2>
-            <Section block={decided} name="решения">
-              {(rows) =>
-                rows.length === 0 ? (
-                  <p className="empty">Решений по заявкам пока нет.</p>
-                ) : (
-                  <ul className="feed">
-                    {rows.map((row) => {
-                      const ok = row.status === 'APPROVED';
-                      return (
-                        <li key={row.id}>
-                          {/* Строка открывает ту самую заявку, по которой
-                              принято решение. Список заявок показывает её
-                              карточку по адресу, а не просто прокручивается
-                              к нужному месту. */}
+            <section className="panel">
+              <h2 className="panel__title panel__title--row">
+                <span className="panel__mark" aria-hidden="true">
+                  <AppIcon name="chat" size={20} />
+                </span>
+                Обращения
+                {talks.state === 'ready' && (
+                  <span className="chip chip--count">{talks.data.items.length}</span>
+                )}
+                <Link className="link link--go panel__aside" to="/questions">
+                  Все обращения <AppIcon name="arrow" size={16} />
+                </Link>
+              </h2>
+              <Section block={talks} name="обращения">
+                {(data) =>
+                  data.items.length === 0 ? (
+                    <p className="empty">Обращений, ждущих ответа, нет.</p>
+                  ) : (
+                    <ul className="feed">
+                      {data.items.slice(0, 2).map((item) => (
+                        <li key={item.id}>
+                          {/* Нажимается вся строка, а не заголовок внутри
+                              неё: попасть в строку списка мышью легко, в
+                              строчку текста внутри — нет. Ссылка ведёт
+                              сразу в это обращение, а не в общий список. */}
                           <Link
                             className="feed__row"
-                            to={
-                              // Список отсортирован по дате подачи, а
-                              // решения — по дате решения: без сужения по
-                              // сотруднику заявка месячной давности лежала
-                              // бы на десятой странице и карточка не
-                              // открылась бы.
-                              `/requests?employee_id=${encodeURIComponent(row.employee.id)}`
-                              + `&request=${encodeURIComponent(row.id)}`
-                            }
+                            to={`/questions?id=${encodeURIComponent(item.id)}`}
                           >
-                            <span
-                              className={ok ? 'feed__mark feed__mark--ok'
-                                            : 'feed__mark feed__mark--no'}
-                              aria-hidden="true"
-                            >
-                              <AppIcon name={ok ? 'check' : 'cross'} size={20} />
+                            <span className="avatar avatar--sm" aria-hidden="true">
+                              {initialsOf(item.employee?.full_name)}
                             </span>
                             <span className="feed__text">
-                              <span className="feed__title">
-                                {row.absence_type.name}
-                                <span className="dot">·</span>
-                                {shortName(row.employee.full_name)}
-                              </span>
+                              <span className="feed__title">{item.topic}</span>
                               <span className="feed__note">
-                                {row.reviewed_at ? ago(row.reviewed_at) : 'решение принято'}
+                                {item.employee?.full_name ?? 'Сотрудник'}
                               </span>
                             </span>
-                            <span className={ok ? 'verdict verdict--ok' : 'verdict verdict--no'}>
-                              {ok ? 'Одобрено' : 'Отклонено'}
-                            </span>
+                            {/* Время последнего сообщения: по нему видно,
+                                сколько человек ждёт. */}
+                            {item.last_message_at && (
+                              <span className="feed__when">{ago(item.last_message_at)}</span>
+                            )}
                             <AppIcon name="next" size={20} className="feed__go" />
                           </Link>
                         </li>
-                      );
-                    })}
-                  </ul>
-                )
-              }
-            </Section>
-          </section>
-        </aside>
+                      ))}
+                    </ul>
+                  )
+                }
+              </Section>
+            </section>
+
+            <section className="panel">
+              <h2 className="panel__title panel__title--row">
+                <span className="panel__mark" aria-hidden="true">
+                  <AppIcon name="check" size={20} />
+                </span>
+                Последние решения
+                <Link
+                  className="link link--go panel__aside"
+                  to="/requests?status=APPROVED,REJECTED"
+                >
+                  Все решения <AppIcon name="arrow" size={16} />
+                </Link>
+              </h2>
+              <Section block={decided} name="решения">
+                {(rows) =>
+                  rows.length === 0 ? (
+                    <p className="empty">Решений по заявкам пока нет.</p>
+                  ) : (
+                    <ul className="feed">
+                      {rows.map((row) => {
+                        const ok = row.status === 'APPROVED';
+                        return (
+                          <li key={row.id}>
+                            {/* Строка открывает ту самую заявку, по которой
+                                принято решение. Список заявок показывает её
+                                карточку по адресу, а не просто прокручивается
+                                к нужному месту. */}
+                            <Link
+                              className="feed__row"
+                              to={
+                                // Список отсортирован по дате подачи, а
+                                // решения — по дате решения: без сужения по
+                                // сотруднику заявка месячной давности лежала
+                                // бы на десятой странице и карточка не
+                                // открылась бы.
+                                `/requests?employee_id=${encodeURIComponent(row.employee.id)}`
+                                + `&request=${encodeURIComponent(row.id)}`
+                              }
+                            >
+                              <span
+                                className={ok ? 'feed__mark feed__mark--ok'
+                                              : 'feed__mark feed__mark--no'}
+                                aria-hidden="true"
+                              >
+                                <AppIcon name={ok ? 'check' : 'cross'} size={20} />
+                              </span>
+                              <span className="feed__text">
+                                <span className="feed__title">
+                                  {row.absence_type.name}
+                                  <span className="dot">·</span>
+                                  {shortName(row.employee.full_name)}
+                                </span>
+                                <span className="feed__note">
+                                  {row.reviewed_at ? ago(row.reviewed_at) : 'решение принято'}
+                                </span>
+                              </span>
+                              <span className={ok ? 'verdict verdict--ok' : 'verdict verdict--no'}>
+                                {ok ? 'Одобрено' : 'Отклонено'}
+                              </span>
+                              <AppIcon name="next" size={20} className="feed__go" />
+                            </Link>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )
+                }
+              </Section>
+            </section>
+          </aside>
+        </div>
       </div>
     </AppShell>
   );
