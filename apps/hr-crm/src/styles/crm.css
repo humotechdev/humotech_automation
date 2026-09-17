@@ -9147,3 +9147,164 @@ html {
 .panel--view {
   scrollbar-gutter: stable;
 }
+
+/* --- боковая панель: единая система ------------------------------------------
+ *
+ * Панель — одна плоская тёмно-синяя плоскость. Ни бликов, ни теней
+ * между пунктами: тени превращали список разделов в стопку отдельных
+ * выпуклых карточек, и глаз читал их как кнопки, а не как оглавление.
+ *
+ * Одна сетка на всё содержимое: знак, названия групп, пункты, профиль и
+ * выход начинаются на одной вертикали, и значки стоят в колонке
+ * постоянной ширины — подписи выравниваются сами собой.
+ *
+ * Выбранный пункт — спокойная голубая подложка и тонкая линия слева.
+ * Ни жирности, ни увеличенной высоты: и то и другое двигало список при
+ * каждом переходе.
+ */
+
+:root {
+  /* Отступ содержимого панели от левого края и ширина колонки значков.
+     Одно место на весь блок — иначе выравнивание разъезжается при
+     первой же правке. */
+  --side-pad: 14px;
+  --side-icon: 22px;
+  --side-gap: 12px;
+  --side-row: 42px;
+}
+
+.side {
+  padding: 0 10px 12px;
+  background: var(--sidebar-top);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: none;
+  border-right: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+/* Знак стоит на той же вертикали, что и подписи пунктов. */
+.side__brand {
+  height: 72px;
+  padding: 16px var(--side-pad) 10px;
+}
+
+.side__group {
+  margin: 14px var(--side-pad) 6px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.side__list {
+  gap: 2px;
+}
+
+/* Строка раздела. Высота одна у всех — и у выбранного тоже. */
+.nav {
+  min-height: var(--side-row);
+  gap: var(--side-gap);
+  padding: 0 var(--side-pad);
+  border-radius: 8px;
+  border-left: 3px solid transparent;
+  font-size: 14.5px;
+  font-weight: 400;
+}
+
+/* Значки в колонке постоянной ширины: подписи встают в одну линию,
+   как бы ни различались сами значки. */
+.side__list svg,
+.side__exit svg {
+  width: var(--side-icon);
+  height: var(--side-icon);
+}
+
+.nav:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* Выбранный раздел: спокойная подложка и линия слева. Без тени, без
+   увеличенной высоты, без полужирного — ничего, что двигало бы список
+   или делало из строки кнопку. */
+.nav--active,
+.nav--active:hover {
+  position: static;
+  border-left-color: #7db9f0;
+  background: rgba(125, 185, 240, 0.16);
+  color: #ffffff;
+  font-weight: 500;
+  box-shadow: none;
+}
+
+.nav--active::before {
+  content: none;
+}
+
+.nav__badge {
+  min-width: 20px;
+  padding: 1px 6px;
+  background: rgba(255, 255, 255, 0.14);
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 11.5px;
+}
+
+.nav--active .nav__badge {
+  background: rgba(255, 255, 255, 0.22);
+  color: #ffffff;
+}
+
+.side__rule {
+  margin: 12px var(--side-pad);
+  background: rgba(255, 255, 255, 0.09);
+}
+
+/* Профиль и выход — та же вертикаль и тот же ритм, что у разделов. */
+.side__user {
+  gap: var(--side-gap);
+  padding: 12px var(--side-pad) 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+.side__role {
+  font-size: 14px;
+}
+
+.side__scope {
+  font-size: 12.5px;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.side__exit {
+  min-height: var(--side-row);
+  gap: var(--side-gap);
+  padding: 0 var(--side-pad);
+  border-left: 3px solid transparent;
+  border-radius: 8px;
+  font-size: 14.5px;
+}
+
+.side__exit:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* Рельс на средней ширине: значки по центру, линия выбранного раздела
+   остаётся — по ней видно, где находишься, когда подписей нет. */
+@media (max-width: 1279px) {
+  .side {
+    padding: 0 8px 12px;
+  }
+
+  .nav,
+  .side__exit {
+    padding: 0;
+    border-left-width: 3px;
+    justify-content: center;
+  }
+
+  .nav--active {
+    border-left-color: #7db9f0;
+  }
+
+  .side__brand {
+    padding: 16px 0 10px;
+  }
+}
