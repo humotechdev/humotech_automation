@@ -198,15 +198,14 @@
 
 /* --- сетка ------------------------------------------------------------------ */
 
-/* Высота сетки — остаток окна, а не содержимое: при `flex: 1` строка
-   `1fr` мерилась по содержимому правой колонки, и панели уходили ниже
-   нижнего поля. На низком окне сетка не сжимается меньше 560. */
+/* Высота сетки определяется таблицей и панелью дня. На F11 список
+   заканчивается после пагинации, а не растягивается до нижнего края. */
 .att-grid {
-  flex: 1 1 0;
-  min-height: 560px;
+  flex: 0 1 auto;
+  min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 367px;
-  grid-template-rows: 160px minmax(0, 1fr);
+  grid-template-rows: 160px auto;
   gap: 14px 14px;
   /* Эталон: 1028 + 14 + 367, правый край на 1645 — в 8 точках от поля. */
   margin: 0 8px 0 5px;
@@ -539,7 +538,7 @@
 }
 
 .att-table {
-  flex: 1;
+  flex: 0 1 auto;
   min-height: 0;
   margin: 12px -10px 0;
   overflow-y: auto;
@@ -1103,4 +1102,73 @@
 .att-log th {
   color: var(--att-muted);
   font-weight: 600;
+}
+
+/* At a normal laptop viewport the right rail consumes a meaningful share of
+   the page. Let the summary and table redistribute their columns instead of
+   drawing the status column underneath that rail. */
+@media (max-width: 1600px) {
+  .att-today {
+    grid-template-columns: minmax(200px, .75fr) minmax(210px, .9fr) minmax(340px, 1.35fr);
+  }
+
+  .att-metric span {
+    white-space: normal;
+    line-height: 1.15;
+  }
+
+  .att-table__head,
+  .att-row {
+    grid-template-columns: minmax(168px, 1fr) minmax(120px, .78fr) minmax(190px, 1.3fr) 74px minmax(94px, .8fr) 18px;
+    padding-right: 10px;
+  }
+}
+
+/* Fit the first page of attendance (including statuses and pager) in the
+   ordinary 864px CSS viewport produced by a 1080p display at 125% scaling. */
+@media (max-height: 900px) {
+  .att-grid { grid-template-rows: 152px auto; }
+  .att-list { padding-top: 8px; padding-bottom: 6px; }
+  .att-filters { height: 34px; }
+  .att-table { margin-top: 8px; }
+  .att-table__head { height: 26px; }
+}
+
+/* --- узкие экраны ----------------------------------------------------------
+ *
+ * Строка отбора собрана из шести чипов и двух списков и на широком
+ * экране помещается в одну линию высотой 36. На 1024 она в эту линию не
+ * влезает: `height: 36px` вместе с `flex: none` не даёт ей перенестись,
+ * и хвост строки выезжает из панели поверх правой карточки.
+ *
+ * Поэтому ниже 1280 строка перестаёт быть строкой фиксированной высоты
+ * и переносится по мере надобности. Порядок и вид чипов не меняются.
+ */
+@media (max-width: 1280px) {
+  .att-filters {
+    height: auto;
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .att-chips {
+    flex-wrap: wrap;
+    row-gap: 8px;
+    margin-right: 0;
+  }
+}
+
+/* Таблица дня на узком экране: второстепенные колонки уходят, важные
+   остаются. Прятать фамилию и офис нельзя — ради них таблицу и
+   открывают. */
+@media (max-width: 1100px) {
+  .att-table__head span:nth-child(n + 5),
+  .att-row > :nth-child(n + 5) {
+    display: none;
+  }
+
+  .att-table__head,
+  .att-row {
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1.2fr) 96px;
+  }
 }

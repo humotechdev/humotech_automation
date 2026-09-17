@@ -25,6 +25,7 @@ import * as api from '../api/crm';
 import { ApiFailure, messageFor } from '../api/errors';
 import { AppShell } from '../components/AppShell';
 import { AppIcon } from '../components/AppIcon';
+import { AppSelectField } from '../components/AppSelect';
 import { MaterialForm } from '../components/MaterialForm';
 import { Markup } from '../features/knowledge/markup';
 import { usePaging } from '../features/knowledge/paging';
@@ -275,20 +276,13 @@ export function KnowledgePage() {
                      aria-label={area === 'faq' ? 'Поиск вопроса' : 'Поиск материала'}
                      onChange={(event) => patch({ q: event.target.value || null })} />
             </label>
-            <label className="pick">
-              <span className="visually-hidden">Регион</span>
-              <select value={region} aria-label="Регион"
-                      onChange={(event) => patch({ region_id: event.target.value || null })}>
+            <AppSelectField className="toolbar-select" label="Регион" value={region} onChange={(value) => patch({ region_id: value || null })}>
                 <option value="">Все регионы</option>
                 {scope.regions.map((item) => (
                   <option key={item.id} value={item.id}>{item.name}</option>
                 ))}
-              </select>
-            </label>
-            <label className="pick">
-              <span className="visually-hidden">Офис</span>
-              <select value={office} aria-label="Офис"
-                      onChange={(event) => patch({ office_id: event.target.value || null })}>
+            </AppSelectField>
+            <AppSelectField className="toolbar-select" label="Офис" value={office} onChange={(value) => patch({ office_id: value || null })}>
                 <option value="">Все офисы</option>
                 {(region
                   ? scope.offices.filter((item) => item.region_id === region)
@@ -296,8 +290,7 @@ export function KnowledgePage() {
                 ).map((item) => (
                   <option key={item.id} value={item.id}>{item.name}</option>
                 ))}
-              </select>
-            </label>
+            </AppSelectField>
           </div>
 
           <div className="chips" role="tablist" aria-label="Состояние материалов">

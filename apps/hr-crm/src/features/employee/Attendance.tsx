@@ -19,6 +19,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 
 import * as api from '../../api/crm';
 import { AppIcon, type AppIconName } from '../../components/AppIcon';
+import { AppDateRangePicker } from '../../components/DateRangePicker';
 import { useBlock } from '../dashboard/data';
 import { clock } from '../time/zone';
 import {
@@ -94,14 +95,9 @@ export function AttendanceTools({ id, canExport }: { id: string; canExport: bool
           </button>
         ))}
       </div>
-      <label className="ea-dates">
-        <AppIcon name="calendar" size={18} />
-        <input type="date" value={range.first} aria-label="Начало периода"
-               onChange={(event) => patch({ period: 'range', from: event.target.value, to: range.last, day: null })} />
-        <span>—</span>
-        <input type="date" value={range.last} aria-label="Конец периода"
-               onChange={(event) => patch({ period: 'range', from: range.first, to: event.target.value, day: null })} />
-      </label>
+      <AppDateRangePicker className="ea-dates" label="Период посещаемости" now={todayIso()} from={range.first} to={range.last}
+        onFromChange={(from) => patch({ period: 'range', from, to: range.last, day: null })}
+        onToChange={(to) => patch({ period: 'range', from: range.first, to, day: null })} />
       {canExport && (
         <Link className="ea-export"
               to={`/reports?kind=sessions&employee_id=${id}&date_from=${range.first}&date_to=${range.last}`}>

@@ -20,6 +20,8 @@ import * as api from '../api/crm';
 import { messageFor } from '../api/errors';
 import { AppShell } from '../components/AppShell';
 import { AppIcon, type AppIconName } from '../components/AppIcon';
+import { AppDateRangePicker } from '../components/DateRangePicker';
+import { AppSegmentedControl, Dropdown } from '../components/AppSelect';
 import { today as todayIso, useBlock, type Block } from '../features/dashboard/data';
 import '../styles/analytics.css';
 
@@ -128,26 +130,13 @@ export function AnalyticsPage() {
         </header>
 
         <div className="an-filters" role="group" aria-label="Фильтры аналитики">
-          <label className="an-range">
-            <AppIcon name="calendar" size={20} />
-            <input type="date" value={start} max={end} aria-label="Начало периода"
-                   onChange={(event) => event.target.value && patch({ from: event.target.value, days: null, day: null })} />
-            <span>—</span>
-            <input type="date" value={end} min={start} aria-label="Конец периода"
-                   onChange={(event) => event.target.value && patch({
-                     to: event.target.value, ...(preset ? { from: start, days: null } : {}), day: null,
-                   })} />
-          </label>
+          <AppDateRangePicker className="an-range" label="Период аналитики" now={todayIso()} from={start} to={end}
+            onFromChange={(value) => value && patch({ from: value, days: null, day: null })}
+            onToChange={(value) => value && patch({ to: value, ...(preset ? { from: start, days: null } : {}), day: null })} />
 
-          <div className="an-presets" role="group" aria-label="Быстрый выбор периода">
-            {PRESETS.map((one) => (
-              <button key={one} type="button" aria-pressed={preset === one}
-                      className={preset === one ? 'an-preset an-preset--on' : 'an-preset'}
-                      onClick={() => patch({ days: one === 30 ? null : String(one), from: null, to: null, day: null })}>
-                {one} дней
-              </button>
-            ))}
-          </div>
+          <AppSegmentedControl className="an-presets" label="Быстрый выбор периода" value={preset}
+            options={PRESETS.map((one) => ({ value: one, label: `${one} дней` }))}
+            onChange={(one) => patch({ days: one === 30 ? null : String(one), from: null, to: null, day: null })} />
 
           <i className="an-filters__rule" />
 
@@ -759,16 +748,7 @@ function Select({ label, empty, value, options, onChange }: {
   options: { id: string; name: string }[];
   onChange: (value: string) => void;
 }) {
-  return (
-    <label className="an-select">
-      <span className="visually-hidden">{label}</span>
-      <select value={value} onChange={(event) => onChange(event.target.value)}>
-        <option value="">{empty}</option>
-        {options.map((one) => <option key={one.id} value={one.id}>{one.name}</option>)}
-      </select>
-      <AppIcon name="chevron" size={16} className="an-select__arrow" />
-    </label>
-  );
+  return <Dropdown label={label} empty={empty} value={value} options={options} onChange={onChange} />;
 }
 
 // --- мелочи ---------------------------------------------------------------------------------

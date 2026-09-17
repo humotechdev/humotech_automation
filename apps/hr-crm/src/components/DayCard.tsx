@@ -17,6 +17,7 @@ import { Link } from 'react-router-dom';
 
 import * as api from '../api/crm';
 import { AppIcon } from './AppIcon';
+import { AppSelectField } from './AppSelect';
 import { DayBar } from './DayBar';
 import { initials } from './AppShell';
 import { messageFor } from '../api/errors';
@@ -240,13 +241,10 @@ function ManualForm({ row, day, onCancel, onDone }: {
       </p>
 
       <div className="manual__row">
-        <label className="pick">
-          <span className="visually-hidden">Направление</span>
-          <select value={type} onChange={(event) => setType(event.target.value as 'ENTRY' | 'EXIT')}>
+        <AppSelectField className="toolbar-select" label="Направление" value={type} onChange={(value) => setType(value as 'ENTRY' | 'EXIT')}>
             <option value="ENTRY">Вход</option>
             <option value="EXIT">Выход</option>
-          </select>
-        </label>
+        </AppSelectField>
         <label className="pick">
           <span className="visually-hidden">Время</span>
           <input type="time" value={time} aria-label="Время"

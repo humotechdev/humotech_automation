@@ -22,6 +22,7 @@ from humotech.employees.serializers import (
     EmployeeCardSerializer,
     EmployeeCreateSerializer,
     EmployeeListItemSerializer,
+    EmployeeSearchItemSerializer,
     EmployeeOnboardSerializer,
     EmployeeUpdateSerializer,
     OnboardedSerializer,
@@ -93,6 +94,16 @@ class EmployeeViewSet(ServiceViewSet):
         params = self._scope(request)
         params["at"] = self._at()
         return Response(self.service.highlights(self.actor, **params))
+
+    @action(detail=False, methods=["get"], url_path="search")
+    def search(self, request):
+        """Не более десяти сотрудников для глобального поиска."""
+        rows = self.service.search(
+            self.actor,
+            query=request.query_params.get("q") or "",
+            at=self._at(),
+        )
+        return Response({"items": EmployeeSearchItemSerializer(rows, many=True).data})
 
     def _scope(self, request) -> dict:
         found = {}

@@ -33,6 +33,8 @@ import * as api from '../api/crm';
 import { ApiFailure, messageFor } from '../api/errors';
 import { AppShell } from '../components/AppShell';
 import { AppIcon } from '../components/AppIcon';
+import { AppSegmentedControl, AppSelectField } from '../components/AppSelect';
+import { AppDateRangePicker } from '../components/DateRangePicker';
 import { FeedCard, FeedRow } from '../components/FeedParts';
 import { FEED_FILTERS, filterTitle } from '../features/notifications/feed-model';
 import { useFeed } from '../features/live/feed';
@@ -41,7 +43,7 @@ import {
   eventTitle, moving, reasonTitle, relatedLink, retryBlockedBecause, tabCount,
   type Tab,
 } from '../features/notifications/model';
-import { useBlock, type Block } from '../features/dashboard/data';
+import { today, useBlock, type Block } from '../features/dashboard/data';
 import { useSession } from '../features/auth/session';
 import { clock, moment } from '../features/time/zone';
 
@@ -214,20 +216,9 @@ export function NotificationsPage() {
     }
   }
 
-  const tabs = (
-    <div className="tabs tabs--page" role="tablist" aria-label="Раздел уведомлений">
-      <button type="button" role="tab" aria-selected={!onQueue}
-              className={onQueue ? 'tab' : 'tab tab--on'}
-              onClick={() => patch({ view: null, id: null })}>
-        Лента событий
-      </button>
-      <button type="button" role="tab" aria-selected={onQueue}
-              className={onQueue ? 'tab tab--on' : 'tab'}
-              onClick={() => patch({ view: 'delivery', id: null })}>
-        Очередь отправки
-      </button>
-    </div>
-  );
+  const tabs = <AppSegmentedControl className="tabs tabs--page" role="tablist" label="Раздел уведомлений" value={onQueue ? 'delivery' : 'feed'}
+    options={[{ value: 'feed', label: 'Лента событий' }, { value: 'delivery', label: 'Очередь отправки' }]}
+    onChange={(value) => patch({ view: value === 'feed' ? null : 'delivery', id: null })} />;
 
   if (!onQueue) {
     return (
@@ -271,19 +262,9 @@ export function NotificationsPage() {
           <p className="head__sub">История сообщений сотрудникам и статусы отправки</p>
         </div>
         <div className="head__actions">
-          <label className="pick pick--date">
-            <AppIcon name="calendar" size={16} />
-            <span className="visually-hidden">Начало периода</span>
-            <input type="date" value={from} max={to || undefined}
-                   aria-label="Начало периода"
-                   onChange={(event) => patch({ date_from: event.target.value || null })} />
-          </label>
-          <label className="pick pick--date">
-            <span className="visually-hidden">Конец периода</span>
-            <input type="date" value={to} min={from || undefined}
-                   aria-label="Конец периода"
-                   onChange={(event) => patch({ date_to: event.target.value || null })} />
-          </label>
+          <AppDateRangePicker className="head__date-range" label="Период уведомлений" now={today()} from={from} to={to}
+            onFromChange={(value) => patch({ date_from: value || null })}
+            onToChange={(value) => patch({ date_to: value || null })} />
           <button type="button" className="tool" aria-label="Обновить список"
                   onClick={refresh}>
             <AppIcon name="refresh" size={18} />
@@ -317,23 +298,18 @@ export function NotificationsPage() {
                      aria-label="Поиск сообщения или сотрудника"
                      onChange={(event) => patch({ search: event.target.value || null })} />
             </label>
-            <label className="pick">
-              <span className="visually-hidden">Регион</span>
-              <select value={region} aria-label="Регион"
-                      onChange={(event) =>
+            <AppSelectField label="Регион" className="notifications-select" value={region}
+                      onChange={(value) =>
                         // Смена региона сбрасывает офис: показанное
                         // обязано совпадать с отправляемым.
-                        patch({ region_id: event.target.value || null, office_id: null })}>
+                        patch({ region_id: value || null, office_id: null })}>
                 <option value="">Все регионы</option>
                 {scope.regions.map((item) => (
                   <option key={item.id} value={item.id}>{item.name}</option>
                 ))}
-              </select>
-            </label>
-            <label className="pick">
-              <span className="visually-hidden">Офис</span>
-              <select value={office} aria-label="Офис"
-                      onChange={(event) => patch({ office_id: event.target.value || null })}>
+            </AppSelectField>
+            <AppSelectField label="Офис" className="notifications-select" value={office}
+                      onChange={(value) => patch({ office_id: value || null })}>
                 <option value="">Все офисы</option>
                 {(region
                   ? scope.offices.filter((item) => item.region_id === region)
@@ -341,25 +317,12 @@ export function NotificationsPage() {
                 ).map((item) => (
                   <option key={item.id} value={item.id}>{item.name}</option>
                 ))}
-              </select>
-            </label>
+            </AppSelectField>
           </div>
 
-          <div className="tabs" role="tablist" aria-label="Состояние отправки">
-            {TABS.map((item) => {
-              const on = item.key === tab;
-              const number = tabCount(item.key, counts);
-              return (
-                <button key={item.key} type="button" role="tab" aria-selected={on}
-                        className={on ? 'tab tab--on' : 'tab'}
-                        onClick={() =>
-                          patch({ tab: item.key === 'all' ? null : item.key, id: null })}>
-                  {item.title}
-                  {number !== null && <span className="tab__count">{number}</span>}
-                </button>
-              );
-            })}
-          </div>
+          <AppSegmentedControl className="tabs" role="tablist" label="Состояние отправки" value={tab}
+            options={TABS.map((item) => ({ value: item.key, label: item.title, count: tabCount(item.key, counts) }))}
+            onChange={(key) => patch({ tab: key === 'all' ? null : key, id: null })} />
 
           {live.state === 'loading' && <p className="empty">Загружаем историю…</p>}
           {live.state === 'denied' && (
@@ -385,7 +348,7 @@ export function NotificationsPage() {
                 <p className="empty">{emptyText(search, tab, Boolean(from || to))}</p>
               ) : (
                 <div className="scroller">
-                  <table className="people">
+                  <table className="people table-cards">
                     <thead>
                       <tr>
                         <th>Сообщение / получатель</th>
@@ -416,9 +379,9 @@ export function NotificationsPage() {
                               </span>
                             </span>
                           </td>
-                          <td>{row.office_name ?? '—'}</td>
-                          <td><StatusPill status={row.status} /></td>
-                          <td className="num">{moment(row.created_at, zone, from === to && Boolean(from))}</td>
+                          <td data-label="Офис">{row.office_name ?? '—'}</td>
+                          <td data-label="Статус"><StatusPill status={row.status} /></td>
+                          <td className="num" data-label="Создано">{moment(row.created_at, zone, from === to && Boolean(from))}</td>
                         </tr>
                       ))}
                     </tbody>

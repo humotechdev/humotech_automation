@@ -20,6 +20,7 @@ import * as api from '../api/crm';
 import { ApiFailure, messageFor } from '../api/errors';
 import { AppShell } from '../components/AppShell';
 import { AppIcon, type AppIconName } from '../components/AppIcon';
+import { AppSelectField } from '../components/AppSelect';
 import { Attendance, AttendanceTools } from '../features/employee/Attendance';
 import { useSession } from '../features/auth/session';
 import { useBlock, type Block } from '../features/dashboard/data';
@@ -759,24 +760,18 @@ function Requests({ id, rights, zone }: {
   return (
     <>
       <div className="toolbar toolbar--thin">
-        <label className="pick">
-          <select value={kind} aria-label="Тип заявки"
-                  onChange={(event) => { setKind(event.target.value); setPicked(null); }}>
+        <AppSelectField className="toolbar-select" label="Тип заявки" value={kind} onChange={(value) => { setKind(value); setPicked(null); }}>
             <option value="">Все типы</option>
             <option value="absence">Отсутствия</option>
             <option value="correction">Исправления отметок</option>
-          </select>
-        </label>
-        <label className="pick">
-          <select value={status} aria-label="Состояние"
-                  onChange={(event) => { setStatus(event.target.value); setPicked(null); }}>
+        </AppSelectField>
+        <AppSelectField className="toolbar-select" label="Состояние" value={status} onChange={(value) => { setStatus(value); setPicked(null); }}>
             <option value="">Все состояния</option>
             <option value="SUBMITTED">На рассмотрении</option>
             <option value="APPROVED">Подтверждены</option>
             <option value="REJECTED">Отклонены</option>
             <option value="CANCELLED">Отменены</option>
-          </select>
-        </label>
+        </AppSelectField>
         <span className="toolbar__note">
           {list.state === 'ready'
             ? `Показано ${items.length}${list.data.has_more ? ' — есть ещё' : ''}`
@@ -995,16 +990,13 @@ function History({ id, rights, zone }: {
   return (
     <>
       <div className="toolbar toolbar--thin">
-        <label className="pick">
-          <select value={action} aria-label="Действие"
-                  onChange={(event) => { setAction(event.target.value); setPicked(null); }}>
+        <AppSelectField className="toolbar-select" label="Действие" value={action} onChange={(value) => { setAction(value); setPicked(null); }}>
             <option value="">Все действия</option>
             <option value="employee.">Профиль и переводы</option>
             <option value="attendance.">Посещаемость</option>
             <option value="absence">Заявки на отсутствие</option>
             <option value="schedule">Графики</option>
-          </select>
-        </label>
+        </AppSelectField>
         <span className="toolbar__note">
           {log.state === 'ready'
             ? `Показано ${rows.length}${log.data.has_more ? ' — есть ещё' : ''}`

@@ -76,6 +76,7 @@ class EmployeeListItemSerializer(serializers.ModelSerializer):
         parts = [employee.last_name, employee.first_name, employee.middle_name]
         return " ".join(part for part in parts if part)
 
+
     def get_photo(self, employee: Employee) -> bool:
         return employee.photo_id is not None
 
@@ -124,6 +125,24 @@ class EmployeeListItemSerializer(serializers.ModelSerializer):
             "start_time": days[0].start_time.isoformat() if days and days[0].start_time else None,
             "end_time": days[0].end_time.isoformat() if days and days[0].end_time else None,
         }
+
+
+class EmployeeSearchItemSerializer(serializers.Serializer):
+    """Безопасная строка выдачи глобального поиска.
+
+    Карточка сотрудника содержит контакты и кадровые данные, поэтому для
+    автодополнения используется отдельный, намеренно небольшой контракт.
+    """
+
+    id = serializers.UUIDField()
+    employee_number = serializers.CharField()
+    full_name = serializers.CharField()
+    employment_status = serializers.CharField()
+    photo = serializers.BooleanField()
+    position_name = serializers.CharField(allow_null=True)
+    department_name = serializers.CharField(allow_null=True)
+    office_name = serializers.CharField(allow_null=True)
+    telegram_username = serializers.CharField(allow_null=True)
 
 
 class TelegramBindingSerializer(serializers.Serializer):

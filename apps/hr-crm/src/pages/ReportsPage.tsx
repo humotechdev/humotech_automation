@@ -22,6 +22,8 @@ import * as api from '../api/crm';
 import { ApiFailure, messageFor } from '../api/errors';
 import { AppShell } from '../components/AppShell';
 import { AppIcon } from '../components/AppIcon';
+import { AppMultiSelect, AppPopover, AppSelectField } from '../components/AppSelect';
+import { AppDateRangePicker } from '../components/DateRangePicker';
 import { useSession } from '../features/auth/session';
 import { formatTime, today, useBlock } from '../features/dashboard/data';
 import { momentTitle, sizeTitle } from '../features/reports/format';
@@ -108,6 +110,19 @@ export function ReportsPage() {
     setFields(item ? item.fields.filter((one) => one.default).map((one) => one.key) : []);
   }
 
+  // Открываем конструктор с первым доступным типом: параметры и предпросмотр
+  // сразу показывают настоящие данные, но только после загрузки серверного каталога.
+  useEffect(() => {
+    if (kind || !mayExport || catalog.state !== 'ready') return;
+    const firstAvailable = KIND_ORDER
+      .map((key) => kinds.find((item) => item.key === key))
+      .find((item) => item && can(item.permission));
+    if (firstAvailable) {
+      setKind(firstAvailable.key);
+      setFields(firstAvailable.fields.filter((field) => field.default).map((field) => field.key));
+    }
+  }, [kind, mayExport, catalog.state, kinds]);
+
   const maxDays = catalog.state === 'ready' ? catalog.data.max_period_days : 366;
   const span = days(from, to);
   const badOrder = span <= 0;
@@ -159,7 +174,8 @@ export function ReportsPage() {
     setInactive(Boolean(f.include_inactive));
     setFields(f.fields ?? (item ? item.fields.filter((one) => one.default).map((one) => one.key) : []));
     setName(f.name ?? '');
-    document.querySelector('.rp-kinds')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+    // Прокрутки к началу конструктора здесь нет: шаблон применяют,
+    // стоя у списка шаблонов, и страница уезжала из-под рук.
   }
 
   // --- заказ ----------------------------------------------------------------
@@ -283,7 +299,7 @@ export function ReportsPage() {
         <header className="rp-head">
           <div>
             <h1 className="rp-head__title">Отчёты</h1>
-            <p className="rp-head__sub">Сформируйте и скачайте данные для работы</p>
+            <p className="rp-head__sub">Выберите данные, настройте фильтры и сформируйте файл</p>
           </div>
           <div className="rp-head__tools">
             <div className="rp-pop-anchor">
@@ -379,21 +395,26 @@ export function ReportsPage() {
         <section className="rp-work">
           {/* --- параметры --- */}
           <div className="rp-params">
-            <h2 className="rp-h2">Параметры отчёта</h2>
+            <div className="rp-params__heading">
+              <div>
+                <h2 className="rp-h2">Параметры{chosen ? ` ${chosen.title.toLowerCase()}` : ' отчёта'}</h2>
+                <p className="rp-muted">Настройте период и состав данных</p>
+              </div>
+              {chosen && <span className="rp-kind-badge">{chosen.title}</span>}
+            </div>
+            {chosen && (
+              <div className="rp-summary" aria-live="polite">
+                <AppIcon name="calendar" size={18} />
+                <span><b>{chosen.title}</b> · {periodLong(from, to, true)} · {officeIds.length ? officeIds.map((id) => offices.find((item) => item.id === id)?.name).filter(Boolean).join(', ') : region ? regions.find((item) => item.id === region)?.name ?? 'Выбранный регион' : 'Все офисы'}</span>
+                <button type="button" className="rp-link" onClick={() => document.querySelector('.rp-period')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}>Изменить <AppIcon name="arrow" size={16} /></button>
+              </div>
+            )}
 
             <div className="rp-field">
               <span className="rp-label">Период</span>
               <div className="rp-period">
-                <label className="rp-range">
-                  <AppIcon name="calendar" size={18} />
-                  <span className="rp-range__text">{periodLong(from, to, true)}</span>
-                  <input className="rp-range__input rp-range__input--from" type="date" value={from}
-                         aria-label="Начало периода" max={to}
-                         onClick={openPicker} onChange={(event) => event.target.value && setFrom(event.target.value)} />
-                  <input className="rp-range__input rp-range__input--to" type="date" value={to}
-                         aria-label="Конец периода" min={from}
-                         onClick={openPicker} onChange={(event) => event.target.value && setTo(event.target.value)} />
-                </label>
+                <AppDateRangePicker className="rp-range" from={from} to={to} now={today()} label="Период отчёта"
+                  onFromChange={setFrom} onToChange={setTo} />
                 {(['this_month', 'last_month'] as const).map((item) => (
                   <button key={item} type="button"
                           className={mode === item ? 'rp-chip rp-chip--on' : 'rp-chip'}
@@ -418,22 +439,19 @@ export function ReportsPage() {
             <div className="rp-row3">
               <label className="rp-field">
                 <span className="rp-label">Регионы</span>
-                <span className="rp-select">
-                  <select value={region} aria-label="Регион" onChange={(event) => setRegion(event.target.value)}>
+                <AppSelectField className="rp-field-select" label="Регион" value={region} onChange={setRegion}>
                     <option value="">Все регионы</option>
                     {regions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-                  </select>
-                  <AppIcon name="chevron" size={16} />
-                </span>
+                </AppSelectField>
               </label>
               <div className="rp-field">
                 <span className="rp-label">Офисы</span>
-                <MultiPick label="Офисы" all="Все офисы" unit={OFFICES}
+                <MultiPick label="Офисы" all="Все офисы"
                            options={offices} value={officeIds} onChange={setOfficeIds} />
               </div>
               <div className="rp-field">
                 <span className="rp-label">Отделы</span>
-                <MultiPick label="Отделы" all="Все отделы" unit={['отдел', 'отдела', 'отделов']}
+                <MultiPick label="Отделы" all="Все отделы"
                            options={departments} value={departmentIds} onChange={setDepartmentIds} />
               </div>
             </div>
@@ -540,7 +558,7 @@ export function ReportsPage() {
         {/* --- история --- */}
         <section className="rp-history">
           <div className="rp-history__head">
-            <h2 className="rp-h2">История выгрузок</h2>
+            <h2 className="rp-h2">Последние выгрузки</h2>
             <div className="rp-tabs" role="tablist" aria-label="Состояние выгрузок">
               {TABS.map((item) => (
                 <button key={item.key} type="button" role="tab" aria-selected={item.key === tab}
@@ -551,16 +569,12 @@ export function ReportsPage() {
                 </button>
               ))}
             </div>
-            <label className="rp-select rp-select--authors">
-              <select value={mineOnly ? 'mine' : 'all'} aria-label="Чьи выгрузки показывать"
+            <AppSelectField className="rp-select--authors" label="Чьи выгрузки показывать" value={mineOnly ? 'mine' : 'all'}
                       disabled={!maySeeOthers}
-                      title={maySeeOthers ? undefined : 'Чужие выгрузки видны только с правом на журнал'}
-                      onChange={(event) => patchParam(setParams, 'authors', event.target.value === 'all' ? 'all' : null)}>
+                      onChange={(value) => patchParam(setParams, 'authors', value === 'all' ? 'all' : null)}>
                 <option value="mine">Только мои</option>
                 {maySeeOthers && <option value="all">Все авторы</option>}
-              </select>
-              <AppIcon name="chevron" size={16} />
-            </label>
+            </AppSelectField>
           </div>
 
           {live.state === 'loading' && <p className="rp-empty">Загружаем историю…</p>}
@@ -584,7 +598,7 @@ export function ReportsPage() {
                 </p>
               ) : (
                 <div className="rp-scroll">
-                  <table className="rp-table">
+                  <table className="rp-table table-cards">
                     <thead>
                       <tr>
                         <th>Отчёт</th>
@@ -731,7 +745,7 @@ function Composition({
   return (
     <div className="rp-compose">
       <div className="rp-compose__head">
-        <h2 className="rp-h2">Состав отчёта</h2>
+        <h2 className="rp-h2">Что попадёт в файл</h2>
         {badge}
       </div>
 
@@ -936,7 +950,7 @@ function HistoryRow({ job, mine, mayDownload, params, busy, error, onAct, onOpen
 
   return (
     <tr>
-      <td>
+      <td data-label="Отчёт">
         <span className="rp-job">
           <span className={job.fmt === 'xlsx' ? 'rp-file rp-file--xlsx' : 'rp-file rp-file--csv'} aria-hidden="true">
             {job.fmt === 'xlsx' ? 'X' : 'CSV'}
@@ -944,10 +958,10 @@ function HistoryRow({ job, mine, mayDownload, params, busy, error, onAct, onOpen
           <span className="rp-job__title">{jobTitle(job)}</span>
         </span>
       </td>
-      <td className="rp-dim">{params}</td>
-      <td>{mine ? 'Вы' : (job.requested_by ?? 'Другой сотрудник')}</td>
-      <td className="rp-dim">{momentTitle(job.created_at)}</td>
-      <td>
+      <td className="rp-dim" data-label="Параметры">{params}</td>
+      <td data-label="Автор">{mine ? 'Вы' : (job.requested_by ?? 'Другой сотрудник')}</td>
+      <td className="rp-dim" data-label="Создан">{momentTitle(job.created_at)}</td>
+      <td data-label="Статус">
         {status === 'RUNNING' && percent !== null ? (
           <span className="rp-progress" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}
                 aria-label="Готовность отчёта">
@@ -1036,57 +1050,14 @@ function HistoryRow({ job, mine, mayDownload, params, busy, error, onAct, onOpen
 
 // --- выбор офисов, отделов и сотрудника -------------------------------------
 
-function MultiPick({ label, all, unit, options, value, onChange }: {
+function MultiPick({ label, all, options, value, onChange }: {
   label: string;
   all: string;
-  unit: [string, string, string];
   options: { id: string; name: string }[];
   value: string[];
   onChange: (next: string[]) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const [filter, setFilter] = useState('');
-  const title = value.length === 0
-    ? all
-    : value.length === 1
-      ? (options.find((item) => item.id === value[0])?.name ?? `1 ${unit[0]}`)
-      : `${value.length} ${plural(value.length, unit)}`;
-  const shown = filter
-    ? options.filter((item) => item.name.toLowerCase().includes(filter.toLowerCase()))
-    : options;
-
-  return (
-    <div className="rp-pop-anchor">
-      <button type="button" className="rp-select rp-select--button" aria-label={label}
-              aria-expanded={open} onClick={() => setOpen((was) => !was)}>
-        <span className="rp-select__text">{title}</span>
-        <AppIcon name="chevron" size={16} />
-      </button>
-      {open && (
-        <Popover onClose={() => setOpen(false)} className="rp-multi">
-          {options.length > 8 && (
-            <input className="rp-input rp-multi__filter" placeholder="Найти" value={filter}
-                   aria-label={`Найти: ${label}`} onChange={(event) => setFilter(event.target.value)} />
-          )}
-          <label className="rp-check">
-            <input type="checkbox" checked={value.length === 0} onChange={() => onChange([])} />
-            <span>{all}</span>
-          </label>
-          <div className="rp-multi__list">
-            {shown.map((item) => (
-              <label key={item.id} className="rp-check">
-                <input type="checkbox" checked={value.includes(item.id)}
-                       onChange={(event) => onChange(event.target.checked
-                         ? [...value, item.id] : value.filter((id) => id !== item.id))} />
-                <span>{item.name}</span>
-              </label>
-            ))}
-            {shown.length === 0 && <p className="rp-muted">Ничего не нашлось</p>}
-          </div>
-        </Popover>
-      )}
-    </div>
-  );
+  return <AppMultiSelect label={label} empty={all} options={options.map((item) => ({ value: item.id, label: item.name }))} value={value} onChange={onChange} />;
 }
 
 function PersonPick({ value, fallbackName, region, officeIds, inactive, onChange }: {
@@ -1177,23 +1148,7 @@ function Popover({ children, onClose, className }: {
   onClose: () => void;
   className: string;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    function outside(event: MouseEvent) {
-      const anchor = ref.current?.parentElement;
-      if (anchor && !anchor.contains(event.target as Node)) onClose();
-    }
-    function escape(event: KeyboardEvent) {
-      if (event.key === 'Escape') onClose();
-    }
-    document.addEventListener('mousedown', outside);
-    document.addEventListener('keydown', escape);
-    return () => {
-      document.removeEventListener('mousedown', outside);
-      document.removeEventListener('keydown', escape);
-    };
-  }, [onClose]);
-  return <div ref={ref} className={`rp-pop ${className}`}>{children}</div>;
+  return <AppPopover open onClose={onClose} className={`rp-pop ${className}`}>{children}</AppPopover>;
 }
 
 // --- вспомогательное ---------------------------------------------------------
@@ -1222,14 +1177,6 @@ export function retentionTitle(hours: number): string {
     return `${value} ${plural(value, ['день', 'дня', 'дней'])}`;
   }
   return `${hours} ${plural(hours, ['час', 'часа', 'часов'])}`;
-}
-
-function openPicker(event: { currentTarget: HTMLInputElement }) {
-  try {
-    event.currentTarget.showPicker?.();
-  } catch {
-    /* браузер без showPicker откроет выбор сам */
-  }
 }
 
 function newKey(): string {

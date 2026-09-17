@@ -24,9 +24,7 @@ export const FEED_FILTERS = [
   { key: 'action', title: 'Требуют действия' },
   { key: 'requests', title: 'Заявки' },
   { key: 'documents', title: 'Документы' },
-  { key: 'attendance', title: 'Посещаемость' },
   { key: 'questions', title: 'Обращения' },
-  { key: 'system', title: 'Системные' },
 ] as const;
 
 export type FeedFilter = (typeof FEED_FILTERS)[number]['key'];
@@ -50,11 +48,7 @@ export const FEED_ICON: Record<FeedType, AppIconName> = {
   absence_cancel: 'cross',
   absence_document: 'doc',
   attendance_correction: 'pencil',
-  attendance_open: 'clock',
   question: 'chat',
-  delivery_error: 'alert',
-  report_ready: 'report',
-  employee_added: 'user',
 };
 
 /**

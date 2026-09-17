@@ -18,6 +18,8 @@ import * as api from '../api/crm';
 import { messageFor } from '../api/errors';
 import { AppShell, initials } from '../components/AppShell';
 import { AppIcon, type AppIconName } from '../components/AppIcon';
+import { DatePicker } from '../components/DatePicker';
+import { AppFilterButton, AppSegmentedControl, Dropdown } from '../components/AppSelect';
 import { DayCard } from '../components/DayCard';
 import { formatTime, longDate, today, useBlock, type Block } from '../features/dashboard/data';
 import { useSession } from '../features/auth/session';
@@ -233,11 +235,8 @@ export function AttendancePage() {
           </div>
           <div className="att-head__side">
             <div className="att-head__tools">
-              <label className="att-date">
-                <AppIcon name="calendar" size={18} />
-                <input type="date" value={day} aria-label="Дата"
-                       onChange={(event) => patch({ date: event.target.value || null, employee: null })} />
-              </label>
+              <DatePicker label="Дата" value={day} now={today()} allowEmpty
+                onChange={(value) => patch({ date: value || null, employee: null })} />
               {can('reports.export') && (
                 <button type="button" className="att-btn att-btn--light att-btn--export"
                         onClick={() => void order()}>
@@ -262,18 +261,9 @@ export function AttendancePage() {
           </p>
         )}
 
-        <div className="att-tabs" role="tablist">
-          {[
-            { key: 'day', title: 'За день' },
-            { key: 'log', title: 'Журнал отметок' },
-          ].map((item) => (
-            <button key={item.key} type="button" role="tab" aria-selected={item.key === tab}
-                    className={item.key === tab ? 'att-tab att-tab--on' : 'att-tab'}
-                    onClick={() => patch({ tab: item.key === 'day' ? null : item.key })}>
-              {item.title}
-            </button>
-          ))}
-        </div>
+        <AppSegmentedControl className="att-tabs" role="tablist" label="Раздел посещаемости" value={tab}
+          options={[{ value: 'day', label: 'За день' }, { value: 'log', label: 'Журнал отметок' }]}
+          onChange={(value) => patch({ tab: value === 'day' ? null : value })} />
 
         {tab === 'log' ? (
           <Journal day={day} office={office} />
@@ -285,14 +275,7 @@ export function AttendancePage() {
             <section className="att-list" aria-label="Состав смены">
               <div className="att-filters">
                 <div className="att-chips" role="group" aria-label="Быстрый отбор">
-                  {QUICK.map((item) => (
-                    <button key={item.id} type="button" aria-pressed={chosen === item.id}
-                            className={`att-chip att-chip--${item.tone}${chosen === item.id ? ' att-chip--on' : ''}`}
-                            onClick={() => choose(item)}>
-                      {item.title}
-                      <span className="att-chip__count">{item.count(counts)}</span>
-                    </button>
-                  ))}
+                  {QUICK.map((item) => <AppFilterButton key={item.id} className={`att-chip att-chip--${item.tone}`} active={chosen === item.id} count={item.count(counts)} onClick={() => choose(item)}>{item.title}</AppFilterButton>)}
                 </div>
                 <label className="att-search">
                   <AppIcon name="search" size={16} />
@@ -756,18 +739,18 @@ function Journal({ day, office }: { day: string; office: string }) {
         {(data) => data.items.length === 0 ? (
           <p className="att-empty">За выбранный день отметок нет.</p>
         ) : (
-          <table className="att-log">
+          <table className="att-log table-cards">
             <thead>
               <tr><th>Время</th><th>Офис и точка</th><th>Направление</th><th>Источник</th><th>Состояние</th></tr>
             </thead>
             <tbody>
               {data.items.map((one) => (
                 <tr key={one.id}>
-                  <td>{one.occurred_at.slice(11, 16)}</td>
-                  <td>{one.office_name ?? '—'}{one.qr_point_name ? ` · ${one.qr_point_name}` : ''}</td>
-                  <td>{one.event_type === 'ENTRY' ? 'Вход' : 'Выход'}</td>
-                  <td>{one.source}</td>
-                  <td>{one.verification_status}</td>
+                  <td data-label="Время">{one.occurred_at.slice(11, 16)}</td>
+                  <td data-label="Офис и точка">{one.office_name ?? '—'}{one.qr_point_name ? ` · ${one.qr_point_name}` : ''}</td>
+                  <td data-label="Направление">{one.event_type === 'ENTRY' ? 'Вход' : 'Выход'}</td>
+                  <td data-label="Источник">{one.source}</td>
+                  <td data-label="Состояние">{one.verification_status}</td>
                 </tr>
               ))}
             </tbody>
@@ -814,16 +797,7 @@ function Select({ label, empty, value, options, onChange }: {
   options: { id: string; name: string }[];
   onChange: (value: string) => void;
 }) {
-  return (
-    <label className="att-select">
-      <span className="visually-hidden">{label}</span>
-      <select value={value} onChange={(event) => onChange(event.target.value)}>
-        <option value="">{empty}</option>
-        {options.map((one) => <option key={one.id} value={one.id}>{one.name}</option>)}
-      </select>
-      <AppIcon name="chevron" size={16} className="att-select__arrow" />
-    </label>
-  );
+  return <Dropdown label={label} empty={empty} value={value} options={options} onChange={onChange} />;
 }
 
 function Section<T>({ block, name, children }: {

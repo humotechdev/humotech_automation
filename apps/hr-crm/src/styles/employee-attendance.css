@@ -230,6 +230,7 @@
 .ea-dates input::-webkit-calendar-picker-indicator {
   display: none;
 }
+.app-date-range.ea-dates { height: auto; padding: 0; border: 0; background: transparent; }
 
 .ea-export {
   display: inline-flex;

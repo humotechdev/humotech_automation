@@ -347,6 +347,25 @@ export type EmployeeQuery = {
 export const employees = (params: EmployeeQuery, signal?: AbortSignal) =>
   request<Cursored<EmployeeRow>>(`/employees/${query(params)}`, signal ? { signal } : {});
 
+/** Минимальная строка для верхнего глобального поиска. Контактов здесь нет. */
+export type EmployeeSearchResult = {
+  id: string;
+  employee_number: string;
+  full_name: string;
+  employment_status: string;
+  photo: boolean;
+  position_name: string | null;
+  department_name: string | null;
+  office_name: string | null;
+  telegram_username: string | null;
+};
+
+export const searchEmployees = (q: string, signal?: AbortSignal) =>
+  request<{ items: EmployeeSearchResult[] }>(
+    `/employees/search/${query({ q })}`,
+    signal ? { signal } : {},
+  );
+
 /** Счётчики вкладок. Состояние в параметры НЕ входит: иначе, выбрав
  *  «Активные», человек видел бы нули у остальных вкладок. */
 /** Короткая сводка о сотруднике — для аватаров в правой колонке. */
@@ -1515,14 +1534,10 @@ export type FeedType =
   | 'absence_cancel'
   | 'absence_document'
   | 'attendance_correction'
-  | 'attendance_open'
-  | 'question'
-  | 'delivery_error'
-  | 'report_ready'
-  | 'employee_added';
+  | 'question';
 
 export type FeedGroup =
-  | 'requests' | 'documents' | 'attendance' | 'questions' | 'system';
+  | 'requests' | 'documents' | 'questions';
 
 export type FeedEvent = {
   /** Составной ключ «вид:запись»: событий своей таблицы у ленты нет. */
@@ -1554,9 +1569,7 @@ export type FeedCounts = {
   action: number;
   requests: number;
   documents: number;
-  attendance: number;
   questions: number;
-  system: number;
 };
 
 export type FeedPage = {

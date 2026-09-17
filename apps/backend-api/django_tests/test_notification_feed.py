@@ -32,6 +32,7 @@ from uuid import uuid4
 import pytest
 from django.utils import timezone
 
+from humotech.accounts.models import User
 from django_tests.conftest import make_qr_point
 from humotech.absences.models import AbsenceDocument, AbsenceRequest, AbsenceType
 from humotech.attendance.models import AttendanceEvent, AttendanceSession
@@ -335,26 +336,20 @@ class TestSources:
         assert "storage_key" not in file_card
         assert "url" not in file_card
 
-    def test_open_session_and_its_details(
+    def test_open_session_is_not_a_hr_feed_event(
         self, service, feed_actor, organization, employee, office
     ):
         session = open_session(organization, employee, office)
-        item = pick(service.page(feed_actor), "attendance_open")
-        assert item["title"] == "Не закрыт выход"
-        assert item["office_name"] == office.name
+        assert service.page(feed_actor)["items"] == []
+        with pytest.raises(ValidationFailed):
+            service.detail(feed_actor, f"attendance_open:{session.id}")
 
-        card = service.detail(feed_actor, f"attendance_open:{session.id}")
-        assert card["session"]["open_minutes"] >= 3 * 60
-        assert card["session"]["qr_point_name"]
-
-    def test_long_open_session_is_critical(
+    def test_long_open_session_is_not_a_critical_notification(
         self, service, feed_actor, organization, employee, office
     ):
         """Красный указатель — только у критичного, иначе он ничего не значит."""
-        open_session(organization, employee, office, hours_ago=20)
-        assert pick(service.page(feed_actor), "attendance_open")["priority"] == (
-            "CRITICAL"
-        )
+        open_session(organization, employee, office, hours_ago=26)
+        assert service.page(feed_actor)["items"] == []
 
     def test_correction_request_becomes_an_event(
         self, service, feed_actor, organization, employee
@@ -379,18 +374,13 @@ class TestSources:
         card = service.detail(feed_actor, f"question:{row.id}")
         assert card["question"]["channel"] == "TELEGRAM"
 
-    def test_delivery_error_hides_provider_answer(
+    def test_delivery_error_is_only_in_delivery_history(
         self, service, feed_actor, organization, employee
     ):
         row = failed_message(organization, employee)
-        item = pick(service.page(feed_actor), "delivery_error")
-        assert item["priority"] == "CRITICAL"
-
-        card = service.detail(feed_actor, f"delivery_error:{row.id}")
-        assert card["delivery"]["attempts"] == 3
-        assert card["delivery"]["channel"] == "TELEGRAM"
-        # Причина — короткий код очереди, а не ответ Telegram целиком.
-        assert card["comment"] == "chat_not_found"
+        assert service.page(feed_actor)["items"] == []
+        with pytest.raises(ValidationFailed):
+            service.detail(feed_actor, f"delivery_error:{row.id}")
 
     def test_ready_report_is_visible_to_its_author_only(
         self, make_actor, organization, other_organization
@@ -402,16 +392,15 @@ class TestSources:
 
         job = ready_report(organization, User.objects.get(id=author.user_id))
 
-        assert kinds(FeedService().page(author)["items"]) == ["report_ready"]
+        assert FeedService().page(author)["items"] == []
         assert FeedService().page(colleague)["items"] == []
-        with pytest.raises(NotFound):
+        with pytest.raises(ValidationFailed):
             FeedService().detail(colleague, f"report_ready:{job.id}")
 
-    def test_new_employee_becomes_an_event(
+    def test_new_employee_is_not_a_feed_event(
         self, service, feed_actor, organization, employee
     ):
-        item = pick(service.page(feed_actor), "employee_added")
-        assert item["action_url"] == f"/employees/{employee.id}"
+        assert service.page(feed_actor)["items"] == []
 
     def test_every_kind_belongs_to_exactly_one_tab(self):
         """Вкладки в сумме дают весь набор, и ни одна не берёт лишнего."""
@@ -458,7 +447,7 @@ class TestScope:
     ):
         session = open_session(organization, stranger, other_office)
         assert service.page(local_hr)["items"] == []
-        with pytest.raises(NotFound):
+        with pytest.raises(ValidationFailed):
             service.detail(local_hr, f"attendance_open:{session.id}")
 
     def test_correction_of_another_office_is_invisible(
@@ -482,14 +471,14 @@ class TestScope:
     ):
         row = failed_message(organization, stranger)
         assert service.page(local_hr)["items"] == []
-        with pytest.raises(NotFound):
+        with pytest.raises(ValidationFailed):
             service.detail(local_hr, f"delivery_error:{row.id}")
 
     def test_employee_of_another_office_is_invisible(
         self, service, local_hr, organization, stranger
     ):
         assert service.page(local_hr)["items"] == []
-        with pytest.raises(NotFound):
+        with pytest.raises(ValidationFailed):
             service.detail(local_hr, f"employee_added:{stranger.id}")
 
     def test_foreign_organization_sees_nothing(
@@ -603,7 +592,7 @@ class TestReadState:
         # У кадровика с доступом ко всей организации не прочитано ничего:
         # два сотрудника и две заявки. Чужая отметка его ленту не трогает.
         wide = make_actor(organization, permissions=ALL_READ)
-        assert FeedService().page(wide)["counts"]["unread"] == 4
+        assert FeedService().page(wide)["counts"]["unread"] == 2
 
     def test_mark_read_refuses_a_foreign_event(
         self, make_actor, organization, office, other_office, vacation_type
@@ -639,7 +628,7 @@ class TestEventKey:
 
 
 class TestPage:
-    def test_newest_first_and_counts_describe_the_whole_window(
+    def test_business_priority_and_counts_describe_the_whole_window(
         self, service, feed_actor, organization, employee, office, vacation_type
     ):
         absence(organization, employee, vacation_type)
@@ -647,13 +636,85 @@ class TestPage:
         open_session(organization, employee, office)
 
         page = service.page(feed_actor, limit=2)
-        times = [one["created_at"] for one in page["items"]]
-        assert times == sorted(times, reverse=True)
+        assert kinds(page["items"]) == ["question", "absence_request"]
         assert len(page["items"]) == 2
-        assert page["has_more"] is True
+        assert page["has_more"] is False
         # Счётчики считают всё окно, а не показанную страницу.
-        assert page["counts"]["all"] == 4  # + карточка сотрудника
-        assert page["counts"]["unread"] == 4
+        assert page["counts"]["all"] == 2
+        assert page["counts"]["unread"] == 2
+
+    def test_delivery_error_and_ready_report_are_excluded(
+        self, service, feed_actor, organization, employee, office
+    ):
+        ready_report(organization, User.objects.get(id=feed_actor.user_id))
+        failed_message(organization, employee)
+
+        assert service.page(feed_actor)["items"] == []
+
+    def test_export_jobs_never_become_hr_feed_events(
+        self, service, feed_actor, organization
+    ):
+        first = ready_report(organization, User.objects.get(id=feed_actor.user_id))
+        second = ready_report(organization, User.objects.get(id=feed_actor.user_id))
+
+        assert service.page(feed_actor)["items"] == []
+
+    def test_request_is_above_newer_information_event(
+        self, service, feed_actor, organization, employee, office, vacation_type
+    ):
+        row = absence(organization, employee, vacation_type)
+        employee.created_at = timezone.now() + timedelta(minutes=1)
+        Employee.objects.filter(id=employee.id).update(created_at=employee.created_at)
+
+        items = service.page(feed_actor)["items"]
+        assert kinds(items) == ["absence_request"]
+        assert items[0]["id"] == f"absence_request:{row.id}"
+
+    def test_unread_then_newest_within_same_priority(
+        self, service, feed_actor, organization, employee, vacation_type
+    ):
+        older = absence(organization, employee, vacation_type)
+        newer = absence(organization, employee, vacation_type)
+        age(AbsenceRequest, older.id, minutes=5)
+        FeedRead.objects.create(
+            organization_id=feed_actor.organization_id,
+            user_id=feed_actor.user_id,
+            event_type="absence_request",
+            entity_id=newer.id,
+        )
+
+        items = [
+            item for item in service.page(feed_actor)["items"]
+            if item["type"] == "absence_request"
+        ]
+        assert [item["id"] for item in items] == [
+            f"absence_request:{older.id}", f"absence_request:{newer.id}"
+        ]
+
+    def test_newest_is_first_within_one_unread_priority(
+        self, service, feed_actor, organization, employee, vacation_type
+    ):
+        older = absence(organization, employee, vacation_type)
+        newer = absence(organization, employee, vacation_type)
+        age(AbsenceRequest, older.id, minutes=5)
+
+        items = [
+            item for item in service.page(feed_actor)["items"]
+            if item["type"] == "absence_request"
+        ]
+        assert [item["id"] for item in items] == [
+            f"absence_request:{newer.id}", f"absence_request:{older.id}"
+        ]
+
+    def test_requested_limit_is_backend_page_size_not_history_size(
+        self, service, feed_actor, organization, employee, office, vacation_type
+    ):
+        for index in range(101):
+            absence(organization, employee, vacation_type)
+        page = service.page(feed_actor, limit=7)
+        assert len(page["items"]) == 7
+        assert page["has_more"] is True
+        assert page["counts"]["all"] == 101
 
     def test_cursor_walks_the_whole_feed_without_repeats(
         self, service, feed_actor, organization, employee, office, vacation_type
@@ -670,7 +731,7 @@ class TestPage:
             cursor = page["next_cursor"]
             if not cursor:
                 break
-        assert len(seen) == len(set(seen)) == 4
+        assert len(seen) == len(set(seen)) == 2
 
     def test_filters_narrow_the_list_but_not_the_counts(
         self, service, feed_actor, organization, employee, vacation_type
@@ -680,7 +741,7 @@ class TestPage:
 
         page = service.page(feed_actor, scope="questions")
         assert kinds(page["items"]) == ["question"]
-        assert page["counts"]["all"] == 3
+        assert page["counts"]["all"] == 2
         assert page["counts"]["questions"] == 1
 
     def test_action_filter_keeps_only_what_waits_for_a_decision(
@@ -773,10 +834,12 @@ class TestApi:
         self, hr, organization, employee, vacation_type
     ):
         absence(organization, employee, vacation_type)
-        response = hr.get(f"{API}/notification-feed")
+        response = hr.get(f"{API}/notification-feed?limit=1")
         assert response.status_code == 200
-        assert response.data["counts"]["unread"] == 2
+        assert response.data["counts"]["unread"] == 1
         assert response.data["window_days"] == 30
+        assert len(response.data["items"]) == 1
+        assert response.data["has_more"] is False
 
     def test_counts_endpoint_answers_alone(
         self, hr, organization, employee, vacation_type
@@ -784,7 +847,7 @@ class TestApi:
         absence(organization, employee, vacation_type)
         response = hr.get(f"{API}/notification-feed/counts")
         assert response.status_code == 200
-        assert response.data["unread"] == 2
+        assert response.data["unread"] == 1
 
     def test_read_and_read_all_over_http(
         self, hr, organization, employee, vacation_type
@@ -792,12 +855,12 @@ class TestApi:
         row = absence(organization, employee, vacation_type)
         one = hr.post(f"{API}/notification-feed/absence_request:{row.id}")
         assert one.status_code == 200
-        assert one.data["unread"] == 1
+        assert one.data["unread"] == 0
 
         everything = hr.post(f"{API}/notification-feed/read-all")
         assert everything.status_code == 200
         assert everything.data["unread"] == 0
-        assert everything.data["marked"] == 1
+        assert everything.data["marked"] == 0
 
     def test_detail_over_http(self, hr, organization, employee, vacation_type):
         row = absence(organization, employee, vacation_type)

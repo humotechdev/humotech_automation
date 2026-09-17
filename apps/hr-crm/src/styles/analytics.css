@@ -95,6 +95,8 @@
 .an-range input::-webkit-calendar-picker-indicator {
   display: none;
 }
+.app-date-range.an-range { height: auto; padding: 0; border: 0; background: transparent; }
+.app-segmented.an-presets { height: auto; border: 0; color: inherit; }
 
 .an-presets {
   display: flex;
@@ -1164,6 +1166,16 @@
     padding-left: 0;
   }
 
+  /* Три нижние карточки перестраиваются в два приёма, а не сразу в
+     столбик: на 1366 две колонки ещё читаются целиком, и отдавать
+     половину ширины пустому полю незачем. В один столбец они уходят
+     ниже 1040, где двум уже тесно. */
+  .an-row--bottom {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1040px) {
   .an-row--bottom {
     grid-template-columns: minmax(0, 1fr);
   }

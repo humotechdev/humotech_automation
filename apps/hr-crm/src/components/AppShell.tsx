@@ -11,13 +11,14 @@
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 
 import { BrandLockup } from './Logo';
 import { NotificationBell } from './NotificationBell';
 import { backdropImage } from '../features/shell/backdrop';
 import { AppIcon, ICON_SIZE, type AppIconName } from './AppIcon';
 import { useSession } from '../features/auth/session';
+import { GlobalEmployeeSearch } from './GlobalEmployeeSearch';
 
 type Item = {
   key: string;
@@ -66,8 +67,31 @@ export function AppShell({ children, badges = {}, breadcrumb, section = 'home' }
   const session = useSession();
   const user = session.status === 'authenticated' ? session.user : null;
 
+  /*
+   * Меню на узком экране выезжает поверх содержимого.
+   *
+   * Состояние живёт здесь, а не в CSS: закрыть меню обязан и переход в
+   * раздел, и Escape, и нажатие мимо. На широком экране класс ничего не
+   * меняет — там меню стоит колонкой сетки и никуда не выезжает.
+   */
+  const [menu, setMenu] = useState(false);
+  const place = useLocation();
+  useEffect(() => setMenu(false), [place.pathname, place.search]);
+  useEffect(() => {
+    if (!menu) return;
+    const stop = new AbortController();
+    document.addEventListener(
+      'keydown',
+      (event) => {
+        if (event.key === 'Escape') setMenu(false);
+      },
+      { signal: stop.signal },
+    );
+    return () => stop.abort();
+  }, [menu]);
+
   return (
-    <div className="shell">
+    <div className={menu ? 'shell shell--menu' : 'shell'}>
       {/* Декоративная подложка. Снимок подставляется, если он лежит в
           `src/assets/office-backdrop.*`; без файла остаётся светлая
           заливка с мягкими бликами. Оба слоя вне потока и недоступны
@@ -79,7 +103,7 @@ export function AppShell({ children, badges = {}, breadcrumb, section = 'home' }
       />
       <div className="shell__wash" aria-hidden="true" />
 
-      <nav className="side" aria-label="Разделы">
+      <nav className={menu ? 'side side--open' : 'side'} aria-label="Разделы">
         <div className="side__brand">
           <BrandLockup />
         </div>
@@ -104,15 +128,35 @@ export function AppShell({ children, badges = {}, breadcrumb, section = 'home' }
         </button>
       </nav>
 
+      {menu && (
+        <button
+          type="button"
+          className="side__scrim"
+          aria-label="Закрыть меню разделов"
+          onClick={() => setMenu(false)}
+        />
+      )}
+
       <div className="work">
         <header className="topbar">
+          {/* Кнопка меню видна только там, где меню выезжает: на широком
+              экране разделы и так на виду. */}
+          <button
+            type="button"
+            className="tool tool--menu"
+            aria-label="Разделы"
+            aria-expanded={menu}
+            onClick={() => setMenu((was) => !was)}
+          >
+            <AppIcon name="list" size={ICON_SIZE.title} />
+          </button>
           <p className="crumbs">
             <span>Рабочее пространство</span>
             <span className="crumbs__sep">/</span>
             <span className="crumbs__here">{breadcrumb}</span>
           </p>
           <div className="topbar__tools">
-            <EmployeeSearch />
+            <GlobalEmployeeSearch />
             <NotificationBell />
             <Language />
             <span className="avatar avatar--sm" aria-hidden="true">
@@ -170,26 +214,6 @@ function Group({ title, items, badges, active }: {
         })}
       </ul>
     </>
-  );
-}
-
-/**
- * Поиск сотрудника. Отдельного поискового сервиса в backend нет —
- * используется параметр `search` существующего состава смены.
- */
-function EmployeeSearch() {
-  const [text, setText] = useState('');
-  return (
-    <label className="find">
-      <AppIcon name="search" size={ICON_SIZE.action} />
-      <input
-        type="search"
-        placeholder="Поиск сотрудника"
-        value={text}
-        onChange={(event) => setText(event.target.value)}
-        aria-label="Поиск сотрудника"
-      />
-    </label>
   );
 }
 

@@ -20,7 +20,9 @@ import * as api from '../api/crm';
 import { messageFor } from '../api/errors';
 import { AppShell, initials } from '../components/AppShell';
 import { AppIcon, type AppIconName } from '../components/AppIcon';
-import { formatTime, useBlock, type Block } from '../features/dashboard/data';
+import { AppSegmentedControl, Dropdown } from '../components/AppSelect';
+import { AppDateRangePicker } from '../components/DateRangePicker';
+import { formatTime, today, useBlock, type Block } from '../features/dashboard/data';
 import '../styles/requests.css';
 
 const OPEN = 'SUBMITTED,IN_REVIEW';
@@ -56,7 +58,9 @@ const STEP_TITLE: Record<string, string> = {
 
 const MONTHS = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
 const MONTHS_SHORT = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
-const PAGE = '7';
+// Larger cursor pages mean fewer trips through the queue; the list itself
+// remains independently scrollable inside its panel.
+const PAGE = '20';
 const COMMENT_MAX = 500;
 
 export function RequestsPage() {
@@ -209,23 +213,9 @@ export function RequestsPage() {
 
         <div className={current ? 'rq-grid rq-grid--open' : 'rq-grid'}>
           <section className="rq-list" aria-label="Очередь заявок">
-            <div className="rq-tabs" role="tablist">
-              {TABS.map((item) => (
-                <button
-                  key={item.key}
-                  type="button"
-                  role="tab"
-                  aria-selected={item.key === tab.key}
-                  className={item.key === tab.key ? 'rq-tab rq-tab--on' : 'rq-tab'}
-                  onClick={() => patch({ tab: item.key === 'open' ? null : item.key, request: null, status: null })}
-                >
-                  {item.title}
-                  {counts.state === 'ready' && item.key !== 'all' && (
-                    <span className="rq-tab__count">{counts.data[item.key] ?? 0}</span>
-                  )}
-                </button>
-              ))}
-            </div>
+            <AppSegmentedControl className="rq-tabs" role="tablist" label="Вид заявок" value={tab.key}
+              options={TABS.map((item) => ({ value: item.key, label: item.title, count: counts.state === 'ready' && item.key !== 'all' ? counts.data[item.key] ?? 0 : null }))}
+              onChange={(key) => patch({ tab: key === 'open' ? null : key, request: null, status: null })} />
 
             <div className="rq-filters">
               <label className="rq-search">
@@ -239,14 +229,9 @@ export function RequestsPage() {
               <Select label="Статус" empty="Все статусы" value={status} options={STATUS_OPTIONS}
                       onChange={(value) => patch({ status: value || null })} />
               {/* Период фильтрует даты самого отсутствия, а не дату подачи. */}
-              <label className="rq-dates" title="Даты самого отсутствия, а не дата подачи">
-                <AppIcon name="calendar" size={18} />
-                <input type="date" value={from} aria-label="Отсутствие с"
-                       onChange={(event) => patch({ date_from: event.target.value || null })} />
-                <span>—</span>
-                <input type="date" value={to} aria-label="Отсутствие по"
-                       onChange={(event) => patch({ date_to: event.target.value || null })} />
-              </label>
+              <AppDateRangePicker className="rq-dates" label="Даты отсутствия" now={today()} from={from} to={to}
+                onFromChange={(value) => patch({ date_from: value || null })}
+                onToChange={(value) => patch({ date_to: value || null })} />
               <button type="button" className={more ? 'rq-more rq-more--on' : 'rq-more'}
                       aria-expanded={more} onClick={() => setMore((was) => !was)}>
                 <AppIcon name="list" size={18} />
@@ -661,16 +646,7 @@ function Select({ label, empty, value, options, onChange }: {
   options: { id: string; name: string }[];
   onChange: (value: string) => void;
 }) {
-  return (
-    <label className="rq-select">
-      <span className="visually-hidden">{label}</span>
-      <select value={value} onChange={(event) => onChange(event.target.value)}>
-        <option value="">{empty}</option>
-        {options.map((one) => <option key={one.id} value={one.id}>{one.name}</option>)}
-      </select>
-      <AppIcon name="chevron" size={16} className="rq-select__arrow" />
-    </label>
-  );
+  return <Dropdown label={label} empty={empty} value={value} options={options} onChange={onChange} />;
 }
 
 function Rows<T>({ block, children }: { block: Block<T>; children: (data: T) => React.ReactNode }) {

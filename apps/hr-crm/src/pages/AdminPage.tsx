@@ -23,6 +23,7 @@ import { ApiFailure, messageFor } from '../api/errors';
 import { AppShell } from '../components/AppShell';
 import { AuditTab } from '../components/AuditTab';
 import { AppIcon } from '../components/AppIcon';
+import { AppSelectField } from '../components/AppSelect';
 import { RolesTab } from '../components/RolesTab';
 import {
   Overlay,
@@ -305,25 +306,17 @@ export function AdminPage() {
                          onChange={(event) =>
                            patch({ search: event.target.value || null })} />
                 </label>
-                <label className="pick">
-                  <span className="visually-hidden">Роль</span>
-                  <select value={roleId} aria-label="Роль"
-                          onChange={(event) => patch({ role_id: event.target.value || null })}>
+                <AppSelectField className="toolbar-select" label="Роль" value={roleId} onChange={(value) => patch({ role_id: value || null })}>
                     <option value="">Все роли</option>
                     {book.roles.map((item) => (
                       <option key={item.id} value={item.id}>{item.name}</option>
                     ))}
-                  </select>
-                </label>
-                <label className="pick">
-                  <span className="visually-hidden">Статус</span>
-                  <select value={status} aria-label="Статус"
-                          onChange={(event) => patch({ status: event.target.value || null })}>
+                </AppSelectField>
+                <AppSelectField className="toolbar-select" label="Статус" value={status} onChange={(value) => patch({ status: value || null })}>
                     {STATUS_TABS.map((item) => (
                       <option key={item.key} value={item.key}>{item.title}</option>
                     ))}
-                  </select>
-                </label>
+                </AppSelectField>
               </div>
 
               {list.state === 'loading' && <p className="empty">Загружаем список…</p>}
@@ -498,7 +491,7 @@ function UserTable({ page, counts, search, filtered, picked, onPick, filters }: 
   return (
     <>
       <div className="scroller">
-        <table className="grid-table" aria-label="Учётные записи">
+        <table className="grid-table table-cards" aria-label="Учётные записи">
           <thead>
             <tr>
               <th scope="col">Пользователь</th>
@@ -527,17 +520,17 @@ function UserTable({ page, counts, search, filtered, picked, onPick, filters }: 
                       </span>
                     </button>
                   </td>
-                  <td>
+                  <td data-label="Роль">
                     {user.grants_visible
                       ? roleSummary(user.active_grants)
                       : <span className="muted">Скрыто</span>}
                   </td>
-                  <td>
+                  <td data-label="Область">
                     {user.grants_visible
                       ? scopeSummary(user.active_grants)
                       : <span className="muted">—</span>}
                   </td>
-                  <td>
+                  <td data-label="Статус">
                     <span className="state">
                       <i className="state__dot" />
                       {STATUS[user.status] ?? user.status}
@@ -722,15 +715,14 @@ function CreateUser({
         <>
           <label className="form-grid__field">
             <span className="form-grid__label">Роль</span>
-            <select className="form-grid__input" value={roleId} aria-label="Роль"
-                    onChange={(event) => setRoleId(event.target.value)}>
+            <AppSelectField label="Роль" value={roleId} onChange={setRoleId}>
               <option value="">Без роли</option>
               {roles.map((item) => (
                 <option key={item.id} value={item.id} disabled={!item.grantable}>
                   {item.name}{item.grantable ? '' : ' · недоступна'}
                 </option>
               ))}
-            </select>
+            </AppSelectField>
           </label>
           {/* Область спрашивается только вместе с ролью: без роли
               выдавать нечего, и назначение не отправляется вовсе. */}

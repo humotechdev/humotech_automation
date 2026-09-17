@@ -22,6 +22,7 @@ import { useEffect, useMemo, useState } from 'react';
 import * as api from '../api/crm';
 import { ApiFailure, messageFor } from '../api/errors';
 import { AppIcon } from './AppIcon';
+import { AppSelectField } from './AppSelect';
 import { SOURCE_TYPE } from '../features/knowledge/model';
 
 type Scope = { regions: api.Region[]; offices: api.Office[] };
@@ -217,15 +218,11 @@ export function MaterialForm({
 
               <label className="field">
                 <span className="field__label">Вид</span>
-                <span className="field__box">
-                  <select value={type} aria-label="Вид документа"
-                          disabled={Boolean(doc && !newVersionOf)}
-                          onChange={(event) => setType(event.target.value as typeof type)}>
+                <AppSelectField label="Вид документа" value={type} disabled={Boolean(doc && !newVersionOf)} onChange={(value) => setType(value as typeof type)}>
                     {Object.entries(SOURCE_TYPE).map(([key, name]) => (
                       <option key={key} value={key}>{name}</option>
                     ))}
-                  </select>
-                </span>
+                </AppSelectField>
               </label>
 
               <label className="field">
@@ -277,15 +274,12 @@ export function MaterialForm({
               {!faq && (
                 <label className="field">
                   <span className="field__label">Связанный документ</span>
-                  <span className="field__box">
-                    <select value={linked} aria-label="Связанный документ"
-                            onChange={(event) => setLinked(event.target.value)}>
+                  <AppSelectField label="Связанный документ" value={linked} onChange={setLinked}>
                       <option value="">Без связи</option>
                       {documents.map((item) => (
                         <option key={item.id} value={item.id}>{item.title}</option>
                       ))}
-                    </select>
-                  </span>
+                  </AppSelectField>
                 </label>
               )}
             </>
@@ -299,29 +293,23 @@ export function MaterialForm({
             <div className="two-fields">
               <label className="field">
                 <span className="field__label">Регион</span>
-                <span className="field__box">
-                  <select value={region} aria-label="Регион материала"
-                          onChange={(event) => setRegion(event.target.value)}>
+                <AppSelectField label="Регион материала" value={region} onChange={setRegion}>
                     <option value="">Вся организация</option>
                     {scope.regions.map((item) => (
                       <option key={item.id} value={item.id}>{item.name}</option>
                     ))}
-                  </select>
-                </span>
+                </AppSelectField>
               </label>
               <label className="field">
                 <span className="field__label">Офис</span>
-                <span className="field__box">
-                  <select value={office} aria-label="Офис материала"
-                          onChange={(event) => setOffice(event.target.value)}>
+                <AppSelectField label="Офис материала" value={office} onChange={setOffice}>
                     <option value="">
                       {region ? 'Весь регион' : 'Вся организация'}
                     </option>
                     {offices.map((item) => (
                       <option key={item.id} value={item.id}>{item.name}</option>
                     ))}
-                  </select>
-                </span>
+                </AppSelectField>
                 <span className="field__hint">
                   Офис и регион одновременно указать нельзя
                 </span>

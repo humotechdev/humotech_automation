@@ -26,6 +26,7 @@ import * as api from '../api/crm';
 import { ApiFailure, messageFor } from '../api/errors';
 import { AppShell } from '../components/AppShell';
 import { AppIcon } from '../components/AppIcon';
+import { AppSelectField } from '../components/AppSelect';
 import { useSession } from '../features/auth/session';
 import { useBlock } from '../features/dashboard/data';
 import { moment } from '../features/time/zone';
@@ -426,9 +427,8 @@ function Organization({ section, draft, set, errors }: {
         <h3 className="setup__block"><AppIcon name="clock" size={16} /> Дата и время</h3>
 
         <Field label="Часовой пояс CRM" name="crm_timezone" errors={errors}>
-          <select className="form-grid__input" aria-label="Часовой пояс CRM"
-                  value={chosen}
-                  onChange={(event) => set('crm_timezone', event.target.value || null)}>
+          <AppSelectField label="Часовой пояс CRM" value={chosen} searchable
+                  onChange={(value) => set('crm_timezone', value || null)}>
             <option value="">
               {effective
                 ? `Как у первого офиса — сейчас ${zoneLabel(effective)}`
@@ -437,7 +437,7 @@ function Organization({ section, draft, set, errors }: {
             {zones.map((name) => (
               <option key={name} value={name}>{zoneLabel(name)}</option>
             ))}
-          </select>
+          </AppSelectField>
         </Field>
 
         <div className="setup__pair">
@@ -464,13 +464,12 @@ function Organization({ section, draft, set, errors }: {
         </p>
 
         <Field label="Запасной пояс организации" name="default_timezone" errors={errors}>
-          <select className="form-grid__input" aria-label="Запасной пояс организации"
-                  value={(draft['default_timezone'] as string | null) ?? ''}
-                  onChange={(event) => set('default_timezone', event.target.value)}>
+          <AppSelectField label="Запасной пояс организации" value={(draft['default_timezone'] as string | null) ?? ''} searchable
+                  onChange={(value) => set('default_timezone', value)}>
             {zones.map((name) => (
               <option key={name} value={name}>{zoneLabel(name)}</option>
             ))}
-          </select>
+          </AppSelectField>
         </Field>
         <p className="field__hint">{section.help['default_timezone']}</p>
       </section>

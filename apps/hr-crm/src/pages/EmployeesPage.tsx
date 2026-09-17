@@ -17,6 +17,7 @@ import * as api from '../api/crm';
 import { messageFor } from '../api/errors';
 import { AppShell, initials } from '../components/AppShell';
 import { AppIcon, type AppIconName } from '../components/AppIcon';
+import { AppSegmentedControl, AppSelectField, Dropdown } from '../components/AppSelect';
 import { EmployeeCard } from '../components/EmployeeCard';
 import { longDate, today as todayIso, useBlock, type Block } from '../features/dashboard/data';
 import '../styles/employees.css';
@@ -229,37 +230,15 @@ export function EmployeesPage() {
                       options={TABS.filter((one) => one.key !== 'all')
                         .map((one) => ({ id: one.key, name: one.title }))}
                       onChange={(value) => patch({ tab: value || null })} />
-              <div className="emp-view" role="group" aria-label="Вид списка">
-                <button type="button" aria-pressed={view === 'table'}
-                        className={view === 'table' ? 'emp-view__one emp-view__one--on' : 'emp-view__one'}
-                        onClick={() => patch({ view: 'table' }, true)}>
-                  <AppIcon name="list" size={18} />
-                  Таблица
-                </button>
-                <button type="button" aria-pressed={view === 'cards'}
-                        className={view === 'cards' ? 'emp-view__one emp-view__one--on' : 'emp-view__one'}
-                        onClick={() => patch({ view: null }, true)}>
-                  <AppIcon name="grid" size={18} />
-                  Карточки
-                </button>
-              </div>
+              <AppSegmentedControl className="emp-view" label="Вид списка" value={view} options={[
+                { value: 'table', label: 'Таблица', icon: 'list' },
+                { value: 'cards', label: 'Карточки', icon: 'grid' },
+              ]} onChange={(next) => patch({ view: next === 'cards' ? null : 'table' }, true)} />
             </div>
 
-            <div className="emp-tabs" role="tablist">
-              {TABS.map((item) => (
-                <button
-                  key={item.key}
-                  type="button"
-                  role="tab"
-                  aria-selected={item.key === tab.key}
-                  className={item.key === tab.key ? 'emp-tab emp-tab--on' : 'emp-tab'}
-                  onClick={() => patch({ tab: item.key === 'all' ? null : item.key })}
-                >
-                  {item.title}
-                  {counts.state === 'ready' && ` ${count(counts.data, item.statuses)}`}
-                </button>
-              ))}
-            </div>
+            <AppSegmentedControl className="emp-tabs" label="Статус сотрудников" role="tablist" value={tab.key}
+              options={TABS.map((item) => ({ value: item.key, label: item.title, count: counts.state === 'ready' ? count(counts.data, item.statuses) : null }))}
+              onChange={(key) => patch({ tab: key === 'all' ? null : key })} />
 
             <div className="emp-body">
               <Rows block={list}>
@@ -297,12 +276,9 @@ export function EmployeesPage() {
                   : ''}
               </p>
               <div className="emp-pager__tools">
-                <label className="emp-size">
-                  <span className="visually-hidden">Строк на странице</span>
-                  <select value={limit} onChange={(event) => patch({ limit: event.target.value })}>
+                <AppSelectField className="emp-size" label="Строк на странице" value={limit} onChange={(value) => patch({ limit: value })}>
                     {SIZES.map((size) => <option key={size} value={size}>{size}</option>)}
-                  </select>
-                </label>
+                </AppSelectField>
                 <Pages page={page} pages={pages}
                        onGo={(next) => patch({ page: next === 1 ? null : String(next) }, true)} />
               </div>
@@ -440,7 +416,7 @@ function PeopleTable({ rows, chosen, onPick }: {
 }) {
   return (
     <div className="emp-table-wrap">
-      <table className="emp-table">
+      <table className="emp-table table-cards">
         <thead>
           <tr>
             <th>Сотрудник</th>
@@ -466,14 +442,14 @@ function PeopleTable({ rows, chosen, onPick }: {
                   </span>
                 </span>
               </td>
-              <td>
+              <td data-label="Должность / отдел">
                 {person.current_assignment?.position_name ?? '—'}
                 <small>{person.current_assignment?.department_name ?? ''}</small>
               </td>
-              <td>{person.current_assignment?.office_name ?? '—'}</td>
-              <td>{scheduleLine(person.current_schedule)}</td>
-              <td>{person.telegram_username ? `@${person.telegram_username}` : telegramShort(person.telegram_state)}</td>
-              <td><Status person={person} className="" /></td>
+              <td data-label="Офис">{person.current_assignment?.office_name ?? '—'}</td>
+              <td data-label="График">{scheduleLine(person.current_schedule)}</td>
+              <td data-label="Telegram">{person.telegram_username ? `@${person.telegram_username}` : telegramShort(person.telegram_state)}</td>
+              <td data-label="Статус"><Status person={person} className="" /></td>
             </tr>
           ))}
         </tbody>
@@ -717,16 +693,7 @@ function Select({ label, empty, value, options, onChange }: {
   options: { id: string; name: string }[];
   onChange: (value: string) => void;
 }) {
-  return (
-    <label className="emp-select">
-      <span className="visually-hidden">{label}</span>
-      <select value={value} onChange={(event) => onChange(event.target.value)}>
-        <option value="">{empty}</option>
-        {options.map((one) => <option key={one.id} value={one.id}>{one.name}</option>)}
-      </select>
-      <AppIcon name="chevron" size={16} className="emp-select__arrow" />
-    </label>
-  );
+  return <Dropdown label={label} empty={empty} value={value} options={options} onChange={onChange} />;
 }
 
 function Rows<T>({ block, children }: { block: Block<T>; children: (data: T) => React.ReactNode }) {

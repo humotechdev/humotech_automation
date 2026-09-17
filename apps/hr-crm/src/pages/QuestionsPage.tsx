@@ -26,6 +26,7 @@ import * as api from '../api/crm';
 import { ApiFailure, messageFor } from '../api/errors';
 import { AppShell, initials } from '../components/AppShell';
 import { AppIcon } from '../components/AppIcon';
+import { AppFilterButton, AppSegmentedControl, AppSelectField } from '../components/AppSelect';
 import { useSession } from '../features/auth/session';
 import { shift, today, useBlock, type Block } from '../features/dashboard/data';
 import '../styles/questions.css';
@@ -355,29 +356,21 @@ export function QuestionsPage() {
             <p className="qs-head__sub">Вопросы сотрудников и ответы HR</p>
           </div>
           <div className="qs-head__tools">
-            <label className="qs-select">
-              <span className="qs-sr">Офис</span>
-              <select aria-label="Офис" value={office} onChange={(event) => patch({ office_id: event.target.value || null, id: null })}>
+            <AppSelectField className="questions-select" label="Офис" value={office} onChange={(value) => patch({ office_id: value || null, id: null })}>
                 <option value="">Все офисы</option>
                 {offices.state === 'ready' && offices.data.map((one) => (
                   <option key={one.id} value={one.id}>{one.name}</option>
                 ))}
-              </select>
-              <AppIcon name="chevron" size={16} />
-            </label>
-            <label className="qs-select qs-select--wide">
-              <span className="qs-sr">Ответственный</span>
-              <select aria-label="Ответственный" value={assignee} onChange={(event) => patch({ assignee: event.target.value || null, id: null })}>
+            </AppSelectField>
+            <AppSelectField className="questions-select questions-select--wide" label="Ответственный" value={assignee} onChange={(value) => patch({ assignee: value || null, id: null })}>
                 <option value="">Все ответственные</option>
                 <option value="me">Назначены на меня</option>
                 <option value="none">Без ответственного</option>
                 {assignees.state === 'ready' && assignees.data.map((one) => (
                   <option key={one.id} value={one.id}>{one.name}</option>
                 ))}
-              </select>
-              <AppIcon name="chevron" size={16} />
-            </label>
-            <button type="button" className="qs-icon-btn" aria-label="Искать обращение" onClick={() => searchInput.current?.focus()}>
+            </AppSelectField>
+            <button type="button" className="qs-icon-btn" aria-label="Искать обращение" onClick={() => searchInput.current?.focus({ preventScroll: true })}>
               <AppIcon name="search" size={20} />
             </button>
             <button
@@ -391,25 +384,9 @@ export function QuestionsPage() {
           </div>
         </header>
 
-        <div className="qs-tabs" role="tablist" aria-label="Состояние обращений">
-          {TABS.map((tab) => {
-            const count = tabCount(tab.key);
-            return (
-              <button
-                key={tab.key}
-                type="button"
-                role="tab"
-                aria-selected={status === tab.key}
-                className={status === tab.key ? 'qs-tab qs-tab--on' : 'qs-tab'}
-                onClick={() => patch({ status: tab.key === 'NEW' ? null : tab.key, quick: null, id: null })}
-              >
-                {tab.title}
-                {count !== null && <span className="qs-tab__count">{count}</span>}
-              </button>
-            );
-          })}
-          {status === 'all' && <span className="qs-tab qs-tab--on qs-tab--static">Все состояния</span>}
-        </div>
+        <AppSegmentedControl className="qs-tabs" role="tablist" label="Состояние обращений" value={status}
+          options={[...TABS.map((tab) => ({ value: tab.key, label: tab.title, count: tabCount(tab.key) })), ...(status === 'all' ? [{ value: 'all', label: 'Все состояния' }] : [])]}
+          onChange={(key) => patch({ status: key === 'NEW' ? null : key, quick: null, id: null })} />
 
         <div className="qs-grid">
           {/* --- очередь --- */}
@@ -430,16 +407,8 @@ export function QuestionsPage() {
               {QUICK.map((one) => {
                 const count = quickCount(one.key);
                 return (
-                  <button
-                    key={one.key}
-                    type="button"
-                    aria-pressed={quick === one.key}
-                    className={quick === one.key ? 'qs-chip qs-chip--on' : 'qs-chip'}
-                    onClick={() => patch({ quick: one.key === 'all' ? null : one.key, id: null })}
-                  >
-                    {one.title}
-                    {count !== null && <span className="qs-chip__count">{count}</span>}
-                  </button>
+                  <AppFilterButton key={one.key} className="qs-chip" active={quick === one.key} {...(count !== null ? { count } : {})}
+                    onClick={() => patch({ quick: one.key === 'all' ? null : one.key, id: null })}>{one.title}</AppFilterButton>
                 );
               })}
               <button
@@ -455,23 +424,23 @@ export function QuestionsPage() {
 
             {moreFilters && (
               <div className="qs-more">
-                <select aria-label="Категория" value={category} onChange={(event) => patch({ category: event.target.value || null, id: null })}>
+                <AppSelectField label="Категория" value={category} onChange={(value) => patch({ category: value || null, id: null })}>
                   <option value="">Все категории</option>
                   {(Object.keys(CATEGORY_TITLE) as api.QuestionCategory[]).map((key) => (
                     <option key={key} value={key}>{CATEGORY_TITLE[key]}</option>
                   ))}
-                </select>
-                <select aria-label="Приоритет" value={priority} onChange={(event) => patch({ priority: event.target.value || null, id: null })}>
+                </AppSelectField>
+                <AppSelectField label="Приоритет" value={priority} onChange={(value) => patch({ priority: value || null, id: null })}>
                   <option value="">Любой приоритет</option>
                   {(Object.keys(PRIORITY_TITLE) as api.QuestionPriority[]).map((key) => (
                     <option key={key} value={key}>{PRIORITY_TITLE[key]}</option>
                   ))}
-                </select>
-                <select aria-label="Период" value={period} onChange={(event) => patch({ period: event.target.value || null, id: null })}>
+                </AppSelectField>
+                <AppSelectField label="Период" value={period} onChange={(value) => patch({ period: value || null, id: null })}>
                   {PERIODS.map((one) => (
                     <option key={one.key} value={one.key}>{one.title}</option>
                   ))}
-                </select>
+                </AppSelectField>
               </div>
             )}
 
@@ -789,12 +758,12 @@ function Conversation({
                   {actions.category && (
                     <li className="qs-menu__group">
                       <span className="qs-menu__label">Категория</span>
-                      <select
-                        aria-label="Сменить категорию"
+                      <AppSelectField
+                        label="Сменить категорию"
                         value={question.category}
                         disabled={busy !== null}
-                        onChange={(event) => {
-                          const next = event.target.value as api.QuestionCategory;
+                        onChange={(value) => {
+                          const next = value as api.QuestionCategory;
                           setMenu(null);
                           void act('category', () => api.setQuestionCategory(id, next));
                         }}
@@ -802,7 +771,7 @@ function Conversation({
                         {(Object.keys(CATEGORY_TITLE) as api.QuestionCategory[]).map((key) => (
                           <option key={key} value={key}>{CATEGORY_TITLE[key]}</option>
                         ))}
-                      </select>
+                      </AppSelectField>
                     </li>
                   )}
                   {actions.close && (
@@ -1165,7 +1134,7 @@ function Composer({ question, value, onChange, canKnowledge, sending, onSend }: 
     onChange(value.slice(0, start) + piece + value.slice(end));
     // Курсор — после вставки, когда React уже записал новое значение.
     window.setTimeout(() => {
-      box.focus();
+      box.focus({ preventScroll: true });
       box.selectionStart = box.selectionEnd = start + piece.length;
     }, 0);
   }

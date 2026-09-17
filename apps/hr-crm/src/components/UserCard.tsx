@@ -21,7 +21,9 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import * as api from '../api/crm';
 import { ApiFailure, messageFor } from '../api/errors';
 import { AppIcon } from './AppIcon';
-import { useBlock, type Block } from '../features/dashboard/data';
+import { AppSelectField } from './AppSelect';
+import { DatePicker } from './DatePicker';
+import { useBlock, today, type Block } from '../features/dashboard/data';
 import {
   PHASE_TITLE,
   STATUS,
@@ -517,9 +519,8 @@ function ValidityForm({ grant, zone, onClose, onDone }: {
       </p>
       <label className="form-grid__field">
         <span className="form-grid__label">Действует по</span>
-        <input className="form-grid__input" type="date" value={until}
-               aria-label="Действует по"
-               onChange={(event) => setUntil(event.target.value)} />
+        <DatePicker label="Действует по" value={until} now={today()} allowEmpty
+          onChange={setUntil} />
         <span className="field__hint">
           Пусто — бессрочно. Прошедшая дата закрывает доступ.
         </span>
@@ -804,8 +805,7 @@ function AssignForm({
     <Overlay title="Назначить роль" onClose={onClose}>
       <label className="form-grid__field">
         <span className="form-grid__label">Роль</span>
-        <select className="form-grid__input" value={roleId} aria-label="Роль"
-                onChange={(event) => setRoleId(event.target.value)}>
+        <AppSelectField label="Роль" value={roleId} onChange={setRoleId}>
           <option value="">Выберите роль</option>
           {roles.map((item) => (
             <option key={item.id} value={item.id} disabled={!item.grantable}>
@@ -814,7 +814,7 @@ function AssignForm({
               {item.grantable ? '' : ' · недоступна'}
             </option>
           ))}
-        </select>
+        </AppSelectField>
       </label>
       {blocked && <p className="form-grid__error">{blocked}</p>}
 
@@ -824,9 +824,8 @@ function AssignForm({
 
       <label className="form-grid__field">
         <span className="form-grid__label">Действует по</span>
-        <input className="form-grid__input" type="date" value={until}
-               aria-label="Действует по"
-               onChange={(event) => setUntil(event.target.value)} />
+        <DatePicker label="Действует по" value={until} now={today()} allowEmpty
+          onChange={setUntil} />
         <span className="field__hint">Пусто — без ограничения срока.</span>
       </label>
 
@@ -889,11 +888,11 @@ export function ScopePicker({
 
       <label className="form-grid__field">
         <span className="form-grid__label">Регион</span>
-        <select className="form-grid__input" value={region} aria-label="Регион"
-                onChange={(event) => {
+        <AppSelectField label="Регион" value={region}
+                onChange={(value) => {
                   // Офис из другого региона несовместим с выбором:
                   // показанное обязано совпадать с отправляемым.
-                  onRegion(event.target.value);
+                  onRegion(value);
                   onOffice('');
                 }}>
           <option value="">
@@ -902,13 +901,12 @@ export function ScopePicker({
           {scopes.regions.map((item) => (
             <option key={item.id} value={item.id}>{item.name}</option>
           ))}
-        </select>
+        </AppSelectField>
       </label>
 
       <label className="form-grid__field">
         <span className="form-grid__label">Офис</span>
-        <select className="form-grid__input" value={office} aria-label="Офис"
-                onChange={(event) => onOffice(event.target.value)}>
+        <AppSelectField label="Офис" value={office} onChange={onOffice}>
           <option value="">
             {region || scopes.all_organization
               ? 'Весь выбранный уровень'
@@ -917,7 +915,7 @@ export function ScopePicker({
           {here.map((item) => (
             <option key={item.id} value={item.id}>{item.name}</option>
           ))}
-        </select>
+        </AppSelectField>
       </label>
 
       {hint && <p className="note note--dim">{hint}</p>}

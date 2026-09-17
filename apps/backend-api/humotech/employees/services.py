@@ -17,7 +17,8 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
-from django.db.models import Count, Q
+from django.db.models import Case, Count, IntegerField, Q, Value, When
+from django.db.models.functions import Lower, Replace
 
 from humotech.core.errors import Conflict, NotFound, ValidationFailed
 from humotech.core.pagination import Cursor, Page, normalize_limit, paginate
@@ -62,6 +63,11 @@ CONTACT_FIELDS = ("first_name", "last_name", "middle_name", "phone",
 WORKING_STATUSES = ("ACTIVE", "PROBATION")
 # Статусы, после которых кадровые операции недоступны.
 FINAL_STATUSES = ("TERMINATED", "ARCHIVED")
+
+
+def _normalize_search_query(value: str | None) -> str:
+    """Единая нормализация строки поиска без опасной транслитерации."""
+    return " ".join((value or "").strip().lower().replace("ё", "е").split())
 
 
 def current_primary_assignment_filter(at: date) -> Q:
@@ -387,6 +393,100 @@ class EmployeeService(BaseService):
             employee.telegram_state = binding[0] if binding else None
             employee.telegram_username = binding[1] if binding else None
         return page
+
+    def search(self, actor: Actor, *, query: str, at: date | None = None) -> list[dict]:
+        """Короткий поиск для верхней панели CRM.
+
+        Это намеренно не вариант ``list``: верхняя панель не должна получать
+        ни контакты, ни историю, ни произвольный размер страницы.  Поиск всегда
+        ограничен десятью строками и проходит через ту же область офисов, что
+        и карточка сотрудника.
+        """
+        self.access.require(actor, "employees.read")
+        normalized = _normalize_search_query(query)
+        if len(normalized) < 2:
+            return []
+
+        at = at or date.today()
+        telegram_query = normalized.lstrip("@")
+        tokens = [part for part in normalized.split(" ") if part]
+        queryset = self._visible(actor, at=at).annotate(
+            search_first=Replace(Lower("first_name"), Value("ё"), Value("е")),
+            search_last=Replace(Lower("last_name"), Value("ё"), Value("е")),
+            search_middle=Replace(Lower("middle_name"), Value("ё"), Value("е")),
+            search_number=Lower("employee_number"),
+            search_email=Lower("corporate_email"),
+            search_telegram=Replace(
+                Lower("telegram_account__telegram_username"), Value("ё"), Value("е")
+            ),
+        )
+
+        # Каждое слово ФИО должно найтись хотя бы в одной допустимой части
+        # имени. Так «Иван Петр» не превращается в поиск по одному Ивану.
+        for token in tokens:
+            queryset = queryset.filter(
+                Q(search_first__contains=token)
+                | Q(search_last__contains=token)
+                | Q(search_middle__contains=token)
+                | Q(search_number__contains=token)
+                | Q(search_telegram__contains=token.lstrip("@"))
+                | Q(search_email__contains=token)
+            )
+
+        first_name = tokens[0]
+        queryset = queryset.annotate(
+            search_rank=Case(
+                When(search_number=normalized, then=Value(0)),
+                When(search_telegram=telegram_query, then=Value(1)),
+                When(
+                    Q(search_last=normalized)
+                    | Q(search_first=normalized)
+                    | Q(search_middle=normalized),
+                    then=Value(2),
+                ),
+                When(
+                    Q(search_last__startswith=first_name)
+                    | Q(search_first__startswith=first_name)
+                    | Q(search_middle__startswith=first_name),
+                    then=Value(3),
+                ),
+                default=Value(4),
+                output_field=IntegerField(),
+            ),
+            status_rank=Case(
+                When(employment_status__in=WORKING_STATUSES, then=Value(0)),
+                default=Value(1),
+                output_field=IntegerField(),
+            ),
+        ).distinct().order_by("search_rank", "status_rank", "last_name", "first_name", "id")
+        rows = list(queryset[:10])
+
+        assignments = {
+            row.employee_id: row
+            for row in EmployeeAssignment.objects.filter(
+                current_primary_assignment_filter(at), employee_id__in=[row.id for row in rows]
+            ).select_related("office", "department", "position")
+        }
+        accounts = {
+            row.employee_id: row.telegram_username
+            for row in TelegramAccount.objects.filter(employee_id__in=[row.id for row in rows])
+        }
+        return [
+            {
+                "id": str(row.id),
+                "employee_number": row.employee_number,
+                "full_name": " ".join(
+                    part for part in (row.last_name, row.first_name, row.middle_name) if part
+                ),
+                "employment_status": row.employment_status,
+                "photo": row.photo_id is not None,
+                "position_name": assignments[row.id].position.name if assignments.get(row.id) and assignments[row.id].position else None,
+                "department_name": assignments[row.id].department.name if assignments.get(row.id) and assignments[row.id].department else None,
+                "office_name": assignments[row.id].office.name if assignments.get(row.id) else None,
+                "telegram_username": accounts.get(row.id),
+            }
+            for row in rows
+        ]
 
     def get(
         self, actor: Actor, employee_id: uuid.UUID, *, at: date | None = None

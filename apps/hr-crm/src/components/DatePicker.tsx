@@ -37,9 +37,12 @@ type Props = {
   /** Сегодняшняя дата. Отдельно — чтобы тест не зависел от часов машины. */
   now: string;
   disabled?: boolean;
+  rangeStart?: string;
+  rangeEnd?: string;
+  allowEmpty?: boolean;
 };
 
-export function DatePicker({ value, onChange, label, min, max, now, disabled }: Props) {
+export function DatePicker({ value, onChange, label, min, max, now, disabled, rangeStart, rangeEnd, allowEmpty }: Props) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -114,6 +117,12 @@ export function DatePicker({ value, onChange, label, min, max, now, disabled }: 
   function apply(text: string): boolean {
     const got = parseRu(text);
     if (!got.ok) {
+      if (got.reason === 'empty' && allowEmpty) {
+        setError(null);
+        setDraft(null);
+        onChange('');
+        return true;
+      }
       setError(got.reason === 'empty' ? null : 'Введите корректную дату');
       return got.reason === 'empty';
     }
@@ -141,7 +150,7 @@ export function DatePicker({ value, onChange, label, min, max, now, disabled }: 
     setDraft(null);
     onChange(day);
     setOpen(false);
-    field.current?.focus();
+    field.current?.focus({ preventScroll: true });
   }
 
   function onFieldKey(event: React.KeyboardEvent<HTMLInputElement>) {
@@ -193,7 +202,7 @@ export function DatePicker({ value, onChange, label, min, max, now, disabled }: 
     if (event.key === 'Escape') {
       event.preventDefault();
       setOpen(false);
-      field.current?.focus();
+      field.current?.focus({ preventScroll: true });
     }
   }
 
@@ -235,7 +244,7 @@ export function DatePicker({ value, onChange, label, min, max, now, disabled }: 
           className="date__toggle"
           aria-label={open ? 'Закрыть календарь' : 'Открыть календарь'}
           disabled={disabled}
-          onClick={() => { setOpen((was) => !was); field.current?.focus(); }}
+          onClick={() => { setOpen((was) => !was); field.current?.focus({ preventScroll: true }); }}
         >
           <AppIcon name="chevron" size={16} />
         </button>
@@ -296,9 +305,13 @@ export function DatePicker({ value, onChange, label, min, max, now, disabled }: 
               const off = !sameMonth(day, anchor);
               const no = blocked(day);
               const on = day === value;
+              const inRange = Boolean(rangeStart && rangeEnd && day >= rangeStart && day <= rangeEnd);
               const marks = [
                 'cal__day',
                 off ? 'cal__day--off' : '',
+                inRange ? 'cal__day--range' : '',
+                day === rangeStart ? 'cal__day--range-start' : '',
+                day === rangeEnd ? 'cal__day--range-end' : '',
                 on ? 'cal__day--on' : '',
                 day === now ? 'cal__day--now' : '',
                 day === cursor ? 'cal__day--cursor' : '',
@@ -332,7 +345,7 @@ export function DatePicker({ value, onChange, label, min, max, now, disabled }: 
             <button
               type="button"
               className="cal__apply"
-              onClick={() => { if (apply(shown)) setOpen(false); field.current?.focus(); }}
+              onClick={() => { if (apply(shown)) setOpen(false); field.current?.focus({ preventScroll: true }); }}
             >
               Применить
             </button>
@@ -343,6 +356,8 @@ export function DatePicker({ value, onChange, label, min, max, now, disabled }: 
     </div>
   );
 }
+
+export { DatePicker as AppDatePicker };
 
 /**
  * Быстрый выбор года: три ряда по четыре.

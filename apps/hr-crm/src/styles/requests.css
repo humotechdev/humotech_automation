@@ -296,6 +296,7 @@
 .rq-dates input::-webkit-calendar-picker-indicator {
   display: none;
 }
+.app-date-range.rq-dates { height: auto; padding: 0; border: 0; background: transparent; }
 
 .rq-more {
   justify-content: center;
@@ -896,7 +897,7 @@
 
 .rq-decide__buttons {
   display: grid;
-  grid-template-columns: 126px minmax(0, 1fr) 134px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
   margin-top: 16px;
 }
@@ -904,6 +905,18 @@
 .rq-decide__buttons .rq-btn {
   height: 40px;
   padding: 0 10px;
+}
+
+/* The document action is currently disabled, but keep its full label legible
+   and reserve the top row for the two actual decisions. */
+.rq-decide__buttons .rq-btn:nth-child(2) {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+
+.rq-decide__buttons .rq-btn:nth-child(3) {
+  grid-column: 2;
+  grid-row: 1;
 }
 
 @media (max-width: 1280px) {
@@ -914,6 +927,82 @@
 
   .rq-filters {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    height: auto;
+  }
+}
+
+/* The details rail is deliberately narrow beside the request list. Stack
+   document metadata and its preview there so both remain readable. */
+@media (max-width: 1600px) {
+  .rq-doc {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rq-doc__preview {
+    width: 100%;
+    height: 104px;
+    margin-top: 0;
+    object-fit: contain;
+  }
+}
+
+/* --- заявки на среднем и узком экране -------------------------------------
+ *
+ * Три поведения подробностей, по ширине:
+ *
+ *   от 1281 — панель стоит рядом со списком, как в эталоне;
+ *   901–1280 — панель выезжает справа поверх списка. Рядом она уже не
+ *              помещается: список ужимается до пяти колонок из восьми,
+ *              и разбирать заявку становится не по чему. Закрывается
+ *              своим крестиком в шапке — он есть всегда;
+ *   до 900  — подробности встают ПОД списком: выезжающая панель на
+ *             такой ширине закрывает собой всё, ради чего её открыли.
+ *
+ * Кнопки решения при этом не прячутся ни на одной ширине: «Одобрить» и
+ * «Отклонить» — то, ради чего страницу открывают.
+ */
+
+@media (max-width: 1280px) and (min-width: 901px) {
+  .rq-grid--open {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rq-grid--open .rq-side {
+    position: fixed;
+    top: var(--topbar-height);
+    right: 0;
+    bottom: 0;
+    z-index: 45;
+    width: min(560px, 82vw);
+    border-left: 1px solid var(--border-default);
+    border-radius: 0;
+    background: #fff;
+    box-shadow: -18px 0 42px rgba(19, 62, 104, 0.18);
+    overflow-y: auto;
+  }
+}
+
+@media (max-width: 900px) {
+  .rq-grid--open {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 12px;
+  }
+
+  /* Строка заявки: восемь колонок в одну карточку. Значок и подпись
+     сверху, остальное — парами под ними. */
+  .rq-row {
+    grid-template-columns: 44px minmax(0, 1fr);
+    align-items: start;
+    row-gap: 2px;
+    padding: 12px 10px;
+  }
+
+  .rq-row > :nth-child(n + 3) {
+    grid-column: 2;
+  }
+
+  .rq-filters {
+    grid-template-columns: minmax(0, 1fr);
     height: auto;
   }
 }

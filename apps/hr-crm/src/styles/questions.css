@@ -100,6 +100,9 @@
   pointer-events: none;
   color: var(--qs-muted);
 }
+.questions-select { flex: 0 1 180px; width: 180px; }
+.questions-select--wide { width: 220px; }
+.qs-more .app-select { min-width: 0; }
 
 .qs-icon-btn {
   display: inline-grid;

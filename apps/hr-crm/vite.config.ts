@@ -10,6 +10,17 @@ export default defineConfig({
   server: {
     port: 5173,
     host: true,
+    /*
+     * Имена контейнеров стенда — для проверок, которые ходят к
+     * dev-серверу изнутри сети Docker, а не через порт хоста.
+     *
+     * Vite с седьмой версии отвечает «Blocked request» на незнакомое
+     * имя в заголовке `Host`, и такая проверка молча снимает не
+     * страницу, а заглушку. Числовые адреса Vite пропускает сам,
+     * поэтому доступ по IP из локальной сети это не меняет. Настройка
+     * касается только dev-сервера: в сборку она не попадает.
+     */
+    allowedHosts: ['humotech_crm_e2e', 'humotech_crm_dev', 'localhost'],
     proxy: {
       '/api': {
         target: process.env.VITE_BACKEND_ORIGIN ?? 'http://127.0.0.1:8000',

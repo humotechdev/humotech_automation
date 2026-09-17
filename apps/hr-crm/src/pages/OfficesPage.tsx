@@ -20,6 +20,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import * as api from '../api/crm';
 import { AppShell } from '../components/AppShell';
 import { AppIcon } from '../components/AppIcon';
+import { AppFilterButton, AppSegmentedControl, AppSelectField } from '../components/AppSelect';
 import { OfficeCard } from '../components/OfficeCard';
 import {
   AREA_NAMES, UzbekistanMap, areaOf, loadAreas, type Area, type MapOffice,
@@ -179,8 +180,9 @@ export function OfficesPage() {
   const inArea = area ? rows.filter((row) => areaById.get(row.office.id) === area) : rows;
   const shown = onlySetup ? inArea.filter(needsSetup) : inArea;
   const stripRows = strip === 'active'
-    ? shown.filter((row) => row.office.status === 'ACTIVE' && !attentionOf(row))
-    : strip === 'attention' ? shown.filter((row) => attentionOf(row) !== null) : shown;
+    ? shown.filter((row) => row.office.status === 'ACTIVE')
+    : strip === 'attention' ? shown.filter((row) => attentionOf(row) !== null)
+      : strip === 'inactive' ? shown.filter((row) => row.office.status !== 'ACTIVE') : shown;
   const current = rows.find((row) => row.office.id === picked) ?? null;
   const withoutCoords = rows.filter((row) => coordinates(row.office) === null);
   const setupCount = rows.filter(needsSetup).length;
@@ -207,7 +209,20 @@ export function OfficesPage() {
     }];
   }), [rows]);
   const pickArea = useCallback((iso: string | null) => patch({ area: iso, office: null }), [patch]);
-  const pickOffice = useCallback((id: string) => patch({ office: id }), [patch]);
+  const pickOfficeFromMap = useCallback((id: string) => {
+    // Keep the selected marker represented in the carousel even when the
+    // current status filter would otherwise hide its card.
+    if (stripRows.some((row) => row.office.id === id)) patch({ office: id });
+    else patch({ office: id, strip: null });
+  }, [patch, stripRows]);
+
+  const pickOfficeFromStrip = useCallback((id: string) => {
+    // Только выбор. Прокрутки к карте здесь больше нет: нажатие на
+    // карточку меняло положение страницы под курсором, и следующий
+    // щелчок попадал не туда, куда человек целился. Карта и так
+    // подсвечивает выбранный офис — уезжать к ней незачем.
+    patch({ office: id });
+  }, [patch]);
 
   return (
     <AppShell breadcrumb="Офисы и регионы" section="offices">
@@ -245,20 +260,13 @@ export function OfficesPage() {
                 </button>
               )}
             </div>
-            <div className="of-views" role="tablist" aria-label="Вид">
-              {([
-                { key: 'map', title: 'Карта сети', icon: 'pin' },
-                { key: 'list', title: 'Список', icon: 'list' },
-                { key: 'regions', title: 'Регионы', icon: 'chart' },
-              ] as const).map((item) => (
-                <button key={item.key} type="button" role="tab" aria-selected={view === item.key}
-                        className={view === item.key ? 'of-view of-view--on' : 'of-view'}
-                        onClick={() => patch({ view: item.key === 'map' ? null : item.key, office: null })}>
-                  <AppIcon name={item.icon} size={18} />
-                  {item.title}
-                </button>
-              ))}
-            </div>
+            <AppSegmentedControl className="of-views" role="tablist" label="Вид офисов" value={view}
+              options={[
+                { value: 'map', label: 'Карта сети', icon: 'pin' },
+                { value: 'list', label: 'Список', icon: 'list' },
+                { value: 'regions', label: 'Регионы', icon: 'chart' },
+              ]}
+              onChange={(next) => patch({ view: next === 'map' ? null : next, office: null })} />
           </div>
         </header>
 
@@ -293,7 +301,7 @@ export function OfficesPage() {
                     area={area}
                     office={picked}
                     onPickArea={pickArea}
-                    onPickOffice={pickOffice}
+                    onPickOffice={pickOfficeFromMap}
                     popup={current ? <Popup row={current} onClose={() => patch({ office: null })} /> : null}
                   />
                 )}
@@ -322,9 +330,9 @@ export function OfficesPage() {
               )}
             </div>
 
-            <OfficeStrip rows={stripRows} total={inArea.length} block={list} strip={strip}
+            <OfficeStrip rows={stripRows} total={shown.length} block={list} strip={strip}
                          picked={picked} onStrip={(value) => patch({ strip: value === 'all' ? null : value })}
-                         onPick={(id) => patch({ office: id })} />
+                         onPick={pickOfficeFromStrip} />
           </>
         )}
       </div>
@@ -442,69 +450,157 @@ function OfficeStrip({ rows, total, block, strip, picked, onStrip, onPick }: {
   onPick: (id: string) => void;
 }) {
   const track = useRef<HTMLDivElement>(null);
-  const scroll = (direction: number) =>
-    track.current?.scrollBy({ left: direction * 520, behavior: 'smooth' });
+  const [visibleCount, setVisibleCount] = useState(4);
+  const [startIndex, setStartIndex] = useState(0);
+  const maxStart = Math.max(0, rows.length - visibleCount);
+  const rangeStart = rows.length ? Math.min(startIndex + 1, rows.length) : 0;
+  const rangeEnd = rows.length ? Math.min(startIndex + visibleCount, rows.length) : 0;
+
+  useEffect(() => {
+    const element = track.current;
+    if (!element) return;
+    const measure = () => {
+      const card = element.querySelector<HTMLElement>('.of-card');
+      if (!card) return;
+      const styles = getComputedStyle(element);
+      const gap = Number.parseFloat(styles.columnGap || styles.gap) || 12;
+      const count = Math.max(1, Math.round(element.clientWidth / (card.getBoundingClientRect().width + gap)));
+      setVisibleCount(count);
+    };
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    measure();
+    return () => observer.disconnect();
+  }, [rows.length]);
+
+  useEffect(() => {
+    const element = track.current;
+    if (!element) return;
+    element.scrollTo({ left: 0, behavior: 'smooth' });
+    setStartIndex(0);
+  }, [strip, rows.length]);
+
+  useEffect(() => {
+    const element = track.current;
+    if (!element || !picked) return;
+    const card = [...element.querySelectorAll<HTMLElement>('.of-card')]
+      .find((item) => item.dataset.officeId === picked);
+    if (!card) return;
+    const trackBounds = element.getBoundingClientRect();
+    const cardBounds = card.getBoundingClientRect();
+    if (cardBounds.left < trackBounds.left) {
+      element.scrollBy({ left: cardBounds.left - trackBounds.left, behavior: 'smooth' });
+    } else if (cardBounds.right > trackBounds.right) {
+      element.scrollBy({ left: cardBounds.right - trackBounds.right, behavior: 'smooth' });
+    }
+  }, [picked, rows]);
+
+  const scroll = (direction: number) => {
+    const element = track.current;
+    if (!element) return;
+    const previousStart = startIndex >= maxStart && maxStart % visibleCount !== 0
+      ? Math.floor(maxStart / visibleCount) * visibleCount
+      : Math.max(0, startIndex - visibleCount);
+    const targetIndex = direction > 0
+      ? Math.min(startIndex + visibleCount, maxStart)
+      : previousStart;
+    const card = element.querySelectorAll<HTMLElement>('.of-card')[targetIndex];
+    if (!card) return;
+    const shift = card.getBoundingClientRect().left - element.getBoundingClientRect().left;
+    element.scrollBy({ left: shift, behavior: 'smooth' });
+  };
+
+  const onTrackScroll = () => {
+    const element = track.current;
+    if (!element) return;
+    const trackLeft = element.getBoundingClientRect().left;
+    const cards = [...element.querySelectorAll<HTMLElement>('.of-card')];
+    const first = cards.findIndex((card) => card.getBoundingClientRect().left >= trackLeft - 1);
+    if (first >= 0) setStartIndex(first);
+  };
 
   return (
     <section className="of-strip" aria-label="Офисы">
       <div className="of-strip__head">
-        <h2>Офисы <span className="of-count">{total}</span></h2>
-        <div className="of-strip__filters" role="group" aria-label="Отбор офисов">
+        <div className="of-strip__identity">
+          <h2>Офисы <span className="of-count">{total}</span></h2>
+          <p>Состояние офисов на выбранную дату</p>
+        </div>
+        <div className="of-strip__controls">
+          <div className="of-strip__filters" role="group" aria-label="Отбор офисов">
           {[
             { key: 'all', title: 'Все' },
             { key: 'active', title: 'Активные' },
             { key: 'attention', title: 'Требуют внимания' },
+            { key: 'inactive', title: 'Неактивные' },
           ].map((item) => (
-            <button key={item.key} type="button" aria-pressed={strip === item.key}
-                    className={strip === item.key ? 'of-chip of-chip--on' : 'of-chip'}
-                    onClick={() => onStrip(item.key)}>
-              {item.title}
-            </button>
+            <AppFilterButton key={item.key} className="of-chip" active={strip === item.key} onClick={() => onStrip(item.key)}>{item.title}</AppFilterButton>
           ))}
+          </div>
+          <div className="of-strip__navigation">
+            <button type="button" className="of-strip__arrow" aria-label="Предыдущие офисы"
+                    disabled={startIndex <= 0} onClick={() => scroll(-1)}>
+              <AppIcon name="back" size={18} />
+            </button>
+            <button type="button" className="of-strip__arrow" aria-label="Следующие офисы"
+                    disabled={startIndex >= maxStart} onClick={() => scroll(1)}>
+              <AppIcon name="next" size={18} />
+            </button>
+            <span className="of-strip__range">{rangeStart}–{rangeEnd} из {rows.length}</span>
+          </div>
         </div>
       </div>
-      <div className="of-strip__body">
-        <button type="button" className="of-strip__arrow" aria-label="Назад" onClick={() => scroll(-1)}>
-          <AppIcon name="back" size={20} />
-        </button>
-        <div className="of-strip__track" ref={track}>
+      <div className="of-strip__track" ref={track} onScroll={onTrackScroll}>
           <Rows block={block} name="офисы">
             {() => rows.length === 0 ? (
               <p className="of-empty">По этим условиям офисов нет.</p>
             ) : rows.map((row) => {
               const here = row.counts['IN_OFFICE'] ?? 0;
               const expected = expectedOf(row);
+              const offSchedule = row.counts['NO_SCHEDULE'] ?? 0;
+              const dayOff = row.counts['DAY_OFF'] ?? 0;
+              const cardTone = row.office.status !== 'ACTIVE' || expected === 0
+                ? 'off' : attentionOf(row) ? 'warn' : 'ok';
+              const nonWorkingLabel = row.office.status !== 'ACTIVE'
+                ? STATUS_TITLE[row.office.status] ?? 'Неактивен'
+                : expected > 0 ? null
+                  : dayOff > 0 && offSchedule === 0 ? 'Выходной'
+                    : offSchedule > 0 && dayOff === 0 ? 'Нет графика'
+                      : 'Нет данных на выбранную дату';
+              const cardStatus = cardTone === 'warn'
+                ? attentionOf(row) ?? 'Требует внимания'
+                : cardTone === 'ok' ? 'Работает' : nonWorkingLabel ?? 'Нет данных';
               return (
-                <button key={row.office.id} type="button"
-                        className={`of-card of-card--${toneOf(row)}${row.office.id === picked ? ' of-card--on' : ''}`}
+                <button key={row.office.id} type="button" data-office-id={row.office.id}
+                        className={`of-card of-card--${cardTone}${row.office.id === picked ? ' of-card--on' : ''}`}
                         onClick={() => onPick(row.office.id)}>
                   <span className="of-card__head">
-                    <i className={`of-dot of-dot--${toneOf(row)}`} />
+                    <i className={`of-dot of-dot--${cardTone}`} />
                     <b>{row.office.name}</b>
                     <AppIcon name="next" size={16} />
                   </span>
                   <small className="of-card__region">{row.office.region_name ?? '—'}</small>
+                  <span className={`of-card__status of-card__status--${cardTone}`}>{cardStatus}</span>
                   <span className="of-card__load">
-                    <AppIcon name="users" size={16} />
-                    <b>{here} из {expected}</b>
-                    <small>{percent(here, expected)}</small>
+                    {expected > 0 ? <>
+                      <span>{here} из {expected} в офисе</span>
+                      <b>{percent(here, expected)}</b>
+                    </> : <span className="of-card__schedule">{nonWorkingLabel}</span>}
                   </span>
-                  <i className="of-load__bar"><i style={{ width: `${expected ? Math.min((here / expected) * 100, 100) : 0}%` }} /></i>
+                  <i className={`of-card__bar of-card__bar--${cardTone}`}>
+                    {expected > 0 && <i style={{ width: `${Math.min((here / expected) * 100, 100)}%` }} />}
+                  </i>
                   <span className="of-card__points">
                     <AppIcon name="grid" size={16} />
-                    {row.pointsKnown === false
+                    <span>{row.pointsKnown === false
                       ? 'QR-точки: нет доступа'
-                      : `${row.points.length} ${pointsWord(row.points.length)}`}
+                      : `${row.points.length} ${pointsWord(row.points.length)}`}</span>
                     <AppIcon name="next" size={16} />
                   </span>
                 </button>
               );
             })}
           </Rows>
-        </div>
-        <button type="button" className="of-strip__arrow" aria-label="Вперёд" onClick={() => scroll(1)}>
-          <AppIcon name="next" size={20} />
-        </button>
       </div>
     </section>
   );
@@ -526,23 +622,17 @@ function ListView({ rows, block, picked, setupCount, onlySetup, regions, region,
   return (
     <section className="of-list" aria-label="Список офисов">
       <div className="of-list__tools">
-        <label className="of-select">
-          <span className="visually-hidden">Регион</span>
-          <select value={region} onChange={(event) => onPatch({ region_id: event.target.value || null })}>
+        <AppSelectField className="of-select" label="Регион" value={region} onChange={(value) => onPatch({ region_id: value || null })}>
             <option value="">Все регионы</option>
             {regions.state === 'ready' && regions.data.items.map((item) => (
               <option key={item.id} value={item.id}>{item.name}</option>
             ))}
-          </select>
-        </label>
-        <label className="of-select">
-          <span className="visually-hidden">Статус</span>
-          <select value={status} onChange={(event) => onPatch({ status: event.target.value || null })}>
+        </AppSelectField>
+        <AppSelectField className="of-select" label="Статус" value={status} onChange={(value) => onPatch({ status: value || null })}>
             <option value="">Все статусы</option>
             <option value="ACTIVE">Активные</option>
             <option value="INACTIVE">Отключённые</option>
-          </select>
-        </label>
+        </AppSelectField>
         {setupCount > 0 && (
           <button type="button" aria-pressed={onlySetup}
                   className={onlySetup ? 'of-chip of-chip--on' : 'of-chip'}
@@ -557,7 +647,7 @@ function ListView({ rows, block, picked, setupCount, onlySetup, regions, region,
           <p className="of-empty">По этим условиям офисов нет.</p>
         ) : (
           <div className="of-table-wrap">
-            <table className="of-table">
+            <table className="of-table table-cards">
               <thead>
                 <tr>
                   <th>Офис / регион</th>
@@ -574,9 +664,9 @@ function ListView({ rows, block, picked, setupCount, onlySetup, regions, region,
                       onClick={() => onPatch({ office: row.office.id })}
                       onKeyDown={(event) => { if (event.key === 'Enter') onPatch({ office: row.office.id }); }}>
                     <td><b>{row.office.name}</b><small>{row.office.region_name ?? '—'}</small></td>
-                    <td>{staffOf(row)}</td>
-                    <td><b>{row.counts['IN_OFFICE'] ?? 0}</b> / {expectedOf(row)}</td>
-                    <td>{row.pointsKnown === false ? '—' : row.points.length}</td>
+                    <td data-label="Сотрудники">{staffOf(row)}</td>
+                    <td data-label="В офисе / по графику"><b>{row.counts['IN_OFFICE'] ?? 0}</b> / {expectedOf(row)}</td>
+                    <td data-label="QR-точки">{row.pointsKnown === false ? '—' : row.points.length}</td>
                     <td>
                       <span className={`of-state of-state--${row.office.status === 'ACTIVE' ? 'ok' : 'off'}`}>
                         {STATUS_TITLE[row.office.status] ?? row.office.status}
@@ -642,14 +732,11 @@ function RegionsTab({ canManage, onChanged, onPick }: {
           <input type="search" value={search} placeholder="Поиск региона" aria-label="Поиск региона"
                  onChange={(event) => setSearch(event.target.value)} />
         </label>
-        <label className="of-select">
-          <span className="visually-hidden">Статус региона</span>
-          <select value={status} onChange={(event) => setStatus(event.target.value)}>
+        <AppSelectField className="of-select" label="Статус региона" value={status} onChange={setStatus}>
             <option value="">Все статусы</option>
             <option value="ACTIVE">Активные</option>
             <option value="INACTIVE">Отключённые</option>
-          </select>
-        </label>
+        </AppSelectField>
       </div>
       {failed && <p className="of-empty of-empty--bad" role="alert">{failed}</p>}
       <Rows block={list} name="регионы">

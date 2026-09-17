@@ -295,6 +295,21 @@ body,
  */
 html {
   overflow-x: clip;
+  /*
+   * Место под вертикальную полосу зарезервировано всегда.
+   *
+   * Сам документ не прокручивается — каркас ровно в высоту окна, а
+   * прокручивается `.work`. Но полоса появляется и исчезает вместе с
+   * содержимым этой области, и без запаса страница дёргается на
+   * ширину полосы при каждом обновлении списка: фильтр применили —
+   * строк стало меньше — полоса пропала — всё уехало вправо.
+   *
+   * `scrollbar-gutter` держит дорожку на месте, `overflow-y: scroll`
+   * повторяет то же самое для браузеров постарше. Полоса у нас своя,
+   * шесть пикселей, поэтому пустая дорожка не бросается в глаза.
+   */
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
 }
 
 /*
@@ -847,6 +862,120 @@ html {
   color: var(--ink-tertiary);
 }
 
+/* Глобальный поиск живёт поверх рабочей области, а не расширяет topbar:
+   результаты не двигают уведомления и не прыгают при подгрузке. */
+.global-search {
+  position: relative;
+  z-index: 20;
+}
+
+.global-search__panel {
+  position: fixed;
+  z-index: 1200;
+  max-height: min(620px, calc(100vh - 90px));
+  overflow-x: hidden;
+  overflow-y: auto;
+  border: 1px solid rgba(204, 222, 242, .95);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, .97);
+  box-shadow: 0 18px 46px rgba(29, 67, 119, .18), 0 2px 8px rgba(29, 67, 119, .08);
+}
+
+.global-search__heading,
+.global-search__footer {
+  display: flex;
+  align-items: center;
+}
+
+.global-search__heading {
+  justify-content: space-between;
+  padding: 14px 16px 10px;
+  color: #12356e;
+  font-size: 13px;
+}
+
+.global-search__heading span {
+  color: #7890af;
+  font-size: 12px;
+}
+
+.global-search__row {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto 16px;
+  align-items: center;
+  width: 100%;
+  min-height: 62px;
+  gap: 10px;
+  padding: 8px 15px;
+  border: 0;
+  border-left: 3px solid transparent;
+  background: transparent;
+  color: #12356e;
+  text-align: left;
+  cursor: pointer;
+}
+
+.global-search__row:hover,
+.global-search__row--active {
+  border-left-color: #2979e6;
+  background: #edf6ff;
+}
+
+.global-search__row > svg { color: #87a0be; }
+
+.global-search__avatar {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #cfe7ff, #93c4f4);
+  color: #1556a4;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.global-search__avatar img { width: 100%; height: 100%; object-fit: cover; }
+
+.global-search__identity { min-width: 0; }
+.global-search__identity strong,
+.global-search__identity small,
+.global-search__place small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.global-search__identity strong { font-size: 13px; font-weight: 720; }
+.global-search__identity small,
+.global-search__place small { margin-top: 3px; color: #7187a4; font-size: 11px; }
+
+.global-search__place { min-width: 62px; text-align: right; }
+.global-search__place em {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 2px 6px;
+  border-radius: 99px;
+  background: #fce8e7;
+  color: #a34c48;
+  font-size: 10px;
+  font-style: normal;
+}
+
+.global-search__message { margin: 0; padding: 24px 16px; color: #6c84a2; font-size: 13px; }
+.global-search__message button { padding: 0; border: 0; background: none; color: #1768d2; font: inherit; cursor: pointer; }
+
+.global-search__footer {
+  gap: 6px;
+  min-height: 38px;
+  padding: 7px 13px;
+  border-top: 1px solid #e6eff9;
+  color: #7890ad;
+  font-size: 10px;
+}
+.global-search__footer > span:first-child { margin-right: auto; }
+.global-search__footer kbd { padding: 2px 4px; border: 1px solid #d5e2f0; border-radius: 4px; background: #f8fbfe; color: #55769e; font: 10px inherit; }
+
+.global-search__skeleton { padding: 4px 15px 12px; }
+.global-search__skeleton i { display: block; height: 52px; margin-top: 7px; border-radius: 8px; background: linear-gradient(90deg, #f0f5fa, #fafcff, #f0f5fa); background-size: 200% 100%; animation: global-search-shimmer 1.1s infinite; }
+@keyframes global-search-shimmer { to { background-position: -200% 0; } }
+
 .tool {
   display: inline-flex;
   align-items: center;
@@ -940,6 +1069,13 @@ html {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+/* The shared select is full-width in form layouts; dashboard filters are a
+   compact toolbar and must keep region and office controls side by side. */
+.head__filters .filters > .app-select {
+  flex: 0 1 172px;
+  width: 172px;
 }
 
 .pick {
@@ -1091,6 +1227,59 @@ html {
   background: var(--selection-bg);
   color: var(--selection-text);
 }
+
+/* Shared controls for legacy screens: visual contract matches the dashboard. */
+.app-select { position: relative; display: block; min-width: 0; width: 100%; }
+.app-select__trigger {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  width: 100%; min-width: 0; min-height: 41px; padding: 0 12px;
+  border: 1px solid rgba(207, 223, 237, .95); border-radius: 9px;
+  background: rgba(255, 255, 255, .94); color: var(--ink-primary);
+  font: inherit; font-size: 14px; text-align: left; cursor: pointer;
+  transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
+}
+.app-select__trigger:hover:not(:disabled) { border-color: #a9cae9; }
+.app-select__trigger:focus-visible, .app-select__trigger--open { outline: 0; border-color: #0875e1; box-shadow: 0 0 0 3px rgba(8,117,225,.1); }
+.app-select__trigger--error { border-color: var(--status-danger); }
+.app-select__trigger:disabled { cursor: not-allowed; opacity: .55; }
+.app-select__trigger > svg { flex: none; color: var(--ink-secondary); transition: transform .16s ease; }
+.app-select__trigger--open > svg { transform: rotate(180deg); }
+.app-select__value { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.app-select__menu {
+  position: fixed; z-index: 10000; display: flex; flex-direction: column; gap: 5px;
+  padding: 6px; border: 1px solid var(--border-default); border-radius: 11px;
+  background: rgba(255,255,255,.98); backdrop-filter: blur(18px) saturate(120%);
+  box-shadow: var(--shadow-panel); animation: drop-in .16s ease-out;
+}
+.app-select__search { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 9px; border: 1px solid var(--border-default); border-radius: 8px; color: var(--ink-secondary); }
+.app-select__search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--ink-primary); font: inherit; font-size: 13px; }
+.app-select__options { overflow: auto; overscroll-behavior: contain; }
+.app-select__option { display: flex; justify-content: space-between; align-items: center; gap: 10px; width: 100%; min-height: 36px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--ink-primary); font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.app-select__option:hover, .app-select__option--active { background: var(--selection-bg); color: var(--selection-text); }
+.app-select__option--selected { font-weight: 600; }
+.app-select__option:disabled { opacity: .5; cursor: not-allowed; }
+.app-select__option svg { flex: none; color: var(--action-text); }
+.app-select__empty { margin: 8px; color: var(--ink-secondary); font-size: 13px; }
+.app-multi__menu { max-height: 320px; }
+.app-multi__option { display: flex; align-items: center; gap: 9px; min-height: 34px; padding: 0 8px; border-radius: 7px; color: var(--ink-primary); font-size: 13px; cursor: pointer; }
+.app-multi__option:hover { background: var(--selection-bg); }
+.app-multi__option input { accent-color: #0875e1; }
+.app-filter, .app-segmented__button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; padding: 0 12px; border: 1px solid #d7e5f4; border-radius: 8px; background: #fff; color: var(--ink-secondary); font: inherit; font-size: 13px; cursor: pointer; transition: .15s ease; }
+.app-filter:hover, .app-segmented__button:hover { border-color: #a9cae9; color: var(--ink-primary); }
+.app-filter--active, .app-segmented__button--active { border-color: #0875e1; background: #eaf3ff; color: #075bb4; font-weight: 600; }
+.app-filter span { padding: 1px 6px; border-radius: 10px; background: rgba(8,117,225,.12); font-size: 11px; }
+.app-segmented { display: inline-flex; gap: 4px; padding: 3px; border: 1px solid #d7e5f4; border-radius: 10px; background: rgba(255,255,255,.65); }
+.app-segmented__button { min-height: 32px; border-color: transparent; background: transparent; }
+.app-segmented__button--active { background: #fff; box-shadow: 0 1px 4px rgba(15,54,104,.12); }
+.app-segmented__count { min-width: 18px; padding: 1px 6px; border-radius: 10px; background: #e8eef6; color: #33466a; font-size: 11px; text-align: center; }
+.app-segmented__button--active .app-segmented__count { background: #cfe0f8; }
+.app-popover { position: absolute; z-index: 1000; border: 1px solid var(--border-default); border-radius: 11px; background: #fff; box-shadow: var(--shadow-panel); }
+.toolbar-select { flex: 0 1 205px; width: 205px; min-width: 145px; }
+.app-date-range .date__field { min-width: 160px; height: 41px; box-sizing: border-box; }
+.app-date-range .date__input { width: 90px; }
+.app-date-range .date__toggle { width: 28px; }
+.app-select__trigger > svg, .app-select__option > svg { flex: none; }
+@media (prefers-reduced-motion: reduce) { .app-select__menu { animation: none; } }
 
 /* --- поле даты и мини-календарь ---------------------------------------------
    Родной календарь браузера нарисован системой: он не берёт ни шрифт
@@ -2805,9 +2994,31 @@ html {
 
 .empty {
   margin: 0;
+  /*
+   * Высота зарезервирована.
+   *
+   * Строка «Загружаем…» в одну строчку занимает тридцать пикселей, а
+   * список на её месте — несколько сотен. Пока данные идут, панель
+   * складывается, страница становится короче, прокрутка упирается в
+   * новый предел — и когда данные пришли, всё прыгает обратно.
+   * Полтораста пикселей под сообщением убирают это схлопывание, а
+   * само сообщение остаётся там же, где было, — сверху слева.
+   */
+  min-height: 150px;
   padding: 10px 0;
   font-size: 13px;
   color: var(--ink-2);
+}
+
+/* Сообщение внутри узкой колонки или маленькой карточки высоту не
+   резервирует: там разница между «пусто» и «список» невелика, а
+   полтораста пикселей растянули бы саму карточку. */
+.metric .empty,
+.card .empty,
+.of-strip .empty,
+.rp-side .empty,
+.an-card .empty {
+  min-height: 0;
 }
 
 .empty--bad {
@@ -2869,42 +3080,6 @@ html {
 }
 
 @media (max-width: 900px) {
-  .shell {
-    grid-template-columns: 64px 1fr;
-  }
-
-  .side {
-    padding: 14px 8px;
-  }
-
-  .side__brand {
-    justify-content: center;
-    padding: 2px 0 18px;
-  }
-
-  .side__brand .brand__full {
-    display: none;
-  }
-
-  .side__brand .brand__mark {
-    display: block;
-    height: 32px;
-  }
-
-  .side__group,
-  .nav span,
-  .side__who,
-  .side__exit span,
-  .nav__badge {
-    display: none;
-  }
-
-  .nav,
-  .side__exit {
-    justify-content: center;
-    padding: 10px 0;
-  }
-
   .cards {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -8593,4 +8768,387 @@ html {
     border-right: 0;
     border-bottom: 1px solid var(--border-soft);
   }
+}
+
+.cal__day--range:not(.cal__day--on) { background: #eaf3ff; border-radius: 0; color: #174a83; }
+.cal__day--range-start:not(.cal__day--on) { border-radius: 9px 0 0 9px; }
+.cal__day--range-end:not(.cal__day--on) { border-radius: 0 9px 9px 0; }
+.app-date-range { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.app-date-range .date { min-width: 0; }
+.app-date-range .date__field { min-width: 160px; }
+.app-date-range__dash { color: var(--ink-secondary); }
+@media (max-width: 560px) {
+  .app-date-range { flex-wrap: wrap; }
+  .app-date-range .date { flex: 1 1 150px; }
+  .app-date-range .date__field { width: 100%; min-width: 0; box-sizing: border-box; }
+}
+
+/* --- каркас на разных ширинах ---------------------------------------------
+ *
+ * Три состояния бокового меню, а не одно уменьшающееся:
+ *
+ *   ШИРОКОЕ (от 1280)  — меню колонкой 212 px с подписями, как в эталоне;
+ *   СРЕДНЕЕ (901–1279) — рельс 76 px: одни значки, подписи всплывают
+ *                        подсказкой. Освободившиеся 136 px уходят
+ *                        содержимому, а не пустому полю;
+ *   УЗКОЕ (до 900)     — меню выезжает поверх содержимого по кнопке.
+ *                        Рельс здесь уже мешает: на 834 px он съедает
+ *                        десятую часть ширины ради значков, по которым
+ *                        всё равно не понять раздел.
+ *
+ * Кнопка меню живёт в верхней панели и показывается только в третьем
+ * состоянии: на широком экране разделы и так на виду.
+ */
+
+.tool--menu {
+  display: none;
+  flex: none;
+}
+
+.side__scrim {
+  display: none;
+}
+
+/* --- средний экран: рельс со значками ------------------------------------- */
+
+@media (max-width: 1279px) {
+  :root {
+    --side-width: 76px;
+  }
+
+  .side {
+    padding: 14px 10px;
+    align-items: stretch;
+  }
+
+  .side__brand {
+    justify-content: center;
+    padding: 2px 0 16px;
+  }
+
+  .side__brand .brand__full {
+    display: none;
+  }
+
+  .side__brand .brand__mark {
+    display: block;
+    height: 34px;
+    width: auto;
+  }
+
+  /* Названия групп и подписи пунктов уходят, значки остаются по центру.
+     Подпись раздела доступна подсказкой — она проставлена разметкой. */
+  .side__group,
+  .nav span,
+  .side__who,
+  .side__exit span {
+    display: none;
+  }
+
+  .nav,
+  .side__exit {
+    justify-content: center;
+    gap: 0;
+    padding: 11px 0;
+  }
+
+  /* Счётчик не влезает рядом со значком — он садится на его угол.
+     Убирать его нельзя: это единственный признак, что в разделе ждут. */
+  .nav {
+    position: relative;
+  }
+
+  .nav__badge {
+    position: absolute;
+    top: 4px;
+    right: 12px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    font-size: 10px;
+    line-height: 16px;
+  }
+
+  .side__user {
+    justify-content: center;
+    padding: 10px 0;
+  }
+
+  .side__rule {
+    margin: 8px 6px;
+  }
+}
+
+/* --- узкий экран: выезжающее меню ----------------------------------------- */
+
+@media (max-width: 900px) {
+  .shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Меню выходит из потока и едет поверх содержимого. Ширина снова
+     полная: на выехавшей панели подписи нужны — по значкам вслепую
+     раздел не выбирают. */
+  .side {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 60;
+    width: 232px;
+    padding: 14px 12px;
+    transform: translateX(-100%);
+    transition: transform 0.18s ease-out;
+    box-shadow: 0 0 34px rgba(11, 40, 100, 0.28);
+  }
+
+  .side--open {
+    transform: none;
+  }
+
+  .side__brand {
+    justify-content: flex-start;
+    padding: 2px 4px 18px;
+  }
+
+  .side__brand .brand__full {
+    display: block;
+  }
+
+  .side__brand .brand__mark {
+    display: none;
+  }
+
+  .side__group,
+  .nav span,
+  .side__who,
+  .side__exit span {
+    display: revert;
+  }
+
+  .nav,
+  .side__exit {
+    justify-content: flex-start;
+    gap: 12px;
+    padding: 10px 12px;
+  }
+
+  .nav__badge {
+    position: static;
+    margin-left: auto;
+  }
+
+  .side__user {
+    justify-content: flex-start;
+    padding: 10px 6px;
+  }
+
+  /* Подложка под выехавшим меню: нажатие мимо закрывает его. */
+  .side__scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 55;
+    border: 0;
+    padding: 0;
+    background: rgba(11, 40, 100, 0.34);
+    cursor: pointer;
+  }
+
+  .tool--menu {
+    display: inline-flex;
+  }
+
+  /* Осветление больше не начинается за меню: меню вне потока. */
+  .shell__wash {
+    inset: 0;
+  }
+
+  .topbar {
+    gap: 10px;
+    padding: 0 14px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .side {
+    transition: none;
+  }
+}
+
+/* --- таблицы на узком экране: строки становятся карточками ----------------
+ *
+ * Колонок в кадровых таблицах пять-семь, и на 834 px они превращаются
+ * либо в столбик по два слова, либо в горизонтальную прокрутку, где
+ * фамилия уезжает за край вместе со статусом. Поэтому строка
+ * разворачивается в карточку: заголовок сверху, под ним пары
+ * «подпись — значение».
+ *
+ * Подпись берётся из `data-label` у ячейки, а не из шапки: CSS не умеет
+ * читать текст соседнего элемента, а подпись без значения — это
+ * догадка. Ячейка без `data-label` показывает одно значение, и это
+ * честнее выдуманного названия колонки.
+ *
+ * Класс ставится разметкой (`table-cards`), а не всем таблицам подряд:
+ * у сводных таблиц аналитики и предпросмотра отчёта колонки — это оси,
+ * и разворачивать их в карточки бессмысленно.
+ */
+
+@media (max-width: 900px) {
+  .table-cards {
+    display: block;
+    width: 100%;
+    border-collapse: separate;
+  }
+
+  .table-cards thead {
+    /* Шапка не прячется `display: none`: так она пропадает и для
+       чтения с экрана. `clip` убирает её с глаз, оставляя в дереве. */
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .table-cards tbody {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .table-cards tbody tr {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 11px 13px;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--panel-radius);
+    background: #fff;
+  }
+
+  .table-cards tbody td {
+    display: grid;
+    grid-template-columns: minmax(78px, 34%) minmax(0, 1fr);
+    align-items: baseline;
+    gap: 10px;
+    width: auto;
+    max-width: none;
+    padding: 0;
+    border: 0;
+    text-align: left;
+    white-space: normal;
+  }
+
+  .table-cards tbody td::before {
+    content: attr(data-label);
+    color: var(--text-muted);
+    font-size: 11.5px;
+    line-height: 1.45;
+  }
+
+  /* Первая ячейка — заголовок карточки: во всю ширину и крупнее. */
+  .table-cards tbody td:first-child {
+    display: block;
+    margin-bottom: 2px;
+    color: var(--text-heading);
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .table-cards tbody td:first-child::before {
+    display: none;
+  }
+
+  /* Пустая ячейка не оставляет висящей подписи. */
+  .table-cards tbody td:empty {
+    display: none;
+  }
+
+  /* Строка-заглушка «ничего не найдено» остаётся строкой. */
+  .table-cards tbody td[colspan]::before {
+    display: none;
+  }
+
+  .table-cards tbody td[colspan] {
+    display: block;
+  }
+}
+
+/* --- содержимое: поля, промежутки и потолок ширины ------------------------ */
+
+/* Сверхширокий экран. Полоса текста и таблиц не растягивается дальше
+   1860 px — дальше строка перестаёт читаться как строка, а глаз теряет
+   начало следующей. Ниже этой ширины правило ничего не меняет: на
+   1920 рабочая область и так уже 1708. */
+@media (min-width: 2100px) {
+  .canvas {
+    width: 100%;
+    max-width: 1860px;
+    margin-inline: auto;
+  }
+}
+
+/* Средний экран: промежутки и поля ужимаются, структура остаётся той же.
+   Панели по-прежнему стоят как стояли — меняется только воздух между
+   ними. */
+@media (max-width: 1366px) {
+  :root {
+    --layout-gap: 12px;
+  }
+
+  .canvas {
+    padding: 14px 16px 18px;
+  }
+}
+
+@media (max-width: 1024px) {
+  .canvas {
+    padding: 14px 14px 20px;
+  }
+
+  /* Строка действий в заголовке страницы переносится, а не сжимает
+     кнопки до значков без подписи. */
+  .head {
+    gap: 12px;
+  }
+
+  .head__actions {
+    flex-wrap: wrap;
+  }
+}
+
+/* Пока меню выехало, содержимое под ним не прокручивается: иначе
+   страница уезжает под панелью, и человек теряет место, откуда открыл
+   меню. */
+@media (max-width: 900px) {
+  .shell--menu .work {
+    overflow: hidden;
+  }
+}
+
+/* --- место под полосу прокрутки в областях, которые её показывают ---------
+ *
+ * Полоса появляется, когда содержимое переросло область, и исчезает,
+ * когда список стал короче. Каждое такое переключение сдвигает всё
+ * содержимое на её ширину — самый частый источник дёрганья при смене
+ * фильтра. Дорожка резервируется заранее у всех областей, которые
+ * прокручиваются по-настоящему.
+ */
+.work,
+.scroller,
+.scroller--rows,
+.canvas,
+.nf__list,
+.nf__body--page .nf__list,
+.qs-queue,
+.qs-talk__body,
+.rq-list,
+.rq-side,
+.emp-table-wrap,
+.att-list,
+.panel--list,
+.panel--view {
+  scrollbar-gutter: stable;
 }

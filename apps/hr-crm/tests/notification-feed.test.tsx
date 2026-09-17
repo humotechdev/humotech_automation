@@ -190,8 +190,7 @@ describe('строки карточки', () => {
 describe('вкладки отбора', () => {
   test('перечень тот же, что понимает сервер', () => {
     expect(FEED_FILTERS.map((one) => one.key)).toEqual([
-      'all', 'unread', 'action', 'requests', 'documents', 'attendance',
-      'questions', 'system',
+      'all', 'unread', 'action', 'requests', 'documents', 'questions',
     ]);
     expect(filterTitle('action')).toBe('Требуют действия');
     expect(filterTitle('что-нибудь')).toBe('Все');
@@ -201,8 +200,8 @@ describe('вкладки отбора', () => {
 // --- окно целиком -----------------------------------------------------------
 
 const COUNTS: FeedCounts = {
-  all: 6, unread: 6, action: 4, requests: 2, documents: 1, attendance: 2,
-  questions: 1, system: 0,
+  all: 4, unread: 4, action: 3, requests: 2, documents: 1,
+  questions: 1,
 };
 
 function event(over: Partial<FeedEvent> = {}): FeedEvent {

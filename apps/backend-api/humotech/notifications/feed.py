@@ -1,16 +1,15 @@
 """Лента событий кадровика: что произошло и чем надо заняться.
 
 Это НЕ очередь отправки из `service.py`. Та таблица отвечает на вопрос
-«ушло ли сообщение сотруднику», а здесь собрано то, что случилось в
-кадровом контуре и ждёт человека: новая заявка, загруженная справка,
-незакрытый выход, обращение из Telegram.
+«ушло ли сообщение сотруднику», а здесь собраны только разрешённые HR-
+события, требующие внимания кадровика. Посещаемость, выгрузки и доставка
+остаются на своих страницах.
 
 Своей таблицы у ленты нет намеренно. Каждое событие уже записано там,
 где произошло, — в заявке, в сессии, в обращении. Вторая копия означала
 бы два источника правды и вечное расхождение между ними: заявку
 одобрили, а в ленте она всё ещё «ждёт решения». Поэтому лента —
-слияние восьми выборок по одному ключу `created_at`, ровно как общая
-очередь заявок в `core/queue_views.py`.
+слияние разрешённых HR-источников, отсортированных единым бизнес-приоритетом.
 
 Хранится единственное, чего из данных не вывести: кто из кадровиков это
 событие уже видел (`FeedRead`). Прочтение у каждого своё — очередь
@@ -38,9 +37,12 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
+import json
 import uuid
 from dataclasses import dataclass, replace
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from django.db.models import Q
 from django.utils import timezone
@@ -48,9 +50,8 @@ from django.utils import timezone
 from humotech.absences.models import AbsenceDocument, AbsenceRequest
 from humotech.absences.services import AbsenceService, hr_period_summary
 from humotech.attendance.hr import AttendanceHrService
-from humotech.attendance.models import AttendanceSession
 from humotech.core.errors import NotFound, ValidationFailed
-from humotech.core.pagination import Cursor, normalize_limit
+from humotech.core.pagination import MAX_PAGE_SIZE, normalize_limit
 from humotech.core.rbac import Actor
 from humotech.core.service import BaseService
 from humotech.employees.models import Employee, EmployeeAssignment
@@ -59,15 +60,11 @@ from humotech.notifications.models import FeedRead, Notification
 from humotech.questions.models import EmployeeQuestion
 from humotech.reports.models import ExportJob
 
+#: Единый allowlist публичных типов ленты. Только эти типы входят в
+#: GROUPS/FEED_TYPES; все прочие системные и attendance-события исключены.
 #: Глубина ленты в днях. Лента — это «что сейчас на руках», а не архив:
 #: заявку месячной давности ищут в «Заявках», а не в колокольчике.
 FEED_DAYS = 30
-
-#: Потолок строк на ОДИН источник. Нужен не ради скорости, а ради
-#: честного ответа: слияние идёт в памяти, и без потолка один шумный
-#: источник (например, сотня незакрытых сессий) вытеснил бы из ленты
-#: всё остальное.
-SOURCE_LIMIT = 100
 
 #: Виды событий. Значение `type` в ответе и первая половина `id`.
 TYPE_ABSENCE = "absence_request"
@@ -88,12 +85,8 @@ GROUPS: dict[str, str] = {
     TYPE_SICK: "requests",
     TYPE_CANCEL: "requests",
     TYPE_DOCUMENT: "documents",
-    TYPE_CORRECTION: "attendance",
-    TYPE_OPEN_SESSION: "attendance",
+    TYPE_CORRECTION: "requests",
     TYPE_QUESTION: "questions",
-    TYPE_DELIVERY: "system",
-    TYPE_REPORT: "system",
-    TYPE_EMPLOYEE: "system",
 }
 
 #: Виды событий одним набором — для схемы и проверок. Порядок тот же,
@@ -111,9 +104,7 @@ FILTERS = (
     ("action", "Требуют действия"),
     ("requests", "Заявки"),
     ("documents", "Документы"),
-    ("attendance", "Посещаемость"),
     ("questions", "Обращения"),
-    ("system", "Системные"),
 )
 
 #: Заявка, по которой решение ещё не принято.
@@ -125,7 +116,7 @@ SICK_CODE = "SICK_LEAVE"
 
 #: Сколько часов открытая сессия остаётся обычным делом. Дольше —
 #: человек ушёл, не отметившись, и это уже разбирательство.
-OPEN_SESSION_CRITICAL_HOURS = 12
+OPEN_SESSION_CRITICAL_HOURS = 24
 
 #: Подписи состояний. Отдельно по видам: «Одобрена» у заявки и
 #: «Подтверждён» у справки — разные слова о разных вещах.
@@ -200,8 +191,65 @@ class Event:
 
     @property
     def order(self) -> tuple:
-        # Тот же ключ, которым сортируют страницы остальные списки.
-        return (self.created_at, str(self.entity_id))
+        """Бизнес-приоритет, персональная непрочитанность, затем свежесть.
+
+        Заголовки намеренно не участвуют: они локализованы и могут
+        меняться, тогда как тип, статус и нормализованный priority — нет.
+        """
+        if self.priority == "CRITICAL":
+            bucket = 0
+        elif self.type in (TYPE_ABSENCE, TYPE_SICK, TYPE_CANCEL):
+            bucket = 2 if self.requires_action else 5
+        elif self.type == TYPE_DOCUMENT:
+            bucket = 3 if self.requires_action else 5
+        elif self.requires_action and self.type in (
+            TYPE_CORRECTION, TYPE_QUESTION
+        ):
+            bucket = 1
+        else:
+            bucket = 5
+        moment = self.created_at.astimezone(UTC) - datetime(1970, 1, 1, tzinfo=UTC)
+        created_microseconds = (
+            moment.days * 86_400_000_000
+            + moment.seconds * 1_000_000
+            + moment.microseconds
+        )
+        return (
+            bucket,
+            self.read_at is not None,
+            -created_microseconds,
+            self.type,
+            str(self.entity_id),
+        )
+
+
+def _encode_cursor(event: Event) -> str:
+    payload = json.dumps({"order": event.order}, separators=(",", ":"))
+    return base64.urlsafe_b64encode(payload.encode()).decode()
+
+
+def _decode_cursor(raw: str) -> tuple:
+    """Decode this feed's business-order key (distinct from time-only pages)."""
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(raw.encode()))
+        order = payload["order"]
+        if (
+            not isinstance(order, list)
+            or len(order) != 5
+            or not isinstance(order[0], int)
+            or not isinstance(order[1], bool)
+            or not isinstance(order[2], int)
+            or not isinstance(order[3], str)
+        ):
+            raise ValueError("invalid order key")
+        uuid.UUID(order[4])
+        return tuple(order)
+    except (
+        binascii.Error, ValueError, KeyError, TypeError, json.JSONDecodeError
+    ) as exc:
+        raise ValidationFailed(
+            "Некорректный курсор постраничного вывода", details={"cursor": raw}
+        ) from exc
 
 
 def event_json(event: Event) -> dict:
@@ -260,12 +308,9 @@ class FeedService(BaseService):
 
         counts = self._counts(events)
         chosen = [one for one in events if self._matches(one, wanted)]
-        position = Cursor.decode(cursor) if cursor else None
+        position = _decode_cursor(cursor) if cursor else None
         if position is not None:
-            chosen = [
-                one for one in chosen
-                if one.order < (position.created_at, str(position.id))
-            ]
+            chosen = [one for one in chosen if one.order > position]
 
         page = chosen[:size]
         has_more = len(chosen) > size
@@ -273,7 +318,7 @@ class FeedService(BaseService):
             "items": [event_json(one) for one in page],
             "counts": counts,
             "next_cursor": (
-                Cursor(created_at=page[-1].created_at, id=page[-1].entity_id).encode()
+                _encode_cursor(page[-1])
                 if page and has_more
                 else None
             ),
@@ -300,11 +345,7 @@ class FeedService(BaseService):
             TYPE_CANCEL: self._absence_detail,
             TYPE_DOCUMENT: self._document_detail,
             TYPE_CORRECTION: self._correction_detail,
-            TYPE_OPEN_SESSION: self._session_detail,
             TYPE_QUESTION: self._question_detail,
-            TYPE_DELIVERY: self._delivery_detail,
-            TYPE_REPORT: self._report_detail,
-            TYPE_EMPLOYEE: self._employee_detail,
         }[kind]
         event, extra = builder(actor, entity_id)
         if event.type != kind:
@@ -399,16 +440,13 @@ class FeedService(BaseService):
             self._absences,
             self._documents,
             self._corrections,
-            self._open_sessions,
             self._questions,
-            self._delivery_errors,
-            self._reports,
-            self._new_employees,
         ):
             rows += source(actor, since)
 
-        rows.sort(key=lambda one: one.order, reverse=True)
-        return self._with_reads(actor, self._with_places(rows))
+        rows = self._with_reads(actor, self._with_places(rows))
+        rows.sort(key=lambda one: one.order)
+        return rows
 
     def _with_places(self, rows: list[Event]) -> list[Event]:
         """Офис проставляется одним запросом на всю ленту, а не на строку."""
@@ -481,9 +519,11 @@ class FeedService(BaseService):
             return []
         return [
             self._absence_event(row)
-            for row in rows.filter(created_at__gte=since).order_by(
+            for row in rows.filter(
+                created_at__gte=since, status__in=OPEN_REQUEST_STATUSES
+            ).order_by(
                 "-created_at", "-id"
-            )[:SOURCE_LIMIT]
+            )
         ]
 
     def _absence_event(self, row: AbsenceRequest) -> Event:
@@ -539,11 +579,12 @@ class FeedService(BaseService):
                 organization_id=actor.organization_id,
                 absence_request_id__in=rows.values("id"),
                 created_at__gte=since,
+                verification_status="PENDING",
             )
             .select_related(
                 "file", "absence_request__employee", "absence_request__absence_type"
             )
-            .order_by("-created_at", "-id")[:SOURCE_LIMIT]
+            .order_by("-created_at", "-id")
         )
         return [self._document_event(row) for row in documents]
 
@@ -554,9 +595,11 @@ class FeedService(BaseService):
         rows = self._sub(AttendanceHrService).correction_queue(actor)
         return [
             self._correction_event(row)
-            for row in rows.filter(created_at__gte=since).order_by(
+            for row in rows.filter(
+                created_at__gte=since, status__in=OPEN_REQUEST_STATUSES
+            ).order_by(
                 "-created_at", "-id"
-            )[:SOURCE_LIMIT]
+            )
         ]
 
     def _correction_event(self, row) -> Event:
@@ -581,24 +624,30 @@ class FeedService(BaseService):
     def _open_sessions(self, actor: Actor, since: datetime) -> list[Event]:
         """Незакрытые рабочие сессии: человек вошёл и не отметил выход.
 
-        Событие живёт ровно столько, сколько сессия остаётся открытой:
-        закрыли выход — событие исчезло само. Отдельного «решено» ему
-        не нужно, и второй строки о том же дне не появится.
+        Устаревший внутренний builder; намеренно не зарегистрирован в
+        allowlist и никогда не вызывается при построении HR-ленты.
         """
         if not self.access.has(actor, "attendance.read"):
             return []
         # Окно отсекается здесь, а не параметрами `sessions`: там период
         # задают ПАРОЙ дат, и «с такого-то дня» без второй границы
         # означает ровно один день, а не «с тех пор».
-        page = self._sub(AttendanceHrService).sessions(
-            actor, only_open=True, limit=SOURCE_LIMIT
-        )
+        attendance = self._sub(AttendanceHrService)
         now = timezone.now()
-        return [
-            self._session_event(row, now)
-            for row in page.items
-            if row.created_at >= since
-        ]
+        result: list[Event] = []
+        cursor = None
+        while True:
+            page = attendance.sessions(
+                actor, only_open=True, limit=MAX_PAGE_SIZE, cursor=cursor
+            )
+            result.extend(
+                self._session_event(row, now)
+                for row in page.items
+                if row.created_at >= since
+            )
+            if not page.has_more:
+                return result
+            cursor = page.next_cursor
 
     def _session_event(self, row, now: datetime) -> Event:
         hours = (now - row.started_at).total_seconds() / 3600
@@ -632,10 +681,13 @@ class FeedService(BaseService):
             return []
         rows = self._scoped(
             actor, EmployeeQuestion.objects.select_related("employee")
-        ).filter(created_at__gte=since)
+        ).filter(
+            created_at__gte=since,
+            status__in=("NEW", "IN_PROGRESS"),
+        )
         return [
             self._question_event(row)
-            for row in rows.order_by("-created_at", "-id")[:SOURCE_LIMIT]
+            for row in rows.order_by("-created_at", "-id")
         ]
 
     def _delivery_errors(self, actor: Actor, since: datetime) -> list[Event]:
@@ -653,7 +705,7 @@ class FeedService(BaseService):
         ).filter(updated_at__gte=since)
         return [
             self._delivery_event(row)
-            for row in rows.order_by("-updated_at", "-id")[:SOURCE_LIMIT]
+            for row in rows.order_by("-updated_at", "-id")
         ]
 
     def _delivery_event(self, row: Notification) -> Event:
@@ -689,7 +741,7 @@ class FeedService(BaseService):
             status="SUCCEEDED",
             hidden_at__isnull=True,
             finished_at__gte=since,
-        ).order_by("-finished_at", "-id")[:SOURCE_LIMIT]
+        ).order_by("-finished_at", "-id")
         return [self._report_event(row) for row in rows]
 
     def _report_event(self, row: ExportJob) -> Event:
@@ -718,7 +770,7 @@ class FeedService(BaseService):
         )
         return [
             self._employee_event(row)
-            for row in rows.order_by("-created_at", "-id")[:SOURCE_LIMIT]
+            for row in rows.order_by("-created_at", "-id")
         ]
 
     def _employee_event(self, row: Employee) -> Event:
@@ -869,10 +921,17 @@ class FeedService(BaseService):
     def _session_detail(self, actor: Actor, entity_id: uuid.UUID):
         if not self.access.has(actor, "attendance.read"):
             raise NotFound("Событие не найдено")
-        page = self._sub(AttendanceHrService).sessions(
-            actor, only_open=True, limit=SOURCE_LIMIT
-        )
-        row = next((one for one in page.items if one.id == entity_id), None)
+        attendance = self._sub(AttendanceHrService)
+        cursor = None
+        row = None
+        while True:
+            page = attendance.sessions(
+                actor, only_open=True, limit=MAX_PAGE_SIZE, cursor=cursor
+            )
+            row = next((one for one in page.items if one.id == entity_id), None)
+            if row is not None or not page.has_more:
+                break
+            cursor = page.next_cursor
         if row is None:
             raise NotFound("Событие не найдено")
         now = timezone.now()

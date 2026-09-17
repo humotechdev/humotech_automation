@@ -341,7 +341,13 @@ export function NewEmployeePage() {
     schedules.state === 'ready'
       ? schedules.data.items.find((item) => item.id === draft.schedule_id)?.name ?? ''
       : '';
-  const fullName = [draft.last_name, draft.first_name].filter(Boolean).join(' ');
+  const regionName =
+    regions.state === 'ready'
+      ? regions.data.items.find((item) => item.id === draft.region_id)?.name ?? ''
+      : '';
+  const fullName = [draft.last_name, draft.first_name, draft.middle_name]
+    .filter(Boolean)
+    .join(' ');
 
   function check(): boolean {
     const found: Partial<Record<keyof Draft, string>> = {};
@@ -708,7 +714,7 @@ export function NewEmployeePage() {
                 ? 'Дождитесь загрузки файлов'
                 : papersStuck
                   ? 'Файл не загрузился: повторите выбор или уберите строку'
-                  : 'После нажатия потребуется одно подтверждение'}
+                  : 'Откроется окно подтверждения — страница не сменится'}
             </p>
           </div>
         </aside>
@@ -718,10 +724,13 @@ export function NewEmployeePage() {
         <Confirm
           name={fullName}
           office={officeName}
+          region={regionName}
+          department={departmentName}
           position={positionName}
           date={draft.hire_date ? longDate(draft.hire_date) : ''}
           schedule={scheduleName}
           telegram={draft.telegram_username.trim()}
+          papers={papersReady.length}
           sending={sending}
           onBack={() => setAsking(false)}
           onConfirm={() => void send()}
@@ -991,50 +1000,82 @@ function Status({ value }: { value: string }) {
 
 // --- подтверждение ----------------------------------------------------------
 
-function Confirm({ name, office, position, date, schedule, telegram, sending,
-                   onBack, onConfirm }: {
+/**
+ * Подтверждение поверх формы, а не отдельная страница.
+ *
+ * Резюме собрано из того, что человек уже ввёл: ФИО, должность, отдел,
+ * регион, офис, график, Telegram и число приложенных документов. Самих
+ * документов здесь нет — ни имён файлов, ни содержимого: их место в
+ * карточке сотрудника, а не в окне подтверждения и тем более не в
+ * сообщении боту.
+ *
+ * Незаполненное поле показывается прочерком и подписью «не выбран» —
+ * так видно, что именно уедет пустым, и можно вернуться.
+ */
+function Confirm({ name, office, region, department, position, date, schedule,
+                   telegram, papers, sending, onBack, onConfirm }: {
   name: string;
   office: string;
+  region: string;
+  department: string;
   position: string;
   date: string;
   schedule: string;
   telegram: string;
+  papers: number;
   sending: boolean;
   onBack: () => void;
   onConfirm: () => void;
 }) {
   return (
     <div className="modal" role="dialog" aria-modal="true"
-         aria-label="Добавить сотрудника?">
+         aria-label="Создать сотрудника?">
       <div className="modal__box">
-        <h2 className="modal__title">Добавить сотрудника?</h2>
+        <h2 className="modal__title">Создать сотрудника?</h2>
         <p className="modal__text">
-          Будет создан сотрудник {name || 'без имени'}
-          {office ? `, назначен в ${office}` : ''} и подготовлен доступ
-          к Telegram-боту.
+          Проверьте данные. После создания сотруднику уйдёт приглашение
+          в Telegram — документы туда не отправляются, они остаются
+          в карточке.
         </p>
         <dl className="modal__facts">
-          <Line title="Офис" value={office} />
-          <Line title="Должность" value={position} />
-          <Line title="Дата начала" value={date} />
-          <Line title="График" value={schedule} />
+          <Line title="ФИО" value={name || 'не заполнено'} />
+          <Line title="Должность" value={position || 'не выбрана'} />
+          <Line title="Отдел" value={department || 'не выбран'} />
+          <Line title="Регион" value={region || 'не выбран'} />
+          <Line title="Офис" value={office || 'не выбран'} />
+          <Line title="Дата начала" value={date || 'не выбрана'} />
+          <Line title="График" value={schedule || 'не выбран'} />
           <Line title="Telegram" value={telegram || 'ссылка будет подготовлена'} />
+          <Line
+            title="Документы"
+            value={papers === 0 ? 'не приложены' : `${papers} ${papersWord(papers)}`}
+          />
         </dl>
         <div className="modal__actions">
           <button type="button" className="btn" onClick={onBack} disabled={sending}>
-            Вернуться к редактированию
+            Назад и изменить
           </button>
           {/* Кнопка блокируется на время запроса: второе нажатие ушло бы
               с тем же ключом и вернуло того же человека, но человеку
               незачем видеть, как кнопка срабатывает дважды. */}
           <button type="button" className="btn btn--dark" onClick={onConfirm}
                   disabled={sending}>
-            {sending ? 'Добавляем…' : 'Подтвердить добавление'}
+            {sending ? 'Создаём…' : 'Создать сотрудника'}
           </button>
         </div>
       </div>
     </div>
   );
+}
+
+/** «1 документ», «2 документа», «5 документов». */
+function papersWord(count: number): string {
+  const last = count % 10;
+  const two = count % 100;
+  if (two >= 11 && two <= 14) return 'документов';
+  if (last === 1) return 'документ';
+  if (last >= 2 && last <= 4) return 'документа';
+  return 'документов';
 }
 
 function Line({ title, value }: { title: string; value: string }) {
@@ -1055,6 +1096,27 @@ function Done({ made, copied, onCopy }: {
 }) {
   const linked = made.telegram.state === 'CONNECTED';
   const waiting = made.telegram.state === 'INVITED';
+  /*
+   * Повторное приглашение.
+   *
+   * Отдельный вызов по УЖЕ СОЗДАННОМУ сотруднику, а не повторный приём:
+   * второго человека он не заводит, ссылка просто выпускается заново.
+   * Нужен, когда сотрудник не ответил или потерял сообщение.
+   */
+  const [again, setAgain] = useState<'idle' | 'busy' | 'done' | 'failed'>('idle');
+  const [link, setLink] = useState<string | null>(made.telegram.link ?? null);
+
+  async function resend() {
+    if (again === 'busy') return;
+    setAgain('busy');
+    try {
+      const fresh = await api.inviteToTelegram(made.employee.id);
+      setLink(fresh.link ?? fresh.url ?? null);
+      setAgain('done');
+    } catch {
+      setAgain('failed');
+    }
+  }
   return (
     <AppShell breadcrumb="Новый сотрудник" section="employees">
       <header className="head head--tight">
@@ -1090,10 +1152,23 @@ function Done({ made, copied, onCopy }: {
             <AppIcon name="users" size={16} />
             Открыть карточку сотрудника
           </Link>
-          {made.telegram.link && (
-            <button type="button" className="btn" onClick={onCopy}>
+          {/* Копируется та ссылка, что показана сейчас: после повторной
+              отправки прежняя уже не действует. */}
+          {link && (
+            <button type="button" className="btn"
+                    onClick={() => { void navigator.clipboard?.writeText(link); onCopy(); }}>
               <AppIcon name={copied ? 'check' : 'send'} size={16} />
               {copied ? 'Ссылка скопирована' : 'Скопировать ссылку Telegram'}
+            </button>
+          )}
+          {!linked && (
+            <button type="button" className="btn" onClick={() => void resend()}
+                    disabled={again === 'busy'}>
+              <AppIcon name="refresh" size={16} />
+              {again === 'busy' ? 'Отправляем…'
+                : again === 'done' ? 'Приглашение отправлено заново'
+                  : again === 'failed' ? 'Не удалось — повторить'
+                    : 'Отправить приглашение повторно'}
             </button>
           )}
           <Link className="link link--go" to="/employees">
