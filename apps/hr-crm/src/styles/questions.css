@@ -1773,3 +1773,38 @@ a.qs-linked:hover .qs-linked__text span {
     max-width: 92%;
   }
 }
+
+/* Нижняя панель ответа: инструменты и «Отправить» в одной строке, пока
+   помещаются. Раньше строка не переносилась, и кнопка отправки ложилась
+   поверх «Шаблонов» и «Базы знаний». */
+.qs-composer__bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+}
+
+.qs-composer__tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.qs-composer__bar .qs-send {
+  flex: none;
+  margin-left: auto;
+}
+
+.qs-composer__foot {
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+
+/* Подписи инструментов не режутся и не переносятся внутри кнопки. */
+.qs-tool {
+  white-space: nowrap;
+  flex: none;
+}

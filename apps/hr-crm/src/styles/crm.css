@@ -844,10 +844,16 @@ html {
   gap: 10px;
 }
 
+/* Поиск в шапке — постоянного размера. Он не главный элемент страницы:
+   на широком экране растянутое поле в половину панели выглядело как
+   основное действие, а на узком — сжималось до пары букв. */
 .find {
   display: flex;
   align-items: center;
   gap: 9px;
+  flex: 0 0 auto;
+  width: 280px;
+  max-width: 100%;
   height: 39px;
   padding: 0 13px;
   border: 1px solid rgba(214, 230, 245, 0.9);
@@ -9307,4 +9313,35 @@ html {
   .side__brand {
     padding: 16px 0 10px;
   }
+}
+
+
+/* Поле внутри поиска занимает остаток и не диктует ширину. */
+.find input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+}
+
+/* Результаты поиска: ФИО и должность — по одной строке каждая. Длинное
+   сокращается отточием, а не переносится на три строки: строки списка
+   должны быть одной высоты, иначе он дёргается при наборе. */
+.global-search__identity,
+.global-search__place {
+  min-width: 0;
+}
+
+.global-search__identity strong,
+.global-search__identity small,
+.global-search__place small,
+.global-search__place em {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.global-search__row > svg {
+  flex: none;
 }

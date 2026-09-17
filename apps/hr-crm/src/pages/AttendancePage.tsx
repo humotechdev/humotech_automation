@@ -646,6 +646,9 @@ function Person({ row, day, zone, canFix, onFix }: {
   const list = events.state === 'ready'
     ? [...events.data.items].sort((a, b) => a.occurred_at.localeCompare(b.occurred_at)).slice(0, 3)
     : [];
+  // Отметок нет и время в офисе не набрано — показывать нечего, кроме
+  // самого факта. Пока события грузятся, пустым состоянием не мигаем.
+  const nothingYet = events.state === 'ready' && list.length === 0 && !present(row, day);
 
   return (
     <section className="att-person" aria-label="Выбранный сотрудник">
@@ -667,26 +670,47 @@ function Person({ row, day, zone, canFix, onFix }: {
         <dd>{hours(row)}</dd>
       </dl>
 
-      <div className="att-person__day">
-        <p className="att-person__label">{day === today() ? 'Сегодня в офисе' : 'В офисе за день'}</p>
-        <p className="att-person__total">{present(row, day) ? span(present(row, day)) : '—'}</p>
-        <DayLine row={row} zone={zone} day={day} wide />
-      </div>
+      {/*
+        * День без единой отметки — это не пустая панель с прочерками.
+        * Прочерк на месте времени и пустая полоса графика выглядят как
+        * сбой загрузки; вместо них — прямая фраза о том, что человек
+        * ещё не отмечался. Офис, отдел и график при этом остаются: они
+        * известны и нужны тому, кто разбирается.
+        */}
+      {nothingYet ? (
+        <div className="att-person__blank">
+          <span className="att-person__blankIcon" aria-hidden="true">
+            <AppIcon name="clock" size={20} />
+          </span>
+          <p className="att-person__blankTitle">
+            {day === today() ? 'Нет отметок за сегодня' : 'Нет отметок за этот день'}
+          </p>
+          <p className="att-person__blankText">Сотрудник ещё не отметил вход или выход</p>
+          <span className="att-status att-status--warn">Нет отметки</span>
+        </div>
+      ) : (
+        <>
+          <div className="att-person__day">
+            <p className="att-person__label">{day === today() ? 'Сегодня в офисе' : 'В офисе за день'}</p>
+            <p className="att-person__total">{present(row, day) ? span(present(row, day)) : '—'}</p>
+            <DayLine row={row} zone={zone} day={day} wide />
+          </div>
 
-      <p className="att-person__label">{day === today() ? 'События сегодня' : 'События дня'}</p>
-      <ul className="att-events">
-        {events.state === 'loading' && <li className="att-events__none">Загружаем…</li>}
-        {events.state === 'ready' && list.length === 0 && <li className="att-events__none">Отметок нет</li>}
-        {list.map((one) => (
-          <li key={one.id} className={one.event_type === 'ENTRY' ? 'att-events__in' : 'att-events__out'}>
-            <b>{clock(one.occurred_at, zone)}</b>
-            <span>
-              {one.event_type === 'ENTRY' ? 'Вход' : 'Выход'}
-              {one.qr_point_name ? ` · ${one.qr_point_name}` : ''}
-            </span>
-          </li>
-        ))}
-      </ul>
+          <p className="att-person__label">{day === today() ? 'События сегодня' : 'События дня'}</p>
+          <ul className="att-events">
+            {events.state === 'loading' && <li className="att-events__none">Загружаем…</li>}
+            {list.map((one) => (
+              <li key={one.id} className={one.event_type === 'ENTRY' ? 'att-events__in' : 'att-events__out'}>
+                <b>{clock(one.occurred_at, zone)}</b>
+                <span>
+                  {one.event_type === 'ENTRY' ? 'Вход' : 'Выход'}
+                  {one.qr_point_name ? ` · ${one.qr_point_name}` : ''}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
 
       <div className="att-person__actions">
         <Link className="att-btn att-btn--outline" to={`/employees/${row.employee_id}?tab=attendance`}>

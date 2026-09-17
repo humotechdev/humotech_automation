@@ -78,7 +78,6 @@ export function RequestsPage() {
   const employee = params.get('employee_id') ?? '';
 
   const [draft, setDraft] = useState(search);
-  const [more, setMore] = useState(Boolean(region));
   const [updated, setUpdated] = useState<Date | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [ordered, setOrdered] = useState<string | null>(null);
@@ -232,20 +231,7 @@ export function RequestsPage() {
               <AppDateRangePicker className="rq-dates" label="Даты отсутствия" now={today()} from={from} to={to}
                 onFromChange={(value) => patch({ date_from: value || null })}
                 onToChange={(value) => patch({ date_to: value || null })} />
-              <button type="button" className={more ? 'rq-more rq-more--on' : 'rq-more'}
-                      aria-expanded={more} onClick={() => setMore((was) => !was)}>
-                <AppIcon name="list" size={18} />
-                Фильтры
-              </button>
             </div>
-
-            {more && (
-              <div className="rq-filters rq-filters--extra">
-                <Select label="Регион" empty="Все регионы" value={region}
-                        options={directory.state === 'ready' ? directory.data.regions : []}
-                        onChange={(value) => patch({ region_id: value || null, office_id: null })} />
-              </div>
-            )}
 
             {dirty && (
               <div className="rq-chips">

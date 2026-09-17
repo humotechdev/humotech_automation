@@ -45,7 +45,6 @@ const TABS: { key: api.QuestionStatus; title: string }[] = [
 const QUICK = [
   { key: 'all', title: 'Все' },
   { key: 'unanswered', title: 'Без ответа' },
-  { key: 'mine', title: 'Мои' },
   { key: 'urgent', title: 'Срочные' },
 ] as const;
 type QuickKey = (typeof QUICK)[number]['key'];
@@ -235,11 +234,6 @@ export function QuestionsPage() {
     'offices',
     canRead,
   );
-  const [assignees] = useBlock(
-    (signal) => api.questionAssignees(signal).then((body) => body.items),
-    'assignees',
-    canRead,
-  );
 
   const items = list.state === 'ready' ? list.data.items : [];
   const currentId = picked || items[0]?.id || '';
@@ -359,14 +353,6 @@ export function QuestionsPage() {
             <AppSelectField className="questions-select" label="Офис" value={office} onChange={(value) => patch({ office_id: value || null, id: null })}>
                 <option value="">Все офисы</option>
                 {offices.state === 'ready' && offices.data.map((one) => (
-                  <option key={one.id} value={one.id}>{one.name}</option>
-                ))}
-            </AppSelectField>
-            <AppSelectField className="questions-select questions-select--wide" label="Ответственный" value={assignee} onChange={(value) => patch({ assignee: value || null, id: null })}>
-                <option value="">Все ответственные</option>
-                <option value="me">Назначены на меня</option>
-                <option value="none">Без ответственного</option>
-                {assignees.state === 'ready' && assignees.data.map((one) => (
                   <option key={one.id} value={one.id}>{one.name}</option>
                 ))}
             </AppSelectField>
@@ -513,12 +499,10 @@ export function QuestionsPage() {
                 now={now}
                 busy={busy}
                 notice={notice}
-                assignees={assignees.state === 'ready' ? assignees.data : []}
                 context={contextBlock.state === 'ready' && contextBlock.data.employee.id === detail.employee.id ? contextBlock.data : null}
                 reply={reply}
                 setReply={setReply}
                 canKnowledge={canKnowledge}
-                meId={user?.id ?? ''}
                 act={act}
               />
             )}
@@ -555,9 +539,6 @@ function QueueRow({ row, on, now, showStatus, onPick }: {
   showStatus: boolean;
   onPick: (id: string) => void;
 }) {
-  const waitingMinutes = row.awaiting_reply
-    ? Math.max(0, Math.round((now.getTime() - new Date(row.last_message_at).getTime()) / 60_000))
-    : null;
   const classes = ['qs-row'];
   if (on) classes.push('qs-row--on');
   if (row.unread) classes.push('qs-row--unread');
@@ -574,10 +555,6 @@ function QueueRow({ row, on, now, showStatus, onPick }: {
           </span>
           <span className="qs-row__line">
             <span className="qs-row__topic">{row.topic}</span>
-            {row.overdue && <span className="qs-flag qs-flag--red">SLA нарушен</span>}
-            {!row.overdue && waitingMinutes !== null && row.status !== 'WAITING_EMPLOYEE' && (
-              <span className="qs-flag qs-flag--wait">Без ответа · {span(waitingMinutes)}</span>
-            )}
           </span>
           <span className="qs-row__line">
             <span className="qs-row__snippet">
@@ -592,7 +569,6 @@ function QueueRow({ row, on, now, showStatus, onPick }: {
           </span>
           <span className="qs-row__meta">
             {[row.office?.name, CATEGORY_TITLE[row.category]].filter(Boolean).join(' · ')}
-            {row.assignee && <span className="qs-row__who"> · {row.assignee.name}</span>}
           </span>
         </span>
       </button>
@@ -640,21 +616,19 @@ function TalkSkeleton({ row }: { row: api.QuestionRow | null }) {
 type Act = (label: string, action: () => Promise<api.Question>, done?: string) => Promise<api.Question | null>;
 
 function Conversation({
-  question, now, busy, notice, assignees, context, reply, setReply, canKnowledge, meId, act,
+  question, now, busy, notice, context, reply, setReply, canKnowledge, act,
 }: {
   question: api.Question;
   now: Date;
   busy: string | null;
   notice: { tone: 'error' | 'ok'; text: string } | null;
-  assignees: api.Person[];
   context: api.QuestionContext | null;
   reply: string;
   setReply: (value: string) => void;
   canKnowledge: boolean;
-  meId: string;
   act: Act;
 }) {
-  const [menu, setMenu] = useState<'assign' | 'more' | 'close' | null>(null);
+  const [menu, setMenu] = useState<'more' | 'close' | null>(null);
   const thread = useRef<HTMLDivElement | null>(null);
   const actions = question.actions;
   const id = question.id;
@@ -684,41 +658,6 @@ function Conversation({
         </div>
 
         <div className="qs-talk__actions">
-          {actions.assign && (
-            <div className="qs-pop">
-              <button type="button" className="qs-btn qs-btn--light" aria-expanded={menu === 'assign'} onClick={() => setMenu(menu === 'assign' ? null : 'assign')}>
-                {question.assignee ? 'Передать' : 'Назначить'}
-                <AppIcon name="chevron" size={16} />
-              </button>
-              {menu === 'assign' && (
-                <ul className="qs-menu" role="menu">
-                  {assignees.length === 0 && <li className="qs-menu__note">Нет сотрудников с правом отвечать</li>}
-                  {assignees.map((person) => (
-                    <li key={person.id}>
-                      <button
-                        type="button"
-                        role="menuitemradio"
-                        aria-checked={question.assignee?.id === person.id}
-                        disabled={busy !== null || question.assignee?.id === person.id}
-                        onClick={() => {
-                          setMenu(null);
-                          void act('assign', () => api.assignQuestion(id, person.id),
-                            question.assignee ? `Передано: ${person.name}` : `Назначено: ${person.name}`);
-                        }}
-                      >
-                        {person.name}{person.id === meId ? ' (я)' : ''}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
-          {actions.take && (
-            <button type="button" className="qs-btn qs-btn--blue" disabled={busy !== null} onClick={() => void act('take', () => api.takeQuestion(id), 'Обращение взято в работу')}>
-              {busy === 'take' ? 'Берём…' : 'Взять в работу'}
-            </button>
-          )}
           {actions.reopen && (
             <button type="button" className="qs-btn qs-btn--blue" disabled={busy !== null} onClick={() => void act('reopen', () => api.reopenQuestion(id), 'Обращение переоткрыто')}>
               Переоткрыть
@@ -807,12 +746,6 @@ function Conversation({
           <span className="qs-pill">{CATEGORY_TITLE[question.category]}</span>
           <span className={`qs-pill qs-pill--${question.priority}`}>{PRIORITY_TITLE[question.priority]}</span>
           <span className={`qs-status qs-status--${question.status}`}>{STATUS_TITLE[question.status]}</span>
-          <span className="qs-pill qs-pill--quiet">
-            {question.assignee ? `Ответственный: ${question.assignee.name}` : 'Без ответственного'}
-          </span>
-          {/* Срок — рядом с состоянием, а не в шапке: там он отнимал место
-              у имени человека, которому отвечают. */}
-          <Deadline question={question} now={now} />
         </div>
       </div>
 
@@ -824,15 +757,6 @@ function Conversation({
 
       <div className="qs-thread" ref={thread}>
         <Thread messages={question.messages} now={now} employeeId={question.employee.id} hasPhoto={question.employee.has_photo} />
-        {question.status !== 'CLOSED' && (
-          <DraftCard
-            draft={question.draft}
-            canRefresh={actions.draft}
-            busy={busy === 'draft'}
-            onRefresh={() => void act('draft', () => api.refreshQuestionDraft(id), 'Черновик обновлён по базе знаний')}
-            onUse={(text) => setReply(reply.trim() ? `${reply.trim()}\n\n${text}` : text)}
-          />
-        )}
         {question.status === 'CLOSED' && (
           <p className="qs-closed">
             Закрыто{question.closed_at ? ` ${dotted(question.closed_at)} в ${clock(question.closed_at)}` : ''}
@@ -869,6 +793,9 @@ function Conversation({
           value={reply}
           onChange={setReply}
           canKnowledge={canKnowledge}
+          canDraft={actions.draft}
+          draftBusy={busy === 'draft'}
+          onDraft={() => act('draft', () => api.refreshQuestionDraft(id))}
           sending={busy === 'reply'}
           onSend={(body) => act('reply', () => api.replyQuestion(id, body),
             body.after === 'CLOSE' ? 'Ответ отправлен, обращение закрыто'
@@ -881,29 +808,6 @@ function Conversation({
             : 'Отвечать на обращения может только сотрудник с правом «Ответы на вопросы».'}
         </p>
       )}
-    </div>
-  );
-}
-
-function Deadline({ question, now }: { question: api.Question; now: Date }) {
-  if (question.status === 'WAITING_EMPLOYEE') {
-    return (
-      <div className="qs-deadline qs-deadline--wait">
-        <AppIcon name="clock" size={20} />
-        <span><b>Ждём сотрудника</b><small>срок ответа не идёт</small></span>
-      </div>
-    );
-  }
-  if (question.status === 'CLOSED' || !question.due_at) return <div className="qs-deadline qs-deadline--none" />;
-  const minutes = Math.round((new Date(question.due_at).getTime() - now.getTime()) / 60_000);
-  const late = minutes < 0;
-  return (
-    <div className={late ? 'qs-deadline qs-deadline--late' : 'qs-deadline'}>
-      <AppIcon name="clock" size={20} />
-      <span>
-        <b>Ответить до {clock(question.due_at)}</b>
-        <small>{late ? `просрочено на ${span(-minutes)}` : `осталось ${span(minutes)}`}</small>
-      </span>
     </div>
   );
 }
@@ -1008,109 +912,15 @@ function Thread({ messages, now, employeeId, hasPhoto }: {
 
 // --- черновик ассистента ------------------------------------------------------
 
-function DraftCard({ draft, canRefresh, busy, onRefresh, onUse }: {
-  draft: api.QuestionDraft | null;
-  canRefresh: boolean;
-  busy: boolean;
-  onRefresh: () => void;
-  onUse: (text: string) => void;
-}) {
-  if (!draft) {
-    return canRefresh ? (
-      <section className="qs-draft qs-draft--empty" aria-label="Предложение помощника">
-        <p>Черновика по базе знаний для этого обращения ещё нет.</p>
-        <button type="button" className="qs-btn qs-btn--light qs-btn--sm" disabled={busy} onClick={onRefresh}>
-          {busy ? 'Ищем…' : 'Подобрать по базе знаний'}
-        </button>
-      </section>
-    ) : null;
-  }
-
-  const confidence = draft.confidence === null ? null : Number(draft.confidence);
-  const source = draft.sources[0] ?? null;
-  const low = draft.status === 'LOW_CONFIDENCE';
-  const trusted = draft.status === 'READY' && !draft.outdated;
-  const level = confidence === null ? null
-    : confidence >= 0.85 ? ['high', 'Высокая точность']
-      : confidence >= 0.75 ? ['mid', 'Средняя точность'] : ['low', 'Низкая точность'];
-
-  return (
-    <section className={trusted ? 'qs-draft' : 'qs-draft qs-draft--warn'} aria-label="Предложение помощника">
-      <header className="qs-draft__head">
-        <span className="qs-draft__spark" aria-hidden="true">✦</span>
-        <b>Предложение помощника</b>
-        {draft.status !== 'CONFLICT' && draft.status !== 'NO_SOURCES' && level && (
-          <span className={`qs-level qs-level--${low ? 'low' : level[0]}`}>
-            {low ? 'Низкая точность' : level[1]}
-            {confidence !== null && ` · ${Math.round(confidence * 100)}%`}
-          </span>
-        )}
-        {canRefresh && (
-          <button type="button" className="qs-link" disabled={busy} onClick={onRefresh}>
-            {busy ? 'Ищем…' : 'Обновить'}
-          </button>
-        )}
-      </header>
-
-      {draft.status === 'CONFLICT' && (
-        <>
-          <p className="qs-draft__warn" role="note">
-            Правила базы знаний противоречат друг другу — ассистент ответ не предлагает. Выберите правило сами:
-          </p>
-          <ul className="qs-draft__sources">
-            {draft.sources.map((one) => (
-              <li key={one.id}>
-                <Link to={`/knowledge?id=${encodeURIComponent(one.id)}`}>«{one.title}»</Link>
-                <span> · редакция от {dotted(one.published_at ?? one.updated_at)}</span>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-
-      {draft.status === 'NO_SOURCES' && (
-        <p className="qs-draft__muted">В опубликованной базе знаний ответа на этот вопрос нет. Ответьте сами.</p>
-      )}
-
-      {draft.text && (draft.status === 'READY' || draft.status === 'LOW_CONFIDENCE') && (
-        <>
-          {(low || draft.outdated) && (
-            <p className="qs-draft__warn" role="note">
-              {draft.outdated
-                ? 'Документ, на котором основан черновик, снят с публикации. Проверьте ответ по действующим правилам.'
-                : 'Ассистент не уверен в ответе. Проверьте его по источнику, прежде чем использовать.'}
-            </p>
-          )}
-          <p className="qs-draft__text">{draft.text}</p>
-          {source && (
-            <p className="qs-draft__source">
-              <AppIcon name="doc" size={16} />
-              Основано на {sourceKind(source.source_type)} «{source.title}», редакция от {dotted(source.published_at ?? source.updated_at)}
-            </p>
-          )}
-          <div className="qs-draft__buttons">
-            <button type="button" className={low || draft.outdated ? 'qs-btn qs-btn--light' : 'qs-btn qs-btn--blue'} onClick={() => onUse(draft.text ?? '')}>
-              {low || draft.outdated ? 'Вставить для проверки' : 'Использовать ответ'}
-            </button>
-            {source && (
-              <Link className="qs-btn qs-btn--light" to={`/knowledge?id=${encodeURIComponent(source.id)}`}>
-                Открыть источник <AppIcon name="arrow" size={16} />
-              </Link>
-            )}
-          </div>
-        </>
-      )}
-    </section>
-  );
-}
-
-// --- ответ --------------------------------------------------------------------
-
-function Composer({ question, value, onChange, canKnowledge, sending, onSend }: {
+function Composer({ question, value, onChange, canKnowledge, canDraft, draftBusy,
+                   onDraft, sending, onSend }: {
   question: api.Question;
   value: string;
   onChange: (value: string) => void;
   canKnowledge: boolean;
+  canDraft: boolean;
+  draftBusy: boolean;
+  onDraft: () => Promise<api.Question | null>;
   sending: boolean;
   onSend: (body: { text: string; after: api.ReplyAfter; client_request_id: string }) => Promise<api.Question | null>;
 }) {
@@ -1178,6 +988,42 @@ function Composer({ question, value, onChange, canKnowledge, sending, onSend }: 
       />
       <div className="qs-composer__bar">
         <div className="qs-composer__tools">
+          {canDraft && (
+            <>
+              {/*
+                * Ответ помощника попадает ПРЯМО в поле: его дописывают,
+                * правят или стирают и пишут своё. Отдельной карточки с
+                * кнопкой «вставить» больше нет — лишний шаг между
+                * предложением и ответом.
+                */}
+              <button
+                type="button"
+                className="qs-tool qs-tool--ai"
+                disabled={draftBusy || sending}
+                onClick={() => {
+                  const ready = question.draft?.text;
+                  if (ready) { onChange(ready); field.current?.focus({ preventScroll: true }); return; }
+                  void onDraft().then((fresh) => {
+                    if (fresh?.draft?.text) onChange(fresh.draft.text);
+                  });
+                }}
+              >
+                <span aria-hidden="true">✦</span> {draftBusy ? 'Готовим…' : 'Ответ от AI'}
+              </button>
+              <button
+                type="button"
+                className="qs-tool"
+                disabled={draftBusy || sending}
+                onClick={() => {
+                  void onDraft().then((fresh) => {
+                    if (fresh?.draft?.text) onChange(fresh.draft.text);
+                  });
+                }}
+              >
+                <AppIcon name="refresh" size={18} /> Другой вариант
+              </button>
+            </>
+          )}
           <button type="button" className="qs-tool" disabled title="Бот пока доставляет только текст: файл сотрудник не получит">
             <AppIcon name="plus" size={18} /> Прикрепить
           </button>
@@ -1564,12 +1410,6 @@ function eventText(message: api.QuestionMessage): string {
   }
 }
 
-function sourceKind(type: string): string {
-  if (type === 'POLICY') return 'правиле';
-  if (type === 'INSTRUCTION') return 'инструкции';
-  if (type === 'FAQ') return 'ответе FAQ';
-  return 'документе';
-}
 
 function sourceKindTitle(type: string): string {
   if (type === 'POLICY') return 'Правило';
@@ -1628,14 +1468,6 @@ function range(start: string | null, end: string | null): string {
   return `${from.getDate()} ${MONTHS_SHORT[from.getMonth()]} – ${to.getDate()} ${MONTHS_SHORT[to.getMonth()]}`;
 }
 
-function span(minutes: number): string {
-  if (minutes < 60) return `${minutes} мин`;
-  const hours = Math.floor(minutes / 60);
-  const rest = minutes % 60;
-  if (hours < 24) return rest ? `${hours} ч ${rest} мин` : `${hours} ч`;
-  const whole = Math.floor(hours / 24);
-  return `${whole} дн`;
-}
 
 function days(value: number): string {
   const rounded = Math.round(value * 10) / 10;

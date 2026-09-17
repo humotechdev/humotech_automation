@@ -18,6 +18,7 @@ import { NotificationBell } from './NotificationBell';
 import { backdropImage } from '../features/shell/backdrop';
 import { AppIcon, ICON_SIZE, type AppIconName } from './AppIcon';
 import { useSession } from '../features/auth/session';
+import { useBadges } from '../features/shell/badges';
 import { GlobalEmployeeSearch } from './GlobalEmployeeSearch';
 
 type Item = {
@@ -63,9 +64,16 @@ type Props = {
   section?: string;
 };
 
-export function AppShell({ children, badges = {}, breadcrumb, section = 'home' }: Props) {
+export function AppShell({ children, badges, breadcrumb, section = 'home' }: Props) {
   const session = useSession();
-  const user = session.status === 'authenticated' ? session.user : null;
+  /*
+   * Числа рядом с разделами приходят из общего источника, а не от
+   * страницы: иначе они есть только там, где их кто-то посчитал, и
+   * исчезают при переходе в соседний раздел. Страница всё ещё может
+   * передать свои — они перекрывают общие.
+   */
+  const shared = useBadges();
+  const counters = { ...shared, ...(badges ?? {}) };
 
   /*
    * Меню на узком экране выезжает поверх содержимого.
@@ -109,19 +117,12 @@ export function AppShell({ children, badges = {}, breadcrumb, section = 'home' }
         </div>
 
         <div className="side__scroll">
-          <Group title="Рабочее пространство" items={WORKSPACE} badges={badges}
+          <Group title="Рабочее пространство" items={WORKSPACE} badges={counters}
                  active={section} />
           <div className="side__rule" />
-          <Group title="Управление" items={MANAGEMENT} badges={badges} active={section} />
+          <Group title="Управление" items={MANAGEMENT} badges={counters} active={section} />
         </div>
 
-        <div className="side__user">
-          <span className="avatar" aria-hidden="true">{initials(user?.email)}</span>
-          <span className="side__who">
-            <span className="side__role">{roleName(user?.roles)}</span>
-            <span className="side__scope">{user?.organization_code ?? ''}</span>
-          </span>
-        </div>
         <button type="button" className="side__exit" onClick={() => void session.signOut()}>
           <AppIcon name="logout" size={ICON_SIZE.nav} />
           Выйти
@@ -159,9 +160,6 @@ export function AppShell({ children, badges = {}, breadcrumb, section = 'home' }
             <GlobalEmployeeSearch />
             <NotificationBell />
             <Language />
-            <span className="avatar avatar--sm" aria-hidden="true">
-              {initials(user?.email)}
-            </span>
           </div>
         </header>
         <main className="canvas">{children}</main>
@@ -183,8 +181,10 @@ function Group({ title, items, badges, active }: {
             <>
               <AppIcon name={item.icon} size={ICON_SIZE.nav} />
               <span>{item.title}</span>
+              {/* Ноль не показывается: пустой кружок читается как
+                  «ноль чего-то», а не «ничего не ждёт». */}
               {count !== undefined && count > 0 && (
-                <span className="nav__badge">{count}</span>
+                <span className="nav__badge">{count > 99 ? '99+' : count}</span>
               )}
             </>
           );
