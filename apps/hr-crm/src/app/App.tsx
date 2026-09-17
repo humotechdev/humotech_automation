@@ -16,6 +16,7 @@ import { NewEmployeePage } from '../pages/NewEmployeePage';
 import { RequestsPage } from '../pages/RequestsPage';
 import { AttendancePage } from '../pages/AttendancePage';
 import { OfficesPage } from '../pages/OfficesPage';
+import { OfficeSetupPage } from '../pages/OfficeSetupPage';
 import { QuestionsPage } from '../pages/QuestionsPage';
 import { AnalyticsPage } from '../pages/AnalyticsPage';
 import { ReportsPage } from '../pages/ReportsPage';
@@ -51,6 +52,7 @@ export function App() {
         <Route path="/requests" element={<RequestsPage />} />
         <Route path="/attendance" element={<AttendancePage />} />
         <Route path="/offices" element={<OfficesPage />} />
+        <Route path="/offices/:id/setup" element={<OfficeSetupPage />} />
         <Route path="/questions" element={<QuestionsPage />} />
         <Route path="/analytics" element={<AnalyticsPage />} />
         <Route path="/reports" element={<ReportsPage />} />

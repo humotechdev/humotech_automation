@@ -41,6 +41,11 @@ export type OfficeStats = {
   counts: Record<string, number>;
   points: api.QrPoint[];
   /**
+   * Опоздавшие сегодня — по строкам состава смены. `null`, если ответ
+   * обрезан: часть людей не пришла, и считать по ней значит занизить.
+   */
+  late?: number | null;
+  /**
    * Получены ли точки. `false` — сервер отказал (например, нет права на
    * QR-точки). Пустой список тогда означает «неизвестно», а не «ноль».
    */
@@ -134,12 +139,15 @@ export function OfficesPage() {
                 // Отказ — не «точек нет»: без права на QR-точки число
                 // неизвестно, и нулём оно не показывается.
                 .catch(() => null);
+              const presence = await api
+                .presenceDay({ office_id: office.id }, signal)
+                .catch(() => null);
               return {
                 office,
-                counts: await api
-                  .presenceDay({ office_id: office.id }, signal)
-                  .then((body) => body.counts)
-                  .catch(() => ({}) as Record<string, number>),
+                counts: presence?.counts ?? ({} as Record<string, number>),
+                late: presence && !presence.truncated
+                  ? presence.items.filter((one) => (one.late_minutes ?? 0) > 0).length
+                  : null,
                 points: points ?? [],
                 pointsKnown: points !== null,
               };
@@ -279,9 +287,8 @@ export function OfficesPage() {
                       onlySetup={onlySetup} regions={regions} region={region} status={status}
                       onPatch={patch} />
             {current ? (
-              <OfficeCard row={current} canManage={can('offices.manage')}
-                          onClose={() => patch({ office: null })}
-                          onChanged={() => setAttempt((n) => n + 1)} />
+              <OfficeCard row={current} canManage={can('offices.manage')} updated={updated}
+                          onClose={() => patch({ office: null })} />
             ) : (
               <Network rows={rows} updated={updated} onPick={(id) => patch({ office: id })} />
             )}
@@ -322,9 +329,8 @@ export function OfficesPage() {
               </section>
 
               {current ? (
-                <OfficeCard row={current} canManage={can('offices.manage')}
-                            onClose={() => patch({ office: null })}
-                            onChanged={() => setAttempt((n) => n + 1)} />
+                <OfficeCard row={current} canManage={can('offices.manage')} updated={updated}
+                            onClose={() => patch({ office: null })} />
               ) : (
                 <Network rows={rows} updated={updated} onPick={(id) => patch({ office: id })} />
               )}
@@ -804,7 +810,7 @@ function attentionOf(row: OfficeStats): string | null {
   return null;
 }
 
-function toneOf(row: OfficeStats): 'ok' | 'warn' | 'off' {
+export function toneOf(row: OfficeStats): 'ok' | 'warn' | 'off' {
   if (row.office.status !== 'ACTIVE') return 'off';
   return attentionOf(row) ? 'warn' : 'ok';
 }

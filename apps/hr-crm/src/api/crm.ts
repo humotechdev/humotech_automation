@@ -676,6 +676,7 @@ export type OfficeFull = Office & {
   geofence_radius_m: number | null;
   opened_at: string | null;
   closed_at: string | null;
+  updated_at?: string;
 };
 
 export const officesPage = (
@@ -717,10 +718,52 @@ export type QrPoint = {
   require_geolocation: boolean;
   require_office_network: boolean;
   is_active: boolean;
+  description?: string | null;
+  created_by_name?: string | null;
+  created_at?: string;
+  rotated_at?: string | null;
+  token_version?: number;
+  /** Попыток за сегодня в поясе офиса. `null` — не считали. */
+  scans_today?: number | null;
 };
 
 export const qrPoints = (params: { office_id?: string }, signal?: AbortSignal) =>
   request<Items<QrPoint>>(`/qr-points/${query(params)}`, signal ? { signal } : {});
+
+/**
+ * Точка вместе с секретом печатного кода. Секрет и ссылка приходят
+ * ТОЛЬКО в ответе на выпуск и перевыпуск — повторно их не узнать.
+ */
+export type IssuedQrPoint = {
+  point: QrPoint;
+  static_token: string | null;
+  sticker_link: string | null;
+};
+
+export const createQrPoint = (body: {
+  office_id: string;
+  name: string;
+  direction_mode: 'ENTRY' | 'EXIT' | 'BOTH';
+  description?: string;
+}) => request<IssuedQrPoint>('/qr-points/', {
+  method: 'POST',
+  body: { ...body, qr_mode: 'STATIC' },
+});
+
+export const updateQrPoint = (id: string, changes: { name?: string; description?: string; direction_mode?: string }) =>
+  request<QrPoint>(`/qr-points/${id}/`, { method: 'PATCH', body: changes });
+
+export const setQrPointActive = (id: string, active: boolean) =>
+  request<QrPoint>(`/qr-points/${id}/${active ? 'activate' : 'deactivate'}/`, {
+    method: 'POST',
+    body: {},
+  });
+
+export const reissueQrPoint = (id: string) =>
+  request<IssuedQrPoint>(`/qr-points/${id}/reissue-token/`, { method: 'POST', body: {} });
+
+export const office = (id: string, signal?: AbortSignal) =>
+  request<OfficeFull>(`/offices/${id}/`, signal ? { signal } : {});
 
 export type QrDevice = {
   id: string;

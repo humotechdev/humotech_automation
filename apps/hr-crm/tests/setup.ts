@@ -14,6 +14,10 @@ import { forgetNavigation } from '../src/features/shell/memory';
 if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = function scrollIntoView() {};
 }
+// Лента офисов листается программно — `scrollTo` в jsdom тоже нет.
+if (!Element.prototype.scrollTo) {
+  Element.prototype.scrollTo = function scrollTo() {};
+}
 
 /*
  * Того же рода пробел: jsdom не выдаёт адресов для файлов, а
@@ -24,6 +28,21 @@ if (!Element.prototype.scrollIntoView) {
 if (!URL.createObjectURL) {
   URL.createObjectURL = () => 'blob:test';
   URL.revokeObjectURL = () => {};
+}
+
+/*
+ * И ещё один: `ResizeObserver` в jsdom нет. Лента офисов и карта следят
+ * за размером своих областей, и без заглушки страница «Офисы» падала
+ * при первом же рендере — тесты видели пустой экран вместо данных.
+ * Размеров jsdom всё равно не считает, поэтому заглушка ничего не делает.
+ */
+if (!('ResizeObserver' in globalThis)) {
+  class ResizeObserverStub {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverStub;
 }
 
 beforeEach(() => {

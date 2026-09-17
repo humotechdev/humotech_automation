@@ -1074,3 +1074,492 @@
     margin-right: 0;
   }
 }
+
+/* --- карточка офиса справа ---------------------------------------------------
+ *
+ * Плотная карточка вместо стопки крупных плашек: обзор помещается в
+ * колонку целиком, без внутренней прокрутки. Шапка 56, вкладки 36,
+ * текст 12–13, заголовки блоков 13, отступы 10–14.
+ *
+ * Высоту колонки задаёт содержимое карточки, а не наоборот: если
+ * карточка выше карты, ряд растёт вместе с ней. Прокручиваются только
+ * длинные списки внутри вкладок — сотрудники и QR-точки.
+ */
+
+.of-grid:has(> .ofc) {
+  grid-template-columns: minmax(0, 1fr) clamp(440px, 26vw, 480px);
+}
+
+.ofc {
+  --ofc-line: #e5ebf3;
+  --ofc-muted: #6b7c98;
+  --ofc-ink: #13295a;
+
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid rgba(221, 229, 239, 0.9);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 6px 24px rgba(30, 64, 120, 0.06);
+  color: #22355c;
+  font-size: 13px;
+}
+
+/* --- шапка ------------------------------------------------------------------- */
+
+.ofc-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 56px;
+  padding: 8px 10px 8px 12px;
+  border-bottom: 1px solid var(--ofc-line);
+}
+
+.ofc-head__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: #eaf2fd;
+  color: #1f5fbf;
+}
+
+.ofc-head__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.ofc-head__name {
+  margin: 0;
+  overflow: hidden;
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 700;
+  color: var(--ofc-ink);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ofc-head__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 0;
+  min-width: 0;
+}
+
+.ofc-head__id {
+  overflow: hidden;
+  font-size: 11.5px;
+  color: var(--ofc-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ofc-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #34507f;
+  cursor: pointer;
+}
+
+.ofc-close:hover {
+  background: #f1f5fb;
+}
+
+/* --- состояние --------------------------------------------------------------- */
+
+.ofc-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.ofc-state i {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.ofc-state--ok { background: #e3f6ec; color: #17844f; }
+.ofc-state--warn { background: #fff1de; color: #b8650a; }
+.ofc-state--off { background: #eef2f7; color: #52627a; }
+
+/* --- вкладки ----------------------------------------------------------------- */
+
+.ofc-tabs {
+  display: flex;
+  gap: 2px;
+  height: 36px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--ofc-line);
+}
+
+.ofc-tab {
+  position: relative;
+  padding: 0 10px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  color: #4d5f7d;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ofc-tab--on {
+  color: #1466d8;
+  font-weight: 600;
+}
+
+.ofc-tab--on::after {
+  content: '';
+  position: absolute;
+  right: 6px;
+  bottom: -1px;
+  left: 6px;
+  height: 2px;
+  border-radius: 2px;
+  background: #1f6fe0;
+}
+
+/* --- тело -------------------------------------------------------------------- */
+
+.ofc-body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  min-height: 0;
+  padding: 10px 14px 12px;
+}
+
+.ofc-date {
+  margin: 0;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--ofc-muted);
+}
+
+/* Четыре числа одной строкой. */
+.ofc-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--ofc-line);
+  border-radius: 8px;
+  list-style: none;
+}
+
+.ofc-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  padding: 6px 10px 7px;
+}
+
+.ofc-metric + .ofc-metric {
+  border-left: 1px solid var(--ofc-line);
+}
+
+.ofc-metric b {
+  font-size: 19px;
+  line-height: 23px;
+  font-weight: 700;
+  color: var(--ofc-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.ofc-metric span {
+  overflow: hidden;
+  font-size: 11.5px;
+  line-height: 15px;
+  color: var(--ofc-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ofc-metric--ok b { color: #17844f; }
+.ofc-metric--warn b { color: #c0660a; }
+
+.ofc-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 6px;
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 17px;
+  color: #4d5f7d;
+}
+
+.ofc-line b {
+  font-weight: 700;
+  color: var(--ofc-ink);
+}
+
+.ofc-line i {
+  font-style: normal;
+  color: #aab6c8;
+}
+
+/* --- блоки фактов ------------------------------------------------------------ */
+
+.ofc-block {
+  padding-top: 8px;
+  border-top: 1px solid var(--ofc-line);
+}
+
+.ofc-block__title {
+  margin: 0 0 5px;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 700;
+  color: var(--ofc-ink);
+}
+
+.ofc-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 14px;
+  margin: 0;
+}
+
+.ofc-facts--three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.ofc-facts > div {
+  min-width: 0;
+}
+
+.ofc-facts__wide {
+  grid-column: 1 / -1;
+}
+
+.ofc-facts dt {
+  font-size: 11.5px;
+  line-height: 15px;
+  color: var(--ofc-muted);
+}
+
+.ofc-facts dd {
+  margin: 0;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+  color: var(--ofc-ink);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ofc-muted {
+  font-weight: 400;
+  color: var(--ofc-muted);
+}
+
+.ofc-warn {
+  color: #c0660a !important;
+}
+
+.ofc-note {
+  margin: 5px 0 0;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--ofc-muted);
+}
+
+.ofc-note--warn {
+  color: #b8650a;
+}
+
+/* --- кнопки ------------------------------------------------------------------ */
+
+.ofc-actions,
+.ofc-pager {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 2px;
+}
+
+.ofc-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid #d3deeb;
+  border-radius: 7px;
+  background: #ffffff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ofc-ink);
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ofc-btn:hover:not(:disabled) {
+  background: #f4f8fd;
+}
+
+.ofc-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.ofc-btn--blue {
+  border-color: #1f6fe0;
+  background: #1f6fe0;
+  color: #ffffff;
+}
+
+.ofc-btn--blue:hover:not(:disabled) {
+  background: #185fc4;
+}
+
+.ofc-btn--wide {
+  width: 100%;
+}
+
+.ofc-link {
+  flex: none;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #1466d8;
+  text-decoration: none;
+}
+
+/* --- списки во вкладках ------------------------------------------------------ */
+
+.ofc-find {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid #d9e2ec;
+  border-radius: 7px;
+  color: #50627f;
+}
+
+.ofc-find input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+}
+
+.ofc-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Длинный список прокручивается сам, а не растягивает карточку. */
+.ofc-rows--scroll {
+  max-height: 320px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.ofc-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 4px 0;
+  border-bottom: 1px solid #edf1f6;
+}
+
+.ofc-row:last-child {
+  border-bottom: 0;
+}
+
+.ofc-row__face {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: #e6effa;
+  font-size: 11px;
+  font-weight: 600;
+  color: #1c4c93;
+}
+
+.ofc-row__text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ofc-row__text b,
+.ofc-row__text small {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ofc-row__text b {
+  font-size: 13px;
+  line-height: 17px;
+  font-weight: 600;
+  color: var(--ofc-ink);
+}
+
+.ofc-row__text small {
+  font-size: 11.5px;
+  line-height: 15px;
+  color: var(--ofc-muted);
+}
+
+.ofc-empty {
+  margin: 4px 0;
+  font-size: 12.5px;
+  color: var(--ofc-muted);
+}
+
+.ofc-empty--bad {
+  color: #b42318;
+}
+
+/* Одна колонка на узком окне: карточка встаёт под карту во всю ширину. */
+@media (max-width: 1280px) {
+  .of-grid:has(> .ofc) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

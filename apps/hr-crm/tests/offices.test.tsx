@@ -103,7 +103,9 @@ describe('карта сети', () => {
     network();
     renderApp('/offices');
 
-    expect(await screen.findByText('32 из 36')).toBeTruthy();
+    // В карточке офиса рядом с числами стоит «в офисе», поэтому поиск
+    // по вхождению, а не по точному совпадению строки.
+    expect(await screen.findByText(/32 из 36/)).toBeTruthy();
     expect(screen.getAllByText('42').length).toBeGreaterThan(0);
   });
 
@@ -111,7 +113,7 @@ describe('карта сети', () => {
     network();
     renderApp('/offices');
 
-    await screen.findByText('32 из 36');
+    await screen.findByText(/32 из 36/);
     await waitFor(() => expect(screen.getByText('Без координат: 1')).toBeTruthy());
     expect(screen.queryByRole('button', { name: 'Офис Главный офис' })).toBeNull();
   });
@@ -143,7 +145,9 @@ describe('карта сети', () => {
     network();
     renderApp('/offices');
 
-    expect(await screen.findByText('Геозона не настроена')).toBeTruthy();
+    // Метка стоит и в ленте офисов, и в списке «Требуют внимания»:
+    // это одно состояние, показанное в двух местах.
+    expect((await screen.findAllByText('Геозона не настроена')).length).toBeGreaterThan(0);
   });
 
   test('отказ в QR-точках не выдаётся за ноль', async () => {
@@ -204,32 +208,45 @@ describe('карточка офиса', () => {
     expect(screen.queryByText(/Онлайн/)).toBeNull();
   });
 
-  test('без права управления кнопки правки нет', async () => {
+  test('без права управления кнопки «Настроить» нет', async () => {
     network((path) =>
       path.includes('/auth/') ? json(200, { ...USER, permissions: ['offices.read'] }) : null,
     );
     renderApp('/offices?office=o-1');
 
     await screen.findAllByText('Главный офис');
-    expect(screen.queryByRole('button', { name: /Редактировать офис/ })).toBeNull();
+    expect(screen.queryByRole('link', { name: /Настроить/ })).toBeNull();
+    // Открыть офис можно и без права правки — посмотреть.
+    expect(screen.getByRole('link', { name: /Открыть офис/ })).toBeTruthy();
   });
 
-  test('при ошибке сохранения введённое остаётся в форме', async () => {
-    network((path, method) =>
-      method === 'PATCH' && path.includes('/offices/o-1/')
-        ? json(400, { error: { code: 'invalid', message: 'нет',
-                               details: { latitude: ['Недопустимое значение.'] } } })
-        : null,
-    );
+  test('«Настроить» ведёт сразу к карте офиса', async () => {
+    network();
     renderApp('/offices?office=o-1');
 
-    fireEvent.click(await screen.findByRole('button', { name: /Редактировать офис/ }));
-    const latitude = screen.getByLabelText('Широта');
-    fireEvent.change(latitude, { target: { value: '999' } });
+    const link = await screen.findByRole('link', { name: /Настроить/ });
+    expect(link.getAttribute('href')).toBe('/offices/o-1/setup?tab=geo');
+  });
+});
+
+describe('настройка офиса', () => {
+  test('при ошибке сохранения введённое остаётся в форме', async () => {
+    network((path, method) => {
+      if (method === 'PATCH' && path.includes('/offices/o-1/')) {
+        return json(400, { error: { code: 'invalid', message: 'нет',
+                                    details: { name: ['Недопустимое значение.'] } } });
+      }
+      if (method === 'GET' && /\/offices\/o-1\/$/.test(path)) return json(200, OFFICE);
+      return null;
+    });
+    renderApp('/offices/o-1/setup');
+
+    const name = await screen.findByLabelText('Название');
+    fireEvent.change(name, { target: { value: 'Главный офис 2' } });
     fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }));
 
     await screen.findByRole('alert');
-    expect((latitude as HTMLInputElement).value).toBe('999');
+    expect((name as HTMLInputElement).value).toBe('Главный офис 2');
     expect(screen.getByText('Недопустимое значение.')).toBeTruthy();
   });
 });
