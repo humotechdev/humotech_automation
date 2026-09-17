@@ -1185,13 +1185,16 @@
    каждого своя ширина. Не помещаются — переносятся целиком, но на
    большом экране стоят в одну строку и не расползаются. */
 .emp-filters .emp-search {
-  flex: 0 1 300px;
-  min-width: 220px;
+  /* Растёт, когда место есть, и первым отдаёт его, когда нет: подпись
+     «Поиск по ФИО, должности или Telegram» длинная, и лишние сто
+     пикселей ей нужнее, чем выбору офиса. */
+  flex: 1 1 240px;
+  min-width: 200px;
 }
 
 .emp-filters .app-select {
-  flex: 0 0 176px;
-  min-width: 156px;
+  flex: 0 1 168px;
+  min-width: 142px;
 }
 
 /* Переключатель вида — своя ширина по содержимому, сжиматься ему
@@ -1215,8 +1218,11 @@
 
 /* Карточки набираются по ширине. 320 — тот предел, ниже которого
    фамилия перестаёт помещаться в строку. */
+/* 430 — та ширина, при которой в карточку помещаются и фамилия с
+   именем, и плашка состояния рядом. На 320 их влезало три в ряд, но
+   фамилия обрывалась на середине — а она здесь главное. */
 .emp-cards {
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 430px), 1fr));
   grid-auto-rows: minmax(139px, auto);
 }
 
@@ -1258,14 +1264,29 @@
 
 /* Состав: кольцо и легенда рядом, пока хватает места; дальше легенда
    переезжает под кольцо целиком. */
+/* Кольцо, число и легенда стоят вместе слева направо, а не по углам
+   панели. Прежде легенда прижималась к правому краю (`margin-left:
+   auto`) и между нею и кольцом зияла пустота в половину панели. */
 .emp-sum {
   height: auto;
+  align-items: center;
+  gap: 14px;
   flex-wrap: wrap;
-  gap: 12px;
 }
 
 .emp-sum > * {
   min-width: 0;
+}
+
+.emp-sum__main {
+  margin: 0;
+}
+
+.emp-sum__legend {
+  width: auto;
+  min-width: 132px;
+  flex: 1 1 132px;
+  margin: 0;
 }
 
 /* Подписи в карточке переносятся на вторую строку вместо отточия:
@@ -1414,4 +1435,58 @@
     display: flex;
     flex-direction: column;
   }
+}
+
+/* Имя и состояние в одной строке карточки. Место справа держится только
+   под кнопку меню, а не под плашку состояния: она теперь в потоке и
+   сама забирает столько, сколько ей нужно. */
+.emp-card__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding-right: 30px;
+}
+
+/* Имя переносится по словам и не сокращается отточием: «Муродова М…»
+   — это не фамилия. Если рядом не помещается плашка состояния, она
+   уходит на следующую строку, а имя остаётся целым. */
+.emp-card__title {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+
+.emp-card__title .emp-card__name {
+  padding-right: 0;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+
+.emp-card__title .emp-card__status {
+  position: static;
+  flex: none;
+}
+
+/* Строки сведений в правой панели переносятся, а не режут название
+   офиса до «Головно…». Высота больше не задана числом: две строки
+   вместо одной — это нормально, обрезанное слово — нет. */
+.emp-chosen__row {
+  height: auto;
+  min-height: 27px;
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+
+.emp-chosen__row .emp-bit,
+.emp-chosen__row .emp-bit:nth-child(2) {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.emp-chosen__row .emp-bit__text {
+  overflow: visible;
+  white-space: normal;
+  text-overflow: clip;
+  overflow-wrap: break-word;
 }

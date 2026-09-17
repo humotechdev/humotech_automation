@@ -324,7 +324,14 @@ function PersonCard({ person, chosen, onPick, onOpen }: {
     >
       <Photo id={person.id} name={person.full_name} has={person.photo} className="emp-card__photo" />
       <div className="emp-card__body">
-        <h3 className="emp-card__name">{shortName(person.full_name)}</h3>
+        {/* Имя и состояние — одной строкой. Состояние стояло отдельным
+            слоем поверх карточки, и под ним приходилось держать пустое
+            поле справа: при трёх карточках в ряд фамилия в это поле
+            уже не помещалась и обрывалась. */}
+        <div className="emp-card__title">
+          <h3 className="emp-card__name">{shortName(person.full_name)}</h3>
+          <Status person={person} className="emp-card__status" />
+        </div>
         <p className="emp-card__number">{person.employee_number ?? '—'}</p>
         <p className="emp-card__role">{at?.position_name ?? 'Должность не назначена'}</p>
         <p className="emp-card__dept">{at?.department_name ?? '—'}</p>
@@ -336,7 +343,6 @@ function PersonCard({ person, chosen, onPick, onOpen }: {
             : <Bit icon="doc" text={telegramShort(person.telegram_state)} />}
         </p>
       </div>
-      <Status person={person} className="emp-card__status" />
       <CardMenu onOpen={onOpen} />
     </article>
   );
