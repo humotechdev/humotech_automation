@@ -334,11 +334,6 @@ def _reject_reason(
     ):
         return RejectionReason.NONCE_REUSED
 
-    if strict_location and _repeated_too_soon(
-        employee_id=employee_id, qr_point=qr_point, now=now
-    ):
-        return RejectionReason.TOO_SOON
-
     if not employee_may_use_office(
         employee_id=employee_id, office_id=qr_point.office_id, at=now
     ):
@@ -366,6 +361,13 @@ def _reject_reason(
 
     if qr_point.require_office_network and not inside_office_network:
         return RejectionReason.NETWORK_REQUIRED
+
+    # Повтор проверяется ПОСЛЕ места: тому, кто отошёл от офиса, важнее
+    # услышать «слишком далеко», чем «вы только что отметились».
+    if strict_location and _repeated_too_soon(
+        employee_id=employee_id, qr_point=qr_point, now=now
+    ):
+        return RejectionReason.TOO_SOON
 
     if event_type == "ENTRY" and current_session is not None:
         return RejectionReason.ALREADY_INSIDE
