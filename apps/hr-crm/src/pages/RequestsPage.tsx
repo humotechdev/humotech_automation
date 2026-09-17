@@ -150,9 +150,11 @@ export function RequestsPage() {
   }, [directory, region]);
 
   const items = list.state === 'ready' ? list.data.items : [];
-  // Без выбора в адресе открыта первая заявка очереди, как в эталоне:
-  // кадровик начинает разбор сверху, и пустая половина экрана ему не нужна.
-  const current = items.find((item) => item.id === opened) ?? items[0] ?? null;
+  // Шторка открывается ТОЛЬКО по выбору. Прежде без выбора открывалась
+  // первая заявка очереди — это было верно для постоянной колонки
+  // рядом со списком, но окно поверх страницы, которое появляется само,
+  // закрывает собой очередь, ради которой страницу открыли.
+  const current = opened ? items.find((item) => item.id === opened) ?? null : null;
   const officeName = directory.state === 'ready'
     ? directory.data.offices.find((one) => one.id === office)?.name ?? null
     : null;
@@ -287,9 +289,20 @@ export function RequestsPage() {
           </section>
 
           {current && (
-            <Details key={current.id} item={current}
-                     onClose={() => patch({ request: null }, true)}
-                     onDone={reload} />
+            <>
+              {/* Затемнение под шторкой: нажатие мимо закрывает её.
+                  Кнопкой, а не слоем: закрыть заявку — это действие, и
+                  оно должно быть доступно и с клавиатуры. */}
+              <button
+                type="button"
+                className="rq-scrim"
+                aria-label="Закрыть заявку"
+                onClick={() => patch({ request: null }, true)}
+              />
+              <Details key={current.id} item={current}
+                       onClose={() => patch({ request: null }, true)}
+                       onDone={reload} />
+            </>
           )}
         </div>
       </div>
@@ -341,6 +354,22 @@ function Details({ item, onClose, onDone }: {
   onClose: () => void;
   onDone: () => void;
 }) {
+  // Escape закрывает шторку: она перекрывает часть страницы, и уйти из
+  // неё нужно уметь не целясь в крестик.
+  useEffect(() => {
+    const stop = new AbortController();
+    // `window.document`, а не `document`: ниже в этой же функции есть
+    // своя переменная `document` — приложенный к заявке файл.
+    window.document.addEventListener(
+      'keydown',
+      (event: KeyboardEvent) => {
+        if (event.key === 'Escape') onClose();
+      },
+      { signal: stop.signal },
+    );
+    return () => stop.abort();
+  }, [onClose]);
+
   const [comment, setComment] = useState('');
   const [sending, setSending] = useState<'approve' | 'reject' | null>(null);
   const [failed, setFailed] = useState<string | null>(null);

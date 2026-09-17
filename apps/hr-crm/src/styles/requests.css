@@ -962,11 +962,41 @@
  * ступеньками. Ступенька всегда оставляет диапазон, в котором плохо.
  */
 
-/* Подробности занимают четверть ширины, но не меньше 330 и не больше
-   420: на узком им хватает, на широком они не растягиваются пустотой. */
+/* Подробности открываются ШТОРКОЙ поверх страницы, а не второй колонкой.
+ *
+ * Колонка забирала у списка треть ширины, и от нажатия на строку
+ * страница перекладывалась целиком: колонки сужались, строки
+ * перестраивались, высота менялась. Шторка ничего этого не делает —
+ * список под ней остаётся ровно таким, каким был.
+ *
+ * Шапка не перекрывается: шторка начинается под ней. Прокрутка у
+ * шторки своя, страница под ней не двигается. */
 .rq-grid--open {
-  grid-template-columns: minmax(0, 1fr) clamp(330px, 25%, 420px);
-  column-gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.rq-grid--open .rq-side {
+  position: fixed;
+  top: var(--topbar-height);
+  right: 0;
+  bottom: 0;
+  z-index: 46;
+  width: min(560px, 94vw);
+  border-radius: 0;
+  border-left: 1px solid var(--rq-line);
+  box-shadow: -18px 0 46px rgba(19, 62, 104, 0.18);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+/* Шапка шторки остаётся на виду при прокрутке её содержимого: закрыть
+   её нужно из любого места. */
+.rq-grid--open .rq-side__head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #fff;
 }
 
 /* Строка отбора укладывается сама. Не сетка из равных долей: у полей
@@ -1117,19 +1147,24 @@
   flex: none;
 }
 
-/* Подробности рядом со списком до тех пор, пока рядом есть место.
-   Ниже — панель под списком; выезжающей шторкой она была бы поверх
-   того, ради чего её открыли. */
-@media (max-width: 1040px) {
-  .rq-grid--open {
-    grid-template-columns: minmax(0, 1fr);
-    row-gap: 12px;
-  }
-
+/* На узком экране шторка занимает почти всю ширину — читать заявку
+   в полосе 300 px нечем. */
+@media (max-width: 720px) {
   .rq-grid--open .rq-side {
-    position: static;
-    width: auto;
-    border-radius: 10px;
-    box-shadow: 0 6px 24px rgba(30, 64, 120, 0.06);
+    width: 100vw;
   }
+}
+
+/* Затемнение под шторкой заявки. Ниже шапки: она остаётся доступной. */
+.rq-scrim {
+  position: fixed;
+  top: var(--topbar-height);
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 45;
+  border: 0;
+  padding: 0;
+  background: rgba(11, 40, 100, 0.22);
+  cursor: pointer;
 }

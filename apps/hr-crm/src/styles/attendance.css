@@ -1253,3 +1253,50 @@
   min-width: 0;
   justify-content: center;
 }
+
+/* Страница в высоту экрана: таблица дня и правая колонка прокручиваются
+   каждая у себя, заголовок, вкладки и отбор остаются на виду.
+ *
+ * Только на экране выше 780: на 720 после шапки, заголовка, вкладок и
+ * карточки «Сегодня» таблице оставалось девяносто пикселей — одна
+ * строка с половиной. Там честнее отдать прокрутку всей странице. */
+@media (min-height: 780px) {
+.canvas:has(> .attp) {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.attp {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.att-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.att-list,
+.att-rail {
+  min-height: 0;
+}
+
+.att-list {
+  overflow: hidden;
+}
+
+.att-table {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.att-rail {
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+}

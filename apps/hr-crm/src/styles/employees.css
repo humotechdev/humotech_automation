@@ -1401,15 +1401,17 @@
    заголовок, отбор и пагинация остаются на виду при любом числе
    карточек на странице. Правило адресное: остальные разделы по-прежнему
    прокручиваются целиком, им так и надо. */
-.canvas:has(> .emp) {
-  flex: 1 1 0;
-  min-height: 0;
-  overflow: hidden;
-}
+@media (min-height: 780px) {
+  .canvas:has(> .emp) {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: hidden;
+  }
 
-.emp {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
+  .emp {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
 }
