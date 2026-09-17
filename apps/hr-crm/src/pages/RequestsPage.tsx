@@ -155,10 +155,6 @@ export function RequestsPage() {
   // рядом со списком, но окно поверх страницы, которое появляется само,
   // закрывает собой очередь, ради которой страницу открыли.
   const current = opened ? items.find((item) => item.id === opened) ?? null : null;
-  const officeName = directory.state === 'ready'
-    ? directory.data.offices.find((one) => one.id === office)?.name ?? null
-    : null;
-  const statusName = STATUS_OPTIONS.find((one) => one.id === status)?.name ?? null;
   const first = items[0];
   const employeeName = employee
     ? first?.absence?.employee.full_name ?? first?.correction?.employee?.full_name ?? null
@@ -218,9 +214,13 @@ export function RequestsPage() {
               options={TABS.map((item) => ({ value: item.key, label: item.title, count: counts.state === 'ready' && item.key !== 'all' ? counts.data[item.key] ?? 0 : null }))}
               onChange={(key) => patch({ tab: key === 'open' ? null : key, request: null, status: null })} />
 
+            {/* Одна строка отбора. Чипов с офисом, статусом, датами и поиском
+                здесь нет: они повторяли то, что и так видно в полях. Метка
+                остаётся только у условий без своего поля — сотрудник,
+                пришедший по ссылке, и регион, — и рядом «Сбросить». */}
             <div className="rq-filters">
               <label className="rq-search">
-                <AppIcon name="search" size={18} />
+                <AppIcon name="search" size={16} />
                 <input type="search" value={draft} placeholder="Сотрудник или табельный номер"
                        aria-label="Сотрудник или табельный номер"
                        onChange={(event) => setDraft(event.target.value)} />
@@ -233,34 +233,37 @@ export function RequestsPage() {
               <AppDateRangePicker className="rq-dates" label="Даты отсутствия" now={today()} from={from} to={to}
                 onFromChange={(value) => patch({ date_from: value || null })}
                 onToChange={(value) => patch({ date_to: value || null })} />
-            </div>
-
-            {dirty && (
-              <div className="rq-chips">
-                {officeName && <Chip text={officeName} onClear={() => patch({ office_id: null })} />}
-                {region && !office && directory.state === 'ready' && (
-                  <Chip text={directory.data.regions.find((one) => one.id === region)?.name ?? 'Регион'}
-                        onClear={() => patch({ region_id: null })} />
-                )}
-                {statusName && <Chip text={statusName} onClear={() => patch({ status: null })} />}
-                {(from || to) && (
-                  <Chip text={`${from ? shortDay(from) : '…'} — ${to ? shortDay(to) : '…'}`}
-                        onClear={() => patch({ date_from: null, date_to: null })} />
-                )}
-                {search && <Chip text={`«${search}»`} onClear={() => patch({ search: null })} />}
-                {employee && (
-                  <Chip text={employeeName ? `Заявки: ${employeeName}` : 'Заявки одного сотрудника'}
-                        onClear={() => patch({ employee_id: null })} />
-                )}
+              {region && !office && directory.state === 'ready' && (
+                <Chip text={directory.data.regions.find((one) => one.id === region)?.name ?? 'Регион'}
+                      onClear={() => patch({ region_id: null })} />
+              )}
+              {employee && (
+                <Chip text={employeeName ? `Заявки: ${employeeName}` : 'Заявки одного сотрудника'}
+                      onClear={() => patch({ employee_id: null })} />
+              )}
+              {dirty && (
                 <button type="button" className="rq-reset" onClick={() =>
                   patch({ search: null, region_id: null, office_id: null, employee_id: null,
                           status: null, date_from: null, date_to: null })}>
                   Сбросить
                 </button>
-              </div>
-            )}
+              )}
+            </div>
 
             <div className="rq-rows">
+              {/* Шапка колонок стоит внутри области прокрутки и прилипает к
+                  её верху: так у неё та же ширина, что у строк, и полоса
+                  прокрутки не сдвигает подписи относительно столбцов. */}
+              <div className="rq-cols" aria-hidden="true">
+                <span />
+                <span>Сотрудник</span>
+                <span>Тип заявки</span>
+                <span>Период</span>
+                <span>Документ</span>
+                <span>Подана</span>
+                <span>Статус</span>
+                <span />
+              </div>
               <Rows block={list}>
                 {(data) => data.items.length === 0 ? (
                   <p className="rq-empty">{dirty ? 'По этим условиям заявок нет.' : 'Очередь пуста.'}</p>
@@ -505,7 +508,11 @@ function Details({ item, onClose, onDone }: {
             </ol>
           </section>
         )}
+      </div>
 
+      {/* Решение — внизу шторки и вне её прокрутки: одобрить или
+          отклонить можно, не пролистывая документ и историю. */}
+      <footer className="rq-side__foot">
         {failed && <p className="rq-alert" role="alert">{failed}</p>}
         {done && <p className="rq-done" role="status">{done}</p>}
 
@@ -551,7 +558,7 @@ function Details({ item, onClose, onDone }: {
             )}
           </p>
         )}
-      </div>
+      </footer>
     </aside>
   );
 }
@@ -692,10 +699,6 @@ function dayLong(day: string): string {
   return `${String(d).padStart(2, '0')} ${MONTHS[m - 1] ?? ''} ${y}`;
 }
 
-function shortDay(day: string): string {
-  const [y, m, d] = parts(day);
-  return `${String(d).padStart(2, '0')}.${String(m).padStart(2, '0')}.${y}`;
-}
 
 /** «09 – 13 сентября 2026» или «28 сентября – 02 октября 2026». */
 function range(first: string, last: string): string {

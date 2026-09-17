@@ -1066,48 +1066,74 @@
   min-width: 0;
 }
 
-/* Период переносится по словам и не обрывается на половине года. */
-.rq-row__period > span {
-  white-space: normal;
-  overflow: visible;
-  text-overflow: clip;
+/* --- колонки списка ----------------------------------------------------------
+ *
+ * Шапка колонок и строки живут на одной сетке: её описание лежит в
+ * переменной `--rq-cols` у области прокрутки, и оба набора берут его
+ * оттуда. Поэтому подпись «Статус» стоит ровно над статусами на любой
+ * ширине.
+ *
+ * Ширину меряем у самого списка (`@container`), а не у окна. Когда
+ * места мало, уходит сначала документ, потом дата подачи: ФИО, тип,
+ * период, статус и стрелка остаются всегда.
+ *
+ * Статус — фиксированные 140 px: «Отмена запрошена», самая длинная
+ * метка, занимает около 130 и не должна обрезаться. Стрелка — у
+ * правого края, в своей колонке.
+ */
+.rq-rows {
+  --rq-cols: 32px minmax(0, 1.35fr) minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 0.95fr) 92px 140px 18px;
 }
 
-/* Меньше 1000 в самой полосе списка — уходит приложенный документ:
-   он нужен реже остальных, и его состояние видно в карточке. */
-@container rq-list (max-width: 1000px) {
-  .rq-row {
-    grid-template-columns:
-      52px minmax(0, 1.25fr) minmax(132px, 1fr) minmax(0, 1.4fr)
-      minmax(104px, 118px) 132px 22px;
-    column-gap: 12px;
+.rq-row,
+.rq-cols {
+  grid-template-columns: var(--rq-cols);
+  column-gap: 12px;
+}
+
+.rq-row > *,
+.rq-cols > * {
+  min-width: 0;
+}
+
+@container rq-list (max-width: 880px) {
+  .rq-rows {
+    --rq-cols: 32px minmax(0, 1.35fr) minmax(0, 1fr) minmax(0, 1.15fr) 92px 140px 18px;
   }
 
-  .rq-row > :nth-child(5) {
+  .rq-row > :nth-child(5),
+  .rq-cols > :nth-child(5) {
     display: none;
   }
 }
 
-/* Меньше 820 — уходит и дата подачи. Остаются ФИО, тип, период,
-   состояние и стрелка: то, ради чего очередь открывают. */
-@container rq-list (max-width: 820px) {
-  .rq-row {
-    grid-template-columns:
-      52px minmax(0, 1.15fr) minmax(132px, 1.05fr) minmax(0, 1.45fr) 132px 22px;
+@container rq-list (max-width: 700px) {
+  .rq-rows {
+    --rq-cols: 32px minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1.15fr) 140px 18px;
   }
 
-  .rq-row > :nth-child(6) {
+  .rq-row > :nth-child(6),
+  .rq-cols > :nth-child(6) {
     display: none;
   }
 }
 
-/* Меньше 600 строка перестаёт быть строкой: значок и ФИО сверху,
-   остальное — под ними. Ужимать дальше нечего. */
-@container rq-list (max-width: 600px) {
-  .rq-row {
-    grid-template-columns: 52px minmax(0, 1fr) 22px;
+/* Меньше 520 строка перестаёт быть строкой: значок и ФИО сверху,
+   остальное — под ними. Шапка колонок в таком виде ничего не
+   подписывает и прячется. */
+@container rq-list (max-width: 520px) {
+  .rq-rows {
+    --rq-cols: 32px minmax(0, 1fr) 18px;
+  }
+
+  .rq-cols {
+    display: none;
+  }
+
+  .rq-rows .rq-row {
+    height: auto;
     row-gap: 4px;
-    padding: 10px 12px;
+    padding: 8px 10px;
   }
 
   .rq-row > :nth-child(3),
@@ -1170,4 +1196,560 @@
   padding: 0;
   background: rgba(11, 40, 100, 0.22);
   cursor: pointer;
+}
+
+/* --- «Заявки»: плотная рабочая страница ---------------------------------------
+ *
+ * Та же задача, что на «Обращениях», «Сотрудниках», «Посещаемости» и
+ * главной: при масштабе браузера 100 % страница вмещает столько же,
+ * сколько сейчас при 80 %. Уменьшены сами величины, а не картинка:
+ * `zoom` и `transform` оставили бы интерфейс крупным, просто
+ * нарисованным мельче.
+ *
+ * Страница ровно в высоту окна и целиком не прокручивается: шапка,
+ * вкладки и отбор стоят на месте, пагинация прибита к низу списка,
+ * прокручиваются только строки заявок.
+ */
+
+@media (min-width: 721px) and (min-height: 560px) {
+  .canvas:has(> .rq) {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: hidden;
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+
+  .rq {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .rq-grid {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .rq-list {
+    overflow: hidden;
+  }
+}
+
+.rq-grid {
+  margin: 0;
+}
+
+/* --- шапка ------------------------------------------------------------------ */
+
+/* Подзаголовок и счётчик — одной строкой под названием, а не двумя. */
+.rq-head {
+  align-items: center;
+  height: auto;
+  margin: 0 0 10px;
+}
+
+.rq-head > div:first-child {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 10px;
+  min-width: 0;
+}
+
+.rq-head__title {
+  flex: 1 0 100%;
+  font-size: 26px;
+  line-height: 32px;
+}
+
+.rq-head__sub {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 18px;
+}
+
+.rq-head__meta {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 18px;
+}
+
+.rq-head__meta::before {
+  content: '·';
+  margin-right: 4px;
+}
+
+.rq-head__actions {
+  gap: 8px;
+  margin-top: 0;
+}
+
+.rq-head__actions .rq-btn {
+  height: 34px;
+  padding: 0 12px;
+  gap: 7px;
+  font-size: 13px;
+}
+
+.rq-head__actions .rq-btn svg {
+  width: 17px;
+  height: 17px;
+}
+
+.rq-note {
+  margin: -4px 0 8px;
+  font-size: 12.5px;
+}
+
+/* --- список ------------------------------------------------------------------- */
+
+.rq-list {
+  padding: 8px 10px 8px;
+}
+
+/* Вкладки — одна низкая строка по ширине подписей. */
+.app-segmented.rq-tabs {
+  align-self: flex-start;
+  flex-wrap: wrap;
+  gap: 2px;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  min-height: 0;
+  margin: 0;
+  padding: 2px;
+  border: 1px solid #d7e5f4;
+  border-radius: 9px;
+}
+
+.rq-tabs .app-segmented__button {
+  min-height: 30px;
+  padding: 0 11px;
+  gap: 6px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.rq-tabs .app-segmented__count {
+  font-size: 11px;
+}
+
+/* Одна строка отбора: поиск забирает свободное место, списки и даты —
+   по своей ширине. На 1280 все четыре поля помещаются в строку; уже —
+   переносятся целиком, не обрезаясь. */
+.rq-filters {
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 0;
+}
+
+.rq-filters .rq-search {
+  flex: 1 1 200px;
+  min-width: 170px;
+  height: 34px;
+  gap: 7px;
+  padding: 0 10px;
+}
+
+.rq-search input {
+  font-size: 13px;
+}
+
+.rq-filters .app-select,
+.rq-filters .rq-select {
+  flex: 0 1 150px;
+  min-width: 128px;
+  max-width: 180px;
+}
+
+.rq-filters .app-select__trigger {
+  min-height: 34px;
+  padding: 0 10px;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.rq-filters .rq-dates {
+  flex: 0 0 auto;
+  min-width: 0;
+  gap: 6px;
+}
+
+.rq-filters .app-date-range .date__field {
+  min-width: 132px;
+  height: 34px;
+  padding: 0 8px;
+  gap: 6px;
+}
+
+.rq-filters .app-date-range .date__input {
+  width: 78px;
+  font-size: 13px;
+}
+
+.rq-filters .app-date-range .date__field > svg {
+  width: 16px;
+  height: 16px;
+}
+
+.rq-filters .app-date-range .date__toggle {
+  width: 22px;
+}
+
+.rq-filters .rq-chip {
+  height: 26px;
+  padding: 0 8px 0 11px;
+  gap: 6px;
+  font-size: 12.5px;
+}
+
+.rq-filters .rq-reset {
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+/* Прокручивается только тело списка. */
+.rq-rows {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 8px -10px 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+/* --- шапка колонок ------------------------------------------------------------ */
+
+.rq-cols {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: grid;
+  align-items: center;
+  height: 30px;
+  padding: 0 12px 0 20px;
+  border-bottom: 1px solid var(--rq-line);
+  background: #f5f8fc;
+  font-size: 12px;
+  font-weight: 600;
+  color: #5b6d8a;
+}
+
+.rq-cols > span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* --- строки ------------------------------------------------------------------- */
+
+/* Все строки одной высоты: каждая колонка — одна-две строки текста без
+   переноса, длинное сокращается многоточием. Выбранная строка
+   выделяется заливкой и тенью внутрь, а не рамкой: рамка добавляла
+   строке два пикселя, и список под ней вздрагивал. */
+.rq-rows .rq-row {
+  height: 52px;
+  min-height: 0;
+  padding: 0 12px 0 20px;
+  border: 0;
+  border-bottom: 1px solid #edf1f6;
+  border-radius: 0;
+}
+
+.rq-rows .rq-row--on {
+  background: #eef5ff;
+  box-shadow: inset 0 0 0 1px #b9d4fb;
+}
+
+.rq-rows .rq-row--on::before {
+  top: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: 0;
+}
+
+.rq-row:focus-visible {
+  outline: 2px solid #1f6fe0;
+  outline-offset: -2px;
+}
+
+.rq-row__face {
+  width: 32px;
+  height: 32px;
+  font-size: 12px;
+}
+
+/* Табельный номер и офис — в одну строку под фамилией. */
+.rq-row__who {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 6px;
+}
+
+.rq-row__who b {
+  grid-column: 1 / -1;
+  font-size: 13.5px;
+  line-height: 18px;
+}
+
+.rq-row__who small {
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.rq-row__who small + small::before {
+  content: '·';
+  margin-right: 6px;
+}
+
+.rq-row__kind,
+.rq-row__doc {
+  gap: 7px;
+  font-size: 12.5px;
+  line-height: 16px;
+}
+
+.rq-row__kind > svg,
+.rq-row__doc > svg {
+  width: 18px;
+  height: 18px;
+}
+
+.rq-row__kind > span,
+.rq-row__doc > span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.rq-row__period {
+  font-size: 12.5px;
+  line-height: 17px;
+}
+
+.rq-row__period > span,
+.rq-row__period small {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.rq-row__period small {
+  font-size: 11.5px;
+  line-height: 15px;
+}
+
+.rq-row__when {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+}
+
+.rq-rows .rq-status {
+  justify-self: start;
+  max-width: 100%;
+  height: 24px;
+  padding: 0 10px;
+  font-size: 12.5px;
+}
+
+.rq-row__go {
+  justify-self: end;
+  width: 18px;
+  height: 18px;
+}
+
+.rq-rows .rq-empty {
+  margin: 16px 20px;
+}
+
+/* --- пагинация ---------------------------------------------------------------- */
+
+.rq-pager {
+  align-items: center;
+  margin: 0 -10px;
+  padding: 6px 10px 0;
+  border-top: 1px solid var(--rq-line);
+}
+
+.rq-pager__btn {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 12.5px;
+}
+
+/* --- шторка заявки ------------------------------------------------------------
+ *
+ * Шапка с номером и крестиком — сверху, решение — снизу, а
+ * прокручивается только середина: сотрудник, факты, причина, документ
+ * и история. Одобрить или отклонить можно, не пролистывая документ.
+ */
+
+.rq-grid--open .rq-side {
+  display: flex;
+  flex-direction: column;
+  width: min(520px, 94vw);
+  padding: 0;
+  overflow: hidden;
+}
+
+.rq-grid--open .rq-side__head {
+  position: static;
+  flex: none;
+  min-height: 50px;
+  padding: 8px 14px 8px 18px;
+}
+
+.rq-side__head h2 {
+  font-size: 17px;
+  line-height: 22px;
+}
+
+.rq-side .rq-status {
+  height: 24px;
+  padding: 0 10px;
+  font-size: 12.5px;
+}
+
+.rq-side__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0 14px 12px 18px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.rq-side__foot {
+  flex: none;
+  padding: 10px 18px 14px;
+  border-top: 1px solid var(--rq-line);
+  background: #ffffff;
+}
+
+.rq-side__foot .rq-alert,
+.rq-side__foot .rq-done {
+  margin: 0 0 8px;
+}
+
+.rq-side__foot .rq-decide {
+  margin-top: 0;
+  padding-top: 0;
+}
+
+.rq-side__foot .rq-closed {
+  margin: 0;
+}
+
+.rq-person {
+  gap: 12px;
+  padding: 10px 0;
+}
+
+.rq-person__face {
+  width: 44px;
+  height: 44px;
+  font-size: 15px;
+}
+
+.rq-person__name {
+  font-size: 15px;
+  line-height: 20px;
+}
+
+.rq-person__number {
+  font-size: 12.5px;
+  line-height: 17px;
+}
+
+.rq-person__place {
+  gap: 2px 16px;
+  margin-top: 3px !important;
+  font-size: 12px;
+}
+
+.rq-facts {
+  gap: 10px 14px;
+  padding: 10px 12px;
+}
+
+.rq-fact {
+  gap: 10px;
+}
+
+.rq-fact > svg {
+  width: 20px;
+  height: 20px;
+  margin-top: 2px;
+}
+
+.rq-fact dt {
+  font-size: 12px;
+}
+
+.rq-fact dd {
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.rq-block {
+  margin-top: 12px;
+}
+
+.rq-block h3 {
+  gap: 8px;
+  font-size: 13.5px;
+}
+
+.rq-block h3 svg {
+  width: 18px;
+  height: 18px;
+}
+
+.rq-block__text {
+  margin-left: 26px;
+  font-size: 13px;
+}
+
+.rq-history {
+  margin: 6px 0 0 26px;
+}
+
+.rq-history li {
+  grid-template-columns: 118px minmax(0, 1fr);
+  gap: 10px;
+  min-height: 24px;
+  font-size: 12.5px;
+}
+
+.rq-comment {
+  height: 36px;
+  padding: 0 10px;
+  gap: 8px;
+}
+
+.rq-comment input {
+  font-size: 13px;
+}
+
+.rq-comment small {
+  font-size: 11.5px;
+}
+
+.rq-decide__buttons {
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.rq-decide__buttons .rq-btn {
+  height: 36px;
+  gap: 7px;
+  font-size: 13px;
+}
+
+.rq-decide__buttons .rq-btn svg {
+  width: 17px;
+  height: 17px;
 }
