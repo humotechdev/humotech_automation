@@ -25,6 +25,7 @@ from aiogram.types import Message
 
 from src.api.errors import ApiError
 from src.api.selfservice import SelfServiceClient
+from src.handlers.attendance.sticker import begin as begin_sticker, sticker_payload
 from src.keyboards import employee as kb
 from src.messages import link as text
 
@@ -59,6 +60,13 @@ async def start_with_link(
     employee,
     denial,
 ) -> None:
+    # Печатный QR-код офиса ведёт сюда же, через `/start qr_…`. Его
+    # разбирает отметка, а не привязка: у него свой разговор — геопозиция.
+    sticker = sticker_payload(command.args)
+    if sticker is not None:
+        await begin_sticker(message, sticker, state, employee, denial)
+        return
+
     token = parse_link_payload(command.args)
     if token is None:
         # Нагрузка есть, но не наша: ведём себя как при обычном /start.

@@ -66,6 +66,7 @@ BTN_ASK_HR = "✍️ Написать в HR"
 BTN_HELP = "❓ Помощь"
 #: Выход из ввода вопроса. В общем меню её нет: она нужна только там.
 BTN_CANCEL = "✖️ Отмена"
+BTN_SEND_LOCATION = "📍 Отправить геопозицию"
 
 # Все подписи разом — по ним фильтруются хендлеры, и список должен быть один.
 #
@@ -157,6 +158,23 @@ def cancel_menu() -> ReplyKeyboardMarkup:
     """Клавиатура на время ввода вопроса: только выход из него."""
     return ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text=BTN_CANCEL)]],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+
+
+def location_request() -> ReplyKeyboardMarkup:
+    """Клавиатура после скана печатного QR: геопозиция или отмена.
+
+    Геопозицию отправляет сам Telegram по нажатию — текущую, с
+    погрешностью. Набрать координаты руками здесь нельзя, и это
+    намеренно.
+    """
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=BTN_SEND_LOCATION, request_location=True)],
+            [KeyboardButton(text=BTN_CANCEL)],
+        ],
         resize_keyboard=True,
         one_time_keyboard=True,
     )

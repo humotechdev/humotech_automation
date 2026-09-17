@@ -15,6 +15,7 @@ from aiogram import Router
 
 from src.handlers.ask_hr import router as ask_hr_router
 from src.handlers.attendance import router as attendance_router
+from src.handlers.attendance.sticker import router as sticker_router
 from src.handlers.fallback import router as fallback_router
 from src.handlers.menu import router as menu_router
 from src.handlers.start import router as start_router
@@ -23,6 +24,9 @@ from src.handlers.start import router as start_router
 def build_root_router() -> Router:
     root = Router(name="root")
     root.include_router(start_router)
+    # Печатный QR ждёт геопозицию в своём состоянии. Раньше меню и
+    # `fallback`: иначе присланное место съел бы ответ «не понял».
+    root.include_router(sticker_router)
     # Отметка из Mini App приходит служебным сообщением `web_app_data`,
     # у которого НЕТ текста. `fallback` ловит любое сообщение без
     # состояния, поэтому стоять он обязан позже: иначе служебное

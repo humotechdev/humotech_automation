@@ -78,8 +78,18 @@ export function cameraAvailable(source: Window = window): boolean {
  * попало в кадр, и без фильтра оно закроется на первой же чужой наклейке.
  */
 export function looksLikeOurCode(value: string): boolean {
-  return typeof value === 'string' && value.trim().startsWith(CODE_PREFIX);
+  if (typeof value !== 'string') return false;
+  const text = value.trim();
+  return text.startsWith(CODE_PREFIX) || STICKER.test(text);
 }
+
+/**
+ * Печатный код офиса: ссылка на бота с нагрузкой `qr_…` или сама нагрузка.
+ *
+ * Разбирает её сервер — здесь только узнавание по виду, чтобы окно
+ * сканера закрылось на наклейке у двери, а не ждало кода с экрана.
+ */
+const STICKER = /^(?:https:\/\/(?:www\.)?(?:t|telegram)\.me\/[A-Za-z0-9_]{3,64}\?start=)?qr_[A-Za-z0-9_-]{32,61}$/;
 
 /**
  * Сканер Telegram. Окно закрывается только на НАШЕМ коде.

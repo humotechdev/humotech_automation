@@ -38,6 +38,15 @@ describe('свой код', () => {
     expect(looksLikeOurCode(`  ${CODE_PREFIX}abcdef `)).toBe(true);
   });
 
+  it('печатный код офиса узнаётся по ссылке на бота', () => {
+    const secret = 'A'.repeat(43);
+    expect(looksLikeOurCode(`https://t.me/humotech_bot?start=qr_${secret}`)).toBe(true);
+    expect(looksLikeOurCode(`qr_${secret}`)).toBe(true);
+    // Похожая ссылка на чужой сайт и огрызок нагрузки — не наш код.
+    expect(looksLikeOurCode(`https://evil.example/?start=qr_${secret}`)).toBe(false);
+    expect(looksLikeOurCode('qr_short')).toBe(false);
+  });
+
   it('чужой QR отсеивается без запроса к серверу', () => {
     // Ссылка, код Wi-Fi, штрихкод на кофейном стакане — всё это попадает
     // в кадр, и ходить за отказом на сервер каждый раз незачем.
