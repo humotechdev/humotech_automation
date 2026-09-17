@@ -17,7 +17,7 @@ import * as api from '../api/crm';
 import { messageFor } from '../api/errors';
 import { AppShell, initials } from '../components/AppShell';
 import { AppIcon, type AppIconName } from '../components/AppIcon';
-import { AppSegmentedControl, AppSelectField, Dropdown } from '../components/AppSelect';
+import { AppSegmentedControl, Dropdown } from '../components/AppSelect';
 import { EmployeeCard } from '../components/EmployeeCard';
 import { longDate, today as todayIso, useBlock, type Block } from '../features/dashboard/data';
 import '../styles/employees.css';
@@ -31,7 +31,9 @@ const TABS = [
 ] as const;
 
 const ACTIVE_STATUSES = ['ACTIVE', 'PROBATION'];
-const SIZES = ['8', '16', '32'];
+/** Сколько сотрудников на странице. Значение одно и не настраивается:
+ *  выбор «8 / 16 / 32» ничего не решал, а место в строке занимал. */
+const PAGE_SIZE = '16';
 const WEEKDAYS = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
 
 const TELEGRAM_TITLE: Record<string, string> = {
@@ -48,7 +50,7 @@ export function EmployeesPage() {
   const search = params.get('search') ?? '';
   const office = params.get('office_id') ?? '';
   const department = params.get('department_id') ?? '';
-  const limit = params.get('limit') ?? '8';
+  const limit = PAGE_SIZE;
   const page = Math.max(1, Number(params.get('page') ?? '1'));
   const opened = params.get('employee') ?? '';
   const picked = params.get('picked') ?? '';
@@ -275,13 +277,8 @@ export function EmployeesPage() {
                   ? `Показано ${items.length} из ${plural(total, 'сотрудник')}`
                   : ''}
               </p>
-              <div className="emp-pager__tools">
-                <AppSelectField className="emp-size" label="Строк на странице" value={limit} onChange={(value) => patch({ limit: value })}>
-                    {SIZES.map((size) => <option key={size} value={size}>{size}</option>)}
-                </AppSelectField>
-                <Pages page={page} pages={pages}
-                       onGo={(next) => patch({ page: next === 1 ? null : String(next) }, true)} />
-              </div>
+              <Pages page={page} pages={pages}
+                     onGo={(next) => patch({ page: next === 1 ? null : String(next) }, true)} />
             </footer>
           </section>
 
