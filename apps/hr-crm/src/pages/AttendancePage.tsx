@@ -281,7 +281,7 @@ export function AttendancePage() {
                   </div>
                   <label className="att-search">
                     <AppIcon name="search" size={16} />
-                    <input type="search" value={draft} placeholder="Поиск сотрудника"
+                    <input type="search" value={draft} placeholder="Поиск"
                            aria-label="Поиск сотрудника"
                            onChange={(event) => setDraft(event.target.value)} />
                   </label>

@@ -1414,9 +1414,18 @@
 /* --- «Сегодня»: одна низкая карточка ----------------------------------------- */
 
 .att-today {
-  grid-template-columns: 228px minmax(0, 300px) minmax(0, 1fr);
   margin-bottom: 10px;
   padding-left: 14px;
+}
+
+/* Четырём показателям хватает по сотне пикселей: подпись короткая, число
+   одно. Остаток ширины уходит графику приходов — на нём время читается
+   только тогда, когда столбцам есть где стоять. На узком экране
+   карточка складывается в столбец правилом выше, его не перебиваем. */
+@media (min-width: 1101px) {
+  .att-today {
+    grid-template-columns: 220px minmax(0, 1.3fr) minmax(360px, 1fr);
+  }
 }
 
 .att-today__title {
@@ -1511,38 +1520,90 @@
   padding: 8px 8px 6px;
 }
 
-.att-filters {
-  gap: 8px;
+/* Четыре быстрых отбора, поиск и два списка — в одну строку без
+   прокрутки. Уступает поиск: подсказка в поле читается и укороченной, а
+   счётчики на чипах и выбранный офис обрезать нельзя. */
+.att-grid .att-filters {
+  flex-wrap: nowrap;
+  gap: 6px;
+  height: auto;
+  min-width: 0;
+}
+
+.att-grid .att-chips {
+  flex: none;
+  gap: 5px;
+  margin-right: 2px;
 }
 
 .att-chip {
   height: 30px;
-  padding: 0 9px;
-  gap: 6px;
+  padding: 0 7px 0 9px;
+  gap: 5px;
   font-size: 12.5px;
 }
 
 .att-chip__count {
+  padding: 0 5px;
   font-size: 11.5px;
 }
 
-.att-search {
-  height: 34px;
+.att-grid .att-search {
+  flex: 1 1 130px;
+  gap: 6px;
+  width: auto;
+  min-width: 84px;
+  height: 32px;
+  padding: 0 9px;
 }
 
 .att-search input {
+  min-width: 0;
   font-size: 13px;
 }
 
-.att-select,
-.att-filters > .app-select {
-  height: 34px;
+.att-grid .att-select,
+.att-grid .att-filters > .app-select {
+  flex: 0 0 112px;
+  width: 112px;
+  min-width: 0;
+  height: 32px;
+}
+
+/* «Все статусы» длиннее «Все офисы» — список статусов чуть шире. */
+.att-grid .att-filters > .app-select:last-child {
+  flex-basis: 126px;
+  width: 126px;
+}
+
+.att-grid .att-filters > .app-select .app-select__trigger {
+  gap: 4px;
+  padding: 0 8px 0 9px;
 }
 
 .att-select select,
 .att-filters > .app-select .app-select__trigger {
-  min-height: 34px;
+  min-height: 32px;
   font-size: 13px;
+}
+
+/* На панели уже 760 строка не помещается даже со сжатым поиском: тогда
+   поиск и списки переходят на вторую строку целиком, а не вылезают за
+   край. Считаем по ширине самой панели — она зависит от правой колонки
+   и бокового меню, а не только от окна. */
+.att-grid .att-list {
+  container: att-list / inline-size;
+}
+
+@container att-list (max-width: 760px) {
+  .att-grid .att-filters {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+
+  .att-grid .att-chips {
+    flex: 1 0 100%;
+  }
 }
 
 /* --- таблица дня -------------------------------------------------------------
@@ -1635,7 +1696,7 @@
 /* --- правая колонка ----------------------------------------------------------- */
 
 .att-attention {
-  padding: 10px 14px 6px;
+  padding: 8px 12px 4px;
 }
 
 .att-attention__title {
@@ -1645,7 +1706,7 @@
 }
 
 .att-attention__row {
-  height: 34px;
+  height: 30px;
   gap: 10px;
 }
 
@@ -1659,28 +1720,41 @@
 }
 
 .att-person {
-  padding: 12px 12px 12px 14px;
+  padding: 10px 12px 10px 14px;
 }
 
 .att-person__who {
   flex: none;
-  gap: 12px;
+  align-items: center;
+  gap: 10px;
 }
 
 .att-person__face {
-  width: 56px;
-  height: 56px;
-  font-size: 18px;
+  width: 44px;
+  height: 44px;
+  font-size: 15px;
+}
+
+/* Табельный номер и статус — в одну строку под фамилией: шапка
+   карточки становится в полтора раза ниже. */
+.att-person__who > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 8px;
+  min-width: 0;
 }
 
 .att-person__name {
+  flex: 1 0 100%;
   font-size: 15px;
   line-height: 20px;
 }
 
 .att-person__number {
+  margin-bottom: 0 !important;
   font-size: 12.5px;
-  line-height: 17px;
+  line-height: 22px;
 }
 
 /* Середина карточки — единственное, что прокручивается в правой
@@ -1693,17 +1767,26 @@
 }
 
 .att-person__facts {
-  grid-template-columns: 104px minmax(0, 1fr);
-  margin-top: 10px;
-  padding-bottom: 10px;
+  grid-template-columns: 92px minmax(0, 1fr);
+  row-gap: 2px;
+  margin-top: 8px;
+  padding-bottom: 8px;
 }
 
 .att-person__facts dt {
-  font-size: 13px;
+  gap: 6px;
+  font-size: 12.5px;
+  line-height: 20px;
+}
+
+.att-person__facts dt svg {
+  width: 15px;
+  height: 15px;
 }
 
 .att-person__facts dd {
-  font-size: 13.5px;
+  font-size: 13px;
+  line-height: 20px;
 }
 
 .att-person__day {
@@ -1730,23 +1813,40 @@
   font-size: 13px;
 }
 
+/* Пустой день — строка со значком слева, а не высокий столбец: те же
+   четыре элемента занимают вдвое меньше высоты. */
 .att-person__blank {
-  margin: 10px 0 12px;
-  padding: 12px;
-  gap: 4px;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  column-gap: 10px;
+  row-gap: 1px;
+  align-items: start;
+  margin: 8px 0 0;
+  padding: 9px 10px;
 }
 
 .att-person__blankIcon {
-  width: 32px;
-  height: 32px;
+  grid-row: 1 / span 3;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
 }
 
 .att-person__blankTitle {
-  font-size: 14px;
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 18px;
 }
 
 .att-person__blankText {
   font-size: 12.5px;
+  line-height: 17px;
+}
+
+.att-person__blank .att-status {
+  justify-self: start;
+  height: 22px;
+  margin-top: 4px;
 }
 
 /* Кнопки прибиты к низу карточки: место им даёт прокрутка середины, а
@@ -1754,11 +1854,11 @@
 .att-person__actions {
   flex: none;
   margin-top: 0;
-  gap: 10px;
-  padding-top: 10px;
+  gap: 8px;
+  padding-top: 8px;
 }
 
 .att-person__actions .att-btn {
-  height: 38px;
+  height: 36px;
   font-size: 13px;
 }
