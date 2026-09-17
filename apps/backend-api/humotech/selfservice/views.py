@@ -12,6 +12,8 @@
 
 from __future__ import annotations
 
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework.response import Response
@@ -171,6 +173,15 @@ class ScanView(EmployeeSelfView):
                 "occurred_at": (
                     outcome.occurred_at.isoformat() if outcome.occurred_at else None
                 ),
+                "occurred_at_local": _local_time(
+                    outcome.occurred_at, outcome.office_timezone
+                ),
+                "point_mode": outcome.point_mode,
+                "distance_m": (
+                    round(outcome.distance_m) if outcome.distance_m is not None
+                    else None
+                ),
+                "radius_m": outcome.radius_m,
                 "session": (
                     {
                         "id": str(session.id),
@@ -186,6 +197,21 @@ class ScanView(EmployeeSelfView):
                 ),
             }
         )
+
+
+def _local_time(moment, zone: str | None) -> str | None:
+    """«09:02» в часовом поясе офиса.
+
+    Считает сервер, а не бот и не телефон: у них нет ни пояса офиса, ни
+    права решать, который час был при отметке.
+    """
+    if moment is None:
+        return None
+    try:
+        local = moment.astimezone(ZoneInfo(zone)) if zone else moment
+    except (ZoneInfoNotFoundError, ValueError):
+        local = moment
+    return local.strftime("%H:%M")
 
 
 @extend_schema(tags=["Личный кабинет"])

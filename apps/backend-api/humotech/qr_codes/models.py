@@ -53,6 +53,22 @@ class OfficeQrPoint(
     require_office_network = models.BooleanField(db_default=False)
     allowed_location_accuracy_m = models.IntegerField(null=True, blank=True)
     is_active = models.BooleanField(db_default=True)
+    # Для HR: где висит точка и зачем она. На проверку отметки не влияет.
+    description = models.TextField(null=True, blank=True)
+    # Кто завёл точку. SET NULL: учётную запись HR можно отключить, а
+    # точка у двери от этого работать не перестаёт.
+    created_by_user = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,
+        db_column="created_by_user_id",
+        db_index=False,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    # Когда последний раз перевыпускали код. `token_version` отвечает на
+    # «сколько раз», а на «когда» — только эта колонка.
+    rotated_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "office_qr_points"

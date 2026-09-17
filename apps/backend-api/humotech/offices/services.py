@@ -14,7 +14,7 @@ from __future__ import annotations
 import uuid
 from datetime import date
 
-from humotech.core.errors import Conflict
+from humotech.core.errors import Conflict, ValidationFailed
 from humotech.core.pagination import Page, paginate
 from humotech.core.rbac import Actor, snapshot
 from humotech.core.service import BaseService
@@ -29,10 +29,42 @@ from humotech.offices.models import Office
 AUDITED_FIELDS = (
     "code", "name", "address", "timezone", "status", "region_id",
     "opened_at", "closed_at",
+    # Перенос точки на карте и смена радиуса меняют, кого пустит отметка:
+    # в журнале это должно быть видно так же, как смена адреса.
+    "latitude", "longitude", "geofence_radius_m",
 )
 
 SIMPLE_FIELDS = ("latitude", "longitude", "geofence_radius_m", "opened_at",
                  "closed_at")
+
+#: Допустимый радиус геозоны. Меньше пятидесяти метров GPS в городе не
+#: даёт: человек у самой двери получал бы отказ. Больше пятисот — это уже
+#: не «на месте», а «в районе».
+GEOFENCE_MIN_M = 50
+GEOFENCE_MAX_M = 500
+
+
+def check_location(office: Office) -> None:
+    """Точка на карте и радиус согласованы между собой.
+
+    Широта без долготы — не место, а половина числа: проверять по ней
+    расстояние нельзя, а сохранённая молча, она выглядела бы
+    настроенной геозоной. Поэтому обе задаются или снимаются вместе.
+    """
+    if (office.latitude is None) != (office.longitude is None):
+        raise ValidationFailed(
+            "Широта и долгота задаются только вместе",
+            details={"latitude": ["Укажите обе координаты или ни одной."],
+                     "longitude": ["Укажите обе координаты или ни одной."]},
+        )
+    radius = office.geofence_radius_m
+    if radius is not None and not GEOFENCE_MIN_M <= radius <= GEOFENCE_MAX_M:
+        raise ValidationFailed(
+            f"Радиус геозоны — от {GEOFENCE_MIN_M} до {GEOFENCE_MAX_M} м",
+            details={"geofence_radius_m": [
+                f"Допустимо от {GEOFENCE_MIN_M} до {GEOFENCE_MAX_M} метров."
+            ]},
+        )
 
 
 class OfficeService(BaseService):
@@ -143,6 +175,10 @@ class OfficeService(BaseService):
         for field in SIMPLE_FIELDS:
             if field in changes:
                 setattr(office, field, changes[field])
+        # Проверяется только то, что меняли: у старых офисов радиус мог быть
+        # задан до появления границ, и правка названия не должна на нём падать.
+        if {"latitude", "longitude", "geofence_radius_m"} & set(changes):
+            check_location(office)
 
         require_order(
             office.opened_at, office.closed_at,

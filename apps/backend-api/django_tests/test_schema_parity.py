@@ -126,6 +126,19 @@ KNOWN_DIVERGENCES = {
     "calendar_exceptions: лишний индекс: public.calendar_exceptions "
     "using btree (organization_id, date) where (is_active and "
     "(office_id is null))",
+    # --- настройка офиса из CRM ---
+    #
+    # У точки отметки появились описание для HR, автор и время последнего
+    # перевыпуска кода; у отметки — расстояние до офиса. Без расстояния
+    # отказ «слишком далеко» нельзя ни объяснить человеку, ни разобрать.
+    "office_qr_points.created_by_user_id: лишняя колонка",
+    "office_qr_points.description: лишняя колонка",
+    "office_qr_points.rotated_at: лишняя колонка",
+    "office_qr_points: лишнее ограничение: foreign key (created_by_user_id) "
+    "references users(id) on delete set null",
+    "attendance_events.distance_m: лишняя колонка",
+    "attendance_events: лишнее ограничение: "
+    "check (((distance_m is null) or (distance_m >= (0)::numeric)))",
 }
 
 
@@ -232,8 +245,12 @@ def test_business_schema_has_expected_shape():
     #                  запись-источник нет: событие адресуется парой
     #                  «вид + запись», а ключа сразу на пять таблиц
     #                  не бывает.
-    assert counts["c"] == 118, f"CHECK: {counts['c']}, ожидалось 118"
-    assert counts["f"] == 155, f"FOREIGN KEY: {counts['f']}, ожидалось 155"
+    # Прибавка настройки офиса:
+    #   CHECK 118 + 1 — расстояние отметки не бывает отрицательным;
+    #   FK    155 + 1 — автор точки отметки;
+    #   UNIQUE 25 + 0 — ни описание, ни автор уникальными не бывают.
+    assert counts["c"] == 119, f"CHECK: {counts['c']}, ожидалось 119"
+    assert counts["f"] == 156, f"FOREIGN KEY: {counts['f']}, ожидалось 156"
     assert counts["u"] == 25, f"UNIQUE: {counts['u']}, ожидалось 25"
     assert counts["x"] == 2, f"EXCLUDE: {counts['x']}, ожидалось 2"
     assert {"btree_gist", "vector"} <= set(snapshot["extensions"])
@@ -261,7 +278,8 @@ def test_every_foreign_key_keeps_its_on_delete_action():
 
     # +1 — фотография сотрудника (employees/0005), RESTRICT.
     # +6 — переписка обращений (questions/0003).
-    assert len(rows) == 155, f"внешних ключей {len(rows)}, ожидалось 155"
+    # +1 — автор точки отметки (qr_codes/0004), SET NULL.
+    assert len(rows) == 156, f"внешних ключей {len(rows)}, ожидалось 156"
 
     # 'a' = NO ACTION: значит, действие не задано
     without_action = [f"{t}.{n}" for t, n, kind, _ in rows if kind == "a"]
@@ -294,5 +312,7 @@ def test_every_foreign_key_keeps_its_on_delete_action():
     # 125 + 1 RESTRICT, 7 + 1 CASCADE — организация и владелец шаблона
     # отчёта: шаблон — личная настройка и уходит вместе с учётной записью.
     assert actions["r"] == 127, f"RESTRICT: {actions['r']}, ожидалось 127"
-    assert actions["n"] == 19, f"SET NULL: {actions['n']}, ожидалось 19"
+    # 19 + 1 SET NULL — автор точки отметки: учётную запись HR можно
+    # отключить, а точка у двери работать не перестаёт.
+    assert actions["n"] == 20, f"SET NULL: {actions['n']}, ожидалось 20"
     assert actions["c"] == 9, f"CASCADE: {actions['c']}, ожидалось 9"

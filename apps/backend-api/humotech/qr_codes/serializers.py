@@ -9,7 +9,10 @@
 
 from __future__ import annotations
 
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
+
+from humotech.qr_codes import stickers
 
 
 class PairSerializer(serializers.Serializer):
@@ -106,8 +109,37 @@ class QrPointSerializer(serializers.Serializer):
     require_office_network = serializers.BooleanField()
     allowed_location_accuracy_m = serializers.IntegerField(allow_null=True)
     is_active = serializers.BooleanField()
+    description = serializers.CharField(allow_null=True)
+    created_by_name = serializers.SerializerMethodField()
+    rotated_at = serializers.DateTimeField(allow_null=True)
+    scans_today = serializers.SerializerMethodField()
     created_at = serializers.DateTimeField()
     updated_at = serializers.DateTimeField()
+
+    @extend_schema_field(serializers.CharField(allow_null=True))
+    def get_created_by_name(self, point) -> str | None:
+        """Кто завёл точку: ФИО, если учётная запись связана с сотрудником.
+
+        Иначе почта. Пусто — точку завели до того, как автор начал
+        записываться, или учётную запись удалили.
+        """
+        user = point.created_by_user
+        if user is None:
+            return None
+        person = getattr(user, "employee", None)
+        if person is not None:
+            full = " ".join(
+                part for part in (person.last_name, person.first_name) if part
+            )
+            if full:
+                return full
+        return user.email
+
+    @extend_schema_field(serializers.IntegerField(allow_null=True))
+    def get_scans_today(self, point) -> int | None:
+        # Считает сервис списка и карточки; у точки из ответа на выпуск
+        # подсчёта нет, и ноль там был бы неправдой.
+        return getattr(point, "scans_today", None)
 
 
 class IssuedQrPointSerializer(serializers.Serializer):
@@ -120,12 +152,25 @@ class IssuedQrPointSerializer(serializers.Serializer):
 
     point = QrPointSerializer()
     static_token = serializers.CharField(allow_null=True)
+    # Ссылка для печатного кода — из того же секрета и в том же единственном
+    # ответе. Пусто у меняющейся точки и если имя бота не настроено.
+    sticker_link = serializers.SerializerMethodField()
+
+    @extend_schema_field(serializers.CharField(allow_null=True))
+    def get_sticker_link(self, issued) -> str | None:
+        if not issued.static_token:
+            return None
+        return stickers.link(issued.static_token)
 
 
 class QrPointCreateSerializer(serializers.Serializer):
     office_id = serializers.UUIDField()
-    code = serializers.CharField(max_length=100)
+    # Необязателен: из CRM приходит только название, код подбирается сам.
+    code = serializers.CharField(max_length=100, required=False, allow_blank=True)
     name = serializers.CharField(max_length=255)
+    description = serializers.CharField(
+        max_length=500, required=False, allow_blank=True, allow_null=True
+    )
     direction_mode = serializers.ChoiceField(
         choices=["ENTRY", "EXIT", "BOTH"], default="BOTH"
     )
@@ -141,6 +186,9 @@ class QrPointCreateSerializer(serializers.Serializer):
 
 class QrPointUpdateSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=255, required=False)
+    description = serializers.CharField(
+        max_length=500, required=False, allow_blank=True
+    )
     direction_mode = serializers.ChoiceField(
         choices=["ENTRY", "EXIT", "BOTH"], required=False
     )

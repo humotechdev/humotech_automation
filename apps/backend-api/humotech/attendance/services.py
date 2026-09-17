@@ -35,7 +35,7 @@ from humotech.employees.models import (
     EmployeeOfficeAccess,
 )
 from humotech.attendance.models import AttendanceEvent, AttendanceSession
-from humotech.offices.geo import looks_like_coordinates, within_office
+from humotech.offices.geo import distance_m, looks_like_coordinates, within_office
 from humotech.qr_codes.models import OfficeQrPoint
 
 # насколько время клиента может отличаться от серверного
@@ -56,6 +56,14 @@ class RejectionReason:
     LOCATION_TOO_VAGUE = "LOCATION_TOO_VAGUE"
     NETWORK_REQUIRED = "NETWORK_REQUIRED"
     CLOCK_DRIFT = "CLOCK_DRIFT"
+    # Печатный код: у офиса нет точки на карте или радиуса, и проверить,
+    # на месте ли человек, не с чем. Такой код не принимается вовсе —
+    # иначе наклейка, сфотографированная у двери, работала бы из дома.
+    GEOFENCE_NOT_CONFIGURED = "GEOFENCE_NOT_CONFIGURED"
+    # Печатный код одноразовости не имеет: второй скан той же наклейки
+    # сразу после первого у точки «вход и выход» закрыл бы только что
+    # открытую сессию.
+    TOO_SOON = "TOO_SOON"
 
 
 @dataclass(frozen=True)
@@ -141,8 +149,15 @@ def register_scan(
     qr_display_session_id: uuid.UUID | None = None,
     client_event_id: str | None = None,
     source: str = "QR",
+    strict_location: bool = False,
 ) -> ScanResult:
-    """Обрабатывает одну попытку отметки и возвращает записанное событие."""
+    """Обрабатывает одну попытку отметки и возвращает записанное событие.
+
+    `strict_location` — для печатного кода: без координат, без геозоны у
+    офиса и повторно в течение минуты отметка не принимается. У
+    меняющегося кода на экране эти проверки мягче: его защищают подпись,
+    срок в полминуты и одноразовость.
+    """
     with transaction.atomic():
         return _register_locked(
             employee_id=employee_id,
@@ -162,6 +177,7 @@ def register_scan(
             qr_display_session_id=qr_display_session_id,
             client_event_id=client_event_id,
             source=source,
+            strict_location=strict_location,
         )
 
 
@@ -184,6 +200,7 @@ def _register_locked(
     qr_display_session_id: uuid.UUID | None,
     client_event_id: str | None,
     source: str,
+    strict_location: bool = False,
 ) -> ScanResult:
     """Тело обработки. Вызывается только внутри транзакции."""
     # Блокировка строки сотрудника выстраивает его сканы в очередь. Без неё
@@ -209,6 +226,7 @@ def _register_locked(
         inside_geofence = location_check(
             qr_point, latitude, longitude, location_accuracy_m
         )
+    distance = location_distance(qr_point, latitude, longitude)
 
     reason = _reject_reason(
         employee_id=employee_id,
@@ -223,6 +241,7 @@ def _register_locked(
         location_accuracy_m=location_accuracy_m,
         inside_office_network=inside_office_network,
         current_session=current_session,
+        strict_location=strict_location,
     )
     accepted = reason is None
 
@@ -246,6 +265,9 @@ def _register_locked(
         location_accuracy_m=location_accuracy_m,
         ip_address=ip_address,
         inside_geofence=inside_geofence,
+        distance_m=(
+            Decimal(str(round(distance, 2))) if distance is not None else None
+        ),
         inside_office_network=inside_office_network,
         client_event_id=client_event_id,
         rejection_reason=reason,
@@ -294,6 +316,7 @@ def _reject_reason(
     location_accuracy_m: Decimal | None,
     inside_office_network: bool | None,
     current_session: AttendanceSession | None,
+    strict_location: bool = False,
 ) -> str | None:
     """Первая сработавшая причина отказа, либо None если всё в порядке."""
     if not qr_point.is_active or qr_point.archived_at is not None:
@@ -311,10 +334,23 @@ def _reject_reason(
     ):
         return RejectionReason.NONCE_REUSED
 
+    if strict_location and _repeated_too_soon(
+        employee_id=employee_id, qr_point=qr_point, now=now
+    ):
+        return RejectionReason.TOO_SOON
+
     if not employee_may_use_office(
         employee_id=employee_id, office_id=qr_point.office_id, at=now
     ):
         return RejectionReason.OFFICE_NOT_ALLOWED
+
+    if strict_location:
+        # Печатный код без координат не принимается: иначе фотография
+        # наклейки работала бы откуда угодно.
+        if latitude is None or longitude is None:
+            return RejectionReason.GEOLOCATION_REQUIRED
+        if not office_is_located(qr_point.office):
+            return RejectionReason.GEOFENCE_NOT_CONFIGURED
 
     if qr_point.require_geolocation and (latitude is None or longitude is None):
         return RejectionReason.GEOLOCATION_REQUIRED
@@ -371,6 +407,50 @@ def _location_verdict(qr_point, latitude, longitude, accuracy_m) -> str | None:
     if verdict.checked and not verdict.inside:
         return RejectionReason.OUTSIDE_GEOFENCE
     return None
+
+
+def office_is_located(office) -> bool:
+    """Есть ли у офиса точка на карте и радиус — то, с чем сравнивать."""
+    return (
+        office is not None
+        and office.latitude is not None
+        and office.longitude is not None
+        and bool(office.geofence_radius_m)
+        and office.geofence_radius_m > 0
+    )
+
+
+def location_distance(qr_point, latitude, longitude) -> float | None:
+    """Расстояние от присланной точки до офиса, в метрах, либо None.
+
+    Считается и тогда, когда радиус не задан: «насколько далеко он был»
+    полезно знать и без вердикта. Мусорные координаты расстояния не
+    имеют — отвечать на широту 900 числом метров значило бы врать.
+    """
+    office = qr_point.office
+    if latitude is None or longitude is None:
+        return None
+    if not looks_like_coordinates(latitude, longitude):
+        return None
+    if office is None or office.latitude is None or office.longitude is None:
+        return None
+    return distance_m(office.latitude, office.longitude, latitude, longitude)
+
+
+def _repeated_too_soon(*, employee_id, qr_point, now) -> bool:
+    """Отмечался ли человек на этой точке только что.
+
+    Окно — `QR.STATIC_REPEAT_SECONDS`, по умолчанию минута. Считаются
+    только принятые отметки: отказ «слишком далеко» не должен мешать
+    подойти ближе и попробовать снова.
+    """
+    seconds = settings.QR.get("STATIC_REPEAT_SECONDS", 60)
+    return AttendanceEvent.objects.filter(
+        employee_id=employee_id,
+        qr_point_id=qr_point.id,
+        verification_status="ACCEPTED",
+        occurred_at__gte=now - timedelta(seconds=seconds),
+    ).exists()
 
 
 def location_check(qr_point, latitude, longitude, accuracy_m):

@@ -20,10 +20,14 @@
 
 from __future__ import annotations
 
-import hashlib
 import secrets
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, time
+from zoneinfo import ZoneInfo
+
+from django.db.models import Count
+from django.utils import timezone
 
 from humotech.core.enums import QR_DIRECTION_MODES, QR_MODES
 from humotech.core.errors import Conflict, NotFound, ValidationFailed
@@ -32,6 +36,7 @@ from humotech.core.rbac import Actor, snapshot
 from humotech.core.service import BaseService
 from humotech.core.validation import clean_code, clean_text
 from humotech.qr_codes.models import OfficeQrPoint
+from humotech.qr_codes.stickers import token_hash
 
 AUDITED_FIELDS = (
     "code",
@@ -44,6 +49,7 @@ AUDITED_FIELDS = (
     "allowed_location_accuracy_m",
     "is_active",
     "token_version",
+    "description",
 )
 
 # Разумные границы смены кода на экране. Меньше пяти секунд — человек
@@ -66,7 +72,44 @@ class IssuedPoint:
 
 
 def _hash(value: str) -> str:
-    return hashlib.sha256(value.encode()).hexdigest()
+    return token_hash(value)
+
+
+def with_scans_today(points: list[OfficeQrPoint]) -> list[OfficeQrPoint]:
+    """Сколько раз каждую точку сканировали сегодня — по дню её офиса.
+
+    Считаются все попытки, и принятые, и отклонённые: HR смотрит сюда,
+    чтобы понять, работает ли наклейка у двери, а сотня отказов «слишком
+    далеко» отвечает на этот вопрос не хуже сотни отметок.
+
+    «Сегодня» — в часовом поясе офиса точки, а не сервера: иначе в
+    Ташкенте день начинался бы в пять утра. Запрос один на часовой пояс,
+    а не на точку.
+    """
+    from humotech.attendance.models import AttendanceEvent
+
+    if not points:
+        return points
+    now = timezone.now()
+    by_zone: dict[str, list[OfficeQrPoint]] = {}
+    for point in points:
+        by_zone.setdefault(point.office.timezone, []).append(point)
+
+    for zone, group in by_zone.items():
+        local = now.astimezone(ZoneInfo(zone))
+        start = datetime.combine(local.date(), time.min, tzinfo=ZoneInfo(zone))
+        counts = dict(
+            AttendanceEvent.objects.filter(
+                qr_point_id__in=[point.id for point in group],
+                occurred_at__gte=start,
+            )
+            .values_list("qr_point_id")
+            .annotate(total=Count("id"))
+            .values_list("qr_point_id", "total")
+        )
+        for point in group:
+            point.scans_today = counts.get(point.id, 0)
+    return points
 
 
 class QrPointService(BaseService):
@@ -89,7 +132,8 @@ class QrPointService(BaseService):
 
         queryset = OfficeQrPoint.objects.filter(
             organization_id=actor.organization_id
-        ).select_related("office", "office__region")
+        ).select_related("office", "office__region", "created_by_user",
+                         "created_by_user__employee")
 
         if office_id:
             self.access.require_office(actor, office_id)
@@ -109,11 +153,13 @@ class QrPointService(BaseService):
             queryset = queryset.filter(name__icontains=pattern) | queryset.filter(
                 code__icontains=pattern
             )
-        return paginate(queryset, limit=limit, cursor=cursor)
+        page = paginate(queryset, limit=limit, cursor=cursor)
+        with_scans_today(list(page.items))
+        return page
 
     def get(self, actor: Actor, point_id: uuid.UUID) -> OfficeQrPoint:
         self.access.require(actor, "qr_points.read")
-        return self._require_point(actor, point_id)
+        return with_scans_today([self._require_point(actor, point_id)])[0]
 
     # -------------------------------------------------------------- изменения
 
@@ -122,8 +168,9 @@ class QrPointService(BaseService):
         actor: Actor,
         *,
         office_id: uuid.UUID,
-        code: str,
         name: str,
+        code: str | None = None,
+        description: str | None = None,
         direction_mode: str = "BOTH",
         qr_mode: str = "ROTATING",
         rotation_seconds: int | None = None,
@@ -134,6 +181,9 @@ class QrPointService(BaseService):
         """Новая точка. Для `STATIC` сразу выпускается секрет.
 
         Секрет возвращается здесь и больше нигде и никогда.
+
+        Код точки необязателен: HR из CRM даёт название, а код для
+        сверки и журналов подбирается сам — уникальный внутри офиса.
         """
         self.access.require(actor, "qr_points.manage")
         office = self.access.require_office(actor, office_id)
@@ -145,8 +195,15 @@ class QrPointService(BaseService):
             point = OfficeQrPoint.objects.create(
                 organization_id=actor.organization_id,
                 office=office,
-                code=clean_code(code, field="code"),
+                code=(
+                    clean_code(code, field="code") if code
+                    else _free_code(office.id)
+                ),
                 name=clean_text(name, field="name", max_length=255),
+                description=clean_text(
+                    description, field="description", max_length=500
+                ) if description else None,
+                created_by_user_id=actor.user_id,
                 direction_mode=direction_mode,
                 qr_mode=qr_mode,
                 rotation_seconds=(
@@ -176,6 +233,7 @@ class QrPointService(BaseService):
         point_id: uuid.UUID,
         *,
         name: str | None = None,
+        description: str | None = None,
         direction_mode: str | None = None,
         rotation_seconds: int | None = None,
         require_geolocation: bool | None = None,
@@ -195,6 +253,11 @@ class QrPointService(BaseService):
 
         if name is not None:
             point.name = clean_text(name, field="name", max_length=255)
+        if description is not None:
+            point.description = (
+                clean_text(description, field="description", max_length=500)
+                if description.strip() else None
+            )
         if direction_mode is not None:
             if direction_mode not in QR_DIRECTION_MODES:
                 raise ValidationFailed(
@@ -282,8 +345,12 @@ class QrPointService(BaseService):
         with self.atomic():
             point.static_token_hash = _hash(token)
             point.token_version = (point.token_version or 1) + 1
+            point.rotated_at = timezone.now()
             point.save(
-                update_fields=["static_token_hash", "token_version", "updated_at"]
+                update_fields=[
+                    "static_token_hash", "token_version", "rotated_at",
+                    "updated_at",
+                ]
             )
             self.audit.record(
                 actor,
@@ -299,7 +366,10 @@ class QrPointService(BaseService):
 
     def _require_point(self, actor: Actor, point_id: uuid.UUID) -> OfficeQrPoint:
         point = (
-            OfficeQrPoint.objects.select_related("office", "office__region")
+            OfficeQrPoint.objects.select_related(
+                "office", "office__region", "created_by_user",
+                "created_by_user__employee",
+            )
             .filter(id=point_id, organization_id=actor.organization_id)
             .first()
         )
@@ -332,6 +402,24 @@ class QrPointService(BaseService):
                     details={"field": "rotation_seconds"},
                 )
             _validate_rotation(rotation_seconds)
+
+
+def _free_code(office_id: uuid.UUID) -> str:
+    """Свободный код точки в офисе: `QR-` и шесть знаков.
+
+    Совпадение возможно, но маловероятно; на него — несколько попыток, а
+    не бесконечный цикл. Уникальный ключ в базе всё равно второй рубеж.
+    """
+    taken = set(
+        OfficeQrPoint.objects.filter(office_id=office_id).values_list(
+            "code", flat=True
+        )
+    )
+    for _ in range(8):
+        candidate = f"QR-{secrets.token_hex(3).upper()}"
+        if candidate not in taken:
+            return candidate
+    raise Conflict("Не удалось подобрать код точки — повторите попытку")
 
 
 def _validate_rotation(seconds: int) -> None:

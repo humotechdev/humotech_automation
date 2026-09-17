@@ -97,6 +97,13 @@ class AttendanceEvent(UUIDPrimaryKeyModel, OrganizationScopedModel, CreatedAtMod
     )
     ip_address = models.GenericIPAddressField(null=True, blank=True)
     inside_geofence = models.BooleanField(null=True, blank=True)
+    # Расстояние от сотрудника до точки офиса в момент попытки, в метрах.
+    # Пусто, если сравнивать было не с чем: координат не прислали или у
+    # офиса их нет. Хранится ради ответа на «насколько далеко он был»,
+    # а не только «внутри ли».
+    distance_m = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True
+    )
     inside_office_network = models.BooleanField(null=True, blank=True)
 
     # идемпотентность повторной отправки с клиента при плохой связи
@@ -126,6 +133,10 @@ class AttendanceEvent(UUIDPrimaryKeyModel, OrganizationScopedModel, CreatedAtMod
                 "qr_expires_at IS NULL OR qr_issued_at IS NULL "
                 "OR qr_expires_at > qr_issued_at",
                 "ck_attendance_events_qr_expiry_after_issue",
+            ),
+            raw_check(
+                "distance_m IS NULL OR distance_m >= 0",
+                "ck_attendance_events_distance_non_negative",
             ),
             # Повторное сканирование одного и того же кода не создаёт второй
             # отметки. Уникальность только среди ПРИНЯТЫХ: отклонённая попытка
