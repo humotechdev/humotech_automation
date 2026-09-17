@@ -1288,9 +1288,10 @@
 /* Имя переносится по словам и не сокращается отточием: «Муродова М…»
    — это не фамилия. Если рядом не помещается плашка состояния, она
    уходит на следующую строку, а имя остаётся целым. */
+/* Состояние в одной строке с именем: перенос добавлял карточке целую
+   строку, и после уплотнения она стала бы выше, чем была до него. */
 .emp-card__title {
-  flex-wrap: wrap;
-  row-gap: 4px;
+  flex-wrap: nowrap;
 }
 
 .emp-card__title .emp-card__name {
@@ -1435,4 +1436,424 @@
    состояние остаётся рядом, а не уходит под него. */
 .emp-card__title .emp-card__name {
   flex: 0 1 auto;
+  min-width: 0;
+}
+
+/* Состояние остаётся в строке имени и не сжимается. */
+.emp-card__title .emp-card__status {
+  position: static;
+  flex: none;
+  align-self: center;
+}
+
+/* --- «Сотрудники»: плотная рабочая страница ----------------------------------
+ *
+ * Та же задача, что решена на «Обращениях»: при масштабе браузера 100 %
+ * страница должна вмещать столько же, сколько сейчас вмещает при 80 %.
+ * Уменьшены сами величины, а не картинка: `zoom` и `transform` оставили
+ * бы интерфейс крупным, просто нарисованным мельче.
+ *
+ * Величины собраны здесь, в переменных страницы. Нижняя граница текста
+ * — 13 px: ниже список фамилий читать тяжело, и экономия высоты этого
+ * не стоит.
+ */
+
+.emp {
+  --emp-gap: 10px;
+  --emp-pad: 12px;
+  --emp-font: 13.5px;
+  --emp-small: 12.5px;
+}
+
+/* --- шапка страницы --------------------------------------------------------- */
+
+.emp-head {
+  min-height: 0;
+  margin-bottom: 2px;
+}
+
+.emp-head__title {
+  font-size: 26px;
+  line-height: 32px;
+}
+
+.emp-head__facts {
+  margin-top: 3px;
+  font-size: var(--emp-small);
+  line-height: 18px;
+}
+
+.emp-head__actions .emp-btn,
+.emp-head__actions .btn {
+  height: 36px;
+  font-size: 13.5px;
+}
+
+/* --- отбор и вкладки -------------------------------------------------------- */
+
+.emp-list {
+  padding: 12px 10px 12px;
+}
+
+.emp-filters {
+  gap: 8px;
+}
+
+.emp-filters .emp-search,
+.emp-filters .app-select__trigger,
+.emp-filters .app-select select {
+  height: 36px;
+  font-size: var(--emp-font);
+}
+
+.emp-tabs {
+  margin: 10px 0 8px;
+}
+
+.emp-tabs [role='tab'] {
+  min-height: 30px;
+  font-size: 13px;
+}
+
+/* --- карточки --------------------------------------------------------------- */
+
+.emp-cards {
+  gap: 8px;
+  /* Высота по содержимому, а не 139 фиксированных: карточка без
+     Telegram не обязана занимать столько же, сколько с ним. */
+  grid-auto-rows: minmax(118px, auto);
+}
+
+.emp-card {
+  padding: 10px 12px;
+  gap: 10px;
+}
+
+.emp-card__photo {
+  width: 74px;
+  height: 74px;
+}
+
+.emp-card__name {
+  font-size: 14.5px;
+  line-height: 19px;
+}
+
+.emp-card__number,
+.emp-card__dept {
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.emp-card__role {
+  font-size: var(--emp-font);
+  line-height: 18px;
+}
+
+.emp-card__meta {
+  margin-top: 8px !important;
+  font-size: 12px;
+  line-height: 17px;
+}
+
+/* --- таблица ---------------------------------------------------------------- */
+
+.emp-table th,
+.emp-table td {
+  padding: 8px 10px;
+  font-size: var(--emp-font);
+}
+
+.emp-table small {
+  font-size: 11.5px;
+}
+
+/* --- пагинация -------------------------------------------------------------- */
+
+.emp-pager {
+  min-height: 34px;
+  margin-top: 10px;
+  font-size: var(--emp-small);
+}
+
+/* --- правая колонка --------------------------------------------------------- */
+
+.emp-team {
+  padding: 12px 10px 12px;
+}
+
+.emp-team__title {
+  font-size: 15px;
+  line-height: 20px;
+}
+
+.emp-team__date {
+  font-size: var(--emp-small);
+}
+
+.emp-sum {
+  min-height: 0;
+  margin: 12px 0 12px;
+}
+
+.emp-sum__main strong {
+  font-size: 18px;
+  line-height: 23px;
+}
+
+.emp-sum__main span {
+  font-size: 12px;
+}
+
+.emp-tile {
+  min-height: 68px;
+  margin-bottom: 6px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.emp-tile--progress {
+  min-height: 92px;
+  padding-top: 11px;
+}
+
+.emp-chosen {
+  padding: 10px;
+}
+
+.emp-tile__line,
+.emp-chosen__role,
+.emp-chosen__number {
+  font-size: var(--emp-small);
+}
+
+.emp-chosen__actions .emp-btn {
+  height: 36px;
+  font-size: 13.5px;
+}
+
+
+/* --- прокрутка внутри списка, а не всей страницы ------------------------------
+ *
+ * Включается только там, где колонки стоят рядом и экран достаточно
+ * высок. В одноколоночной раскладке список длиннее окна, и прокручиваться
+ * должна вся страница — иначе её низ просто недоступен.
+ */
+@media (min-width: 1041px) and (min-height: 780px) {
+  .canvas:has(> .emp) {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .emp {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .emp-grid {
+    flex: 1 1 auto;
+    min-height: 0;
+    align-items: stretch;
+  }
+
+  .emp-list,
+  .emp-team {
+    align-self: stretch;
+    min-height: 0;
+  }
+
+  .emp-list {
+    overflow: hidden;
+  }
+
+  /* Прокручивается только список карточек; отбор, вкладки и пагинация
+     остаются на виду. */
+  .emp-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+  }
+
+  .emp-team {
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+  }
+}
+
+/* Имя и состояние в одной строке — правило стоит последним намеренно:
+   выше по файлу `.emp-card__title` получает `display: block` от более
+   общего правила карточки, и без этой строки состояние уходит под имя,
+   добавляя карточке лишние двадцать пикселей. */
+.emp-card__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  min-width: 0;
+  padding-right: 30px;
+}
+
+/* Плитке с полосой готовности нужна её высота: при меньшей полоса и
+   число наезжают на подпись. */
+.emp-tile--progress {
+  min-height: 100px;
+}
+
+/* --- плотность под эталон ----------------------------------------------------
+ *
+ * Эталон — эта же страница при масштабе браузера 80 %: на экране 1920
+ * туда помещается семь карточек, шапка занимает 42 приведённых пикселя,
+ * отбор 32, вкладки 31. Значения ниже подобраны так, чтобы при 100 %
+ * получалось то же самое: семь карточек, те же высоты, тот же вид.
+ * Проверялось замером, а не на глаз.
+ */
+
+.emp-head__title {
+  font-size: 22px;
+  line-height: 27px;
+}
+
+.emp-head__facts {
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.emp-head__actions .emp-btn,
+.emp-head__actions .btn {
+  height: 32px;
+  font-size: 13px;
+}
+
+.emp-filters .emp-search,
+.emp-filters .app-select__trigger,
+.emp-filters .app-select select {
+  height: 32px;
+  font-size: 13px;
+}
+
+.emp-tabs {
+  margin: 8px 0 6px;
+}
+
+.emp-tabs [role='tab'] {
+  min-height: 26px;
+  font-size: 12.5px;
+}
+
+/* Карточка: 106 вместо 127 — ровно столько, чтобы семь штук
+   помещались в список на экране 1080. */
+.emp-cards {
+  gap: 7px;
+  grid-auto-rows: minmax(100px, auto);
+}
+
+.emp-card {
+  padding: 9px 11px;
+  gap: 9px;
+}
+
+.emp-card__photo {
+  width: 64px;
+  height: 64px;
+}
+
+.emp-card__name {
+  font-size: 14px;
+  line-height: 18px;
+}
+
+.emp-card__number,
+.emp-card__dept {
+  font-size: 11.5px;
+  line-height: 15px;
+}
+
+.emp-card__role {
+  font-size: 13px;
+  line-height: 17px;
+}
+
+.emp-card__meta {
+  margin-top: 6px !important;
+  font-size: 11.5px;
+  line-height: 16px;
+}
+
+/* Правая колонка — ровно 400, как в эталоне. */
+.emp-grid {
+  grid-template-columns: minmax(0, 1fr) 400px;
+  column-gap: 14px;
+}
+
+@media (max-width: 1240px) {
+  .emp-grid {
+    grid-template-columns: minmax(0, 1fr) 340px;
+  }
+}
+
+/* Второй проход подгонки: замер показал карточку 119 при нужных 106 и
+   отбор с вкладками на четверть выше эталона. */
+.emp-card {
+  padding: 8px 10px;
+  gap: 8px;
+}
+
+.emp-card__photo {
+  width: 58px;
+  height: 58px;
+}
+
+.emp-card__name {
+  font-size: 13.5px;
+  line-height: 17px;
+}
+
+.emp-card__number,
+.emp-card__dept {
+  font-size: 11px;
+  line-height: 14px;
+}
+
+.emp-card__role {
+  font-size: 12.5px;
+  line-height: 16px;
+}
+
+.emp-card__meta {
+  margin-top: 5px !important;
+  font-size: 11px;
+  line-height: 15px;
+}
+
+.emp-cards {
+  gap: 6px;
+  grid-auto-rows: minmax(96px, auto);
+}
+
+/* Отбор и вкладки: высота задаётся полями, а не содержимым. */
+.emp-filters {
+  gap: 7px;
+}
+
+.emp-filters .emp-search,
+.emp-filters .app-select__trigger,
+.emp-filters .app-select select,
+.emp-filters .emp-view button {
+  height: 30px;
+  font-size: 12.5px;
+}
+
+.emp-tabs {
+  margin: 7px 0 5px;
+  padding: 2px;
+}
+
+.emp-tabs [role='tab'] {
+  min-height: 24px;
+  padding: 0 10px;
+  font-size: 12.5px;
 }
