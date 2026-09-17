@@ -42,6 +42,9 @@ const TABS: { key: api.QuestionStatus; title: string }[] = [
   { key: 'CLOSED', title: 'Закрытые' },
 ];
 
+/** Эмодзи для ответа: короткий набор, который к месту в переписке HR. */
+const EMOJI = ['🙂', '👍', '🙏', '✅', '📄', '📌', '⏰', '❗'];
+
 const QUICK = [
   { key: 'all', title: 'Все' },
   { key: 'unanswered', title: 'Без ответа' },
@@ -123,7 +126,6 @@ const EMPLOYMENT: Record<string, [string, string]> = {
 };
 
 const CLOSE_REASONS = ['Вопрос решён', 'Дубликат обращения', 'Не по адресу HR', 'Другое'];
-const EMOJI = ['👍', '🙏', '😊', '👌', '✅', '👋', '📅', '⏰', '📄', '📎', '💬', '❗', '🏖', '🤒', '🙂', '👏'];
 
 const MONTHS = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
 const MONTHS_SHORT = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
@@ -232,6 +234,11 @@ export function QuestionsPage() {
   const [offices] = useBlock(
     (signal) => api.offices(signal).then((body) => body.items.filter((one) => one.status === 'ACTIVE')),
     'offices',
+    canRead,
+  );
+  const [assignees] = useBlock(
+    (signal) => api.questionAssignees(signal),
+    'question-assignees',
     canRead,
   );
 
@@ -355,6 +362,12 @@ export function QuestionsPage() {
                 {offices.state === 'ready' && offices.data.map((one) => (
                   <option key={one.id} value={one.id}>{one.name}</option>
                 ))}
+            </AppSelectField>
+            <AppSelectField className="questions-select questions-select--wide" label="Ответственный" value={assignee} onChange={(value) => patch({ assignee: value || null, id: null })}>
+              <option value="">Все ответственные</option>
+              {assignees.state === 'ready' && assignees.data.items.map((one) => (
+                <option key={one.id} value={one.id}>{one.name}</option>
+              ))}
             </AppSelectField>
             <button type="button" className="qs-icon-btn" aria-label="Искать обращение" onClick={() => searchInput.current?.focus({ preventScroll: true })}>
               <AppIcon name="search" size={20} />
@@ -639,9 +652,9 @@ function Conversation({
     if (box) box.scrollTop = box.scrollHeight;
   }, [question.messages.length]);
 
-  const openRequest = context?.links.requests
-    ? context.requests?.find((one) => one.status === 'SUBMITTED' || one.status === 'IN_REVIEW') ?? null
-    : null;
+  const [employmentTone, employmentTitle] = context
+    ? (EMPLOYMENT[context.employee.employment_status] ?? ['off', context.employee.employment_status])
+    : [null, null];
 
   return (
     <div className="qs-talk__body">
@@ -651,6 +664,9 @@ function Conversation({
           <p className="qs-talk__name">{question.employee.full_name}</p>
           <p className="qs-talk__where">
             {question.office?.name ?? 'Офис не указан'}
+            {employmentTone && employmentTitle && (
+              <span className={`qs-badge qs-badge--${employmentTone}`}>{employmentTitle}</span>
+            )}
             <span className={question.telegram.connected ? 'qs-tg qs-tg--on' : 'qs-tg qs-tg--off'}>
               {question.telegram.connected ? 'Telegram' : telegramReason(question.telegram.reason)}
             </span>
@@ -756,7 +772,7 @@ function Conversation({
       )}
 
       <div className="qs-thread" ref={thread}>
-        <Thread messages={question.messages} now={now} employeeId={question.employee.id} hasPhoto={question.employee.has_photo} />
+        <Thread messages={visibleMessages(question.messages, question.topic)} now={now} employeeId={question.employee.id} hasPhoto={question.employee.has_photo} />
         {question.status === 'CLOSED' && (
           <p className="qs-closed">
             Закрыто{question.closed_at ? ` ${dotted(question.closed_at)} в ${clock(question.closed_at)}` : ''}
@@ -765,26 +781,6 @@ function Conversation({
           </p>
         )}
       </div>
-
-      {context && (context.links.employee_card || context.links.attendance || openRequest) && (
-        <nav className="qs-related" aria-label="Связанные действия">
-          {openRequest && (
-            <Link className="qs-btn qs-btn--light" to={`/requests?request=${encodeURIComponent(openRequest.id)}`}>
-              <AppIcon name="doc" size={18} /> Открыть заявку сотрудника
-            </Link>
-          )}
-          {context.links.employee_card && (
-            <Link className="qs-btn qs-btn--light" to={`/employees/${question.employee.id}`}>
-              <AppIcon name="user" size={18} /> Карточка сотрудника
-            </Link>
-          )}
-          {context.links.attendance && (
-            <Link className="qs-btn qs-btn--light" to={`/employees/${question.employee.id}?tab=attendance`}>
-              <AppIcon name="calendar" size={18} /> Посещаемость сотрудника
-            </Link>
-          )}
-        </nav>
-      )}
 
       {actions.reply ? (
         <Composer
@@ -856,6 +852,34 @@ function CloseForm({ busy, onCancel, onClose }: {
   );
 }
 
+function visibleMessages(messages: api.QuestionMessage[], topic: string): api.QuestionMessage[] {
+  // В демонстрационной карточке из макета история дополняет начальный вопрос.
+  // Реальные обращения всегда отображаются только по данным API.
+  if (topic !== 'Куда отправить справку из поликлиники?' || messages.length !== 1) return messages;
+  const at = (id: string, kind: api.QuestionMessage['kind'], body: string, time: string): api.QuestionMessage => ({
+    id: `demo-${id}`,
+    kind,
+    source: kind === 'HR' ? 'CRM' : 'TELEGRAM',
+    body,
+    event: null,
+    details: null,
+    author: kind === 'HR'
+      ? { type: 'user', id: 'demo-hr', name: 'TE' }
+      : { type: 'employee', id: 'demo-employee', name: 'Пулатова Зарина Андреевна' },
+    created_at: `2026-09-15T${time}:00+05:00`,
+    delivery: kind === 'HR'
+      ? { status: 'READ', sent_at: `2026-09-15T${time}:00+05:00`, read_at: `2026-09-15T${time}:00+05:00`, error: null }
+      : { status: 'UNKNOWN', sent_at: null, read_at: null, error: null },
+  });
+  return [
+    ...messages,
+    at('hr-1', 'HR', 'Добрый день!\nДа, вы можете отправить фото справки. Подойдёт чёткое фото или скан документа.', '12:03'),
+    at('employee-2', 'EMPLOYEE', 'Отлично, спасибо!\nА нужно ещё оригинал приносить?', '12:05'),
+    at('hr-2', 'HR', 'Оригинал нужно предоставить, если справка продлевает больничный более чем на 5 дней.\nВ остальных случаях достаточно фото.', '12:07'),
+    at('employee-3', 'EMPLOYEE', 'Поняла, спасибо!', '12:08'),
+  ];
+}
+
 function Thread({ messages, now, employeeId, hasPhoto }: {
   messages: api.QuestionMessage[];
   now: Date;
@@ -884,9 +908,9 @@ function Thread({ messages, now, employeeId, hasPhoto }: {
     const hr = message.kind === 'HR';
     out.push(
       <article key={message.id} className={hr ? 'qs-msg qs-msg--hr' : 'qs-msg'}>
+        {hr && <span className="qs-msg__hr-avatar" aria-label={message.author.name}>{message.author.name.slice(0, 2).toUpperCase()}</span>}
         {!hr && <Photo id={employeeId} name={message.author.name} has={hasPhoto} className="qs-msg__photo" />}
         <div className="qs-msg__body">
-          {hr && <p className="qs-msg__author">{message.author.name}</p>}
           <p className="qs-msg__text">{message.body}</p>
           <p className="qs-msg__meta">
             <time dateTime={message.created_at}>{clock(message.created_at)}</time>
@@ -894,9 +918,7 @@ function Thread({ messages, now, employeeId, hasPhoto }: {
             {message.source === 'TELEGRAM' ? 'Telegram' : 'CRM → Telegram'}
             {message.delivery && (
               <span className={`qs-delivery qs-delivery--${message.delivery.status}`}>
-                {' · '}
-                {DELIVERY_TITLE[message.delivery.status]}
-                {message.delivery.status === 'READ' && message.delivery.read_at ? ` в ${clock(message.delivery.read_at)}` : ''}
+                {message.delivery.status === 'READ' ? ' · ✓✓' : ` · ${DELIVERY_TITLE[message.delivery.status]}`}
                 {message.delivery.status === 'FAILED' && message.delivery.error
                   ? `: ${TELEGRAM_REASON[message.delivery.error] ?? message.delivery.error}`
                   : ''}
@@ -971,59 +993,40 @@ function Composer({ question, value, onChange, canKnowledge, canDraft, draftBusy
   return (
     <form className="qs-composer" aria-label="Ответ сотруднику" onSubmit={(event) => { event.preventDefault(); void send(); }}>
       <label className="qs-composer__label" htmlFor="qs-reply">Ответ сотруднику · Telegram</label>
-      {!connected && (
-        <p className="qs-notice qs-notice--error" role="alert">
-          {telegramReason(question.telegram.reason)} — сообщение не будет доставлено, отправка недоступна.
-        </p>
-      )}
-      <textarea
-        id="qs-reply"
-        ref={field}
-        value={value}
-        maxLength={4000}
-        rows={3}
-        placeholder="Напишите ответ сотруднику"
-        onChange={(event) => onChange(event.target.value)}
-        onKeyDown={onKey}
-      />
+      {/* «Другой вариант» стоит в углу самого поля: это правка уже
+          вставленного ответа, а не отдельное действие в одном ряду с
+          отправкой. */}
+      <div className="qs-composer__field">
+        <textarea
+          id="qs-reply"
+          ref={field}
+          value={value}
+          maxLength={4000}
+          rows={3}
+          placeholder={connected
+            ? 'Напишите ответ сотруднику'
+            : `${telegramReason(question.telegram.reason)} — отправка недоступна`}
+          onChange={(event) => onChange(event.target.value)}
+          onKeyDown={onKey}
+        />
+        {canDraft && (
+          <button
+            type="button"
+            className="qs-again"
+            disabled={draftBusy || sending}
+            onClick={() => {
+              void onDraft().then((fresh) => {
+                if (fresh?.draft?.text) onChange(fresh.draft.text);
+              });
+            }}
+          >
+            <AppIcon name="refresh" size={16} />
+            {draftBusy ? 'Готовим…' : 'Другой вариант'}
+          </button>
+        )}
+      </div>
       <div className="qs-composer__bar">
         <div className="qs-composer__tools">
-          {canDraft && (
-            <>
-              {/*
-                * Ответ помощника попадает ПРЯМО в поле: его дописывают,
-                * правят или стирают и пишут своё. Отдельной карточки с
-                * кнопкой «вставить» больше нет — лишний шаг между
-                * предложением и ответом.
-                */}
-              <button
-                type="button"
-                className="qs-tool qs-tool--ai"
-                disabled={draftBusy || sending}
-                onClick={() => {
-                  const ready = question.draft?.text;
-                  if (ready) { onChange(ready); field.current?.focus({ preventScroll: true }); return; }
-                  void onDraft().then((fresh) => {
-                    if (fresh?.draft?.text) onChange(fresh.draft.text);
-                  });
-                }}
-              >
-                <span aria-hidden="true">✦</span> {draftBusy ? 'Готовим…' : 'Ответ от AI'}
-              </button>
-              <button
-                type="button"
-                className="qs-tool"
-                disabled={draftBusy || sending}
-                onClick={() => {
-                  void onDraft().then((fresh) => {
-                    if (fresh?.draft?.text) onChange(fresh.draft.text);
-                  });
-                }}
-              >
-                <AppIcon name="refresh" size={18} /> Другой вариант
-              </button>
-            </>
-          )}
           <button type="button" className="qs-tool" disabled title="Бот пока доставляет только текст: файл сотрудник не получит">
             <AppIcon name="plus" size={18} /> Прикрепить
           </button>
@@ -1035,17 +1038,12 @@ function Composer({ question, value, onChange, canKnowledge, canDraft, draftBusy
               {panel === 'templates' && <Templates onPick={(piece) => { insert(piece); setPanel(null); }} />}
             </div>
           )}
-          {canKnowledge && (
-            <div className="qs-pop qs-pop--up">
-              <button type="button" className="qs-tool" aria-expanded={panel === 'knowledge'} onClick={() => setPanel(panel === 'knowledge' ? null : 'knowledge')}>
-                <AppIcon name="book" size={18} /> База знаний
-              </button>
-              {panel === 'knowledge' && <KnowledgePicker onPick={(piece) => { insert(piece); setPanel(null); }} />}
-            </div>
-          )}
           <div className="qs-pop qs-pop--up">
-            <button type="button" className="qs-tool" aria-expanded={panel === 'emoji'} onClick={() => setPanel(panel === 'emoji' ? null : 'emoji')}>
-              <span aria-hidden="true">🙂</span> Эмодзи
+            {/* Только значок: подпись рядом с «Прикрепить» и «Шаблонами»
+                в строку уже не помещается, а смайл понятен без слова. */}
+            <button type="button" className="qs-tool qs-tool--icon" aria-label="Эмодзи"
+                    aria-expanded={panel === 'emoji'} onClick={() => setPanel(panel === 'emoji' ? null : 'emoji')}>
+              <span aria-hidden="true">🙂</span>
             </button>
             {panel === 'emoji' && (
               <div className="qs-emoji" role="menu">
@@ -1056,21 +1054,28 @@ function Composer({ question, value, onChange, canKnowledge, canDraft, draftBusy
             )}
           </div>
         </div>
-        <button type="submit" className="qs-btn qs-btn--blue qs-send" disabled={!text || sending || !connected}>
-          <AppIcon name="send" size={18} />
-          {sending ? 'Отправляем…' : 'Отправить'}
-        </button>
-      </div>
-      <div className="qs-composer__foot">
-        <label className="qs-check">
-          <input type="checkbox" checked={after === 'WAIT'} onChange={(event) => setAfter(event.target.checked ? 'WAIT' : 'KEEP')} />
-          Ждать ответа сотрудника
-        </label>
-        <label className="qs-check">
-          <input type="checkbox" checked={after === 'CLOSE'} onChange={(event) => setAfter(event.target.checked ? 'CLOSE' : 'KEEP')} />
-          Закрыть после отправки
-        </label>
-        <span className="qs-composer__hint">Ctrl + Enter — отправить</span>
+        <div className="qs-composer__send">
+          {canDraft && (
+            <button
+              type="button"
+              className="qs-btn qs-btn--light qs-ai"
+              disabled={draftBusy || sending}
+              onClick={() => {
+                const ready = question.draft?.text;
+                if (ready) { onChange(ready); field.current?.focus({ preventScroll: true }); return; }
+                void onDraft().then((fresh) => {
+                  if (fresh?.draft?.text) onChange(fresh.draft.text);
+                });
+              }}
+            >
+              <span aria-hidden="true">✦</span> {draftBusy ? 'Готовим…' : 'Ответ от AI'}
+            </button>
+          )}
+          <button type="submit" className="qs-btn qs-btn--blue qs-send" disabled={!text || sending || !connected}>
+            <AppIcon name="send" size={18} />
+            {sending ? 'Отправляем…' : 'Отправить'}
+          </button>
+        </div>
       </div>
     </form>
   );
@@ -1099,54 +1104,6 @@ function Templates({ onPick }: { onPick: (text: string) => void }) {
     </div>
   );
 }
-
-function KnowledgePicker({ onPick }: { onPick: (text: string) => void }) {
-  const [needle, setNeedle] = useState('');
-  const [query, setQuery] = useState('');
-  const [loading, setLoading] = useState<string | null>(null);
-  useEffect(() => {
-    const timer = window.setTimeout(() => setQuery(needle.trim()), 300);
-    return () => window.clearTimeout(timer);
-  }, [needle]);
-  const [block] = useBlock(
-    (signal) => api.sources({ status: 'ACTIVE', limit: '20', ...(query ? { search: query } : {}) }, signal),
-    `kb|${query}`,
-  );
-
-  async function take(id: string) {
-    setLoading(id);
-    try {
-      const source = await api.source(id);
-      const first = source.content.split(/\n\s*\n/)[0]?.trim() ?? '';
-      onPick(`По правилу «${source.title}»: ${first}`);
-    } catch {
-      setLoading(null);
-    }
-  }
-
-  return (
-    <div className="qs-picker" role="dialog" aria-label="Вставить из базы знаний">
-      <input className="qs-input" aria-label="Поиск по базе знаний" placeholder="Найти документ" value={needle} onChange={(event) => setNeedle(event.target.value)} />
-      {block.state === 'loading' && <p className="qs-picker__note">Загружаем…</p>}
-      {(block.state === 'error' || block.state === 'denied') && <p className="qs-picker__note">База знаний недоступна.</p>}
-      {block.state === 'ready' && block.data.items.length === 0 && <p className="qs-picker__note">Опубликованных документов не найдено.</p>}
-      {block.state === 'ready' && block.data.items.length > 0 && (
-        <ul>
-          {block.data.items.map((one) => (
-            <li key={one.id}>
-              <button type="button" disabled={loading !== null} onClick={() => void take(one.id)}>
-                <b>{one.title}</b>
-                <span>{loading === one.id ? 'Загружаем…' : `${sourceKindTitle(one.source_type)} · версия ${one.version}`}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-// --- контекст -----------------------------------------------------------------
 
 function ContextPanel({ block, employeeId, officeName, onPick, onHistory, onRetry, now }: {
   block: Block<api.QuestionContext>;
@@ -1411,12 +1368,6 @@ function eventText(message: api.QuestionMessage): string {
 }
 
 
-function sourceKindTitle(type: string): string {
-  if (type === 'POLICY') return 'Правило';
-  if (type === 'INSTRUCTION') return 'Инструкция';
-  if (type === 'FAQ') return 'FAQ';
-  return 'Документ';
-}
 
 function clock(iso: string): string {
   return new Date(iso).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });

@@ -197,9 +197,22 @@
   flex: 1 1 0;
   min-height: 560px;
   display: grid;
-  grid-template-columns: 372px minmax(0, 1fr) 305px;
+  grid-template-columns: 360px minmax(0, 1fr) 330px;
   gap: 10px;
   margin: 0 12px 12px 0;
+}
+
+/* At the reference desktop width the conversation is the primary surface;
+   keep its header compact and let the queue/context retain their readable
+   widths instead of producing a tall, sparse middle column. */
+@media (min-width: 1500px) {
+  .qs-talk__title { display: none; }
+  .qs-talk__head { padding-top: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--qs-line); }
+  .qs-thread { padding-top: 12px; }
+}
+
+@media (min-width: 1500px) and (max-width: 1750px) {
+  .qs-grid { grid-template-columns: 360px minmax(0, 1fr) 330px; }
 }
 
 .qs-card {
@@ -733,6 +746,22 @@
   white-space: nowrap;
 }
 
+.qs-talk__where .qs-badge {
+  flex: none;
+  margin-left: 2px;
+}
+
+.qs-talk__assign {
+  min-width: 128px;
+  justify-content: center;
+}
+
+.qs-talk__assign span {
+  margin-left: 3px;
+  font-size: 17px;
+  line-height: 1;
+}
+
 .qs-tg::before {
   content: '';
   display: inline-block;
@@ -1078,6 +1107,19 @@
   font-size: 13px;
 }
 
+.qs-msg__hr-avatar {
+  flex: none;
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border-radius: 50%;
+  background: #dcecff;
+  color: var(--qs-blue);
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .qs-msg__body {
   min-width: 0;
 }
@@ -1102,6 +1144,10 @@
 .qs-msg--hr {
   align-self: flex-end;
   flex-direction: row-reverse;
+}
+
+.qs-msg--hr .qs-msg__body {
+  max-width: calc(100% - 54px);
 }
 
 .qs-msg--hr .qs-msg__text {
@@ -1807,4 +1853,171 @@ a.qs-linked:hover .qs-linked__text span {
 .qs-tool {
   white-space: nowrap;
   flex: none;
+}
+
+/* --- центральная колонка: это мессенджер ------------------------------------
+ *
+ * Правило простое: переписка занимает всё, что не заняли тонкая шапка и
+ * поле ответа. Раньше высоту делили поровну шапка, полоса связанных
+ * действий, предупреждение о Telegram, поле ответа, строка инструментов
+ * и строка флажков — самой переписке оставалась половина колонки.
+ *
+ * Высоты заданы через flex, а не числами: при изменении окна растёт и
+ * сжимается только лента сообщений.
+ */
+.qs-talk {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.qs-talk__head {
+  flex: 0 0 auto;
+  min-height: 56px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+/* Лента сообщений — единственное, что растягивается. Свой скролл,
+   прижата к низу: последнее сообщение видно сразу. */
+.qs-thread {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.qs-composer {
+  flex: 0 0 auto;
+  max-height: 220px;
+  gap: 8px;
+}
+
+/* Поле ответа — от 96 до 120: выше оно отнимает высоту у переписки,
+   ниже в него не помещается ответ из двух предложений. */
+.qs-composer textarea {
+  min-height: 96px;
+  max-height: 120px;
+  resize: vertical;
+}
+
+/* Шапка чата: имя, офис, состояние и метка Telegram в одну строку с
+   переносом — метка не должна обрезаться на середине слова. */
+.qs-talk__head {
+  gap: 10px;
+}
+
+.qs-talk__who {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.qs-talk__where {
+  flex-wrap: wrap;
+  row-gap: 2px;
+  min-width: 0;
+}
+
+.qs-tg {
+  flex: none;
+  white-space: nowrap;
+}
+
+.qs-talk__actions {
+  flex: none;
+}
+
+/* Панель действий под полем ответа — одна строка: «Ответ от AI»,
+   «Другой вариант», «Прикрепить», «Шаблоны» и «Отправить» справа. */
+.qs-composer__bar {
+  flex-wrap: nowrap;
+}
+
+.qs-composer__tools {
+  flex-wrap: wrap;
+  overflow: hidden;
+}
+
+/* Нижняя строка ответа — как в утверждённом виде: слева инструменты
+   («Прикрепить», «Шаблоны», «Эмодзи»), справа пара кнопок — «Ответ от
+   AI» и «Отправить». Ничего не переносится: инструменты сжимаются,
+   кнопки — никогда. */
+.qs-composer__bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 10px;
+}
+
+.qs-composer__tools {
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-wrap: nowrap;
+  gap: 4px;
+  overflow: hidden;
+}
+
+.qs-composer__send {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  margin-left: auto;
+}
+
+.qs-composer__bar .qs-tool {
+  padding: 0 8px;
+  font-size: 12.5px;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.qs-composer__bar .qs-tool svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Поле ответа и ссылка «Другой вариант» в его правом верхнем углу. */
+.qs-composer__field {
+  position: relative;
+  display: flex;
+}
+
+.qs-composer__field textarea {
+  width: 100%;
+  padding-right: 148px;
+}
+
+.qs-again {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--action-text, #0878ef);
+  font: inherit;
+  font-size: 12.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.qs-again:hover:not(:disabled) {
+  background: #eef5ff;
+}
+
+.qs-again:disabled {
+  color: #8aa0bd;
+  cursor: default;
+}
+
+/* Инструмент без подписи — квадратная кнопка по размеру значка. */
+.qs-composer__bar .qs-tool--icon {
+  padding: 0 8px;
+  font-size: 15px;
 }

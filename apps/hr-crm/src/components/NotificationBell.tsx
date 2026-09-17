@@ -68,9 +68,19 @@ export function NotificationBell() {
     let timer: number | undefined;
     const ask = () => {
       if (document.hidden) return;
-      api.feedCounts(stop.signal)
-        .then(setCounts)
-        .catch(() => undefined);
+      Promise.allSettled([
+        api.feedCounts(stop.signal),
+        api.feed({ limit: '1' }, stop.signal),
+      ]).then(([countResult, pageResult]) => {
+        if (countResult.status === 'fulfilled') {
+          const fromPage = pageResult.status === 'fulfilled' ? pageResult.value.counts : null;
+          setCounts(fromPage && fromPage.unread > countResult.value.unread ? fromPage : countResult.value);
+        } else if (pageResult.status === 'fulfilled') {
+          // Some deployments expose the unread total only on the feed
+          // response; keep the badge visible in that case as well.
+          setCounts(pageResult.value.counts);
+        }
+      });
     };
     ask();
     timer = window.setInterval(ask, IDLE_TICK);

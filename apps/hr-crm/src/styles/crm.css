@@ -2165,6 +2165,8 @@ html {
   font: inherit;
   font-size: 14px;
   font-weight: 550;
+  white-space: nowrap;
+  min-width: 72px;
   cursor: pointer;
   transition: color 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }

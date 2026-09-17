@@ -1039,7 +1039,9 @@
 
 .emp-chosen__who {
   display: flex;
-  gap: 19px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
   margin-top: 13px;
 }
 
@@ -1052,6 +1054,7 @@
 
 .emp-chosen__text {
   min-width: 0;
+  width: 100%;
 }
 
 .emp-chosen__text p {
@@ -1097,7 +1100,7 @@
 }
 
 .emp-chosen__facts {
-  margin: 8px 0 0 101px;
+  margin: 8px 0 0;
 }
 
 .emp-chosen__row {
@@ -1282,172 +1285,6 @@
   margin: 0;
 }
 
-.emp-sum__legend {
-  width: auto;
-  min-width: 132px;
-  flex: 1 1 132px;
-  margin: 0;
-}
-
-/* Подписи в карточке переносятся на вторую строку вместо отточия:
-   «@demo_user_007» без хвоста — это другой адрес, а не сокращённый. */
-.emp-card__meta {
-  flex-wrap: wrap;
-  row-gap: 4px;
-}
-
-.emp-card__meta .emp-bit:nth-child(1),
-.emp-card__meta .emp-bit:nth-child(3) {
-  flex: 0 1 auto;
-  min-width: 0;
-}
-
-.emp-bit {
-  overflow-wrap: break-word;
-}
-
-/* Имя в карточке и в «Выбранном сотруднике» переносится по словам и
-   не залезает под метку состояния. Метка стоит абсолютно, поэтому
-   место под неё держит отступ справа — он и уменьшен до нужного:
-   150 px закладывались под самую длинную подпись вместе с кнопкой
-   меню, а переносу это мешало. */
-.emp-card__name {
-  padding-right: 118px;
-  overflow-wrap: break-word;
-}
-
-.emp-chosen__top {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  min-width: 0;
-}
-
-.emp-chosen__top > :first-child {
-  min-width: 0;
-  overflow-wrap: break-word;
-  white-space: normal;
-  overflow: visible;
-  text-overflow: clip;
-}
-
-.emp-chosen__top .emp-status {
-  flex: none;
-}
-
-/* --- прокрутка внутри списка, а не всей страницы ------------------------------
- *
- * При шестнадцати и тридцати двух карточках страница вытягивалась вниз:
- * список уезжал под экран, а рядом с ним оставалось белое поле в рост
- * панели. Правильнее наоборот — каркас в высоту экрана, прокручивается
- * только список, а пагинация остаётся на виду под ним.
- */
-.emp-grid {
-  flex: 1 1 auto;
-  min-height: 0;
-  align-items: stretch;
-}
-
-.emp-list {
-  align-self: stretch;
-  min-height: 0;
-  overflow: hidden;
-}
-
-/* Сам список карточек или таблицы — единственное, что прокручивается. */
-.emp-body {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
-}
-
-/* Пагинация и выбор количества стоят под списком и не уезжают вместе
-   с ним. */
-.emp-pager {
-  flex: none;
-  flex-wrap: wrap;
-  height: auto;
-  min-height: 40px;
-  gap: 8px 12px;
-}
-
-/* Правая панель — своя прокрутка, своя высота. */
-.emp-team {
-  align-self: stretch;
-  min-height: 0;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
-}
-
-/* --- кнопки панели сотрудника ------------------------------------------------
- *
- * «Открыть профиль» и «Написать» стояли в сетке 194 + остаток. Когда
- * панель ужалась, первой колонки не хватило, и подпись обрезалась.
- * Теперь кнопки делят ширину поровну и переносятся на две строки, если
- * вдвоём не помещаются. Обрезать их нельзя: это единственные действия
- * панели.
- */
-.emp-chosen__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 13px;
-}
-
-.emp-chosen__actions .emp-btn {
-  flex: 1 1 150px;
-  min-width: 0;
-  height: 42px;
-  padding: 0 14px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Ничего не выезжает вбок: длинные значения переносятся по словам. */
-.emp-chosen,
-.emp-chosen * {
-  min-width: 0;
-}
-
-.emp-chosen__row,
-.emp-chosen__value {
-  overflow-wrap: break-word;
-}
-
-/* Страница занимает ровно экран, а не растёт вместе со списком.
-   Прокручивается только сам список (`.emp-body`) и правая панель —
-   заголовок, отбор и пагинация остаются на виду при любом числе
-   карточек на странице. Правило адресное: остальные разделы по-прежнему
-   прокручиваются целиком, им так и надо. */
-@media (min-height: 780px) {
-  .canvas:has(> .emp) {
-    flex: 1 1 0;
-    min-height: 0;
-    overflow: hidden;
-  }
-
-  .emp {
-    flex: 1 1 auto;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-  }
-}
-
-/* Имя и состояние в одной строке карточки. Место справа держится только
-   под кнопку меню, а не под плашку состояния: она теперь в потоке и
-   сама забирает столько, сколько ей нужно. */
-.emp-card__title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  padding-right: 30px;
-}
-
 /* Имя переносится по словам и не сокращается отточием: «Муродова М…»
    — это не фамилия. Если рядом не помещается плашка состояния, она
    уходит на следующую строку, а имя остаётся целым. */
@@ -1478,6 +1315,80 @@
   row-gap: 4px;
 }
 
+/* Desktop toolbar: keep search, filters and view switch on one stable axis.
+   The old flex layout let the native control's intrinsic width push the
+   switch onto a lonely second row at common laptop/zoom sizes. */
+@media (min-width: 1041px) {
+  .emp-filters {
+    display: grid;
+    grid-template-columns: minmax(230px, 1fr) repeat(3, minmax(128px, 168px)) max-content;
+    align-items: stretch;
+    gap: 10px;
+    height: 40px;
+  }
+
+  .emp-filters .emp-search,
+  .emp-filters .app-select,
+  .emp-filters .emp-view {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .emp-filters .emp-view {
+    justify-self: end;
+  }
+}
+
+@media (min-width: 1041px) and (max-width: 1350px) {
+  .emp-filters {
+    grid-template-columns: minmax(190px, 1fr) repeat(3, minmax(108px, 1fr)) max-content;
+    gap: 8px;
+  }
+  .emp-filters .app-select select,
+  .emp-filters .app-select__trigger {
+    font-size: 12px;
+  }
+}
+
+/* Сводка команды: круг, итог и статусы на одной ясной линии. */
+.emp-sum {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  column-gap: 12px;
+  row-gap: 10px;
+  height: auto;
+  min-height: 122px;
+  margin: 16px 0 18px;
+  padding: 0 8px;
+}
+
+.emp-sum__main { margin: 14px 0 0; }
+/* Легенда набирается по ширине панели, а не тремя колонками жёстко:
+   при трёх на 380 пикселях последнему числу («253» у «Нет на месте»)
+   не оставалось места, и оно срезалось краем панели. */
+.emp-sum__legend {
+  grid-column: 1 / -1;
+  width: auto;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  align-self: start;
+  gap: 6px 12px;
+}
+
+.emp-sum__legend li {
+  min-width: 0;
+  height: auto;
+  gap: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+/* Число не сжимается и стоит сразу за подписью. */
+.emp-sum__legend b {
+  flex: none;
+  margin-left: 6px;
+}
+
 .emp-chosen__row .emp-bit,
 .emp-chosen__row .emp-bit:nth-child(2) {
   flex: 0 1 auto;
@@ -1489,4 +1400,39 @@
   white-space: normal;
   text-overflow: clip;
   overflow-wrap: break-word;
+}
+
+/* Строки «На месте / Ушли / Нет на месте» на странице больше нет —
+   тот же состав виден числом «0 из 253» над ней. Сводка стала в одну
+   строку: кольцо и итог. */
+.emp-sum {
+  grid-template-columns: 86px minmax(0, 1fr);
+  min-height: 0;
+  margin: 16px 0 14px;
+}
+
+/* Подписи в карточке переносятся ЦЕЛИКОМ, по меткам, а не по буквам:
+   «Головной офис» уезжает на следующую строку целой меткой, а не
+   рвётся на «Головно / й офис». */
+.emp-card__meta {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+
+.emp-card__meta .emp-bit {
+  flex: 0 0 auto;
+  overflow: visible;
+  white-space: nowrap;
+}
+
+.emp-card__meta .emp-bit__text {
+  overflow: visible;
+  white-space: nowrap;
+  text-overflow: clip;
+}
+
+/* Имя занимает столько, сколько нужно ему, а не всю строку: тогда
+   состояние остаётся рядом, а не уходит под него. */
+.emp-card__title .emp-card__name {
+  flex: 0 1 auto;
 }

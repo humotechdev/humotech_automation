@@ -529,11 +529,6 @@ function TeamPanel({ presence, highlights, person, onOpen }: {
           <strong>{here} из {total}</strong>
           <span>сотрудников на месте</span>
         </p>
-        <ul className="emp-sum__legend">
-          <li><i className="emp-dot emp-dot--ok" />На месте<b>{here}</b></li>
-          <li><i className="emp-dot emp-dot--idle" />Ушли<b>{left}</b></li>
-          <li><i className="emp-dot emp-dot--warn" />Нет на месте<b>{away}</b></li>
-        </ul>
       </div>
 
       {highlights.state === 'ready' ? (
@@ -587,8 +582,10 @@ function Ring({ share }: { share: number }) {
     <svg className="emp-ring" viewBox="0 0 80 80" width={80} height={80}
          role="img" aria-label={`На месте ${share} процентов`}>
       <circle className="emp-ring__track" cx="40" cy="40" r={radius} />
-      <circle className="emp-ring__fill" cx="40" cy="40" r={radius}
-              strokeDasharray={`${filled} ${length}`} transform="rotate(-90 40 40)" />
+      {share > 0 && (
+        <circle className="emp-ring__fill" cx="40" cy="40" r={radius}
+                strokeDasharray={`${filled} ${length}`} transform="rotate(-90 40 40)" />
+      )}
       <text className="emp-ring__text" x="40" y="41">{share}%</text>
     </svg>
   );

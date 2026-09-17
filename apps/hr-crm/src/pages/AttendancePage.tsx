@@ -374,7 +374,7 @@ function Today({ counts, past, rows, zone, chosen, onPick, block }: {
         <div className="att-today__ring">
           <Donut share={share} />
           <p className="att-today__sum">
-            <i className="att-today__live" />
+            {counts.here > 0 && <i className="att-today__live" aria-hidden="true" />}
             <strong>{counts.here} из {counts.expected}</strong>
             <span>{past ? 'пришли' : 'в офисе'}</span>
             <small>{block.state === 'loading' ? 'Загружаем…' : past ? 'За выбранный день' : 'Сейчас в офисе'}</small>

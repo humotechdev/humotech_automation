@@ -162,20 +162,26 @@
    любом экране получалась длинная пустая полоса с двумя словами в
    начале, а на узком она ещё и тянула страницу вбок. */
 .att-tabs {
-  display: inline-flex;
+  display: flex;
   gap: 2px;
-  height: 36px;
-  width: auto;
+  height: 44px;
+  width: fit-content;
   max-width: 100%;
-  margin: 10px 0 12px 5px;
+  margin: 10px 8px 16px 5px;
+  padding: 3px;
   flex: none;
   align-self: flex-start;
-  border-bottom: 1px solid var(--att-line);
+  border: 1px solid var(--att-line);
+  border-radius: 12px;
+  background: rgba(255,255,255,.72);
 }
 
 .att-tab {
   position: relative;
-  padding: 0 15px;
+  flex: 0 0 auto;
+  min-width: 96px;
+  padding: 0 18px;
+  border-radius: 9px;
   border: 0;
   background: transparent;
   font: inherit;
@@ -185,8 +191,10 @@
 }
 
 .att-tab--on {
+  background: #ffffff;
   color: #1466d8;
   font-weight: 600;
+  box-shadow: 0 1px 3px rgba(30,64,120,.08);
 }
 
 .att-tab--on::after {
@@ -194,8 +202,8 @@
   position: absolute;
   left: 0;
   right: 0;
-  bottom: -1px;
-  height: 3px;
+  bottom: 1px;
+  height: 2px;
   border-radius: 2px;
   background: var(--att-blue);
 }
@@ -1108,6 +1116,34 @@
   font-weight: 600;
 }
 
+/* Журнал отметок — обычный контент страницы, а не вложенное окно со своим
+   обрезанным скроллом. Так таблица продолжает блок вниз и читается целиком. */
+.attp:has(.att-list--log) {
+  min-height: auto;
+}
+
+.canvas:has(> .attp:has(.att-list--log)) {
+  overflow: visible;
+}
+
+.attp:has(.att-list--log) .att-grid {
+  flex: none;
+  align-items: start;
+}
+
+.attp:has(.att-list--log) .att-list--log,
+.attp:has(.att-list--log) .att-list--log .att-table {
+  overflow: visible;
+}
+
+.att-list--log .att-filters {
+  margin-bottom: 6px;
+}
+
+.att-list--log .att-log tbody tr:hover {
+  background: #f8fbff;
+}
+
 /* At a normal laptop viewport the right rail consumes a meaningful share of
    the page. Let the summary and table redistribute their columns instead of
    drawing the status column underneath that rail. */
@@ -1151,15 +1187,23 @@
 @media (max-width: 1600px) {
   .att-filters {
     height: auto;
-    flex-wrap: wrap;
-    row-gap: 8px;
+    flex-wrap: nowrap;
+    gap: 7px;
+    overflow: visible;
   }
 
   .att-chips {
-    flex-wrap: wrap;
-    row-gap: 8px;
+    flex-wrap: nowrap;
+    gap: 6px;
     margin-right: 0;
+    flex: 0 1 auto;
   }
+
+  .att-chip { padding-left: 9px; padding-right: 8px; gap: 6px; }
+  .att-search { width: 170px; flex: 0 1 170px; }
+  .att-select,
+  .att-filters > .app-select { width: 122px; flex: 0 0 122px; min-width: 0; }
+  .att-filters > .app-select .app-select__trigger { min-width: 0; padding-left: 10px; padding-right: 26px; }
 }
 
 /* Таблица дня на узком экране: второстепенные колонки уходят, важные
