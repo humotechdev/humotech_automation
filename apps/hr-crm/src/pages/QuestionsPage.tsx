@@ -45,6 +45,9 @@ const TABS: { key: api.QuestionStatus; title: string }[] = [
 /** Эмодзи для ответа: короткий набор, который к месту в переписке HR. */
 const EMOJI = ['🙂', '👍', '🙏', '✅', '📄', '📌', '⏰', '❗'];
 
+/** Служебные события, которым не место в ленте переписки. */
+const HIDDEN_EVENTS = new Set(['TAKEN', 'ASSIGNED', 'TRANSFERRED', 'PRIORITY', 'CATEGORY']);
+
 const QUICK = [
   { key: 'all', title: 'Все' },
   { key: 'unanswered', title: 'Без ответа' },
@@ -895,6 +898,12 @@ function Thread({ messages, now, employeeId, hasPhoto }: {
       out.push(<div key={`day-${message.id}`} className="qs-day"><span>{label}</span></div>);
     }
     if (message.kind === 'SYSTEM') {
+      // Служебные пометки о назначении, ответственном, приоритете и
+      // категории в переписке не показываются: это работа кадровика
+      // с карточкой, а не разговор с человеком. Создание, ожидание,
+      // закрытие и переоткрытие остаются — они объясняют паузы в
+      // самой переписке.
+      if (HIDDEN_EVENTS.has(message.event ?? '')) continue;
       out.push(
         <p key={message.id} className="qs-event">
           <AppIcon name="settings" size={16} />

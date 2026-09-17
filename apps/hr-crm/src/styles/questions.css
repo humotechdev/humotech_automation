@@ -2021,3 +2021,300 @@ a.qs-linked:hover .qs-linked__text span {
   padding: 0 8px;
   font-size: 15px;
 }
+
+/* --- «Обращения»: плотная рабочая страница -----------------------------------
+ *
+ * Требование было такое: при масштабе браузера 100 % страница должна
+ * вмещать столько же, сколько сейчас вмещает при 80 %. Масштабированием
+ * этого добиваться нельзя — `zoom` и `transform` не уменьшают размеры,
+ * а врут о них: интерфейс остаётся крупным, просто нарисован мельче.
+ *
+ * Поэтому уменьшены сами величины. Все они собраны здесь, в переменных
+ * страницы, а не разбросаны по правилам: изменить плотность целиком
+ * можно одной правкой, и ни одна страница, кроме этой, не затронута.
+ *
+ * Нижняя граница текста — 13 px. Ниже читать таблицу фамилий и
+ * переписку уже тяжело, и экономия высоты не стоит этого.
+ */
+
+.qs {
+  --qs-gap: 10px;
+  --qs-pad: 12px;
+  --qs-row: 34px;
+  --qs-font: 13.5px;
+  --qs-small: 12.5px;
+}
+
+/* Страница ровно в высоту рабочей области: прокручиваются три колонки
+   по отдельности, а не документ целиком. */
+.canvas:has(> .qs) {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.qs {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Заголовок и вкладки не уезжают при прокрутке: они вне колонок. */
+.qs-head {
+  flex: none;
+  margin: -4px 10px 0 4px;
+}
+
+.qs-head__title {
+  font-size: 26px;
+  line-height: 32px;
+}
+
+.qs-head__sub {
+  font-size: 13.5px;
+  line-height: 19px;
+}
+
+.qs-tabs {
+  flex: none;
+}
+
+/* Три колонки: список, чат, контекст. Ширины в заданных пределах, чат
+   забирает остаток и остаётся главным. */
+.qs-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  grid-template-columns: clamp(300px, 22vw, 340px) minmax(0, 1fr) clamp(320px, 23vw, 360px);
+  gap: var(--qs-gap);
+  margin: 0 10px 10px 0;
+}
+
+.qs-queue,
+.qs-talk,
+.qs-side {
+  min-height: 0;
+  min-width: 0;
+}
+
+/* Каждая колонка прокручивается у себя. */
+.qs-queue__list,
+.qs-side {
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+/* --- левая колонка ---------------------------------------------------------- */
+
+.qs-queue__search {
+  margin: 10px 10px 8px;
+}
+
+.qs-queue__search input {
+  height: 36px;
+  font-size: var(--qs-font);
+}
+
+.qs-queue__filters,
+.qs-queue__chips {
+  padding: 0 10px 8px;
+  gap: 6px;
+}
+
+.qs-row {
+  padding: 9px 10px;
+  gap: 9px;
+}
+
+.qs-row__name {
+  font-size: var(--qs-font);
+}
+
+.qs-row__topic,
+.qs-row__snippet {
+  font-size: var(--qs-small);
+}
+
+.qs-row__meta,
+.qs-row__time {
+  font-size: 11.5px;
+}
+
+.qs-row__photo {
+  width: 34px;
+  height: 34px;
+}
+
+/* --- центр: чат ------------------------------------------------------------- */
+
+.qs-talk__head {
+  min-height: 52px;
+  max-height: 56px;
+  padding: 6px 12px;
+  gap: 10px;
+}
+
+.qs-talk__name {
+  font-size: 15px;
+  line-height: 20px;
+}
+
+.qs-talk__where {
+  font-size: var(--qs-small);
+}
+
+.qs-thread {
+  padding: 10px 12px;
+  gap: 8px;
+}
+
+/* Пузырь сообщения: читаемая ширина и небольшие поля. */
+.qs-msg {
+  max-width: 72%;
+}
+
+.qs-msg__body {
+  padding: 8px 11px;
+  font-size: var(--qs-font);
+  line-height: 1.4;
+}
+
+.qs-msg__time,
+.qs-day {
+  font-size: 11.5px;
+}
+
+.qs-composer {
+  padding: 10px 12px;
+  gap: 6px;
+  max-height: 200px;
+}
+
+.qs-composer__label {
+  font-size: 11.5px;
+}
+
+.qs-composer textarea {
+  min-height: 92px;
+  max-height: 116px;
+  padding: 9px 11px;
+  font-size: var(--qs-font);
+}
+
+.qs-composer__bar .qs-tool {
+  height: 30px;
+  font-size: 12px;
+}
+
+.qs-composer__send .qs-btn {
+  height: 34px;
+  font-size: 13px;
+}
+
+/* --- правая колонка --------------------------------------------------------- */
+
+.qs-side {
+  padding: 10px 12px;
+  gap: 10px;
+}
+
+.qs-side h2,
+.qs-side h3 {
+  font-size: 14px;
+  line-height: 19px;
+}
+
+.qs-side p,
+.qs-side li,
+.qs-side dd,
+.qs-side dt {
+  font-size: var(--qs-small);
+  line-height: 1.4;
+}
+
+/* Длинное значение переносится и не выходит за край колонки. */
+.qs-side,
+.qs-side * {
+  min-width: 0;
+}
+
+.qs-side p,
+.qs-side li {
+  overflow-wrap: break-word;
+}
+
+/* Невысокое окно: поле ответа ужимается, чтобы переписке осталась
+   большая часть колонки. На 1080 этого не требуется — там ленте и так
+   достаётся около трёх четвертей. */
+@media (max-height: 900px) {
+  .qs-composer textarea {
+    min-height: 72px;
+    max-height: 92px;
+  }
+
+  .qs-composer {
+    padding: 8px 12px;
+    max-height: 170px;
+  }
+
+  .qs-thread {
+    padding: 8px 12px;
+  }
+}
+
+/* Переписка прижата к низу: короткий разговор стоит над полем ответа,
+   а не висит у шапки с пустотой во весь экран. При длинной ленте отступ
+   схлопывается сам, и прокрутка работает как обычно. */
+.qs-thread {
+  display: flex;
+  flex-direction: column;
+}
+
+.qs-thread > *:first-child {
+  margin-top: auto;
+}
+
+/* Кнопка эмодзи не должна прятаться за переполнением строки. */
+.qs-composer__tools .qs-pop {
+  flex: none;
+}
+
+/* Шапка чата — всегда одна строка: аватар, имя, офис, состояние, метка
+   Telegram и «⋯». Тема вопроса и чипы отсюда убраны: тема стоит в
+   строке списка слева и в правой колонке, а здесь они разгоняли шапку
+   до полутора сотен пикселей и отнимали высоту у переписки. */
+.qs-talk__title,
+.qs-talk__chips {
+  display: none;
+}
+
+/* Узкая центральная колонка: у инструментов остаются значки, подписи
+   уходят. Обрезанное «Г» вместо «Прикрепить» — хуже, чем значок. */
+.qs-talk {
+  container-type: inline-size;
+  container-name: qs-talk;
+}
+
+@container qs-talk (max-width: 560px) {
+  .qs-composer__bar .qs-tool {
+    font-size: 0;
+    gap: 0;
+    padding: 0 9px;
+  }
+
+  .qs-composer__bar .qs-tool svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .qs-composer__bar .qs-tool--icon {
+    font-size: 15px;
+  }
+}
+
+/* Инструменты не прячутся переполнением: лучше ужать их до значков
+   (это делает контейнерный запрос выше), чем срезать кнопку целиком. */
+.qs-composer__tools {
+  overflow: visible;
+}
