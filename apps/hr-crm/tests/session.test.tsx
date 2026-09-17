@@ -23,8 +23,9 @@ describe('проверка сессии при запуске', () => {
     renderApp('/');
 
     expect(await screen.findByText('Обзор на сегодня')).toBeTruthy();
-    // Область доступа берётся из сессии, а не подставляется всем одна.
-    expect(screen.getByText('DEMO')).toBeTruthy();
+    // Кабинет открыт целиком: меню разделов на месте. Код организации в
+    // меню больше не выводится — блок убран из оболочки по решению HR.
+    expect(screen.getByRole('navigation', { name: 'Разделы' })).toBeTruthy();
     expect(calls[0]?.url.endsWith('/auth/me')).toBe(true);
   });
 
@@ -184,11 +185,14 @@ describe('выход', () => {
       );
       renderApp('/');
       await screen.findByText('Обзор на сегодня');
-      expect(screen.getByText(USER.organization_code)).toBeTruthy();
+      expect(screen.getByRole('navigation', { name: 'Разделы' })).toBeTruthy();
 
       await userEvent.click(screen.getByRole('button', { name: 'Выйти' }));
 
       await screen.findByRole('heading', { name: 'Добро пожаловать' });
+      // Оболочка кабинета живёт в маршруте-раскладке: после выхода её не
+      // должно остаться вместе со всем, что она показывала.
+      expect(screen.queryByRole('navigation', { name: 'Разделы' })).toBeNull();
       expect(screen.queryByText(USER.organization_code)).toBeNull();
       expect(screen.queryByText(USER.email)).toBeNull();
     });

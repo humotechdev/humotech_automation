@@ -25,6 +25,7 @@ import { formatTime, longDate, today, useBlock, type Block } from '../features/d
 import { useSession } from '../features/auth/session';
 import { clock, clockOnDay } from '../features/time/zone';
 import '../styles/attendance.css';
+import { useStickyState } from '../features/shell/sticky';
 
 const PAGE = 16;
 
@@ -739,8 +740,8 @@ function Person({ row, day, zone, canFix, onFix }: {
 
 function Journal({ day, office }: { day: string; office: string }) {
   const [cursor, setCursor] = useState('');
-  const [direction, setDirection] = useState('');
-  const [onlyAccepted, setOnlyAccepted] = useState(true);
+  const [direction, setDirection] = useStickyState('attendance.log.direction', '');
+  const [onlyAccepted, setOnlyAccepted] = useStickyState('attendance.log.accepted', true);
 
   const [log] = useBlock(
     (signal) => api.events({

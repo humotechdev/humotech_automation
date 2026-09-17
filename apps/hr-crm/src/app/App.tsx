@@ -1,13 +1,12 @@
 /**
  * Маршруты приложения.
  *
- * Их сейчас два, и это не заготовка на будущее: пустые пункты меню и
- * ведущие в никуда ссылки создают впечатление готовой системы там, где
- * её нет. Следующие разделы (`/employees`, `/attendance`, `/reports` и
- * прочие) появятся вместе со своими экранами — план описан в
- * `docs/architecture/hr-crm.md`.
+ * Разделы кабинета вложены в один маршрут-раскладку: оболочка CRM
+ * монтируется один раз, а при переходах меняется только страница.
+ * Страница входа и перенаправление неизвестных адресов — снаружи.
  */
 
+import { useEffect } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 
 import { DashboardPage } from '../pages/DashboardPage';
@@ -26,43 +25,55 @@ import { AdminPage } from '../pages/AdminPage';
 import { SettingsPage } from '../pages/SettingsPage';
 import { LoginPage } from '../pages/LoginPage';
 import { useSession } from '../features/auth/session';
+import { ShellLayout } from '../components/AppShell';
+import { forgetNavigation } from '../features/shell/memory';
 
 export function App() {
   return (
     <Routes>
       <Route path="/login" element={<GuestOnly />} />
-      <Route path="/" element={<Protected />} />
-      <Route path="/employees" element={<Protected page="employees" />} />
-      {/* Полная карточка. Собственный адрес — чтобы ссылка на человека
-          передавалась, а «Назад» возвращал в список с его фильтрами. */}
-      {/* Приём стоит ВЫШЕ маршрута карточки: иначе `/employees/new`
-          совпал бы с `:id` и страница пыталась бы открыть сотрудника с
-          идентификатором «new». */}
-      <Route path="/employees/new" element={<Protected page="employee-new" />} />
-      <Route path="/employees/:id" element={<Protected page="employee" />} />
-      <Route path="/requests" element={<Protected page="requests" />} />
-      <Route path="/attendance" element={<Protected page="attendance" />} />
-      <Route path="/offices" element={<Protected page="offices" />} />
-      <Route path="/questions" element={<Protected page="questions" />} />
-      <Route path="/analytics" element={<Protected page="analytics" />} />
-      <Route path="/reports" element={<Protected page="reports" />} />
-      <Route path="/knowledge" element={<Protected page="knowledge" />} />
-      <Route path="/notifications" element={<Protected page="notifications" />} />
-      <Route path="/admin" element={<Protected page="admin" />} />
-      <Route path="/settings" element={<Protected page="settings" />} />
+      {/*
+        * Все разделы кабинета — внутри одного маршрута-раскладки. Меню,
+        * верхняя панель, колокольчик и поиск стоят в нём и при переходе
+        * между разделами не пересоздаются: меняется только страница в
+        * рабочей области.
+        */}
+      <Route element={<Protected />}>
+        <Route path="/" element={<DashboardPage />} />
+        <Route path="/employees" element={<EmployeesPage />} />
+        {/* Полная карточка. Собственный адрес — чтобы ссылка на человека
+            передавалась, а «Назад» возвращал в список с его фильтрами. */}
+        {/* Приём стоит ВЫШЕ маршрута карточки: иначе `/employees/new`
+            совпал бы с `:id` и страница пыталась бы открыть сотрудника с
+            идентификатором «new». */}
+        <Route path="/employees/new" element={<NewEmployeePage />} />
+        <Route path="/employees/:id" element={<EmployeePage />} />
+        <Route path="/requests" element={<RequestsPage />} />
+        <Route path="/attendance" element={<AttendancePage />} />
+        <Route path="/offices" element={<OfficesPage />} />
+        <Route path="/questions" element={<QuestionsPage />} />
+        <Route path="/analytics" element={<AnalyticsPage />} />
+        <Route path="/reports" element={<ReportsPage />} />
+        <Route path="/knowledge" element={<KnowledgePage />} />
+        <Route path="/notifications" element={<NotificationsPage />} />
+        <Route path="/admin" element={<AdminPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
+      </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }
 
 /** Кабинет: без сессии сюда нельзя. */
-function Protected({ page }: {
-  page?: 'employees' | 'requests' | 'attendance' | 'offices' | 'questions'
-       | 'analytics' | 'reports' | 'knowledge' | 'notifications' | 'admin'
-       | 'employee-new'
-       | 'settings' | 'employee';
-}) {
+function Protected() {
   const session = useSession();
+
+  // Вышедшему не должно достаться ничего от прежнего: ни ответов
+  // сервера в кэше, ни фильтров, ни адресов разделов.
+  useEffect(() => {
+    if (session.status === 'anonymous') forgetNavigation();
+  }, [session.status]);
+
   if (session.status === 'checking') return <Checking />;
   // Сначала сбой связи, потом отсутствие доступа: перепутать их значит
   // объявить человека вышедшим из-за перезапуска сервера. Сессия на
@@ -71,20 +82,7 @@ function Protected({ page }: {
     return <Unavailable onRetry={session.recheck} />;
   }
   if (session.status === 'anonymous') return <Navigate to="/login" replace />;
-  if (page === 'employees') return <EmployeesPage />;
-  if (page === 'employee') return <EmployeePage />;
-  if (page === 'employee-new') return <NewEmployeePage />;
-  if (page === 'requests') return <RequestsPage />;
-  if (page === 'attendance') return <AttendancePage />;
-  if (page === 'offices') return <OfficesPage />;
-  if (page === 'questions') return <QuestionsPage />;
-  if (page === 'analytics') return <AnalyticsPage />;
-  if (page === 'reports') return <ReportsPage />;
-  if (page === 'knowledge') return <KnowledgePage />;
-  if (page === 'notifications') return <NotificationsPage />;
-  if (page === 'admin') return <AdminPage />;
-  if (page === 'settings') return <SettingsPage />;
-  return <DashboardPage />;
+  return <ShellLayout />;
 }
 
 /**

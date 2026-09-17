@@ -3,6 +3,8 @@
 import { cleanup } from '@testing-library/react';
 import { afterEach, beforeEach, vi } from 'vitest';
 
+import { forgetNavigation } from '../src/features/shell/memory';
+
 /*
  * jsdom не раскладывает страницу, поэтому у элементов нет `scrollIntoView`
  * — не «не работает», а вовсе отсутствует, и вызов падает с TypeError.
@@ -30,6 +32,10 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  // Кэш ответов, адреса разделов, прокрутка и отборы живут на уровне
+  // модуля — как во вкладке браузера. Между тестами их надо забывать,
+  // иначе следующий тест увидит данные предыдущего вместо загрузки.
+  forgetNavigation();
   vi.restoreAllMocks();
   /*
    * `restoreAllMocks` возвращает на место подсмотренные методы, но НЕ

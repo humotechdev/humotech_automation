@@ -33,6 +33,7 @@ import {
   plural, progressPercent, tabCount, type KindKey, type TabKey,
 } from '../features/reports/kinds';
 import { useHistory } from '../features/reports/queue';
+import { useStickyState } from '../features/shell/sticky';
 import '../styles/reports.css';
 
 type Fmt = 'xlsx' | 'csv';
@@ -74,17 +75,19 @@ export function ReportsPage() {
 
   // --- параметры будущего отчёта -------------------------------------------
 
-  const [kind, setKind] = useState<KindKey | null>(null);
-  const [from, setFrom] = useState(() => periodRange('this_month', today())[0]);
-  const [to, setTo] = useState(() => periodRange('this_month', today())[1]);
-  const [region, setRegion] = useState('');
-  const [officeIds, setOfficeIds] = useState<string[]>([]);
-  const [departmentIds, setDepartmentIds] = useState<string[]>([]);
-  const [person, setPerson] = useState<Person | null>(null);
-  const [inactive, setInactive] = useState(false);
-  const [fields, setFields] = useState<string[]>([]);
-  const [fmt, setFmt] = useState<Fmt>('xlsx');
-  const [name, setName] = useState('');
+  // Набранные параметры не пропадают, если выйти в другой раздел и
+  // вернуться: конструктор открывается таким, каким его оставили.
+  const [kind, setKind] = useStickyState<KindKey | null>('reports.kind', null);
+  const [from, setFrom] = useStickyState('reports.from', () => periodRange('this_month', today())[0]);
+  const [to, setTo] = useStickyState('reports.to', () => periodRange('this_month', today())[1]);
+  const [region, setRegion] = useStickyState('reports.region', '');
+  const [officeIds, setOfficeIds] = useStickyState<string[]>('reports.offices', []);
+  const [departmentIds, setDepartmentIds] = useStickyState<string[]>('reports.departments', []);
+  const [person, setPerson] = useStickyState<Person | null>('reports.person', null);
+  const [inactive, setInactive] = useStickyState('reports.inactive', false);
+  const [fields, setFields] = useStickyState<string[]>('reports.fields', []);
+  const [fmt, setFmt] = useStickyState<Fmt>('reports.fmt', 'xlsx');
+  const [name, setName] = useStickyState('reports.name', '');
 
   const chosen = kinds.find((item) => item.key === kind) ?? null;
   const offices = useMemo(

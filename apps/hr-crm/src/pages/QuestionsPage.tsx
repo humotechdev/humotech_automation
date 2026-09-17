@@ -29,6 +29,7 @@ import { AppIcon } from '../components/AppIcon';
 import { AppFilterButton, AppSegmentedControl, AppSelectField } from '../components/AppSelect';
 import { useSession } from '../features/auth/session';
 import { shift, today, useBlock, type Block } from '../features/dashboard/data';
+import { useStickyState } from '../features/shell/sticky';
 import '../styles/questions.css';
 
 const REFRESH_MS = 15_000;
@@ -310,8 +311,9 @@ export function QuestionsPage() {
     [reloadDetail, reloadList, reloadCounts, reloadContext],
   );
 
-  // Набранный ответ у каждого обращения свой и не теряется при переходе.
-  const [replies, setReplies] = useState<Record<string, string>>({});
+  // Набранный ответ у каждого обращения свой и не теряется при переходе —
+  // ни к другому обращению, ни в другой раздел CRM.
+  const [replies, setReplies] = useStickyState<Record<string, string>>('questions.replies', {});
   const reply = replies[currentId] ?? '';
   const setReply = useCallback(
     (value: string) => setReplies((was) => ({ ...was, [currentId]: value })),

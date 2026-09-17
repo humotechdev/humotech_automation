@@ -46,6 +46,7 @@ import {
 import { today, useBlock, type Block } from '../features/dashboard/data';
 import { useSession } from '../features/auth/session';
 import { clock, moment } from '../features/time/zone';
+import { useStickyState } from '../features/shell/sticky';
 
 const PAGE = '20';
 
@@ -620,7 +621,7 @@ function FeedBoard({
   onOpen: (id: string) => void;
 }) {
   const navigate = useNavigate();
-  const [filter, setFilter] = useState<string>('all');
+  const [filter, setFilter] = useStickyState<string>('notifications.filter', 'all');
   const [page, setPage] = useState<api.FeedPage | null>(null);
   const [rows, setRows] = useState<api.FeedEvent[]>([]);
   const [loading, setLoading] = useState(true);

@@ -15,6 +15,7 @@
  */
 
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 
 import * as api from '../api/crm';
 import { AppIcon } from './AppIcon';
@@ -183,9 +184,9 @@ function Overview({ row, canManage, onChanged }: {
           Редактировать офис
         </button>
       )}
-      <a className="linky" href={`/attendance?office_id=${office.id}`}>
+      <Link className="linky" to={`/attendance?office_id=${office.id}`}>
         Открыть посещаемость <AppIcon name="arrow" size={16} />
-      </a>
+      </Link>
     </>
   );
 }
@@ -350,7 +351,7 @@ function Staff({ officeId }: { officeId: string }) {
                       {person.current_assignment?.position_name ?? '—'}
                     </span>
                   </span>
-                  <a className="linky" href={`/employees?employee=${person.id}`}>Открыть</a>
+                  <Link className="linky" to={`/employees?employee=${person.id}`}>Открыть</Link>
                 </li>
               ))}
             </ul>

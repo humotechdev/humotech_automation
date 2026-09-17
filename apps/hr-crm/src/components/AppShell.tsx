@@ -10,8 +10,11 @@
  * ответа, а спрятать их значило бы скрыть от человека план системы.
  */
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import {
+  createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState,
+  type ReactNode,
+} from 'react';
+import { Link, Outlet, useLocation } from 'react-router-dom';
 
 import { BrandLockup } from './Logo';
 import { NotificationBell } from './NotificationBell';
@@ -19,6 +22,8 @@ import { backdropImage } from '../features/shell/backdrop';
 import { AppIcon, ICON_SIZE, type AppIconName } from './AppIcon';
 import { useSession } from '../features/auth/session';
 import { useBadges } from '../features/shell/badges';
+import { placeOf, rememberPlace } from '../features/shell/places';
+import { useScrollMemory } from '../features/shell/scroll';
 import { GlobalEmployeeSearch } from './GlobalEmployeeSearch';
 
 type Item = {
@@ -55,16 +60,85 @@ const ROLE_NAMES: Record<string, string> = {
   VIEWER: 'Наблюдатель',
 };
 
-type Props = {
-  children: ReactNode;
-  /** Счётчики у разделов. Только настоящие, только пришедшие с сервера. */
-  badges?: Record<string, number>;
+type Meta = {
   breadcrumb: string;
   /** Какой пункт навигации подсвечен. */
+  section: string;
+  /** Счётчики у разделов. Только настоящие, только пришедшие с сервера. */
+  badges?: Record<string, number>;
+};
+
+type Props = {
+  children: ReactNode;
+  badges?: Record<string, number>;
+  breadcrumb: string;
   section?: string;
 };
 
+/*
+ * Оболочка живёт в маршруте-раскладке и не пересоздаётся при переходах.
+ *
+ * Раньше каждая страница рендерила `AppShell` сама. Страницы — разные
+ * компоненты, и при переходе React разбирал всё дерево целиком: меню,
+ * верхнюю панель, колокольчик, поиск и данные страницы. Со стороны это
+ * выглядело как перезагрузка с нуля, хотя адрес менялся без запроса
+ * документа.
+ *
+ * Теперь `ShellLayout` стоит над маршрутами и остаётся на месте, а
+ * `AppShell` внутри страницы только сообщает ему заголовок, раздел и
+ * счётчики. Без раскладки над собой (отдельный рендер страницы) он, как
+ * и прежде, рисует оболочку сам.
+ */
+const ShellContext = createContext<((meta: Meta) => void) | null>(null);
+
+function sameMeta(one: Meta, two: Meta): boolean {
+  return one.breadcrumb === two.breadcrumb
+    && one.section === two.section
+    && JSON.stringify(one.badges ?? {}) === JSON.stringify(two.badges ?? {});
+}
+
+/** Оболочка для маршрутов кабинета: страница подставляется в `<Outlet />`. */
+export function ShellLayout() {
+  const [meta, setMeta] = useState<Meta>({ breadcrumb: '', section: '' });
+  const publish = useCallback((next: Meta) => {
+    setMeta((was) => (sameMeta(was, next) ? was : next));
+  }, []);
+  return (
+    <ShellContext.Provider value={publish}>
+      <ShellFrame meta={meta} remember>
+        <Outlet />
+      </ShellFrame>
+    </ShellContext.Provider>
+  );
+}
+
 export function AppShell({ children, badges, breadcrumb, section = 'home' }: Props) {
+  const publish = useContext(ShellContext);
+  const badgesKey = JSON.stringify(badges ?? {});
+
+  // До отрисовки кадра: иначе новая страница на один кадр показалась бы
+  // с заголовком и подсвеченным пунктом предыдущей.
+  useLayoutEffect(() => {
+    if (!publish) return;
+    publish({ breadcrumb, section, ...(badges ? { badges } : {}) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [publish, breadcrumb, section, badgesKey]);
+
+  if (publish) return <>{children}</>;
+  return (
+    <ShellFrame meta={{ breadcrumb, section, ...(badges ? { badges } : {}) }}>
+      {children}
+    </ShellFrame>
+  );
+}
+
+function ShellFrame({ children, meta, remember = false }: {
+  children: ReactNode;
+  meta: Meta;
+  /** Запоминать адреса разделов и прокрутку страниц. */
+  remember?: boolean;
+}) {
+  const { breadcrumb, section, badges } = meta;
   const session = useSession();
   /*
    * Числа рядом с разделами приходят из общего источника, а не от
@@ -98,6 +172,12 @@ export function AppShell({ children, badges, breadcrumb, section = 'home' }: Pro
     return () => stop.abort();
   }, [menu]);
 
+  // Меню ведёт в раздел туда, где человек был в нём последний раз: с
+  // теми же фильтрами, вкладкой, выбранной строкой и страницей списка.
+  if (remember) rememberPlace(place.pathname, place.search);
+  const work = useRef<HTMLDivElement>(null);
+  useScrollMemory(work, remember ? place.pathname : '', remember);
+
   return (
     <div className={menu ? 'shell shell--menu' : 'shell'}>
       {/* Декоративная подложка. Снимок подставляется, если он лежит в
@@ -118,9 +198,10 @@ export function AppShell({ children, badges, breadcrumb, section = 'home' }: Pro
 
         <div className="side__scroll">
           <Group title="Рабочее пространство" items={WORKSPACE} badges={counters}
-                 active={section} />
+                 active={section} remember={remember} />
           <div className="side__rule" />
-          <Group title="Управление" items={MANAGEMENT} badges={counters} active={section} />
+          <Group title="Управление" items={MANAGEMENT} badges={counters} active={section}
+                 remember={remember} />
         </div>
 
         <button type="button" className="side__exit" onClick={() => void session.signOut()}>
@@ -138,7 +219,7 @@ export function AppShell({ children, badges, breadcrumb, section = 'home' }: Pro
         />
       )}
 
-      <div className="work">
+      <div className="work" ref={work}>
         <header className="topbar">
           {/* Кнопка меню видна только там, где меню выезжает: на широком
               экране разделы и так на виду. */}
@@ -168,8 +249,8 @@ export function AppShell({ children, badges, breadcrumb, section = 'home' }: Pro
   );
 }
 
-function Group({ title, items, badges, active }: {
-  title: string; items: Item[]; badges: Record<string, number>; active: string;
+function Group({ title, items, badges, active, remember }: {
+  title: string; items: Item[]; badges: Record<string, number>; active: string; remember: boolean;
 }) {
   return (
     <>
@@ -192,7 +273,7 @@ function Group({ title, items, badges, active }: {
             <li key={item.key}>
               {item.to ? (
                 <Link
-                  to={item.to}
+                  to={remember ? placeOf(item.to) : item.to}
                   className={item.key === active ? 'nav nav--active' : 'nav'}
                   aria-current={item.key === active ? 'page' : undefined}
                 >

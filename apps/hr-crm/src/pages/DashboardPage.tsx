@@ -24,6 +24,7 @@ import {
   formatPercent, formatTime, longDate, percent, shift, today, useBlock,
   type Block,
 } from '../features/dashboard/data';
+import { useStickyState } from '../features/shell/sticky';
 import '../styles/dashboard.css';
 
 const RANGES = [
@@ -113,12 +114,15 @@ function cardLink(card: api.Card | undefined): string | null {
 }
 
 export function DashboardPage() {
-  const [day, setDay] = useState(today);
-  const [region, setRegion] = useState('');
-  const [office, setOffice] = useState('');
-  const [range, setRange] = useState<(typeof RANGES)[number]>(RANGES[1]);
+  // Отбор главной хранится не в адресе, поэтому переживает уход в
+  // другой раздел отдельно: вернувшись, человек видит тот же регион,
+  // офис, дату и период графика.
+  const [day, setDay] = useStickyState('dashboard.day', today);
+  const [region, setRegion] = useStickyState('dashboard.region', '');
+  const [office, setOffice] = useStickyState('dashboard.office', '');
+  const [range, setRange] = useStickyState<(typeof RANGES)[number]>('dashboard.range', RANGES[1]);
   const [updated, setUpdated] = useState<Date | null>(null);
-  const [officeSearch, setOfficeSearch] = useState('');
+  const [officeSearch, setOfficeSearch] = useStickyState('dashboard.officeSearch', '');
   const [attempt, setAttempt] = useState(0);
 
   const filters: api.Filters = useMemo(
