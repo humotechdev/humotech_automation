@@ -26,7 +26,7 @@ import { useSession } from '../features/auth/session';
 import { clock, clockOnDay } from '../features/time/zone';
 import '../styles/attendance.css';
 
-const PAGE = 8;
+const PAGE = 16;
 
 type Tone = 'ok' | 'idle' | 'warn' | 'violet' | 'blue' | 'grey';
 
@@ -268,79 +268,82 @@ export function AttendancePage() {
         {tab === 'log' ? (
           <Journal day={day} office={office} />
         ) : (
-          <div className="att-grid">
+          <>
             <Today counts={counts} past={past} rows={everyone} zone={zone}
                    chosen={chosen} onPick={choose} block={cards} />
 
-            <section className="att-list" aria-label="Состав смены">
-              <div className="att-filters">
-                <div className="att-chips" role="group" aria-label="Быстрый отбор">
-                  {QUICK.map((item) => <AppFilterButton key={item.id} className={`att-chip att-chip--${item.tone}`} active={chosen === item.id} count={item.count(counts)} onClick={() => choose(item)}>{item.title}</AppFilterButton>)}
+            <div className="att-grid">
+
+              <section className="att-list" aria-label="Состав смены">
+                <div className="att-filters">
+                  <div className="att-chips" role="group" aria-label="Быстрый отбор">
+                    {QUICK.map((item) => <AppFilterButton key={item.id} className={`att-chip att-chip--${item.tone}`} active={chosen === item.id} count={item.count(counts)} onClick={() => choose(item)}>{item.title}</AppFilterButton>)}
+                  </div>
+                  <label className="att-search">
+                    <AppIcon name="search" size={16} />
+                    <input type="search" value={draft} placeholder="Поиск сотрудника"
+                           aria-label="Поиск сотрудника"
+                           onChange={(event) => setDraft(event.target.value)} />
+                  </label>
+                  <Select label="Офис" empty="Все офисы" value={office}
+                          options={directory.state === 'ready' ? directory.data : []}
+                          onChange={(value) => patch({ office_id: value || null })} />
+                  <Select label="Статус" empty="Все статусы" value={state} options={STATUS_OPTIONS}
+                          onChange={(value) => patch({ state: value || null, flag: null })} />
                 </div>
-                <label className="att-search">
-                  <AppIcon name="search" size={16} />
-                  <input type="search" value={draft} placeholder="Поиск сотрудника"
-                         aria-label="Поиск сотрудника"
-                         onChange={(event) => setDraft(event.target.value)} />
-                </label>
-                <Select label="Офис" empty="Все офисы" value={office}
-                        options={directory.state === 'ready' ? directory.data : []}
-                        onChange={(value) => patch({ office_id: value || null })} />
-                <Select label="Статус" empty="Все статусы" value={state} options={STATUS_OPTIONS}
-                        onChange={(value) => patch({ state: value || null, flag: null })} />
+
+                <div className="att-table">
+                  <div className="att-table__head" role="row">
+                    <span>Сотрудник</span>
+                    <span>Офис / график</span>
+                    <span>Рабочий день</span>
+                    <span>В офисе</span>
+                    <span>Статус</span>
+                  </div>
+                  <Section block={shift} name="состав смены">
+                    {(data) => rows.length === 0 ? (
+                      <p className="att-empty">
+                        {state || flag || search || office ? 'По этим условиям никого нет.' : 'На выбранный день отметок нет.'}
+                      </p>
+                    ) : (
+                      <>
+                        {data.truncated && (
+                          <p className="att-empty att-empty--bad">
+                            Показаны не все: состав больше одного ответа. Сузьте фильтры.
+                          </p>
+                        )}
+                        {slice.map((row) => (
+                          <Row key={row.employee_id} row={row} zone={data.timezone} day={day}
+                               on={row.employee_id === chosenRow?.employee_id}
+                               onPick={() => { setFixing(false); patch({ employee: row.employee_id }, true); }} />
+                        ))}
+                      </>
+                    )}
+                  </Section>
+                </div>
+
+                <footer className="att-pager">
+                  <p>{shift.state === 'ready' ? `Показано ${slice.length} из ${plural(rows.length)}` : ''}</p>
+                  <Pages page={page} pages={pages}
+                         onGo={(next) => patch({ page: next === 1 ? null : String(next) }, true)} />
+                </footer>
+              </section>
+
+              <div className="att-rail">
+                <Attention counts={counts} chosen={chosen} onPick={choose} />
+                {chosenRow && fixing ? (
+                  <div className="att-fix">
+                    <DayCard row={chosenRow} day={day} timezone={zone} canAdd={can('attendance.manual')}
+                             onClose={() => setFixing(false)}
+                             onChanged={() => { setFixing(false); setAttempt((n) => n + 1); }} />
+                  </div>
+                ) : (
+                  <Person row={chosenRow} day={day} zone={zone}
+                          canFix={can('attendance.manual')} onFix={() => setFixing(true)} />
+                )}
               </div>
-
-              <div className="att-table">
-                <div className="att-table__head" role="row">
-                  <span>Сотрудник</span>
-                  <span>Офис / график</span>
-                  <span>Рабочий день</span>
-                  <span>В офисе</span>
-                  <span>Статус</span>
-                </div>
-                <Section block={shift} name="состав смены">
-                  {(data) => rows.length === 0 ? (
-                    <p className="att-empty">
-                      {state || flag || search || office ? 'По этим условиям никого нет.' : 'На выбранный день отметок нет.'}
-                    </p>
-                  ) : (
-                    <>
-                      {data.truncated && (
-                        <p className="att-empty att-empty--bad">
-                          Показаны не все: состав больше одного ответа. Сузьте фильтры.
-                        </p>
-                      )}
-                      {slice.map((row) => (
-                        <Row key={row.employee_id} row={row} zone={data.timezone} day={day}
-                             on={row.employee_id === chosenRow?.employee_id}
-                             onPick={() => { setFixing(false); patch({ employee: row.employee_id }, true); }} />
-                      ))}
-                    </>
-                  )}
-                </Section>
-              </div>
-
-              <footer className="att-pager">
-                <p>{shift.state === 'ready' ? `Показано ${slice.length} из ${plural(rows.length)}` : ''}</p>
-                <Pages page={page} pages={pages}
-                       onGo={(next) => patch({ page: next === 1 ? null : String(next) }, true)} />
-              </footer>
-            </section>
-
-            <div className="att-rail">
-              <Attention counts={counts} chosen={chosen} onPick={choose} />
-              {chosenRow && fixing ? (
-                <div className="att-fix">
-                  <DayCard row={chosenRow} day={day} timezone={zone} canAdd={can('attendance.manual')}
-                           onClose={() => setFixing(false)}
-                           onChanged={() => { setFixing(false); setAttempt((n) => n + 1); }} />
-                </div>
-              ) : (
-                <Person row={chosenRow} day={day} zone={zone}
-                        canFix={can('attendance.manual')} onFix={() => setFixing(true)} />
-              )}
             </div>
-          </div>
+          </>
         )}
       </div>
     </AppShell>
@@ -661,56 +664,60 @@ function Person({ row, day, zone, canFix, onFix }: {
         </div>
       </div>
 
-      <dl className="att-person__facts">
-        <dt><AppIcon name="building" size={18} />Офис</dt>
-        <dd>{row.office_name ?? '—'}</dd>
-        <dt><AppIcon name="users" size={18} />Отдел</dt>
-        <dd>{row.department_name ?? '—'}</dd>
-        <dt><AppIcon name="calendar" size={18} />График</dt>
-        <dd>{hours(row)}</dd>
-      </dl>
+      {/* Прокручивается середина карточки, а не панель целиком: «Открыть
+          карточку» и «Исправить отметку» должны оставаться на виду. */}
+      <div className="att-person__scroll">
+        <dl className="att-person__facts">
+          <dt><AppIcon name="building" size={18} />Офис</dt>
+          <dd>{row.office_name ?? '—'}</dd>
+          <dt><AppIcon name="users" size={18} />Отдел</dt>
+          <dd>{row.department_name ?? '—'}</dd>
+          <dt><AppIcon name="calendar" size={18} />График</dt>
+          <dd>{hours(row)}</dd>
+        </dl>
 
-      {/*
-        * День без единой отметки — это не пустая панель с прочерками.
-        * Прочерк на месте времени и пустая полоса графика выглядят как
-        * сбой загрузки; вместо них — прямая фраза о том, что человек
-        * ещё не отмечался. Офис, отдел и график при этом остаются: они
-        * известны и нужны тому, кто разбирается.
-        */}
-      {nothingYet ? (
-        <div className="att-person__blank">
-          <span className="att-person__blankIcon" aria-hidden="true">
-            <AppIcon name="clock" size={20} />
-          </span>
-          <p className="att-person__blankTitle">
-            {day === today() ? 'Нет отметок за сегодня' : 'Нет отметок за этот день'}
-          </p>
-          <p className="att-person__blankText">Сотрудник ещё не отметил вход или выход</p>
-          <span className="att-status att-status--warn">Нет отметки</span>
-        </div>
-      ) : (
-        <>
-          <div className="att-person__day">
-            <p className="att-person__label">{day === today() ? 'Сегодня в офисе' : 'В офисе за день'}</p>
-            <p className="att-person__total">{present(row, day) ? span(present(row, day)) : '—'}</p>
-            <DayLine row={row} zone={zone} day={day} wide />
+        {/*
+          * День без единой отметки — это не пустая панель с прочерками.
+          * Прочерк на месте времени и пустая полоса графика выглядят как
+          * сбой загрузки; вместо них — прямая фраза о том, что человек
+          * ещё не отмечался. Офис, отдел и график при этом остаются: они
+          * известны и нужны тому, кто разбирается.
+          */}
+        {nothingYet ? (
+          <div className="att-person__blank">
+            <span className="att-person__blankIcon" aria-hidden="true">
+              <AppIcon name="clock" size={20} />
+            </span>
+            <p className="att-person__blankTitle">
+              {day === today() ? 'Нет отметок за сегодня' : 'Нет отметок за этот день'}
+            </p>
+            <p className="att-person__blankText">Сотрудник ещё не отметил вход или выход</p>
+            <span className="att-status att-status--warn">Нет отметки</span>
           </div>
+        ) : (
+          <>
+            <div className="att-person__day">
+              <p className="att-person__label">{day === today() ? 'Сегодня в офисе' : 'В офисе за день'}</p>
+              <p className="att-person__total">{present(row, day) ? span(present(row, day)) : '—'}</p>
+              <DayLine row={row} zone={zone} day={day} wide />
+            </div>
 
-          <p className="att-person__label">{day === today() ? 'События сегодня' : 'События дня'}</p>
-          <ul className="att-events">
-            {events.state === 'loading' && <li className="att-events__none">Загружаем…</li>}
-            {list.map((one) => (
-              <li key={one.id} className={one.event_type === 'ENTRY' ? 'att-events__in' : 'att-events__out'}>
-                <b>{clock(one.occurred_at, zone)}</b>
-                <span>
-                  {one.event_type === 'ENTRY' ? 'Вход' : 'Выход'}
-                  {one.qr_point_name ? ` · ${one.qr_point_name}` : ''}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
+            <p className="att-person__label">{day === today() ? 'События сегодня' : 'События дня'}</p>
+            <ul className="att-events">
+              {events.state === 'loading' && <li className="att-events__none">Загружаем…</li>}
+              {list.map((one) => (
+                <li key={one.id} className={one.event_type === 'ENTRY' ? 'att-events__in' : 'att-events__out'}>
+                  <b>{clock(one.occurred_at, zone)}</b>
+                  <span>
+                    {one.event_type === 'ENTRY' ? 'Вход' : 'Выход'}
+                    {one.qr_point_name ? ` · ${one.qr_point_name}` : ''}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+      </div>
 
       <div className="att-person__actions">
         <Link className="att-btn att-btn--outline" to={`/employees/${row.employee_id}?tab=attendance`}>

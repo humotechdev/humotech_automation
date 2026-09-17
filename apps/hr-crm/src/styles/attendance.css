@@ -210,16 +210,15 @@
 
 /* --- сетка ------------------------------------------------------------------ */
 
-/* Высота сетки определяется таблицей и панелью дня. На F11 список
-   заканчивается после пагинации, а не растягивается до нижнего края. */
+/* Рабочая часть — два столбца в один ряд: слева состав смены, справа
+   «Требует внимания» и выбранный сотрудник. «Сегодня» стоит выше сетки,
+   во всю ширину: в столбце она отнимала высоту у таблицы. */
 .att-grid {
   flex: 0 1 auto;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 367px;
-  grid-template-rows: 160px auto;
-  gap: 14px 14px;
-  /* Эталон: 1028 + 14 + 367, правый край на 1645 — в 8 точках от поля. */
+  grid-template-columns: minmax(0, 1fr) 440px;
+  gap: 16px;
   margin: 0 8px 0 5px;
 }
 
@@ -235,7 +234,6 @@
 
 .att-rail {
   grid-column: 2;
-  grid-row: 1 / 3;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -245,9 +243,11 @@
 /* --- «Сегодня» ---------------------------------------------------------------- */
 
 .att-today {
+  flex: none;
   display: grid;
   grid-template-columns: 250px minmax(0, 334px) minmax(0, 1fr);
   align-items: stretch;
+  margin: 0 8px 12px 5px;
   padding: 0 0 0 16px;
 }
 
@@ -423,7 +423,6 @@
 
 .att-list {
   grid-column: 1;
-  grid-row: 2;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -564,8 +563,15 @@
   padding: 0 0 0 16px;
 }
 
+/* Прокручивается тело таблицы, поэтому шапка прибита к верху своего
+   окна прокрутки: без непрозрачного фона и слоя строки проступали бы
+   сквозь неё (у `.att-row` есть `position: relative`). */
 .att-table__head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   height: 30px;
+  background: #ffffff;
   font-size: 13px;
   color: #4d5f7d;
   border-bottom: 1px solid var(--att-line);
@@ -1167,7 +1173,6 @@
 /* Fit the first page of attendance (including statuses and pager) in the
    ordinary 864px CSS viewport produced by a 1080p display at 125% scaling. */
 @media (max-height: 900px) {
-  .att-grid { grid-template-rows: 152px auto; }
   .att-list { padding-top: 8px; padding-bottom: 6px; }
   .att-filters { height: 34px; }
   .att-table { margin-top: 8px; }
@@ -1339,8 +1344,421 @@
   scrollbar-gutter: stable;
 }
 
+/* Правая колонка целиком не прокручивается: «Требует внимания»
+   остаётся сверху, прокручивается середина карточки сотрудника. */
 .att-rail {
+  overflow: hidden;
+}
+
+.att-person {
+  overflow: hidden;
+}
+
+/* Карточка дня — форма с полями, её удобнее листать целиком. */
+.att-fix {
   overflow-y: auto;
   scrollbar-gutter: stable;
 }
+}
+
+/* --- «Посещаемость»: плотная рабочая страница ---------------------------------
+ *
+ * Та же задача, что решена на «Обращениях» и «Сотрудниках»: при
+ * масштабе браузера 100 % страница должна вмещать столько же, сколько
+ * сейчас вмещает при 80 %. Уменьшены сами величины, а не картинка:
+ * `zoom` и `transform` оставили бы интерфейс крупным, просто
+ * нарисованным мельче.
+ *
+ * Правила лежат в конце файла, потому что перебивают размеры,
+ * снятые с эталона 1672×941 выше. Те, что касаются рабочей части,
+ * привязаны к `.att-grid`: «Журнал отметок» рисует свой `.att-list`
+ * вне сетки, и плотность дня его не задевает.
+ *
+ * Нижняя граница текста — 12,5 px: ниже фамилии и время в таблице
+ * читать тяжело, и экономия высоты этого не стоит.
+ */
+
+/* --- шапка страницы --------------------------------------------------------- */
+
+.att-head__title {
+  font-size: 26px;
+  line-height: 32px;
+}
+
+.att-head__sub {
+  font-size: 12.5px;
+  line-height: 18px;
+}
+
+.att-head__updated {
+  font-size: 12px;
+}
+
+.att-head__tools .att-btn {
+  height: 36px;
+  font-size: 13.5px;
+}
+
+.att-tabs {
+  height: 36px;
+  margin: 6px 8px 10px 5px;
+  padding: 2px;
+}
+
+.att-tab {
+  min-width: 84px;
+  padding: 0 14px;
+  font-size: 13.5px;
+}
+
+/* --- «Сегодня»: одна низкая карточка ----------------------------------------- */
+
+.att-today {
+  grid-template-columns: 228px minmax(0, 300px) minmax(0, 1fr);
+  margin-bottom: 10px;
+  padding-left: 14px;
+}
+
+.att-today__title {
+  margin-top: 10px;
+  font-size: 16.5px;
+  line-height: 22px;
+}
+
+.att-today__ring {
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.att-donut {
+  width: 76px;
+  height: 76px;
+}
+
+.att-donut__text {
+  font-size: 17px;
+}
+
+.att-today__sum {
+  padding-top: 4px;
+}
+
+.att-today__live {
+  width: 8px;
+  height: 8px;
+}
+
+.att-today__sum strong {
+  font-size: 20px;
+  line-height: 25px;
+}
+
+.att-today__sum span {
+  font-size: 13.5px;
+  line-height: 18px;
+}
+
+.att-today__sum small {
+  font-size: 12px;
+}
+
+.att-arrivals {
+  margin: 14px 0;
+  padding: 6px 14px 0;
+}
+
+.att-arrivals__title {
+  font-size: 12.5px;
+}
+
+.att-arrivals__bars {
+  height: 42px;
+  margin-top: 6px;
+}
+
+.att-arrivals__axis {
+  margin-top: 4px;
+  font-size: 11px;
+}
+
+.att-metrics {
+  margin: 14px 0;
+}
+
+.att-metric {
+  gap: 2px;
+  padding: 2px 0 0 12px;
+}
+
+.att-metric svg {
+  width: 22px;
+  height: 22px;
+}
+
+.att-metric strong {
+  font-size: 20px;
+  line-height: 24px;
+}
+
+.att-metric span {
+  margin-top: 0;
+  font-size: 12.5px;
+}
+
+/* --- левая панель: отбор одной строкой --------------------------------------- */
+
+.att-grid .att-list {
+  padding: 8px 8px 6px;
+}
+
+.att-filters {
+  gap: 8px;
+}
+
+.att-chip {
+  height: 30px;
+  padding: 0 9px;
+  gap: 6px;
+  font-size: 12.5px;
+}
+
+.att-chip__count {
+  font-size: 11.5px;
+}
+
+.att-search {
+  height: 34px;
+}
+
+.att-search input {
+  font-size: 13px;
+}
+
+.att-select,
+.att-filters > .app-select {
+  height: 34px;
+}
+
+.att-select select,
+.att-filters > .app-select .app-select__trigger {
+  min-height: 34px;
+  font-size: 13px;
+}
+
+/* --- таблица дня -------------------------------------------------------------
+ *
+ * Правый столбец стал шире (440 вместо 367), поэтому доли колонок
+ * заданы заново: сжимаются «Офис / график» и полоса рабочего дня, а
+ * статус и стрелка сохраняют свою ширину — их обрезать нельзя.
+ */
+
+.att-grid .att-table {
+  margin: 8px -8px 0;
+}
+
+.att-grid .att-table__head,
+.att-grid .att-row {
+  grid-template-columns:
+    minmax(150px, 1.15fr) minmax(100px, 0.7fr) minmax(160px, 1.15fr) 62px minmax(112px, 0.8fr) 16px;
+  gap: 8px;
+  padding: 0 8px 0 12px;
+}
+
+/* Длинная фамилия или название отдела сжимают свою ячейку, а не
+   выталкивают соседнюю. */
+.att-grid .att-table__head > *,
+.att-grid .att-row > * {
+  min-width: 0;
+}
+
+.att-grid .att-table__head {
+  height: 28px;
+  font-size: 12.5px;
+}
+
+.att-grid .att-row {
+  height: 42px;
+}
+
+.att-row__face {
+  width: 30px;
+  height: 30px;
+  font-size: 12px;
+}
+
+.att-row__text b {
+  font-size: 13.5px;
+}
+
+.att-row__text span,
+.att-row__text small {
+  font-size: 12px;
+}
+
+.att-row__time {
+  font-size: 13px;
+}
+
+.att-status {
+  height: 24px;
+  padding: 0 10px 0 8px;
+  gap: 6px;
+  font-size: 12.5px;
+}
+
+.att-status::before {
+  width: 8px;
+  height: 8px;
+}
+
+.att-line__labels small {
+  font-size: 11px;
+}
+
+/* --- пагинация внизу панели --------------------------------------------------- */
+
+.att-grid .att-pager {
+  height: 36px;
+  margin-top: 6px;
+}
+
+.att-pager p {
+  font-size: 12.5px;
+}
+
+.att-pages__arrow,
+.att-pages__one,
+.att-pages__next {
+  height: 30px;
+}
+
+/* --- правая колонка ----------------------------------------------------------- */
+
+.att-attention {
+  padding: 10px 14px 6px;
+}
+
+.att-attention__title {
+  margin-bottom: 4px;
+  font-size: 15.5px;
+  line-height: 21px;
+}
+
+.att-attention__row {
+  height: 34px;
+  gap: 10px;
+}
+
+.att-attention__row span {
+  font-size: 13.5px;
+}
+
+.att-attention__row svg:first-child {
+  width: 20px;
+  height: 20px;
+}
+
+.att-person {
+  padding: 12px 12px 12px 14px;
+}
+
+.att-person__who {
+  flex: none;
+  gap: 12px;
+}
+
+.att-person__face {
+  width: 56px;
+  height: 56px;
+  font-size: 18px;
+}
+
+.att-person__name {
+  font-size: 15px;
+  line-height: 20px;
+}
+
+.att-person__number {
+  font-size: 12.5px;
+  line-height: 17px;
+}
+
+/* Середина карточки — единственное, что прокручивается в правой
+   колонке: шапка с фамилией и кнопки внизу остаются на месте. */
+.att-person__scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.att-person__facts {
+  grid-template-columns: 104px minmax(0, 1fr);
+  margin-top: 10px;
+  padding-bottom: 10px;
+}
+
+.att-person__facts dt {
+  font-size: 13px;
+}
+
+.att-person__facts dd {
+  font-size: 13.5px;
+}
+
+.att-person__day {
+  margin-top: 8px;
+}
+
+.att-person__label {
+  font-size: 12.5px;
+}
+
+.att-person__total {
+  margin: 2px 0 8px;
+  font-size: 18px;
+  line-height: 23px;
+}
+
+.att-events li {
+  height: 22px;
+  gap: 14px;
+  font-size: 12.5px;
+}
+
+.att-events li b {
+  font-size: 13px;
+}
+
+.att-person__blank {
+  margin: 10px 0 12px;
+  padding: 12px;
+  gap: 4px;
+}
+
+.att-person__blankIcon {
+  width: 32px;
+  height: 32px;
+}
+
+.att-person__blankTitle {
+  font-size: 14px;
+}
+
+.att-person__blankText {
+  font-size: 12.5px;
+}
+
+/* Кнопки прибиты к низу карточки: место им даёт прокрутка середины, а
+   не `margin-top: auto`, и сжиматься они не должны. */
+.att-person__actions {
+  flex: none;
+  margin-top: 0;
+  gap: 10px;
+  padding-top: 10px;
+}
+
+.att-person__actions .att-btn {
+  height: 38px;
+  font-size: 13px;
 }
