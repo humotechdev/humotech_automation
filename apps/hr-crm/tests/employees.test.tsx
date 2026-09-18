@@ -76,7 +76,7 @@ describe('список', () => {
     renderApp('/employees');
 
     expect((await screen.findAllByText('Каримов Алишер')).length).toBeGreaterThan(0);
-    expect(screen.getAllByText('HT-001').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Ташкент').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Специалист поддержки').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Операционный отдел').length).toBeGreaterThan(0);
     // В графике нет дней и часов — показывается его название, а не пустота.
@@ -114,16 +114,21 @@ describe('список', () => {
   });
 
   test('номер страницы уходит на сервер сдвигом выборки', async () => {
-    // Двенадцать человек по восемь на странице — две страницы. Вторая
-    // запрашивается сдвигом, а не курсором: на неё можно перейти сразу.
-    const calls = network();
+    // На странице шестнадцать человек, поэтому для второй страницы их
+    // должно быть больше. Вторая запрашивается сдвигом, а не курсором:
+    // на неё можно перейти сразу.
+    const calls = network((path) =>
+      path.includes('/employees/counts')
+        ? json(200, { total: 20, ACTIVE: 20, SUSPENDED: 0, TERMINATED: 0 })
+        : null,
+    );
     renderApp('/employees');
     await screen.findAllByText('Каримов Алишер');
 
     fireEvent.click(screen.getByRole('button', { name: '2' }));
 
     await waitFor(() =>
-      expect(listCalls(calls).some((c) => c.url.includes('offset=8'))).toBe(true),
+      expect(listCalls(calls).some((c) => c.url.includes('offset=16'))).toBe(true),
     );
     expect(screen.queryByRole('button', { name: '3' })).toBeNull();
   });
@@ -168,24 +173,33 @@ describe('карточка', () => {
     expect(screen.queryByRole('dialog', { name: 'Карточка сотрудника' })).toBeNull();
   });
 
-  test('открывается кнопкой «Открыть профиль»', async () => {
-    network();
+  test('«Открыть профиль» открывает карточку сотрудника страницей', async () => {
+    // Человек просит карточку — он и должен получить карточку, а не
+    // окно поверх списка.
+    network((path) =>
+      /\/employees\/e-1\/$/.test(path)
+        ? json(200, { ...PERSON, current_assignment: PERSON.current_assignment })
+        : null,
+    );
     renderApp('/employees');
     await screen.findAllByText('Каримов Алишер');
     const [open] = await screen.findAllByRole('button', { name: 'Открыть профиль' });
     fireEvent.click(open as HTMLElement);
 
-    expect(await screen.findByRole('dialog', { name: 'Карточка сотрудника' })).toBeTruthy();
+    expect(await screen.findByRole('link', { name: /Все сотрудники/ })).toBeTruthy();
+    expect(screen.queryByRole('dialog', { name: 'Карточка сотрудника' })).toBeNull();
   });
 
   test('приглашение Telegram не создаётся само при открытии', async () => {
     // Открытие карточки не должно раздавать ссылки доступа.
-    const calls = network();
+    const calls = network((path) =>
+      /\/employees\/e-1\/$/.test(path) ? json(200, PERSON) : null,
+    );
     renderApp('/employees');
     await screen.findAllByText('Каримов Алишер');
     const [open] = await screen.findAllByRole('button', { name: 'Открыть профиль' });
     fireEvent.click(open as HTMLElement);
-    await screen.findByRole('dialog', { name: 'Карточка сотрудника' });
+    await screen.findByRole('link', { name: /Все сотрудники/ });
 
     expect(calls.filter((c) => c.method === 'POST' && c.url.includes('invitations'))).toHaveLength(0);
   });

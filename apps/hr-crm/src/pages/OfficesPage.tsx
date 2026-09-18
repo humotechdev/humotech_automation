@@ -26,7 +26,6 @@ import {
   AREA_NAMES, UzbekistanMap, areaOf, loadAreas, type Area, type MapOffice,
 } from '../components/UzbekistanMap';
 import { formatTime, useBlock, type Block } from '../features/dashboard/data';
-import { useSession } from '../features/auth/session';
 import '../styles/offices.css';
 
 const STATUS_TITLE: Record<string, string> = {
@@ -70,9 +69,12 @@ export function needsSetup(row: OfficeStats): boolean {
 type View = 'map' | 'list' | 'regions';
 
 export function OfficesPage() {
-  const session = useSession();
-  const can = (code: string) =>
-    session.status === 'authenticated' && session.user.permissions.includes(code);
+  /*
+   * Прав в интерфейсе нет: администратор один, и ему открыто всё.
+   * Проверку исполняет сервер — он и ответит отказом, если когда-нибудь
+   * появится учётная запись с урезанным доступом.
+   */
+  const can = (_code: string) => true;
 
   const [params, setParams] = useSearchParams();
   const raw = params.get('view') ?? (params.get('tab') === 'regions' ? 'regions' : 'map');

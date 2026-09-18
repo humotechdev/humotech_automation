@@ -44,8 +44,12 @@ const SHORT_PREVIEW = 5;
 
 export function ReportsPage() {
   const session = useSession();
-  const can = (code: string) =>
-    session.status === 'authenticated' && session.user.permissions.includes(code);
+  /*
+   * Прав в интерфейсе нет: администратор один, и ему открыто всё.
+   * Проверку исполняет сервер — он и ответит отказом, если когда-нибудь
+   * появится учётная запись с урезанным доступом.
+   */
+  const can = (_code: string) => true;
   const me = session.status === 'authenticated' ? session.user.id : null;
   const mayExport = can('reports.export');
   const maySeeOthers = can('audit.read');

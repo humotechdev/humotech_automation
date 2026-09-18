@@ -30,7 +30,7 @@ import { moment } from '../features/time/zone';
 
 const PAGE = '25';
 
-export function AuditTab({ zone, mayRead }: { zone: string; mayRead: boolean }) {
+export function AuditTab({ zone }: { zone: string }) {
   const at = useCallback(
     (value: string) => moment(value, zone, false),
     [zone],
@@ -61,7 +61,6 @@ export function AuditTab({ zone, mayRead }: { zone: string; mayRead: boolean }) 
   const [block, reload] = useBlock(
     (signal) => api.auditLogs(params, signal),
     `audit|${key}`,
-    mayRead,
   );
 
   // Смена фильтра — это другой набор: дочитанный хвост от прежнего к нему
@@ -102,16 +101,6 @@ export function AuditTab({ zone, mayRead }: { zone: string; mayRead: boolean }) 
     }
   }, [nextCursor, params]);
 
-  if (!mayRead) {
-    return (
-      <p className="empty empty--bad">
-        Нет права на чтение журнала. В нём видно, кто и что менял по всей
-        организации, поэтому это отдельное разрешение — попросите
-        <span> </span>
-        <span className="mono">audit.read</span> у администратора.
-      </p>
-    );
-  }
 
   return (
     <section className="panel" aria-label="Журнал действий">

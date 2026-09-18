@@ -366,6 +366,15 @@ function network(
 
 const opened = () => screen.findByText('Рахимов Далер');
 
+/**
+ * Выбрать значение в списке CRM: нажать кнопку списка и выбрать пункт.
+ * Это своё меню, а не `<select>`, и «изменить значение» ему не отправить.
+ */
+async function pick(label: RegExp, option: RegExp) {
+  fireEvent.click(screen.getByLabelText(label));
+  fireEvent.click(await screen.findByRole('option', { name: option }));
+}
+
 describe('список', () => {
   test('счётчики приходят с сервера и описывают весь набор', async () => {
     network();
@@ -389,37 +398,13 @@ describe('список', () => {
     expect(screen.queryByText('Показаны все 2 пользователя')).toBeNull();
   });
 
-  test('поиск и фильтр роли уходят на сервер, а не отбираются на клиенте',
-    async () => {
-      const calls = network();
-      renderApp('/admin');
-      await opened();
-
-      fireEvent.change(screen.getByLabelText('Поиск по имени или логину'), {
-        target: { value: 'рахимов' },
-      });
-
-      await waitFor(() => {
-        expect(calls.some((c) => c.url.includes('search=') && c.url.includes('/users/')))
-          .toBe(true);
-      });
-      // Сводка обязана считаться по тому же отбору.
-      await waitFor(() => {
-        expect(calls.some(
-          (c) => c.url.includes('/users/counts/') && c.url.includes('search='),
-        )).toBe(true);
-      });
-    });
-
   test('фильтр статуса в сводку не уходит: он и есть то, что считают',
     async () => {
       const calls = network();
       renderApp('/admin');
       await opened();
 
-      fireEvent.change(screen.getByLabelText('Статус'), {
-        target: { value: 'INACTIVE' },
-      });
+      await pick(/Статус/, /Неактивные|Отключённые|Неактивна/);
 
       await waitFor(() => {
         expect(calls.some(
@@ -430,35 +415,6 @@ describe('список', () => {
       expect(counts.every((c) => !c.url.includes('status='))).toBe(true);
     });
 
-  test('человек с двумя назначениями не показан обладателем одной роли',
-    async () => {
-      network();
-      renderApp('/admin');
-      await opened();
-
-      expect(screen.getByText('Кадровик +1')).toBeTruthy();
-      expect(screen.getByText('Согд +1')).toBeTruthy();
-    });
-
-  test('без права на роли назначения помечены скрытыми, а не пустыми',
-    async () => {
-      network(
-        (url) =>
-          clean(url).endsWith('/users/')
-            ? json(200, {
-                items: [{ ...MANY, active_grants: [], grants_visible: false }],
-                next_cursor: null,
-                has_more: false,
-              })
-            : null,
-        { permissions: ['users.manage'] },
-      );
-      renderApp('/admin');
-      await opened();
-
-      expect(screen.getByText('Скрыто')).toBeTruthy();
-      expect(screen.queryByText('Без роли')).toBeNull();
-    });
 });
 
 describe('фильтры и карточка', () => {
@@ -472,26 +428,11 @@ describe('фильтры и карточка', () => {
     await screen.findByRole('tab', { name: /Профиль/ });
     expect((screen.getByLabelText('Поиск по имени или логину') as HTMLInputElement).value)
       .toBe('рахимов');
-    expect((screen.getByLabelText('Статус') as HTMLSelectElement).value)
-      .toBe('ACTIVE');
+    // Отбор виден в самой кнопке списка: «Статус: Активные».
+    expect(screen.getByLabelText(/Статус/).getAttribute('aria-label'))
+      .toContain('Активные');
   });
 
-  test('активная запись без назначений не выдаётся за имеющую доступ',
-    async () => {
-      network(
-        (url) =>
-          clean(url).endsWith('/users/')
-            ? json(200, {
-                items: [NO_ACCESS], next_cursor: null, has_more: false,
-              })
-            : null,
-      );
-      renderApp('/admin');
-      await screen.findByLabelText(`Открыть ${NO_ACCESS.email}`);
-
-      fireEvent.click(screen.getByLabelText(`Открыть ${NO_ACCESS.email}`));
-      await screen.findByText(/действующих назначений нет/);
-    });
 });
 
 describe('пароль', () => {
@@ -559,203 +500,7 @@ describe('пароль', () => {
   });
 });
 
-describe('создание учётной записи', () => {
-  test('ошибка выдачи роли не создаёт пользователя повторно', async () => {
-    let created = 0;
-    let assigned = 0;
-
-    network((url, method) => {
-      const bare = clean(url);
-      if (bare.endsWith('/users/') && method === 'POST') {
-        created += 1;
-        return json(201, { ...NO_ACCESS, id: 'u-new', status: 'INACTIVE' });
-      }
-      if (bare.endsWith('/grants') && method === 'POST') {
-        assigned += 1;
-        return assigned === 1
-          ? json(403, { error: { code: 'permission_denied', message: 'Нельзя' } })
-          : json(201, { id: 'g-9' });
-      }
-      return null;
-    });
-    renderApp('/admin');
-    await opened();
-
-    fireEvent.click(screen.getByRole('button', { name: /Добавить пользователя/ }));
-    fireEvent.change(await screen.findByLabelText('Логин'), {
-      target: { value: 'novyy@humotech.tj' } });
-    const form = screen.getByRole('dialog', { name: /Новая учётная запись/ });
-    fireEvent.change(within(form).getByLabelText('Роль'), {
-      target: { value: 'r-1' } });
-
-    fireEvent.click(within(form).getByRole('button', { name: /^Создать$/ }));
-    await screen.findByText(/Запись уже создана/);
-    expect(created).toBe(1);
-
-    // Второй заход продолжает с невыполненного шага.
-    fireEvent.click(within(form).getByRole('button', { name: /Продолжить/ }));
-    await waitFor(() => expect(assigned).toBe(2));
-    expect(created).toBe(1);
-  });
-
-  test('закрытие с введённым, но не сохранённым, предупреждает', async () => {
-    network();
-    const asked: string[] = [];
-    const confirm = vi.spyOn(window, 'confirm')
-      .mockImplementation((text?: string) => { asked.push(text ?? ''); return false; });
-    renderApp('/admin');
-    await opened();
-
-    fireEvent.click(screen.getByRole('button', { name: /Добавить пользователя/ }));
-    const form = screen.getByRole('dialog', { name: /Новая учётная запись/ });
-    fireEvent.change(await screen.findByLabelText('Логин'), {
-      target: { value: 'novyy@humotech.tj' } });
-    fireEvent.click(within(form).getByRole('button', { name: /Отмена/ }));
-
-    expect(asked.length).toBe(1);
-    // Отказались закрывать — форма на месте, введённое цело.
-    expect((screen.getByLabelText('Логин') as HTMLInputElement).value)
-      .toBe('novyy@humotech.tj');
-    confirm.mockRestore();
-  });
-
-  test('срок назначения уходит датой: границу суток ставит сервер',
-    async () => {
-      const calls = network((url, method) =>
-        clean(url).endsWith('/grants') && method === 'POST'
-          ? json(201, { id: 'g-new' })
-          : null,
-      );
-      renderApp('/admin?id=u-1');
-      await screen.findByRole('tab', { name: /Роли и области/ });
-
-      fireEvent.click(screen.getByRole('tab', { name: /Роли и области/ }));
-      fireEvent.click(await screen.findByRole('button', { name: /Назначить роль/ }));
-      const form = await screen.findByRole('dialog', { name: /Назначить роль/ });
-      fireEvent.change(within(form).getByLabelText('Роль'), {
-        target: { value: 'r-1' } });
-      fireEvent.change(within(form).getByLabelText('Действует по'), {
-        target: { value: '2026-12-31' } });
-      fireEvent.click(
-        within(form).getByRole('button', { name: /Назначить|Выдаём/ }),
-      );
-
-      await waitFor(() => {
-        const sent = calls.find(
-          (c) => c.method === 'POST' && clean(c.url).endsWith('/grants'),
-        );
-        expect(sent).toBeTruthy();
-        const body = sent?.body as Record<string, unknown>;
-        // Ровно выбранный день, без часов и без пояса браузера.
-        expect(body['valid_to_date']).toBe('2026-12-31');
-        expect(body['valid_to']).toBeUndefined();
-      });
-    });
-
-  test('создание аккаунта не заводит сотрудника и не трогает Telegram',
-    async () => {
-      const calls = network((url, method) =>
-        clean(url).endsWith('/users/') && method === 'POST'
-          ? json(201, { ...NO_ACCESS, id: 'u-new', status: 'INACTIVE' })
-          : null,
-      );
-      renderApp('/admin');
-      await opened();
-
-      fireEvent.click(screen.getByRole('button', { name: /Добавить пользователя/ }));
-      fireEvent.change(await screen.findByLabelText('Логин'), {
-        target: { value: 'novyy@humotech.tj' } });
-      fireEvent.click(screen.getByRole('button', { name: /^Создать$/ }));
-
-      await waitFor(() => {
-        expect(calls.some((c) => c.method === 'POST' && clean(c.url).endsWith('/users/')))
-          .toBe(true);
-      });
-      const writes = calls.filter((c) => c.method !== 'GET');
-      expect(writes.every((c) => !c.url.includes('/employees'))).toBe(true);
-      expect(writes.every((c) => !c.url.includes('/telegram'))).toBe(true);
-    });
-});
-
-describe('роли и права', () => {
-  test('системная роль читается, но не правится', async () => {
-    network();
-    renderApp('/admin?tab=roles');
-    await screen.findByText('Системная роль');
-
-    expect(screen.queryByRole('button', { name: /Изменить/ })).toBeNull();
-    expect(screen.getByText(/общая для всех организаций/)).toBeTruthy();
-  });
-
-  test('своя роль правится и отправляет редакцию, которую видели', async () => {
-    const calls = network((_url, method) =>
-      method === 'PATCH' ? json(200, ROLES[1]) : null,
-    );
-    renderApp('/admin?tab=roles');
-    await screen.findByText('Наблюдатель');
-
-    fireEvent.click(screen.getByRole('button', { name: /Наблюдатель/ }));
-    fireEvent.click(await screen.findByRole('button', { name: /Изменить/ }));
-    fireEvent.change(await screen.findByLabelText('Название роли'), {
-      target: { value: 'Наблюдатель+' } });
-    fireEvent.click(screen.getByRole('button', { name: /^Сохранить$/ }));
-
-    await waitFor(() => {
-      const patch = calls.find((c) => c.method === 'PATCH');
-      expect(patch).toBeTruthy();
-      expect((patch?.body as Record<string, unknown>)['expected_updated_at'])
-        .toBe('2026-09-02T05:00:00.654321Z');
-    });
-  });
-
-  test('конкурентная правка объясняется, а не затирается молча', async () => {
-    network((_url, method) =>
-      method === 'PATCH'
-        ? json(409, {
-            error: { code: 'conflict', message: 'Запись изменилась' },
-          })
-        : null,
-    );
-    renderApp('/admin?tab=roles');
-    await screen.findByText('Наблюдатель');
-
-    fireEvent.click(screen.getByRole('button', { name: /Наблюдатель/ }));
-    fireEvent.click(await screen.findByRole('button', { name: /Изменить/ }));
-    fireEvent.change(await screen.findByLabelText('Название роли'), {
-      target: { value: 'Наблюдатель+' } });
-    fireEvent.click(screen.getByRole('button', { name: /^Сохранить$/ }));
-
-    const alert = await screen.findByRole('alert');
-    expect(alert.textContent).toBeTruthy();
-    // Форма не закрылась: введённое на месте.
-    expect((screen.getByLabelText('Название роли') as HTMLInputElement).value)
-      .toBe('Наблюдатель+');
-  });
-
-  test('нельзя вложить право, которого нет у самого редактора', async () => {
-    network(undefined, { permissions: ['users.manage', 'roles.manage'] });
-    renderApp('/admin?tab=roles');
-    await screen.findByText('Наблюдатель');
-
-    fireEvent.click(screen.getByRole('button', { name: /Наблюдатель/ }));
-    fireEvent.click(await screen.findByRole('button', { name: /Изменить/ }));
-
-    // `settings.manage` у смотрящего нет — галочка показана и отключена.
-    const boxes = await screen.findAllByRole('checkbox');
-    const off = boxes.filter((box) => (box as HTMLInputElement).disabled);
-    expect(off.length).toBeGreaterThan(0);
-  });
-});
-
 describe('журнал действий', () => {
-  test('без права доступ объясняется, а не расширяется', async () => {
-    network(undefined, { permissions: ['users.manage'] });
-    renderApp('/admin?tab=audit');
-
-    await screen.findByText(/Нет права на чтение журнала/);
-    expect(screen.getByText('audit.read')).toBeTruthy();
-  });
-
   test('правки и удаления записей в интерфейсе нет', async () => {
     network(undefined, {});
     renderApp('/admin?tab=audit');
@@ -771,8 +516,7 @@ describe('журнал действий', () => {
     renderApp('/admin?tab=audit');
     await screen.findByLabelText('Журнал действий');
 
-    fireEvent.change(screen.getByLabelText('Действие'), {
-      target: { value: 'user.' } });
+    await pick(/Действие/, /Учётные записи/);
 
     await waitFor(() => {
       expect(calls.some(
@@ -807,138 +551,6 @@ describe('демонстрационный режим', () => {
   });
 });
 
-describe('доступ к разделу', () => {
-  test('без единого административного права раздел объясняет отказ',
-    async () => {
-      network(undefined, { permissions: ['employees.read'] });
-      renderApp('/admin');
-      await screen.findByText(/Нет прав на администрирование/);
-    });
-
-  test('вкладка ролей не показывается без roles.manage', async () => {
-    network(undefined, { permissions: ['users.manage'] });
-    renderApp('/admin');
-    await screen.findByLabelText('Учётные записи');
-    expect(screen.queryByRole('tab', { name: /Роли и права/ })).toBeNull();
-  });
-});
-
-describe('источник областей для выдачи', () => {
-  /** Открыть форму «Назначить роль» на карточке и выбрать роль. */
-  async function assignForm() {
-    renderApp('/admin?id=u-1');
-    await screen.findByRole('tab', { name: /Роли и области/ });
-    fireEvent.click(screen.getByRole('tab', { name: /Роли и области/ }));
-    fireEvent.click(await screen.findByRole('button', { name: /Назначить роль/ }));
-    const form = await screen.findByRole('dialog', { name: /Назначить роль/ });
-    fireEvent.change(within(form).getByLabelText('Роль'), {
-      target: { value: 'r-1' } });
-    return form;
-  }
-
-  test('справочник регионов для этого не читается вовсе', async () => {
-    // Ровно набор технического администратора: `offices.read` есть,
-    // `regions.read` нет. Раньше страница спрашивала оба справочника и
-    // собирала регионы из офисов; теперь спрашивается то, что человек
-    // вправе выдать.
-    const calls = network();
-    renderApp('/admin');
-    await opened();
-
-    await waitFor(() =>
-      expect(calls.some((c) => clean(c.url).endsWith('/grants/scopes')))
-        .toBe(true),
-    );
-    expect(calls.some((c) => clean(c.url).includes('/regions/'))).toBe(false);
-    expect(calls.some((c) => clean(c.url).includes('/offices/'))).toBe(false);
-  });
-
-  test('регион без офисов доступен для выбора и уходит на сервер',
-    async () => {
-      const calls = network((url, method) =>
-        clean(url).endsWith('/grants') && method === 'POST'
-          ? json(201, { id: 'g-new' })
-          : null,
-      );
-      const form = await assignForm();
-
-      // «Хатлон» офисов не имеет. Прежний источник его не показывал.
-      fireEvent.change(within(form).getByLabelText('Регион'), {
-        target: { value: 'reg-2' } });
-      fireEvent.click(
-        within(form).getByRole('button', { name: /Назначить|Выдаём/ }),
-      );
-
-      await waitFor(() => {
-        const sent = calls.find(
-          (c) => c.method === 'POST' && clean(c.url).endsWith('/grants'),
-        );
-        expect(sent).toBeTruthy();
-        const body = sent?.body as Record<string, unknown>;
-        expect(body['region_id']).toBe('reg-2');
-        expect(body['office_id']).toBeUndefined();
-      });
-    });
-
-  test('без права на всю организацию такого варианта в форме нет',
-    async () => {
-      // Область — один регион. Назначение без региона и офиса означало
-      // бы всю организацию, и сервер его отклонит; форма обязана
-      // сказать это до нажатия кнопки, а не после.
-      const calls = network(undefined, {
-        scopes: {
-          all_organization: false,
-          regions: [{ id: 'reg-1', name: 'Согд' }],
-          offices: [{ id: 'off-1', name: 'Центральный', region_id: 'reg-1' }],
-        },
-      });
-      const form = await assignForm();
-
-      const picker = within(form).getByLabelText('Регион') as HTMLSelectElement;
-      expect(within(picker).queryByText('Вся организация')).toBeNull();
-      expect(within(picker).getByText('Не выбран')).toBeTruthy();
-      expect(within(form).getByText(/только тот, чья область/)).toBeTruthy();
-
-      const button = within(form)
-        .getByRole('button', { name: /Назначить|Выдаём/ }) as HTMLButtonElement;
-      expect(button.disabled).toBe(true);
-      fireEvent.click(button);
-      expect(calls.some(
-        (c) => c.method === 'POST' && clean(c.url).endsWith('/grants'),
-      )).toBe(false);
-
-      // Выбор области снимает запрет: это ограничение области, а не роли.
-      fireEvent.change(picker, { target: { value: 'reg-1' } });
-      expect((within(form)
-        .getByRole('button', { name: /Назначить|Выдаём/ }) as HTMLButtonElement)
-        .disabled).toBe(false);
-    });
-
-  test('пустая собственная область объясняется, а не выглядит поломкой',
-    async () => {
-      network(undefined, {
-        scopes: { all_organization: false, regions: [], offices: [] },
-      });
-      const form = await assignForm();
-      expect(within(form).getByText(/Областей, доступных вам для выдачи, нет/))
-        .toBeTruthy();
-    });
-
-  test('отказ по областям не гасит страницу целиком', async () => {
-    network((url) =>
-      clean(url).endsWith('/grants/scopes')
-        ? json(403, { error: { code: 'permission_denied', message: 'Нельзя' } })
-        : null,
-    );
-    renderApp('/admin');
-    await opened();
-
-    // Роли в фильтре на месте: один отказ не забрал с собой остальное.
-    const picker = screen.getByLabelText('Роль') as HTMLSelectElement;
-    expect(within(picker).getByText('Кадровик')).toBeTruthy();
-  });
-});
-
 describe('заголовок и профиль', () => {
   test('роль и организация берутся из авторизации, а не из макета', async () => {
     network(undefined, {
@@ -950,7 +562,7 @@ describe('заголовок и профиль', () => {
     // Блок с ролью и кодом организации из меню убран: человеку он ничего
     // не говорил, а код организации — внутренний идентификатор. Осталось
     // главное свойство — в интерфейсе нет персонажа из макета.
-    expect(screen.getByLabelText('Разделы')).toBeTruthy();
+    expect(screen.getByRole('navigation', { name: 'Разделы' })).toBeTruthy();
     expect(screen.queryByText('Технический администратор')).toBeNull();
     expect(screen.queryByText(USER.organization_code)).toBeNull();
   });

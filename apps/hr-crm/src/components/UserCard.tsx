@@ -16,65 +16,42 @@
  * значение уходит одним запросом и стирается сразу после ответа.
  */
 
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 
 import * as api from '../api/crm';
 import { ApiFailure, messageFor } from '../api/errors';
 import { AppIcon } from './AppIcon';
-import { AppSelectField } from './AppSelect';
-import { DatePicker } from './DatePicker';
-import { useBlock, today, type Block } from '../features/dashboard/data';
+import { useBlock, type Block } from '../features/dashboard/data';
 import {
-  PHASE_TITLE,
   STATUS,
   accessNote,
   changes,
   actionTitle,
   entityTitle,
-  grantBlockedBecause,
-  grantPhase,
   initials,
-  permissionTitle,
-  scopeTitle,
-  sections,
   userSubtitle,
   userTitle,
-  scopeHint,
-  validityTitle,
-  type Phase,
 } from '../features/admin/model';
-import { dayInZone, moment } from '../features/time/zone';
-
-type Rights = { users: boolean; roles: boolean; audit: boolean };
+import { moment } from '../features/time/zone';
 
 type Props = {
   user: api.CrmUser;
   zone: string;
-  rights: Rights;
-  scopes: api.AssignableScopes;
-  /** Прочитан ли список областей. Отказ сети — не пустая область. */
-  scopesKnown: boolean;
-  roles: api.RoleFull[];
-  catalog: api.PermissionRow[];
   onClose: () => void;
   /** Что-то изменилось: перечитать строку, список и счётчики. */
   onChanged: (user?: api.CrmUser) => void;
 };
 
-type Inner = 'profile' | 'grants' | 'history';
+type Inner = 'profile' | 'history';
 
 const INNER: Array<{ key: Inner; title: string }> = [
   { key: 'profile', title: 'Профиль' },
-  { key: 'grants', title: 'Роли и области' },
   { key: 'history', title: 'История' },
 ];
 
-export function UserCard({
-  user, zone, rights, scopes, scopesKnown, roles, catalog,
-  onClose, onChanged,
-}: Props) {
+export function UserCard({ user, zone, onClose, onChanged }: Props) {
   const [tab, setTab] = useState<Inner>('profile');
-  const [form, setForm] = useState<'password' | 'assign' | null>(null);
+  const [form, setForm] = useState<'password' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [acting, setActing] = useState(false);
   // Замок на ссылке, а не в состоянии: `setActing` применяется к
@@ -125,13 +102,11 @@ export function UserCard({
           </div>
         </div>
         <div className="view__actions">
-          {rights.users && (
-            <button type="button" className="btn btn--small"
-                    onClick={() => { setForm('password'); setError(null); }}>
-              <AppIcon name="key" size={16} />
-              Задать пароль
-            </button>
-          )}
+          <button type="button" className="btn btn--small"
+                  onClick={() => { setForm('password'); setError(null); }}>
+            <AppIcon name="key" size={16} />
+            Задать пароль
+          </button>
           <button type="button" className="tool" aria-label="Закрыть карточку"
                   onClick={onClose}>
             <AppIcon name="cross" size={16} />
@@ -142,7 +117,6 @@ export function UserCard({
       <div className="tabs tabs--inner" role="tablist" aria-label="Разделы карточки">
         {INNER.map((item) => {
           const on = item.key === tab;
-          if (item.key === 'history' && !rights.audit) return null;
           return (
             <button key={item.key} type="button" role="tab" aria-selected={on}
                     className={on ? 'tab tab--on' : 'tab'}
@@ -158,28 +132,14 @@ export function UserCard({
         {note && <p className="note note--dim">{note}</p>}
 
         {tab === 'profile' && (
-          <Profile user={user} rights={rights} at={at} acting={acting} act={act} />
+          <Profile user={user} at={at} acting={acting} act={act} />
         )}
-        {tab === 'grants' && (
-          <Grants user={user} zone={zone} rights={rights} roles={roles}
-                  catalog={catalog}
-                  onOpenAssign={() => { setForm('assign'); setError(null); }}
-                  onChanged={onChanged} />
-        )}
-        {tab === 'history' && rights.audit && (
-          <History user={user} at={at} />
-        )}
+        {tab === 'history' && <History user={user} at={at} />}
       </div>
 
       {form === 'password' && (
         <PasswordForm user={user} onClose={() => setForm(null)}
                       onDone={(fresh) => { setForm(null); onChanged(fresh); }} />
-      )}
-      {form === 'assign' && (
-        <AssignForm user={user} roles={roles} scopes={scopes}
-                    scopesKnown={scopesKnown}
-                    onClose={() => setForm(null)}
-                    onDone={() => { setForm(null); onChanged(); }} />
       )}
     </section>
   );
@@ -187,9 +147,8 @@ export function UserCard({
 
 // --- профиль ----------------------------------------------------------------
 
-function Profile({ user, rights, at, acting, act }: {
+function Profile({ user, at, acting, act }: {
   user: api.CrmUser;
-  rights: Rights;
   at: (value: string) => string;
   acting: boolean;
   act: (run: () => Promise<api.CrmUser>) => Promise<void>;
@@ -232,8 +191,7 @@ function Profile({ user, rights, at, acting, act }: {
         Управление ею в этот раздел не входит.
       </p>
 
-      {rights.users && (
-        <div className="side-panel__actions">
+      <div className="side-panel__actions">
           {active ? (
             <button type="button" className="btn" disabled={acting}
                     onClick={() => void act(() => api.deactivateCrmUser(user.id))}>
@@ -244,334 +202,17 @@ function Profile({ user, rights, at, acting, act }: {
                     onClick={() => void act(() => api.activateCrmUser(user.id))}>
               Восстановить доступ
             </button>
-          )}
-        </div>
-      )}
+        )}
+      </div>
       <p className="muted">
         {active
           ? 'Отключение закрывает вход в CRM. Сотрудник и его отметки не '
             + 'затрагиваются: это учётная запись, а не трудовые отношения.'
-          : 'Восстановление откроет вход, если у записи есть пароль. Роли '
-            + 'при отключении не отзывались.'}
+          : 'Восстановление откроет вход, если у записи есть пароль.'}
       </p>
     </>
   );
 }
-
-// --- роли и области ---------------------------------------------------------
-
-function Grants({
-  user, zone, rights, roles, catalog, onOpenAssign, onChanged,
-}: {
-  user: api.CrmUser;
-  zone: string;
-  rights: Rights;
-  roles: api.RoleFull[];
-  catalog: api.PermissionRow[];
-  onOpenAssign: () => void;
-  onChanged: () => void;
-}) {
-  const [attempt, setAttempt] = useState(0);
-  const [picked, setPicked] = useState<string | null>(null);
-  const [dated, setDated] = useState<api.Grant | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const busy = useRef(false);
-
-  // Два запроса намеренно: «действует» решает сервер, а не сравнение дат
-  // здесь. Клиент лишь раскладывает остальные на «ещё не началось» и
-  // «уже закончилось».
-  const [block] = useBlock(
-    (signal) =>
-      Promise.all([
-        api.userGrants(user.id, true, signal),
-        api.userGrants(user.id, false, signal),
-      ]).then(([all, live]) => ({
-        items: all.items,
-        active: new Set(live.items.map((item) => item.id)),
-      })),
-    `grants|${user.id}|${attempt}`,
-    rights.roles,
-  );
-
-  const revoke = useCallback(
-    async (id: string) => {
-      if (busy.current) return;
-      busy.current = true;
-      setError(null);
-      try {
-        await api.revokeGrant(id);
-        setAttempt((n) => n + 1);
-        onChanged();
-      } catch (failure) {
-        setError(
-          failure instanceof ApiFailure
-            ? messageFor(failure)
-            : 'Не удалось отозвать назначение.',
-        );
-      } finally {
-        busy.current = false;
-      }
-    },
-    [onChanged],
-  );
-
-  if (!rights.roles) {
-    return (
-      <p className="empty">
-        Нет права управлять ролями. Назначения этого человека скрыты — не
-        потому, что их нет.
-      </p>
-    );
-  }
-  if (block.state === 'loading') return <p className="empty">Читаем назначения…</p>;
-  if (block.state === 'denied') return <p className="empty">Сессия истекла.</p>;
-  if (block.state === 'error') {
-    return (
-      <p className="empty empty--bad">
-        Не удалось загрузить назначения.{' '}
-        <button type="button" className="link" onClick={() => setAttempt((n) => n + 1)}>
-          Повторить
-        </button>
-      </p>
-    );
-  }
-
-  const { items, active } = block.data;
-  const phases = new Map<string, Phase>(
-    items.map((item) => [item.id, grantPhase(item, active)]),
-  );
-  const live = items.filter((item) => phases.get(item.id) === 'active');
-  const rest = items.filter((item) => phases.get(item.id) !== 'active');
-  const role = picked ? roles.find((item) => item.id === picked) : undefined;
-
-  return (
-    <>
-      {error && <p className="empty empty--bad" role="alert">{error}</p>}
-
-      <p className="side-panel__label">
-        Назначения доступа <span className="tab__count">{live.length}</span>
-      </p>
-
-      {live.length === 0 && (
-        <p className="empty">
-          Действующих назначений нет. Учётная запись войдёт в CRM и не увидит
-          ни одного раздела.
-        </p>
-      )}
-
-      <ul className="grants">
-        {live.map((grant) => (
-          <li key={grant.id} className="grant">
-            <div className="grant__head">
-              <AppIcon name="admin" size={16} />
-              <b className="grant__name">{grant.role_name}</b>
-              {roles.find((item) => item.id === grant.role_id)?.is_system && (
-                <span className="chip">Системная роль</span>
-              )}
-            </div>
-            <dl className="facts facts--tight">
-              <div className="facts__row">
-                <dt>Область</dt>
-                <dd>{scopeTitle(grant)}</dd>
-              </div>
-              <div className="facts__row">
-                <dt>Действует с</dt>
-                <dd>{moment(grant.valid_from, zone, false)}</dd>
-              </div>
-              <div className="facts__row">
-                <dt>Срок</dt>
-                <dd>
-                  {validityTitle(grant, (value) => moment(value, zone, false))}
-                </dd>
-              </div>
-            </dl>
-            <div className="grant__actions">
-              <button type="button" className="btn btn--small"
-                      onClick={() => setPicked(
-                        picked === grant.role_id ? null : grant.role_id,
-                      )}>
-                {picked === grant.role_id ? 'Скрыть права' : 'Права роли'}
-              </button>
-              <button type="button" className="btn btn--small"
-                      onClick={() => setDated(grant)}>
-                Изменить срок
-              </button>
-              <button type="button" className="btn btn--small"
-                      onClick={() => void revoke(grant.id)}>
-                Отозвать
-              </button>
-            </div>
-          </li>
-        ))}
-      </ul>
-
-      {rest.length > 0 && (
-        <>
-          <p className="side-panel__label">Недействующие</p>
-          <ul className="grants grants--dim">
-            {rest.map((grant) => (
-              <li key={grant.id} className="grant">
-                <div className="grant__head">
-                  <AppIcon name="clock" size={16} />
-                  <b className="grant__name">{grant.role_name}</b>
-                  <span className="chip">{PHASE_TITLE[phases.get(grant.id)!]}</span>
-                </div>
-                <p className="muted">
-                  {scopeTitle(grant)} · с {moment(grant.valid_from, zone, false)}
-                  {grant.valid_to
-                    ? ` по ${moment(grant.valid_to, zone, false)}`
-                    : ''}
-                </p>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-
-      {role && (
-        <>
-          <p className="side-panel__label">Разрешения роли «{role.name}»</p>
-          <p className="muted">
-            Это права САМОЙ роли. Человеку они действуют только в области
-            своего назначения.
-          </p>
-          <PermissionList codes={role.permissions} catalog={catalog} />
-        </>
-      )}
-
-      <div className="side-panel__actions">
-        <button type="button" className="btn btn--dark btn--wide" onClick={onOpenAssign}>
-          <AppIcon name="plus" size={16} />
-          Назначить роль
-        </button>
-      </div>
-      <p className="muted">Изменения прав записываются в журнал.</p>
-
-      {dated && (
-        <ValidityForm
-          grant={dated}
-          zone={zone}
-          onClose={() => setDated(null)}
-          onDone={() => {
-            setDated(null);
-            setAttempt((n) => n + 1);
-            onChanged();
-          }}
-        />
-      )}
-    </>
-  );
-}
-
-// --- срок назначения --------------------------------------------------------
-
-/**
- * Продлить или закрыть назначение, не отзывая его.
- *
- * Отправляется не только новый срок, но и прежний — тот, что был на
- * экране, — вместе с признаком сверки. Признак нужен отдельно: `null`
- * здесь означает законное «бессрочно», и по одному значению не отличить
- * «срока не было» от «срок не передали». Если тем временем назначение
- * изменил другой администратор, сервер отвечает конфликтом, а не молча
- * затирает его правку.
- */
-function ValidityForm({ grant, zone, onClose, onDone }: {
-  grant: api.Grant;
-  zone: string;
-  onClose: () => void;
-  onDone: () => void;
-}) {
-  const [until, setUntil] = useState(() => (grant.valid_to ? dayInZone(grant.valid_to, zone) : ''));
-  const [error, setError] = useState<string | null>(null);
-  const [sending, setSending] = useState(false);
-  const busy = useRef(false);
-
-  const submit = useCallback(async () => {
-    if (busy.current) return;
-    busy.current = true;
-    setSending(true);
-    setError(null);
-    try {
-      await api.setGrantValidity(grant.id, {
-        // Пусто — «бессрочно»; иначе дата, а границу суток ставит сервер.
-        ...(until ? { valid_to_date: until } : { valid_to: null }),
-        expected_valid_to: grant.valid_to,
-        check_expected: true,
-      });
-      onDone();
-    } catch (failure) {
-      setError(
-        failure instanceof ApiFailure
-          ? messageFor(failure)
-          : 'Не удалось изменить срок.',
-      );
-    } finally {
-      busy.current = false;
-      setSending(false);
-    }
-  }, [grant.id, grant.valid_to, onDone, until]);
-
-  return (
-    <Overlay title={`Срок роли «${grant.role_name}»`} onClose={onClose}>
-      <p className="muted">
-        Область: {scopeTitle(grant)}. Действует с{' '}
-        {moment(grant.valid_from, zone, false)}.
-      </p>
-      <label className="form-grid__field">
-        <span className="form-grid__label">Действует по</span>
-        <DatePicker label="Действует по" value={until} now={today()} allowEmpty
-          onChange={setUntil} />
-        <span className="field__hint">
-          Пусто — бессрочно. Прошедшая дата закрывает доступ.
-        </span>
-      </label>
-      {error && <p className="form-grid__error" role="alert">{error}</p>}
-      <div className="side-panel__actions">
-        <button type="button" className="btn" onClick={onClose}>Отмена</button>
-        <button type="button" className="btn btn--dark" disabled={sending}
-                onClick={() => void submit()}>
-          {sending ? 'Сохраняем…' : 'Сохранить срок'}
-        </button>
-      </div>
-    </Overlay>
-  );
-}
-
-/** Список разрешений с человеческими названиями из каталога. */
-export function PermissionList({ codes, catalog }: {
-  codes: string[];
-  catalog: api.PermissionRow[];
-}) {
-  const granted = useMemo(() => new Set(codes), [codes]);
-  const groups = useMemo(
-    () => sections(catalog.filter((item) => granted.has(item.code))),
-    [catalog, granted],
-  );
-  if (groups.length === 0) {
-    return <p className="empty">У роли нет ни одного разрешения.</p>;
-  }
-  return (
-    <ul className="perms">
-      {groups.map((group) => (
-        <li key={group.prefix} className="perms__group">
-          <p className="perms__title">{group.title}</p>
-          <ul className="perms__list">
-            {group.items.map((item) => (
-              <li key={item.code} className="perms__row">
-                <AppIcon name="check" size={16} />
-                <span className="perms__text">
-                  <span className="perms__name">{permissionTitle(item)}</span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-// --- история ----------------------------------------------------------------
 
 function History({ user, at }: {
   user: api.CrmUser;
@@ -744,192 +385,6 @@ function PasswordForm({ user, onClose, onDone }: {
 
 // --- назначение роли --------------------------------------------------------
 
-function AssignForm({
-  user, roles, scopes, scopesKnown, onClose, onDone,
-}: {
-  user: api.CrmUser;
-  roles: api.RoleFull[];
-  scopes: api.AssignableScopes;
-  /** Прочитан ли список областей. */
-  scopesKnown: boolean;
-  onClose: () => void;
-  onDone: () => void;
-}) {
-  const [roleId, setRoleId] = useState('');
-  const [region, setRegion] = useState('');
-  const [office, setOffice] = useState('');
-  const [until, setUntil] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [sending, setSending] = useState(false);
-  const busy = useRef(false);
-
-  const role = roles.find((item) => item.id === roleId);
-  const blocked = role ? grantBlockedBecause(role) : null;
-  // Область проверяется отдельно от роли — ровно так же, как на
-  // сервере: `_require_grantable` смотрит на права роли,
-  // `_require_within_own_scope` — на территорию, и одно от другого
-  // не зависит.
-  const wrongScope = scopeHint(scopes, region, office);
-
-  const submit = useCallback(async () => {
-    if (busy.current) return;
-    busy.current = true;
-    setSending(true);
-    setError(null);
-    try {
-      await api.assignRole({
-        user_id: user.id,
-        role_id: roleId,
-        ...(office ? { office_id: office } : {}),
-        ...(!office && region ? { region_id: region } : {}),
-        // Дата, а не момент: конец суток ставит сервер в поясе
-        // организации. Собирать момент здесь значило бы считать его по
-        // поясу браузера — и показанная дата разошлась бы с сохранённой.
-        ...(until ? { valid_to_date: until } : {}),
-      });
-      onDone();
-    } catch (failure) {
-      setError(
-        failure instanceof ApiFailure
-          ? messageFor(failure)
-          : 'Не удалось выдать роль.',
-      );
-    } finally {
-      busy.current = false;
-      setSending(false);
-    }
-  }, [office, onDone, region, roleId, until, user.id]);
-
-  return (
-    <Overlay title="Назначить роль" onClose={onClose}>
-      <label className="form-grid__field">
-        <span className="form-grid__label">Роль</span>
-        <AppSelectField label="Роль" value={roleId} onChange={setRoleId}>
-          <option value="">Выберите роль</option>
-          {roles.map((item) => (
-            <option key={item.id} value={item.id} disabled={!item.grantable}>
-              {item.name}
-              {item.is_system ? ' · системная' : ''}
-              {item.grantable ? '' : ' · недоступна'}
-            </option>
-          ))}
-        </AppSelectField>
-      </label>
-      {blocked && <p className="form-grid__error">{blocked}</p>}
-
-      <ScopePicker scopes={scopes} known={scopesKnown} hint={wrongScope}
-                   region={region} office={office}
-                   onRegion={setRegion} onOffice={setOffice} />
-
-      <label className="form-grid__field">
-        <span className="form-grid__label">Действует по</span>
-        <DatePicker label="Действует по" value={until} now={today()} allowEmpty
-          onChange={setUntil} />
-        <span className="field__hint">Пусто — без ограничения срока.</span>
-      </label>
-
-      {error && <p className="form-grid__error" role="alert">{error}</p>}
-      <div className="side-panel__actions">
-        <button type="button" className="btn" onClick={onClose}>Отмена</button>
-        <button type="button" className="btn btn--dark"
-                disabled={
-                  sending || !roleId || Boolean(blocked) || Boolean(wrongScope)
-                }
-                onClick={() => void submit()}>
-          {sending ? 'Выдаём…' : 'Назначить'}
-        </button>
-      </div>
-    </Overlay>
-  );
-}
-
-/**
- * Выбор области назначения. Один на обе формы — и в карточке, и при
- * заведении записи.
- *
- * Варианты приходят с сервера (`/grants/scopes`) и совпадают с
- * проверкой при выдаче: они считаются тем же кодом. Собирать регионы
- * из видимых офисов, как делала форма раньше, нельзя — регион без
- * офисов пропал бы вместе с возможностью выдать назначение на него,
- * а у технического администратора справочника регионов нет вовсе.
- *
- * «Вся организация» появляется только у того, кто вправе её выдать.
- * Раньше этот вариант стоял первым у всех, был выбран по умолчанию —
- * и администратор одного региона узнавал об отказе после нажатия
- * кнопки.
- */
-export function ScopePicker({
-  scopes, known, hint, region, office, onRegion, onOffice,
-}: {
-  scopes: api.AssignableScopes;
-  known: boolean;
-  /** Почему выбранное отправить нельзя. Считает `scopeHint`. */
-  hint: string | null;
-  region: string;
-  office: string;
-  onRegion: (id: string) => void;
-  onOffice: (id: string) => void;
-}) {
-  // Офисы выбранного региона. Без региона — все доступные: область
-  // «офис» самостоятельна и региона не требует.
-  const here = region
-    ? scopes.offices.filter((item) => item.region_id === region)
-    : scopes.offices;
-
-  return (
-    <>
-      {!known && (
-        <p className="note note--dim">
-          Список доступных областей не загрузился. Выбрать область сейчас
-          нельзя; закройте форму и откройте её заново.
-        </p>
-      )}
-
-      <label className="form-grid__field">
-        <span className="form-grid__label">Регион</span>
-        <AppSelectField label="Регион" value={region}
-                onChange={(value) => {
-                  // Офис из другого региона несовместим с выбором:
-                  // показанное обязано совпадать с отправляемым.
-                  onRegion(value);
-                  onOffice('');
-                }}>
-          <option value="">
-            {scopes.all_organization ? 'Вся организация' : 'Не выбран'}
-          </option>
-          {scopes.regions.map((item) => (
-            <option key={item.id} value={item.id}>{item.name}</option>
-          ))}
-        </AppSelectField>
-      </label>
-
-      <label className="form-grid__field">
-        <span className="form-grid__label">Офис</span>
-        <AppSelectField label="Офис" value={office} onChange={onOffice}>
-          <option value="">
-            {region || scopes.all_organization
-              ? 'Весь выбранный уровень'
-              : 'Не выбран'}
-          </option>
-          {here.map((item) => (
-            <option key={item.id} value={item.id}>{item.name}</option>
-          ))}
-        </AppSelectField>
-      </label>
-
-      {hint && <p className="note note--dim">{hint}</p>}
-    </>
-  );
-}
-
-/**
- * Небольшое окно поверх карточки. Закрывается по Esc и по фону.
- *
- * Собственный класс `.dialog`, а не `.editor`: та в этом проекте —
- * многострочное ПОЛЕ ВВОДА, и окно, надевшее её имя, разъезжалось во всю
- * ширину экрана. `.veil` при этом остаётся общей: это ровно затемнение
- * фона, и второй такой заводить незачем.
- */
 export function Overlay({ title, children, onClose }: {
   title: string;
   children: React.ReactNode;
@@ -954,5 +409,4 @@ export function Overlay({ title, children, onClose }: {
   );
 }
 
-export type { Rights };
 export type { Block };

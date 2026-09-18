@@ -44,16 +44,18 @@ import {
   type Tab,
 } from '../features/notifications/model';
 import { today, useBlock, type Block } from '../features/dashboard/data';
-import { useSession } from '../features/auth/session';
 import { clock, moment } from '../features/time/zone';
 import { useStickyState } from '../features/shell/sticky';
 
 const PAGE = '20';
 
 export function NotificationsPage() {
-  const session = useSession();
-  const can = (code: string) =>
-    session.status === 'authenticated' && session.user.permissions.includes(code);
+  /*
+   * Прав в интерфейсе нет: администратор один, и ему открыто всё.
+   * Проверку исполняет сервер — он и ответит отказом, если когда-нибудь
+   * появится учётная запись с урезанным доступом.
+   */
+  const can = (_code: string) => true;
   const mayRead = can('notifications.read');
   const mayManage = can('notifications.manage');
 

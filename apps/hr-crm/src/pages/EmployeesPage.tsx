@@ -11,7 +11,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 
 import * as api from '../api/crm';
 import { messageFor } from '../api/errors';
@@ -46,6 +46,22 @@ const TELEGRAM_TITLE: Record<string, string> = {
 
 export function EmployeesPage() {
   const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
+  const place = useLocation();
+
+  /*
+   * «Открыть профиль» ведёт на карточку сотрудника, а не открывает
+   * боковое окно поверх списка: человек просит карточку и должен
+   * получить карточку. Адрес возврата уходит с собой — «Назад» в
+   * карточке возвращает в тот же список с теми же фильтрами.
+   */
+  const openProfile = useCallback(
+    (id: string) => {
+      const back = encodeURIComponent(place.pathname + place.search);
+      navigate(`/employees/${id}?back=${back}`);
+    },
+    [navigate, place.pathname, place.search],
+  );
   const tab = TABS.find((t) => t.key === params.get('tab')) ?? TABS[0];
   const search = params.get('search') ?? '';
   const office = params.get('office_id') ?? '';
@@ -259,7 +275,7 @@ export function EmployeesPage() {
                           person={person}
                           chosen={person.id === chosen?.id}
                           onPick={() => patch({ picked: person.id }, true)}
-                          onOpen={() => patch({ employee: person.id }, true)}
+                          onOpen={() => openProfile(person.id)}
                         />
                       ))}
                     </div>
@@ -286,7 +302,7 @@ export function EmployeesPage() {
             presence={presence}
             highlights={highlights}
             person={chosen}
-            onOpen={() => chosen && patch({ employee: chosen.id }, true)}
+            onOpen={() => chosen && openProfile(chosen.id)}
           />
         </div>
       </div>

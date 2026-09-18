@@ -22,7 +22,6 @@ import { Field, OfficeForm, Staff } from '../components/OfficeCard';
 import { OfficeMap, addressOf, searchAddress, type Found, type Place } from '../components/OfficeMap';
 import { QrPointsManager } from '../components/QrPointsManager';
 import { useBlock } from '../features/dashboard/data';
-import { useSession } from '../features/auth/session';
 import '../styles/offices.css';
 import '../styles/office-setup.css';
 
@@ -48,9 +47,12 @@ const STATUS_TITLE: Record<string, string> = {
 
 export function OfficeSetupPage() {
   const { id = '' } = useParams();
-  const session = useSession();
-  const can = (code: string) =>
-    session.status === 'authenticated' && session.user.permissions.includes(code);
+  /*
+   * Прав в интерфейсе нет: администратор один, и ему открыто всё.
+   * Проверку исполняет сервер — он и ответит отказом, если когда-нибудь
+   * появится учётная запись с урезанным доступом.
+   */
+  const can = (_code: string) => true;
 
   const [params, setParams] = useSearchParams();
   const raw = params.get('tab');
