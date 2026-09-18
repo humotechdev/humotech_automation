@@ -329,7 +329,6 @@ function PersonCard({ person, chosen, onPick, onOpen }: {
           <h3 className="emp-card__name">{shortName(person.full_name)}</h3>
           <Status person={person} className="emp-card__status" />
         </div>
-        <p className="emp-card__number">{person.employee_number ?? '—'}</p>
         <p className="emp-card__role">{at?.position_name ?? 'Должность не назначена'}</p>
         <p className="emp-card__dept">{at?.department_name ?? '—'}</p>
         <p className="emp-card__meta">
@@ -441,7 +440,7 @@ function PeopleTable({ rows, chosen, onPick }: {
                   <Photo id={person.id} name={person.full_name} has={person.photo} className="emp-table__photo" />
                   <span>
                     <b>{shortName(person.full_name)}</b>
-                    <small>{person.employee_number ?? '—'}</small>
+                    <small>{person.current_assignment?.office_name ?? ''}</small>
                   </span>
                 </span>
               </td>
@@ -649,7 +648,6 @@ function Chosen({ person, onOpen }: { person: api.EmployeeRow; onOpen: () => voi
             <b>{shortName(person.full_name)}</b>
             <Status person={person} className="" />
           </p>
-          <p className="emp-chosen__number">{person.employee_number ?? '—'}</p>
           <p className="emp-chosen__role">{at?.position_name ?? 'Должность не назначена'}</p>
           <p className="emp-chosen__dept">{at?.department_name ?? '—'}</p>
         </div>

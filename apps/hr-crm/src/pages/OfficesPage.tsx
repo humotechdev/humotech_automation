@@ -752,7 +752,7 @@ function RegionsTab({ canManage, onChanged, onPick }: {
           <div className="of-table-wrap">
             <table className="of-table">
               <thead>
-                <tr><th>Регион</th><th>Код</th><th>Статус</th><th aria-label="Действия" /></tr>
+                <tr><th>Регион</th><th>Статус</th><th aria-label="Действия" /></tr>
               </thead>
               <tbody>
                 {data.items.map((item) => (
@@ -760,7 +760,6 @@ function RegionsTab({ canManage, onChanged, onPick }: {
                     <td>
                       <button type="button" className="of-linky" onClick={() => onPick(item.id)}>{item.name}</button>
                     </td>
-                    <td>{item.code}</td>
                     <td>
                       <span className={`of-state of-state--${item.status === 'ACTIVE' ? 'ok' : 'off'}`}>
                         {STATUS_TITLE[item.status] ?? item.status}

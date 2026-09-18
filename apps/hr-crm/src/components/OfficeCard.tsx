@@ -65,7 +65,7 @@ export function OfficeCard({ row, canManage, updated = null, onClose }: Props) {
               <i aria-hidden="true" />
               {STATE_TITLE[tone]}
             </span>
-            <span className="ofc-head__id" title="Код офиса">{office.code}</span>
+            <span className="ofc-head__id">{office.region_name ?? ''}</span>
           </p>
         </div>
         <button type="button" className="ofc-close" aria-label="Закрыть" onClick={onClose}>

@@ -221,8 +221,8 @@ export function RequestsPage() {
             <div className="rq-filters">
               <label className="rq-search">
                 <AppIcon name="search" size={16} />
-                <input type="search" value={draft} placeholder="Сотрудник или табельный номер"
-                       aria-label="Сотрудник или табельный номер"
+                <input type="search" value={draft} placeholder="Поиск сотрудника"
+                       aria-label="Поиск сотрудника"
                        onChange={(event) => setDraft(event.target.value)} />
               </label>
               <Select label="Офис" empty="Все офисы" value={office} options={offices}
@@ -328,7 +328,6 @@ function Row({ item, on, onOpen }: { item: api.QueueItem; on: boolean; onOpen: (
       <Face id={person?.id ?? ''} name={person?.full_name ?? ''} className="rq-row__face" />
       <span className="rq-row__who">
         <b>{shortName(person?.full_name)}</b>
-        <small>{person?.employee_number ?? '—'}</small>
         <small>{item.place?.office_name ?? '—'}</small>
       </span>
       <span className={`rq-row__kind rq-row__kind--${kind.tone}`}>
@@ -425,7 +424,6 @@ function Details({ item, onClose, onDone }: {
           <Face id={person?.id ?? ''} name={person?.full_name ?? ''} className="rq-person__face" />
           <div>
             <p className="rq-person__name">{shortName(person?.full_name)}</p>
-            <p className="rq-person__number">{person?.employee_number ?? '—'}</p>
             <p className="rq-person__place">
               {item.place?.office_name && <span><AppIcon name="pin" size={16} />{item.place.office_name}</span>}
               {item.place?.department_name && <span><AppIcon name="users" size={16} />{item.place.department_name}</span>}

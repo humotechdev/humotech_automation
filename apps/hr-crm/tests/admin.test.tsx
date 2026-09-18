@@ -33,7 +33,6 @@ import {
   userLine,
   userTitle,
 } from '../src/features/admin/model';
-import { roleName } from '../src/components/AppShell';
 import { USER, crm, fakeNetwork, json, renderApp } from './helpers';
 
 // --- чистые правила ---------------------------------------------------------
@@ -948,15 +947,12 @@ describe('заголовок и профиль', () => {
     renderApp('/admin');
     await opened();
 
-    // Профиль в боковой панели — тот, кто вошёл, а не персонаж макета.
-    const side = screen.getByLabelText('Разделы');
-    const scope = within(side).getByText(USER.organization_code);
-    const profile = scope.closest('.side__user') as HTMLElement;
-    // Роль читается из ответа `/auth/me`, а не берётся с картинки.
-    expect(profile.querySelector('.side__role')?.textContent)
-      .toBe(roleName(USER.roles));
-    expect(scope.textContent).toBe(USER.organization_code);
+    // Блок с ролью и кодом организации из меню убран: человеку он ничего
+    // не говорил, а код организации — внутренний идентификатор. Осталось
+    // главное свойство — в интерфейсе нет персонажа из макета.
+    expect(screen.getByLabelText('Разделы')).toBeTruthy();
     expect(screen.queryByText('Технический администратор')).toBeNull();
+    expect(screen.queryByText(USER.organization_code)).toBeNull();
   });
 });
 

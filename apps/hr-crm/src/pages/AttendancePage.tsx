@@ -469,7 +469,7 @@ function Row({ row, zone, day, on, onPick }: {
         <Face id={row.employee_id} name={row.full_name} className="att-row__face" />
         <span className="att-row__text">
           <b>{shortName(row.full_name)}</b>
-          <small>{row.employee_number ?? '—'}</small>
+          <small>{row.department_name ?? row.office_name ?? '—'}</small>
         </span>
       </span>
       <span className="att-row__text">
@@ -660,7 +660,7 @@ function Person({ row, day, zone, canFix, onFix }: {
         <Face id={row.employee_id} name={row.full_name} className="att-person__face" />
         <div>
           <p className="att-person__name">{shortName(row.full_name)}</p>
-          <p className="att-person__number">{row.employee_number ?? '—'}</p>
+          <p className="att-person__number">{row.department_name ?? row.office_name ?? '—'}</p>
           <span className={`att-status att-status--${status.tone}`}>{status.title}</span>
         </div>
       </div>
@@ -738,6 +738,22 @@ function Person({ row, day, zone, canFix, onFix }: {
 
 // --- журнал отметок ------------------------------------------------------------
 
+/** Как отметка попала в систему. В журнале — словами, а не кодом. */
+const SOURCE: Record<string, string> = {
+  QR: 'QR-код',
+  MANUAL: 'Вручную',
+  IMPORT: 'Импорт',
+  SYSTEM: 'Система',
+  TERMINAL: 'Терминал',
+};
+
+/** Чем закончилась проверка отметки. */
+const VERDICT: Record<string, string> = {
+  ACCEPTED: 'Принята',
+  REJECTED: 'Отклонена',
+  PENDING: 'На проверке',
+};
+
 function Journal({ day, office }: { day: string; office: string }) {
   const [cursor, setCursor] = useState('');
   const [direction, setDirection] = useStickyState('attendance.log.direction', '');
@@ -781,8 +797,8 @@ function Journal({ day, office }: { day: string; office: string }) {
                   <td data-label="Время">{one.occurred_at.slice(11, 16)}</td>
                   <td data-label="Офис и точка">{one.office_name ?? '—'}{one.qr_point_name ? ` · ${one.qr_point_name}` : ''}</td>
                   <td data-label="Направление">{one.event_type === 'ENTRY' ? 'Вход' : 'Выход'}</td>
-                  <td data-label="Источник">{one.source}</td>
-                  <td data-label="Состояние">{one.verification_status}</td>
+                  <td data-label="Источник">{SOURCE[one.source] ?? one.source}</td>
+                  <td data-label="Состояние">{VERDICT[one.verification_status] ?? one.verification_status}</td>
                 </tr>
               ))}
             </tbody>

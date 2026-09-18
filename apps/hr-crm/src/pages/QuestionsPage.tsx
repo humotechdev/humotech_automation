@@ -349,8 +349,8 @@ export function QuestionsPage() {
     patch({ id });
   }
 
-  function showHistory(person: { employee_number: string | null; full_name: string }) {
-    patch({ q: person.employee_number ?? person.full_name, status: 'all', quick: null, id: null });
+  function showHistory(person: { full_name: string }) {
+    patch({ q: person.full_name, status: 'all', quick: null, id: null });
   }
 
   return (
@@ -401,7 +401,7 @@ export function QuestionsPage() {
                 ref={searchInput}
                 type="search"
                 aria-label="Поиск обращений"
-                placeholder="Поиск: ФИО, табельный, номер, текст"
+                placeholder="Поиск: ФИО, номер обращения, текст"
                 value={draftSearch}
                 onChange={(event) => setDraftSearch(event.target.value)}
               />
@@ -1121,7 +1121,7 @@ function ContextPanel({ block, employeeId, officeName, onPick, onHistory, onRetr
   employeeId: string | null;
   officeName: (id: string) => string;
   onPick: (id: string) => void;
-  onHistory: (person: { employee_number: string | null; full_name: string }) => void;
+  onHistory: (person: { full_name: string }) => void;
   onRetry: () => void;
   now: Date;
 }) {
@@ -1161,7 +1161,7 @@ function ContextPanel({ block, employeeId, officeName, onPick, onHistory, onRetr
           <Photo id={person.id} name={person.full_name} has={person.has_photo} className="qs-photo--lg" />
           <div>
             <p className="qs-person__name">{person.full_name}</p>
-            <p className="qs-person__number">{person.employee_number ?? 'Без табельного номера'}</p>
+            <p className="qs-person__number">{person.position ?? 'Должность не назначена'}</p>
             <span className={`qs-badge qs-badge--${tone}`}>{statusTitle}</span>
           </div>
         </div>

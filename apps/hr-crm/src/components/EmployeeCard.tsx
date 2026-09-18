@@ -75,7 +75,10 @@ export function EmployeeCard({ id, onClose }: { id: string; onClose: () => void 
                   <span className="avatar avatar--big">{initials(name)}</span>
                   <span className="drawer__who">
                     <span className="drawer__name">{name}</span>
-                    <span className="drawer__id">{person['employee_number'] ?? '—'}</span>
+                    <span className="drawer__id">
+                      {[person['position_name'], person['office_name']]
+                        .filter(Boolean).join(' · ') || 'Должность не назначена'}
+                    </span>
                   </span>
                   {/* Переход в полную карточку, а не второй редактор
                       того же человека: быстрые действия остаются здесь,

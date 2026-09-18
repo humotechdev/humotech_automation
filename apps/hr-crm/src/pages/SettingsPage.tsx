@@ -24,7 +24,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 
 import * as api from '../api/crm';
 import { ApiFailure, messageFor } from '../api/errors';
-import { AppShell } from '../components/AppShell';
+import { AppShell, roleName } from '../components/AppShell';
 import { AppIcon } from '../components/AppIcon';
 import { AppSelectField } from '../components/AppSelect';
 import { useSession } from '../features/auth/session';
@@ -92,10 +92,9 @@ export function SettingsPage() {
     [setParams],
   );
 
-  const org = session.status === 'authenticated' ? session.user : null;
   const items = all.state === 'ready' ? all.data.items : [];
   const named = sectionOf(items, SECTION_OF['org']);
-  const title = (named?.values['name'] as string | null) ?? org?.organization_code ?? '';
+  const title = (named?.values['name'] as string | null) ?? 'Организация';
 
   return (
     <AppShell breadcrumb="Настройки" section="settings">
@@ -812,11 +811,14 @@ function Personal({ session }: { session: ReturnType<typeof useSession> }) {
         <dl className="facts">
           <div className="facts__row"><dt>Логин</dt><dd>{user.email}</dd></div>
           <div className="facts__row">
-            <dt>Организация</dt><dd>{user.organization_code}</dd>
-          </div>
-          <div className="facts__row">
             <dt>Роли</dt>
-            <dd>{user.roles.length ? user.roles.join(', ') : 'Без роли'}</dd>
+            {/* Роли показываются по-человечески: код роли — внутреннее
+                имя из прав доступа, а не то, что читает человек. */}
+            <dd>
+              {user.roles.length
+                ? user.roles.map((role) => roleName([role])).join(', ')
+                : 'Без роли'}
+            </dd>
           </div>
           <div className="facts__row">
             <dt>Время показывается в поясе</dt><dd>{zoneLabel(user.timezone)}</dd>
@@ -846,7 +848,6 @@ function Personal({ session }: { session: ReturnType<typeof useSession> }) {
 // --- правая колонка ----------------------------------------------------------
 
 function ScopeCard({ section }: { section: api.SettingSection }) {
-  const code = section.effective?.['code'] as string | undefined;
   return (
     <section className="panel">
       <div className="setup__aside-head">
@@ -854,12 +855,10 @@ function ScopeCard({ section }: { section: api.SettingSection }) {
         <span className="pill">Вся организация</span>
       </div>
       <p className="muted">{section.description}</p>
-      {code && (
-        <p className="field__hint">
-          Организация <span className="mono">{code}</span>. Настройки другой
-          организации отсюда не видны и не меняются.
-        </p>
-      )}
+      <p className="field__hint">
+        Настройки относятся ко всей организации; настройки другой организации
+        отсюда не видны и не меняются.
+      </p>
       <p className="field__hint">
         Параметры отдельных офисов задаются в их карточках.
       </p>

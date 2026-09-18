@@ -145,7 +145,6 @@ const PROBATION = [
 /** Что система сделает сама. Список не рекламный: каждая строка — шаг. */
 const AUTOMATIC = [
   'Создаст карточку сотрудника',
-  'Присвоит табельный номер',
   'Создаст первое назначение',
   'Назначит рабочий график',
   'Подготовит доступ к Telegram-боту',
@@ -1123,7 +1122,7 @@ function Done({ made, copied, onCopy }: {
         <div>
           <h1 className="head__title">Сотрудник успешно добавлен</h1>
           <p className="head__sub">
-            {made.employee.full_name} · табельный номер {made.employee.employee_number}
+            {made.employee.full_name}
           </p>
         </div>
       </header>

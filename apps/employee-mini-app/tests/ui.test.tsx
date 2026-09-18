@@ -679,7 +679,10 @@ describe('только свои данные', () => {
 
     expect(container.textContent).not.toContain(profile.employee.id);
     expect(container.textContent).not.toContain(profile.office.id);
-    expect(container.textContent).toContain('DEMO-001');
+    // Табельный номер — тоже внутренний идентификатор: человеку он
+    // ничего не объясняет, а в разговоре с кадрами хватает фамилии.
+    expect(container.textContent).not.toContain('DEMO-001');
+    expect(container.textContent).toContain(profile.office.name);
   });
 });
 

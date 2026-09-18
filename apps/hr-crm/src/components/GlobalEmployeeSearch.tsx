@@ -183,7 +183,7 @@ export function GlobalEmployeeSearch() {
                   </span>
                   <span className="global-search__identity">
                     <strong>{row.full_name}</strong>
-                    <small>ID {row.employee_number}{row.position_name ? ` · ${row.position_name}` : ''}</small>
+                    <small>{row.position_name || 'Должность не назначена'}</small>
                   </span>
                   <span className="global-search__place">
                     {row.office_name && <small>{row.office_name}</small>}
@@ -192,7 +192,7 @@ export function GlobalEmployeeSearch() {
                   <AppIcon name="chevron" size={16} />
                 </button>
               ))}
-              <div className="global-search__footer"><span>Не нашли сотрудника? Уточните имя, ID или Telegram</span><kbd>↑↓</kbd><span>выбрать</span><kbd>Enter</kbd><span>открыть</span><kbd>Esc</kbd></div>
+              <div className="global-search__footer"><span>Не нашли сотрудника? Уточните имя, должность или Telegram</span><kbd>↑↓</kbd><span>выбрать</span><kbd>Enter</kbd><span>открыть</span><kbd>Esc</kbd></div>
             </>
           )}
         </div>,

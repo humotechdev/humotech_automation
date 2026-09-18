@@ -561,7 +561,6 @@ export function PermissionList({ codes, catalog }: {
                 <AppIcon name="check" size={16} />
                 <span className="perms__text">
                   <span className="perms__name">{permissionTitle(item)}</span>
-                  <span className="perms__code mono">{item.code}</span>
                 </span>
               </li>
             ))}

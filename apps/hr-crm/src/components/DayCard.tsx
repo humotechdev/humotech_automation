@@ -79,7 +79,6 @@ export function DayCard({ row, day, timezone, canAdd, onClose, onChanged }: Prop
           <span className="avatar">{initials(row.full_name)}</span>
           <span className="who__text">
             <span className="who__name">{row.full_name}</span>
-            <span className="who__id">{row.employee_number ?? '—'}</span>
             <span className="who__id">
               {[row.office_name, row.department_name].filter(Boolean).join(' · ') || '—'}
             </span>

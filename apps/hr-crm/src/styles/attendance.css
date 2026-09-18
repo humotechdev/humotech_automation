@@ -1399,13 +1399,19 @@
   font-size: 13.5px;
 }
 
+/* Высота — по кнопке внутри, а не числом. При жёстких 36 белая кнопка
+   выбранной вкладки (32 плюс рамка и отступы) не помещалась в полосу и
+   торчала из неё. */
 .att-tabs {
-  height: 36px;
+  height: auto;
+  align-items: center;
+  gap: 2px;
   margin: 6px 8px 10px 5px;
-  padding: 2px;
+  padding: 3px;
 }
 
-.att-tab {
+.att-tabs .app-segmented__button {
+  min-height: 30px;
   min-width: 84px;
   padding: 0 14px;
   font-size: 13.5px;

@@ -214,7 +214,6 @@ export function facts(card: FeedDetail): Fact[] {
 
   const person = card.new_employee;
   if (person) {
-    add('number', 'key', 'Табельный номер', person.employee_number);
     add('hired', 'calendar', 'Принят', dayTitle(person.hire_date));
     add(
       'telegram', 'send', 'Telegram',

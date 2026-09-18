@@ -100,7 +100,6 @@ export function OfficeSetupPage() {
                     <i aria-hidden="true" />
                     {STATUS_TITLE[office.status] ?? office.status}
                   </span>
-                  <span>{office.code}</span>
                   <span>{office.region_name ?? '—'}</span>
                   <span>{office.timezone}</span>
                 </p>

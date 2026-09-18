@@ -1137,7 +1137,6 @@ function PersonPick({ value, fallbackName, region, officeIds, inactive, onChange
                       setOpen(false);
                     }}>
               <b>{item.full_name}</b>
-              {item.employee_number && <span className="rp-dim"> · {item.employee_number}</span>}
             </button>
           ))}
         </Popover>

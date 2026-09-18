@@ -81,7 +81,6 @@ export function RolesTab({ roles, catalog, mayManage, mine, onChanged }: Props) 
                     <span className="who">
                       <span className="who__text">
                         <span className="who__name">{item.name}</span>
-                        <span className="who__id mono">{item.code}</span>
                       </span>
                     </span>
                     <span className="role-meta">
@@ -111,7 +110,6 @@ export function RolesTab({ roles, catalog, mayManage, mine, onChanged }: Props) 
             </span>
             <div className="view__who">
               <h2 className="view__title">{role.name}</h2>
-              <p className="view__sub mono">{role.code}</p>
               <div className="view__badges">
                 <span className="chip">
                   {role.is_system ? 'Системная роль' : 'Роль организации'}
@@ -190,7 +188,6 @@ function RolePermissions({ codes, catalog }: {
                   <AppIcon name="check" size={16} />
                   <span className="perms__text">
                     <span className="perms__name">{permissionTitle(item)}</span>
-                    <span className="perms__code mono">{item.code}</span>
                   </span>
                 </li>
               ))}
@@ -343,7 +340,6 @@ function RoleForm({ role, catalog, mine, onClose, onDone }: {
                              onChange={() => toggle(item.code)} />
                       <span className="perms__text">
                         <span className="perms__name">{permissionTitle(item)}</span>
-                        <span className="perms__code mono">{item.code}</span>
                       </span>
                     </label>
                   </li>

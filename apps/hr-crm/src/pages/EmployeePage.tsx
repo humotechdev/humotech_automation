@@ -209,8 +209,7 @@ function Header({ person, back, tools }: { person: Person; back: string; tools: 
   // Должность, отдел и офис живут в текущем назначении, а не в самой
   // карточке: на верхнем уровне этих полей нет, и строки выходили пустыми.
   const assignment = (person['current_assignment'] ?? {}) as Person;
-  const first = [text(person, 'employee_number'), text(assignment, 'position_name')]
-    .filter(Boolean).join(' · ');
+  const first = text(assignment, 'position_name') ?? '';
   const second = [text(assignment, 'department_name'), text(assignment, 'office_name')]
     .filter(Boolean).join(' · ');
   return (
@@ -384,7 +383,6 @@ function Overview({ id, person, zone, rights, onGo, onChanged }: {
               <Fact label="Офис" value={text(person, 'office_name')} />
               <Fact label="Телефон" value={text(person, 'phone')} />
               <Fact label="Рабочая почта" value={text(person, 'corporate_email')} />
-              <Fact label="Табельный номер" value={text(person, 'employee_number')} />
               <Fact label="Пол" value={GENDER[text(person, 'gender') ?? ''] ?? null} />
               <Fact label="Семейное положение"
                     value={MARITAL[text(person, 'marital_status') ?? ''] ?? null} />

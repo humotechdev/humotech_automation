@@ -1090,6 +1090,15 @@
   grid-template-columns: minmax(0, 1fr) clamp(440px, 26vw, 480px);
 }
 
+/* Карточка не выше своего ряда: иначе её низ с кнопками уходил под
+   ленту офисов. Если содержимое не помещается — прокручивается тело
+   карточки, а не страница под ней. */
+.of-grid > .ofc {
+  min-height: 0;
+  max-height: 100%;
+  overflow: hidden;
+}
+
 .ofc {
   --ofc-line: #e5ebf3;
   --ofc-muted: #6b7c98;
@@ -1252,6 +1261,9 @@
   gap: 9px;
   min-height: 0;
   padding: 10px 14px 12px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .ofc-date {
@@ -1398,13 +1410,18 @@
 
 /* --- кнопки ------------------------------------------------------------------ */
 
+/* Кнопки видны всегда: при прокрутке они остаются у нижнего края
+   карточки, а не уезжают вместе с фактами. */
 .ofc-actions,
 .ofc-pager {
+  position: sticky;
+  bottom: -12px;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   margin-top: auto;
-  padding-top: 2px;
+  padding: 6px 0 8px;
+  background: rgba(255, 255, 255, 0.97);
 }
 
 .ofc-btn {

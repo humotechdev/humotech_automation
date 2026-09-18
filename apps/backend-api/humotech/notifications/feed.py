@@ -779,7 +779,7 @@ class FeedService(BaseService):
             entity_id=row.id,
             created_at=row.created_at,
             title="Новый сотрудник добавлен",
-            short_text=f"Табельный номер {row.employee_number}",
+            short_text=_hired_on(row),
             status=row.employment_status,
             status_label=(
                 "Работает" if row.employment_status == "ACTIVE"
@@ -1118,7 +1118,7 @@ class FeedService(BaseService):
             entity_id=row.id,
             created_at=row.created_at,
             title="Новый сотрудник добавлен",
-            short_text=f"Табельный номер {row.employee_number}",
+            short_text=_hired_on(row),
             status=row.employment_status,
             status_label=(
                 "Работает" if row.employment_status == "ACTIVE"
@@ -1322,6 +1322,17 @@ def _correction_kind(row) -> str:
     if row.requested_entry_at and row.requested_exit_at:
         return "Вход и выход"
     return "Вход" if row.requested_entry_at else "Выход"
+
+
+def _hired_on(employee) -> str:
+    """Подпись события о новом сотруднике.
+
+    Табельный номер отсюда убран: это внутренний идентификатор, и в
+    ленте он ничего не объясняет. Дата приёма отвечает на вопрос
+    «когда», а фамилия стоит в самом событии.
+    """
+    hired = getattr(employee, "hire_date", None)
+    return f"Принят {hired:%d.%m.%Y}" if hired else "Новый сотрудник в организации"
 
 
 def _full_name(employee) -> str:
