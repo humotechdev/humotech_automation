@@ -36,6 +36,7 @@ import { Profile } from './screens/Profile';
 import { QuickScan } from './screens/QuickScan';
 import { Requests, type AbsenceKind } from './screens/Requests';
 import { Scan } from './screens/Scan';
+import { Survey } from './screens/Survey';
 import { Stats } from './screens/Stats';
 import {
   backButton,
@@ -78,6 +79,24 @@ export function isQuickScanRoute(
 }
 
 /**
+ * Опрос открывается по своему адресу: `/survey/<получатель>`.
+ *
+ * На этот адрес смотрит кнопка «Пройти опрос» под сообщением бота.
+ * Идентификатор именно в адресе, а не «последний непройденный опрос»:
+ * человек может нажать кнопку через день, когда пришёл ещё один, и
+ * открыться должен тот, который он открыл.
+ */
+export const SURVEY_PATH = '/survey';
+
+export function surveyOf(
+  pathname: string = window.location.pathname,
+): string | null {
+  const parts = pathname.replace(/\/+$/, '').split('/').filter(Boolean);
+  if (parts.length !== 2 || `/${parts[0]}` !== SURVEY_PATH) return null;
+  return parts[1] ?? null;
+}
+
+/**
  * Режим нижней кнопки Telegram.
  *
  * Отличается ТОЛЬКО транспортом: подписи запуска у такого Mini App нет,
@@ -111,6 +130,10 @@ export default function App() {
   // при этом не меняется — переписывать историю браузера в вебвью
   // Telegram значило бы ломать его же кнопку «назад».
   const [quick, setQuick] = useState(isQuickScanRoute);
+  // Какой опрос открыть. Состоянием по той же причине, что и быстрая
+  // отметка: из опроса можно уйти в кабинет, а переписывать историю
+  // браузера в вебвью Telegram значит ломать его же «назад».
+  const [survey, setSurvey] = useState(surveyOf);
 
   const run = useCallback(async () => {
     setPhase({ kind: 'loading' });
@@ -161,6 +184,15 @@ export default function App() {
 
   switch (result.state) {
     case 'authenticated':
+      if (survey) {
+        return (
+          <Survey
+            recipientId={survey}
+            onDone={() => setSurvey(null)}
+            onExit={() => setSurvey(null)}
+          />
+        );
+      }
       return quick ? (
         <QuickScan onOpenCabinet={() => setQuick(false)} />
       ) : (

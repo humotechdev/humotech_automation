@@ -6,7 +6,7 @@
  * знаменатель и повторные входы.
  */
 
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
 
 import {
@@ -14,7 +14,7 @@ import {
   share, weighted,
 } from '../src/features/analytics/metrics';
 import { toPoints } from '../src/components/AttendanceChart';
-import { USER, crm, fakeNetwork, json, renderApp } from './helpers';
+import { USER, crm, fakeNetwork, json, pick, renderApp } from './helpers';
 
 describe('доли и их сложение', () => {
   test('4 608 из 4 800 — это 96,0%', () => {
@@ -162,12 +162,21 @@ const OVERVIEW = {
 
 const REGIONS = { items: [{ id: 'r-1', code: 'C', name: 'Центр', status: 'ACTIVE' }] };
 
+const MOVEMENT = {
+  current: { first: '2026-03-01', last: '2026-03-31', hired: 5, left: 2, difference: 3 },
+  previous: { first: '2026-01-29', last: '2026-02-28', hired: 3, left: 4, difference: -1 },
+  month_before: { first: '2026-02-01', last: '2026-02-28', hired: 2, left: 1, difference: 1 },
+  year_before: { first: '2025-03-01', last: '2025-03-31', hired: 7, left: 7, difference: 0 },
+  headcount: 42,
+};
+
 function network(handler: (path: string, method: string) => Response | null = () => null) {
   return fakeNetwork((path, call) => {
     const own = handler(path, call.method);
     if (own) return own;
     if (path.includes('/auth/')) return json(200, USER);
     if (path.includes('/analytics/overview')) return json(200, OVERVIEW);
+    if (path.includes('/analytics/movement')) return json(200, MOVEMENT);
     if (path.includes('/regions/')) return json(200, REGIONS);
     return crm(path) ?? json(200, { items: [], next_cursor: null, has_more: false });
   });
@@ -175,6 +184,57 @@ function network(handler: (path: string, method: string) => Response | null = ()
 
 const PAGE = '/analytics?from=2026-08-03&to=2026-08-09';
 const overviewCalls = (calls: { url: string }[]) => calls.filter((c) => c.url.includes('/analytics/overview'));
+
+describe('движение сотрудников', () => {
+  test('показывает принято, уволено и разницу со знаком', async () => {
+    network();
+    renderApp(PAGE);
+
+    // Блок сначала считает: ждём текст, а не первый отрисованный кадр.
+    // «Принято» есть и в карточке, и в заголовке столбца — берём оба.
+    expect((await screen.findAllByText('Принято')).length).toBeGreaterThan(0);
+    const block = screen.getByLabelText('Движение сотрудников');
+    expect(within(block).getAllByText('5').length).toBeGreaterThan(0);
+    // «3» и «−3» — противоположные новости, и различать их по цвету
+    // одному нельзя.
+    expect(within(block).getAllByText('+3').length).toBeGreaterThan(0);
+    expect(within(block).getByText(/На конец периода: 42/)).toBeTruthy();
+  });
+
+  test('сравнивает с прошлым периодом, месяцем и годом', async () => {
+    network();
+    renderApp(PAGE);
+
+    await screen.findAllByText('Принято');
+    const block = screen.getByLabelText('Движение сотрудников');
+    for (const title of [
+      'Выбранный период', 'Предыдущий период', 'Месяцем раньше', 'Годом раньше',
+    ]) {
+      // Заголовок строки — это название и даты под ним, поэтому поиск
+      // идёт по вхождению, а не по точному совпадению.
+      expect(within(block).getByText(new RegExp(title))).toBeTruthy();
+    }
+    // Предыдущий период равен по длине, а не календарный: иначе
+    // разница объяснялась бы длиной, а не событиями.
+    expect(within(block).getAllByText(/2026-01-29/).length).toBeGreaterThan(0);
+  });
+
+  test('неполный ответ не роняет всю страницу', async () => {
+    // Так бывает у старого сервера и у прокси, подменившего тело.
+    network((path) =>
+      path.includes('/analytics/movement') ? json(200, { headcount: 0 }) : null,
+    );
+    // Другой период — другой ключ загрузки: `useBlock` кэширует ответ
+    // по ключу, и на том же периоде тест получил бы данные соседа.
+    renderApp('/analytics?from=2026-07-06&to=2026-07-12');
+
+    // Блок сначала считает, поэтому ждём именно текст, а не первый
+    // отрисованный кадр.
+    expect(await screen.findByText('Данных за период нет.')).toBeTruthy();
+    // Остальные блоки при этом продолжают работать.
+    expect(await screen.findByLabelText(/Явка/)).toBeTruthy();
+  });
+});
 
 describe('сводка', () => {
   test('явка показана с сотрудника-днями и разницей в пунктах', async () => {
@@ -211,7 +271,7 @@ describe('фильтры', () => {
       expect(last?.url).not.toContain('date_from=2026-08-03');
     });
 
-    fireEvent.change(await screen.findByLabelText('Регион'), { target: { value: 'r-1' } });
+    await pick('Регион', 'Центр');
     await waitFor(() => expect(overviewCalls(calls).pop()?.url).toContain('region_id=r-1'));
   });
 

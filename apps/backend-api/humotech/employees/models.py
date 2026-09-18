@@ -84,6 +84,10 @@ class Employee(
     pinfl = models.CharField(max_length=14, null=True, blank=True)
     hire_date = models.DateField()
     termination_date = models.DateField(null=True, blank=True)
+    # Почему человека нет в штате. Свободный текст: причин столько же,
+    # сколько обстоятельств, а «прочее» из списка не отвечает ни на один
+    # вопрос через год после увольнения.
+    termination_reason = models.CharField(max_length=255, null=True, blank=True)
     preferred_language = models.CharField(max_length=10, db_default="ru")
     employment_status = models.CharField(
         max_length=30, choices=choices(EMPLOYMENT_STATUSES)

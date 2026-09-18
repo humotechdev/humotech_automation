@@ -167,7 +167,10 @@ class QrPointCreateSerializer(serializers.Serializer):
     office_id = serializers.UUIDField()
     # Необязателен: из CRM приходит только название, код подбирается сам.
     code = serializers.CharField(max_length=100, required=False, allow_blank=True)
-    name = serializers.CharField(max_length=255)
+    # Название необязательно: тип точки уже говорит, для чего она, и
+    # заставлять придумывать «Главный вход» на пустом месте незачем.
+    # Пустое имя сервер заменяет названием по типу точки.
+    name = serializers.CharField(max_length=255, required=False, allow_blank=True)
     description = serializers.CharField(
         max_length=500, required=False, allow_blank=True, allow_null=True
     )

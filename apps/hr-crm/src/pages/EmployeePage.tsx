@@ -21,9 +21,12 @@ import { ApiFailure, messageFor } from '../api/errors';
 import { AppShell } from '../components/AppShell';
 import { AppIcon, type AppIconName } from '../components/AppIcon';
 import { AppSelectField } from '../components/AppSelect';
+import { Modal, ModalField, ModalTools } from '../components/admin/Modal';
+import { Refusal, useSaving } from '../components/admin/Parts';
 import { Attendance, AttendanceTools } from '../features/employee/Attendance';
 import { useSession } from '../features/auth/session';
 import { useBlock, type Block } from '../features/dashboard/data';
+import { employmentStatus, isTrainee } from '../features/employees/status';
 import { clockOnDay, moment } from '../features/time/zone';
 import {
   CORRECTION_STATUS,
@@ -134,6 +137,13 @@ export function EmployeePage() {
             ) : null}
           />
 
+          {/* Решение по стажировке принимают один раз и в карточке —
+              там же, где видно, как человек отработал испытательный
+              срок. Отдельного раздела оно не стоит. */}
+          {rights.manage && isTrainee(text(person, 'employment_status')) && (
+            <Probation id={id} person={person} onChanged={reload} />
+          )}
+
           <div className="ep-tabs" role="tablist" aria-label="Разделы карточки">
             {TABS.map((item) => (
               <button key={item.key} type="button" role="tab"
@@ -185,14 +195,6 @@ function shortName(full: string | null): string {
   return (full ?? '').split(' ').slice(0, 2).join(' ');
 }
 
-/** Состояние занятости: подпись и цвет плашки. */
-const EMPLOYMENT: Record<string, [string, 'ok' | 'off']> = {
-  ACTIVE: ['Активен', 'ok'],
-  PROBATION: ['Испытательный срок', 'ok'],
-  SUSPENDED: ['Неактивен', 'off'],
-  TERMINATED: ['Уволен', 'off'],
-  ARCHIVED: ['В архиве', 'off'],
-};
 
 /**
  * Шапка карточки по эталону: фото, имя, номер и должность с плашкой
@@ -201,7 +203,7 @@ const EMPLOYMENT: Record<string, [string, 'ok' | 'off']> = {
  */
 function Header({ person, back, tools }: { person: Person; back: string; tools: ReactNode }) {
   const status = text(person, 'employment_status') ?? '';
-  const [title, tone] = EMPLOYMENT[status] ?? [orDash(status), 'off'];
+  const [title, tone] = employmentStatus(status);
   const id = text(person, 'id');
   // В карточке приходит только признак фото; сам снимок — отдельным
   // адресом, где право спрашивается при каждом открытии.
@@ -1089,5 +1091,153 @@ function Diff({ before, after }: {
         </li>
       ))}
     </ul>
+  );
+}
+
+/**
+ * Решение по стажировке: принять в штат или расстаться.
+ *
+ * Полоса стоит под шапкой карточки, а не в отдельном разделе: решение
+ * принимают один раз, глядя на то, как человек отработал испытательный
+ * срок, — то есть ровно здесь, где видно его посещаемость и историю.
+ *
+ * Обе кнопки открывают окно. «Принять в штат» — потому что по итогам
+ * стажировки должность иногда пересматривают, и предложить это надо до
+ * нажатия, а не после. «Завершить стажировку» — потому что это
+ * увольнение, и сделать его одним щелчком нельзя.
+ */
+function Probation({ id, person, onChanged }: {
+  id: string;
+  person: Person;
+  onChanged: () => void;
+}) {
+  const [asking, setAsking] = useState<'promote' | 'end' | null>(null);
+
+  const name = [text(person, 'last_name'), text(person, 'first_name')]
+    .filter(Boolean).join(' ');
+
+  return (
+    <section className="ep-probation" aria-label="Стажировка">
+      <span className="ep-probation__mark" aria-hidden="true">
+        <AppIcon name="clock" size={18} />
+      </span>
+      <p className="ep-probation__text">
+        <b>Идёт стажировка</b>
+        <span>
+          По итогам испытательного срока человека принимают в штат или
+          расстаются с ним.
+        </span>
+      </p>
+      <button type="button" className="btn btn--primary"
+              onClick={() => setAsking('promote')}>
+        Принять в штат
+      </button>
+      <button type="button" className="btn"
+              onClick={() => setAsking('end')}>
+        Завершить стажировку
+      </button>
+
+      {asking === 'promote' && (
+        <PromoteForm id={id} name={name}
+                     onClose={() => setAsking(null)}
+                     onSaved={() => { setAsking(null); onChanged(); }} />
+      )}
+      {asking === 'end' && (
+        <EndProbationForm id={id} name={name}
+                          onClose={() => setAsking(null)}
+                          onSaved={() => { setAsking(null); onChanged(); }} />
+      )}
+    </section>
+  );
+}
+
+/** Приём в штат: подтверждение и, если нужно, другая должность. */
+function PromoteForm({ id, name, onClose, onSaved }: {
+  id: string;
+  name: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [position, setPosition] = useState('');
+  const saving = useSaving();
+  const [positions] = useBlock((signal) => api.positions(signal), 'promote-positions');
+
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault();
+    void saving.run(
+      () => api.promoteEmployee(id, position ? { position_id: position } : {}),
+      onSaved,
+    );
+  };
+
+  return (
+    <Modal title="Принять в штат" onClose={onClose}>
+      <form className="adm-modal__form" onSubmit={submit}>
+        <p className="muted">
+          {name || 'Сотрудник'} перейдёт из стажировки в штат. Он получит
+          сообщение в Telegram с должностью и графиком.
+        </p>
+
+        <ModalField label="Должность"
+                    hint="Оставьте пустой, если должность не меняется">
+          <AppSelectField label="Должность" value={position} searchable
+                          onChange={setPosition}>
+            <option value="">Оставить прежнюю</option>
+            {positions.state === 'ready'
+              ? positions.data.items.map((one) => (
+                  <option key={one.id} value={one.id}>{one.name}</option>
+                ))
+              : null}
+          </AppSelectField>
+        </ModalField>
+
+        <Refusal text={saving.refusal} />
+        <ModalTools busy={saving.busy} onCancel={onClose}
+                    submitLabel="Принять в штат" />
+      </form>
+    </Modal>
+  );
+}
+
+/** Расставание по итогам стажировки. */
+function EndProbationForm({ id, name, onClose, onSaved }: {
+  id: string;
+  name: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [reason, setReason] = useState('');
+  const saving = useSaving();
+
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault();
+    void saving.run(
+      () => api.endProbation(id, reason.trim() ? { reason: reason.trim() } : {}),
+      onSaved,
+    );
+  };
+
+  return (
+    <Modal title="Завершить стажировку" onClose={onClose}>
+      <form className="adm-modal__form" onSubmit={submit}>
+        <p className="muted">
+          {name || 'Сотрудник'} будет уволен с причиной «Не прошёл
+          стажировку». Назначения и график закроются сегодняшним днём,
+          история отметок останется. Человек получит нейтральное
+          сообщение без объяснений и оценок.
+        </p>
+
+        <ModalField label="Причина"
+                    hint="Оставьте пустой — запишется «Не прошёл стажировку»">
+          <input className="input" value={reason} maxLength={255}
+                 placeholder="Не прошёл стажировку"
+                 onChange={(event) => setReason(event.target.value)} />
+        </ModalField>
+
+        <Refusal text={saving.refusal} />
+        <ModalTools busy={saving.busy} onCancel={onClose}
+                    submitLabel="Завершить стажировку" />
+      </form>
+    </Modal>
   );
 }

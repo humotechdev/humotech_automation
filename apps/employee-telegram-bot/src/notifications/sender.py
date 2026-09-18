@@ -26,6 +26,7 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError
 
 from src.config.settings import settings
+from src.notifications.buttons import markup_for
 
 logger = logging.getLogger("humotech.notifications")
 
@@ -45,7 +46,8 @@ class Outcome:
 
 class Sender(Protocol):
     async def deliver(
-        self, *, chat_id: int, text: str, notification_type: str
+        self, *, chat_id: int, text: str, notification_type: str,
+        entity_id: str | None = None,
     ) -> Outcome: ...
 
 
@@ -56,11 +58,14 @@ class TelegramSender:
         self._bot = bot
 
     async def deliver(
-        self, *, chat_id: int, text: str, notification_type: str
+        self, *, chat_id: int, text: str, notification_type: str,
+        entity_id: str | None = None,
     ) -> Outcome:
-        del notification_type  # Telegram про типы уведомлений не знает
+        # Тип теперь важен: по нему под сообщением появляется кнопка.
+        # Какая именно — решает `buttons.py`, а не это место.
+        markup = markup_for(notification_type, entity_id)
         try:
-            await self._bot.send_message(chat_id, text)
+            await self._bot.send_message(chat_id, text, reply_markup=markup)
             return Outcome(sent=True)
         except TelegramForbiddenError:
             # Человек заблокировал бота или удалил чат. Повторять
@@ -85,9 +90,11 @@ class StubSender:
         self._fail = tuple(part for part in fail_types if part)
 
     async def deliver(
-        self, *, chat_id: int, text: str, notification_type: str
+        self, *, chat_id: int, text: str, notification_type: str,
+        entity_id: str | None = None,
     ) -> Outcome:
         del text  # содержимое проверочного сообщения в журнал не идёт
+        del entity_id  # заглушка кнопок не рисует
         if any(notification_type.startswith(part) for part in self._fail):
             logger.info("STUB FAIL chat=%s type=%s", chat_id, notification_type)
             return Outcome(sent=False, error="stub_forced_failure")

@@ -12,6 +12,8 @@ from decimal import Decimal
 
 from rest_framework import serializers
 
+from humotech.core.enums import DAY_NOTICE_KINDS
+
 
 class ScanRequestSerializer(serializers.Serializer):
     """Один отсканированный код.
@@ -93,3 +95,17 @@ class PeriodSerializer(serializers.Serializer):
                 {"date_to": "Период длиннее года — сузьте запрос"}
             )
         return attrs
+
+
+class DayNoticeSerializer(serializers.Serializer):
+    """Ответ на напоминание: задерживаюсь или не приду.
+
+    Причина необязательна намеренно. Требовать объяснение у того, кто
+    стоит в пробке, — способ не получить ни объяснения, ни
+    предупреждения: человек просто не нажмёт кнопку.
+    """
+
+    kind = serializers.ChoiceField(choices=DAY_NOTICE_KINDS)
+    comment = serializers.CharField(
+        max_length=500, required=False, allow_null=True, allow_blank=True
+    )

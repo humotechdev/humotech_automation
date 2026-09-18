@@ -129,6 +129,7 @@ async function failure(response: Response): Promise<ApiFailure> {
     fieldsOf(body),
     fieldOf(body),
     typeof body.code === 'string' ? body.code : null,
+    typeof body.message === 'string' && body.message.trim() ? body.message : null,
   );
 }
 

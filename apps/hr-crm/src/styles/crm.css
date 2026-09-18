@@ -9347,3 +9347,105 @@ html {
 .global-search__row > svg {
   flex: none;
 }
+
+/* --- поле ввода ------------------------------------------------------------
+ *
+ * Класс `.input` использовался в формах, но никогда не был описан: поле
+ * рисовалось браузерным по умолчанию — квадратная рамка, чужой шрифт,
+ * своя высота. Рядом со списками и кнопками CRM это выглядело чужим.
+ *
+ * Размеры те же, что у `.field__box`: одна высота строки во всех формах,
+ * иначе поле и список рядом стоят на разной высоте.
+ */
+
+.input {
+  width: 100%;
+  min-width: 0;
+  /* Высота, рамка и фон — те же, что у кнопки списка
+     (`.app-select__trigger`): в одной форме поле и список стоят рядом,
+     и разница в один пиксель читается как небрежность. */
+  min-height: 41px;
+  padding: 0 12px;
+  border: 1px solid rgba(207, 223, 237, 0.95);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--ink-1);
+  font: inherit;
+  font-size: 14px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.input::placeholder {
+  color: var(--ink-2);
+}
+
+.input:hover:not(:disabled) {
+  border-color: #a9cae9;
+}
+
+/* Обводка своя, а не общая документная: у поля она повторяет рамку, и
+   две рамки одна поверх другой выглядели бы ошибкой. */
+.input:focus,
+.input:focus-visible {
+  outline: 0;
+  border-color: #0875e1;
+  box-shadow: 0 0 0 3px rgb(8 117 225 / 10%);
+}
+
+.input:disabled {
+  background: var(--disabled-bg);
+  color: var(--ink-2);
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* Многострочное поле: высота растёт от содержимого, а не задана строкой. */
+textarea.input,
+.input--area {
+  min-height: 76px;
+  padding: 10px 12px;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+/* Время: узкое поле, но той же высоты, что и соседние. */
+.input--time {
+  width: 112px;
+  padding: 0 10px;
+}
+
+/* Поле с ошибкой. Красная рамка держится и в фокусе: иначе ошибка
+   пропадает ровно тогда, когда человек вернулся её исправлять. */
+.adm-field--bad .input,
+.of-field .input[aria-invalid='true'] {
+  border-color: var(--danger, #b42318);
+}
+
+.adm-field--bad .input:focus {
+  box-shadow: 0 0 0 3px rgb(180 35 24 / 16%);
+}
+
+/* Причина отказа под кнопками приглашения. Красная, но не тревожная:
+   ссылку почти всегда можно выдать заново, и человеку нужно знать
+   причину, а не испугаться. */
+.hire__result-note--bad {
+  color: var(--status-danger, #b42318);
+}
+
+.hire__invite {
+  max-width: 620px;
+}
+
+.hire__invite-link {
+  margin: 16px 0 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line, #dbe5f3);
+  border-radius: 10px;
+  background: #f7faff;
+  overflow-wrap: anywhere;
+}
+
+.hire__invite-note {
+  margin: 0;
+  color: var(--muted, #64748b);
+}

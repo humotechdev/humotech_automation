@@ -375,6 +375,12 @@ function Details({ item, onClose, onDone }: {
   const [comment, setComment] = useState('');
   const [sending, setSending] = useState<'approve' | 'reject' | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
+  // Решение по справке живёт отдельно от решения по заявке: одобренный
+  // больничный с отклонённой справкой — законное состояние.
+  const [docComment, setDocComment] = useState('');
+  const [docAsking, setDocAsking] = useState(false);
+  const [docSending, setDocSending] = useState<'accept' | 'reject' | null>(null);
+  const [docFailed, setDocFailed] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
 
   const person = personOf(item);
@@ -386,6 +392,31 @@ function Details({ item, onClose, onDone }: {
   const open = ['SUBMITTED', 'IN_REVIEW'].includes(absence?.status ?? item.correction?.status ?? '');
   const reason = absence?.comment ?? item.correction?.reason ?? null;
   const steps = absence?.history ?? [];
+
+  async function decideDocument(decision: 'accept' | 'reject') {
+    if (docSending || !document) return;
+    // Отказ без причины — тупик: человек принесёт ту же бумагу второй
+    // раз и не поймёт, почему её опять не взяли.
+    if (decision === 'reject' && !docComment.trim()) {
+      setDocFailed('Напишите, что не так со справкой — это уйдёт сотруднику.');
+      return;
+    }
+    setDocSending(decision);
+    setDocFailed(null);
+    try {
+      await api.decideAbsenceDocument(
+        item.id, document.id, decision,
+        docComment.trim() || undefined,
+      );
+      setDocAsking(false);
+      setDocComment('');
+      onDone();
+    } catch (error) {
+      setDocFailed(messageFor(error));
+    } finally {
+      setDocSending(null);
+    }
+  }
 
   async function decide(decision: 'approve' | 'reject') {
     if (sending) return;
@@ -470,6 +501,63 @@ function Details({ item, onClose, onDone }: {
                     </a>
                   </span>
                 </div>
+
+                {/* Решение по бумаге. Пока справка ждёт проверки — две
+                    кнопки; отказ спрашивает причину, потому что человеку
+                    надо знать, что принести взамен. */}
+                {document.verification_status === 'PENDING' && (
+                  <div className="rq-doc__decide">
+                    {docAsking ? (
+                      <>
+                        <textarea
+                          className="input"
+                          rows={2}
+                          value={docComment}
+                          placeholder="Что не так со справкой — это уйдёт сотруднику"
+                          onChange={(event) => setDocComment(event.target.value)}
+                        />
+                        <span className="rq-doc__decideRow">
+                          <button type="button" className="btn btn--danger"
+                                  disabled={docSending !== null}
+                                  onClick={() => void decideDocument('reject')}>
+                            {docSending === 'reject' ? 'Возвращаем…' : 'Вернуть на доработку'}
+                          </button>
+                          <button type="button" className="btn"
+                                  onClick={() => { setDocAsking(false); setDocFailed(null); }}>
+                            Отмена
+                          </button>
+                        </span>
+                      </>
+                    ) : (
+                      <span className="rq-doc__decideRow">
+                        <button type="button" className="btn btn--primary"
+                                disabled={docSending !== null}
+                                onClick={() => void decideDocument('accept')}>
+                          {docSending === 'accept' ? 'Принимаем…' : 'Принять справку'}
+                        </button>
+                        {/* «Вернуть», а не «Отклонить»: справку не
+                            выбрасывают, за ней приходят снова — и глагол
+                            должен говорить именно это. Заодно он не
+                            путается с отклонением самой заявки, которое
+                            стоит на этом же экране. */}
+                        <button type="button" className="btn"
+                                onClick={() => setDocAsking(true)}>
+                          Вернуть справку
+                        </button>
+                      </span>
+                    )}
+                    {docFailed && (
+                      <p className="rq-block__text rq-block__text--warn" role="alert">
+                        {docFailed}
+                      </p>
+                    )}
+                  </div>
+                )}
+                {document.verification_comment && (
+                  <p className="rq-block__text">
+                    Комментарий к справке: {document.verification_comment}
+                  </p>
+                )}
                 {document.file.mime_type.startsWith('image/') ? (
                   <img className="rq-doc__preview" src={api.absenceDocumentUrl(item.id, document.id)} alt="" />
                 ) : (

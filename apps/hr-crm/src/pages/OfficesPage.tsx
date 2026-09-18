@@ -20,6 +20,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import * as api from '../api/crm';
 import { AppShell } from '../components/AppShell';
 import { AppIcon } from '../components/AppIcon';
+import { NewOfficeDialog } from '../components/NewOfficeDialog';
 import { AppFilterButton, AppSegmentedControl, AppSelectField } from '../components/AppSelect';
 import { OfficeCard } from '../components/OfficeCard';
 import {
@@ -163,6 +164,13 @@ export function OfficesPage() {
   );
 
   const [regions] = useBlock((signal) => api.regions(signal), `regions|${attempt}`);
+  // Окно «Добавить офис». Регион заводится в нём же: без региона офис
+  // создать не во что, а пустая система начинается именно с этого.
+  const [adding, setAdding] = useState(false);
+  const [regionRows] = useBlock(
+    (signal) => api.regionsPage({ status: 'ACTIVE', limit: '200' }, signal),
+    `regions-full|${attempt}`,
+  );
   const [staff] = useBlock(
     (signal) => api.employeeCounts(region ? { region_id: region } : {}, signal),
     `staff|${region}|${attempt}`,
@@ -263,8 +271,8 @@ export function OfficesPage() {
                 Экспорт
               </Link>
               {can('offices.manage') && (
-                <button type="button" className="of-btn of-btn--blue" disabled
-                        title="Форма создания офиса появится следующим этапом">
+                <button type="button" className="of-btn of-btn--blue"
+                        onClick={() => setAdding(true)}>
                   <AppIcon name="plus" size={20} />
                   Добавить офис
                 </button>
@@ -279,6 +287,14 @@ export function OfficesPage() {
               onChange={(next) => patch({ view: next === 'map' ? null : next, office: null })} />
           </div>
         </header>
+
+        {adding && (
+          <NewOfficeDialog
+            regions={regionRows.state === 'ready' ? regionRows.data.items : []}
+            onClose={() => setAdding(false)}
+            onCreated={() => setAttempt((n) => n + 1)}
+          />
+        )}
 
         {view === 'regions' ? (
           <RegionsTab canManage={can('regions.manage')} onChanged={() => setAttempt((n) => n + 1)}

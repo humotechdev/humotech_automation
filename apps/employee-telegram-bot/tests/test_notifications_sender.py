@@ -104,3 +104,82 @@ class TestNetworkGuard:
         # импортированному имени: оно было бы другим объектом.
         with pytest.raises(RuntimeError, match="наружу не ходят"):
             socket.socket().connect(("149.154.167.220", 443))
+
+
+class TestSurveyButton:
+    """Опрос уходит ОДНИМ сообщением с кнопкой, а не вопросами подряд.
+
+    В чате нельзя вернуться на предыдущий вопрос, нельзя увидеть,
+    сколько осталось, и нельзя ответить шкалой. Поэтому вопросы
+    показывает Mini App, а в чат уходит короткое приглашение.
+    """
+
+    def setup_method(self):
+        from src.config.settings import settings
+
+        self._was = settings.mini_app_url
+        settings.mini_app_url = "https://miniapp.example/app"
+
+    def teardown_method(self):
+        from src.config.settings import settings
+
+        settings.mini_app_url = self._was
+
+    def test_приглашение_несёт_кнопку_на_свой_опрос(self):
+        from src.notifications.buttons import markup_for
+
+        markup = markup_for("survey.invite", "11111111-2222-3333-4444-555555555555")
+
+        assert markup is not None
+        button = markup.inline_keyboard[0][0]
+        assert button.text == "Пройти опрос"
+        # Кнопка ведёт именно к этому опросу, а не «к опросам вообще».
+        assert button.web_app.url.endswith(
+            "/survey/11111111-2222-3333-4444-555555555555"
+        )
+
+    def test_у_обычного_уведомления_кнопки_нет(self):
+        from src.notifications.buttons import markup_for
+
+        assert markup_for("absence.approved", "some-id") is None
+
+    def test_без_ссылки_на_опрос_кнопки_нет(self):
+        # Кнопка открыла бы «какой-то» опрос — это хуже её отсутствия.
+        from src.notifications.buttons import markup_for
+
+        assert markup_for("survey.invite", None) is None
+
+    def test_без_адреса_mini_app_кнопки_нет(self):
+        from src.config.settings import settings
+        from src.notifications.buttons import markup_for
+
+        settings.mini_app_url = ""
+        assert markup_for("survey.invite", "any-id") is None
+
+    def test_идентификатор_экранируется(self):
+        from src.notifications.buttons import survey_url
+
+        url = survey_url("../../admin")
+        assert url is not None
+        assert "/survey/..%2F..%2Fadmin" in url
+
+    def test_ссылка_доезжает_от_очереди_до_отправщика(self):
+        """Идентификатор из очереди должен дойти до кнопки целиком."""
+        seen = {}
+
+        class Watching:
+            async def deliver(self, *, chat_id, text, notification_type,
+                              entity_id=None):
+                seen["entity_id"] = entity_id
+                seen["type"] = notification_type
+                from src.notifications.sender import Outcome
+
+                return Outcome(sent=True)
+
+        item = message(1, "survey.invite")
+        item["entity_id"] = "recipient-77"
+        client = FakeClient([item])
+
+        asyncio.run(tick(Watching(), client))
+
+        assert seen == {"entity_id": "recipient-77", "type": "survey.invite"}

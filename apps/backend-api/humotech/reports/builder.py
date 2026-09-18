@@ -311,6 +311,7 @@ class Scope:
         if self._assignments is not None:
             return self._assignments
         from humotech.employees.models import EmployeeAssignment
+        from humotech.employees.services import WORKING_STATUSES
 
         spec = self.spec
         start = spec.first if spec.include_inactive else spec.last
@@ -321,7 +322,9 @@ class Scope:
             valid_from__lte=spec.last,
         ).filter(Q(valid_to__isnull=True) | Q(valid_to__gte=start))
         if not spec.include_inactive:
-            rows = rows.filter(employee__employment_status="ACTIVE")
+            # Стажёр работает и попадает в отчёт: «не включать неактивных»
+            # означает уволенных, а не тех, у кого идёт испытательный срок.
+            rows = rows.filter(employee__employment_status__in=WORKING_STATUSES)
         if spec.department_ids:
             rows = rows.filter(department_id__in=spec.department_ids)
         if spec.employee_id:

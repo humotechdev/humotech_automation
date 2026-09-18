@@ -47,6 +47,15 @@ SCHEDULE_STATUSES = ("ACTIVE", "INACTIVE", "ARCHIVED")
 CALENDAR_EXCEPTION_TYPES = ("HOLIDAY", "SHORT_DAY", "WORKING_WEEKEND", "CLOSURE")
 
 # --- QR ---
+# --- опросы сотрудников ---
+#
+# Опрос именной: HR видит, кто и как ответил. Анонимного вида здесь нет
+# и не появится незаметно — это другой продукт с другими обещаниями.
+SURVEY_QUESTION_KINDS = ("SINGLE", "MULTI", "SCALE", "TEXT")
+SURVEY_CAMPAIGN_STATUSES = ("DRAFT", "SCHEDULED", "ACTIVE", "FINISHED", "CANCELLED")
+SURVEY_AUDIENCE_KINDS = ("EMPLOYEES", "DEPARTMENT", "OFFICE", "ALL")
+SURVEY_RECIPIENT_STATUSES = ("PENDING", "SENT", "STARTED", "COMPLETED")
+
 QR_DIRECTION_MODES = ("ENTRY", "EXIT", "BOTH")
 QR_MODES = ("STATIC", "ROTATING")
 QR_DISPLAY_SESSION_STATUSES = ("ACTIVE", "EXPIRED", "REVOKED", "CLOSED")
@@ -62,6 +71,10 @@ ATTENDANCE_EVENT_TYPES = ("ENTRY", "EXIT")
 ATTENDANCE_SOURCES = ("QR", "MANUAL", "IMPORT")
 VERIFICATION_STATUSES = ("ACCEPTED", "REJECTED", "REVIEW")
 ATTENDANCE_SESSION_STATUSES = ("OPEN", "CLOSED", "CORRECTED", "INVALID")
+#: Что человек сам сказал про свой день в ответ на напоминание.
+#: «Не приду» здесь — это предупреждение, а не оформленное отсутствие:
+#: отпуск и больничный проходят согласование и живут своими заявками.
+DAY_NOTICE_KINDS = ("LATE", "ABSENT")
 CORRECTION_REQUEST_STATUSES = (
     "DRAFT", "SUBMITTED", "IN_REVIEW", "APPROVED", "REJECTED", "CANCELLED",
 )
@@ -76,7 +89,11 @@ DOCUMENT_VERIFICATION_STATUSES = ("PENDING", "VERIFIED", "REJECTED")
 FILE_SCAN_STATUSES = ("PENDING", "CLEAN", "INFECTED", "FAILED")
 ABSENCE_ACTIONS = (
     "CREATED", "SUBMITTED", "TAKEN_IN_REVIEW", "APPROVED", "REJECTED",
-    "CANCELLED", "DOCUMENT_ATTACHED", "DOCUMENT_VERIFIED", "COMMENTED",
+    "CANCELLED", "DOCUMENT_ATTACHED", "DOCUMENT_VERIFIED",
+    # Справку не приняли. Отдельно от `DOCUMENT_VERIFIED`: «проверен» и
+    # «отклонён» — разные исходы, и записывать отказ как проверку значит
+    # потерять его в истории заявки.
+    "DOCUMENT_REJECTED", "COMMENTED",
 )
 
 # --- Telegram, знания, вопросы, уведомления ---
@@ -169,7 +186,15 @@ NOTIFICATION_ATTEMPT_OUTCOMES = ("SENT", "FAILED", "CANCELLED")
 # --- роли, создаваемые сидом ---
 SYSTEM_ROLE_CODES = (
     "SUPER_ADMIN", "HR_ADMIN", "REGIONAL_HR", "OFFICE_ADMIN",
-    "MANAGER", "ACCOUNTANT", "TECH_ADMIN",
+    "MANAGER", "ACCOUNTANT", "TECH_ADMIN", "VIEWER",
+)
+
+# Роли, которые предлагают при выдаче доступа в интерфейсе. Каталог шире:
+# в нём есть служебные и переносные роли, и отдавать их выбором из списка
+# незачем. Уже выданную роль вне этого набора интерфейс всё равно
+# показывает — иначе у живого администратора роль выглядела бы пустой.
+OFFERED_ROLE_CODES = (
+    "SUPER_ADMIN", "HR_ADMIN", "OFFICE_ADMIN", "MANAGER", "VIEWER",
 )
 
 def status_check(

@@ -20,6 +20,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from humotech.attendance import statistics
+from humotech.attendance import reminders
 from humotech.attendance.scanning import scan
 from humotech.core.api import validated
 from humotech.core.clientip import client_ip
@@ -36,7 +37,11 @@ from humotech.selfservice.responses import (
     ScanResultSerializer,
     StatisticsSerializer,
 )
-from humotech.selfservice.serializers import PeriodSerializer, ScanRequestSerializer
+from humotech.selfservice.serializers import (
+    DayNoticeSerializer,
+    PeriodSerializer,
+    ScanRequestSerializer,
+)
 from humotech.selfservice.throttling import EmployeeRateThrottle, ScanRateThrottle
 from humotech.telegram.auth import (
     BotEmployeeAuthentication,
@@ -212,6 +217,37 @@ def _local_time(moment, zone: str | None) -> str | None:
     except (ZoneInfoNotFoundError, ValueError):
         local = moment
     return local.strftime("%H:%M")
+
+
+@extend_schema(tags=["Личный кабинет"])
+class DayNoticeView(EmployeeSelfView):
+    """Ответ на напоминание о начале дня.
+
+    Это НЕ заявка. «Не приду» не оформляет ни отпуска, ни больничного:
+    они проходят согласование и живут своими адресами. Здесь человек
+    только объясняет пустую строку в табеле, и кадровик видит разницу
+    между «предупредил» и «пропал».
+
+    Строка одна на человека и день: сказавший «опаздываю», а потом «не
+    приду», обновляет прежний ответ, а не заводит второй.
+    """
+
+    @extend_schema(
+        operation_id="me_day_notice",
+        summary="Опаздываю или не приду",
+        request=DayNoticeSerializer,
+        responses={200: DayNoticeSerializer},
+    )
+    def post(self, request):
+        data = validated(DayNoticeSerializer, request.data)
+        row = reminders.notice(
+            employee=self.context.employee,
+            kind=data["kind"],
+            comment=data.get("comment"),
+        )
+        return Response(
+            {"kind": row.kind, "comment": row.comment, "day": row.day.isoformat()}
+        )
 
 
 @extend_schema(tags=["Личный кабинет"])

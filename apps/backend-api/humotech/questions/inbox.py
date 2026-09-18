@@ -566,7 +566,7 @@ class InboxService(BaseService):
                 title=f"Ответ на обращение №{question.number}",
                 # В ленте CRM — чистый текст, в чат — с заголовком: без
                 # номера человек с двумя обращениями не поймёт, о каком речь.
-                body=f"{REPLY_HEADER.format(number=question.number)}\n\n{body}",
+                body=_reply_body(question, body),
                 # Ключ — по сообщению, а не по обращению: у переписки
                 # ответов несколько, и ключ по обращению вернул бы второму
                 # ответу первое уведомление, так и не отправив его.
@@ -1312,3 +1312,22 @@ __all__ = [
     "next_number",
     "prepare_draft",
 ]
+
+
+def _reply_body(question, answer: str) -> str:
+    """Ответ HR так, как его увидит человек в чате.
+
+    Номер обращения и цитата вопроса — не украшение. Человек задал
+    вопрос неделю назад, с тех пор написал ещё два и получил ответ на
+    один из них: без цитаты он не поймёт, о каком именно речь, и
+    переспросит — то есть заведёт кадровику ещё одну работу.
+
+    Цитата короткая: полный вопрос человек и так помнит, а стена текста
+    в чате прячет сам ответ.
+    """
+    asked = " ".join((question.question_text or "").split())
+    head = REPLY_HEADER.format(number=question.number)
+    if asked:
+        short = asked if len(asked) <= 120 else asked[:117].rstrip() + "…"
+        head += f"\n\nВы спрашивали: «{short}»"
+    return f"{head}\n\n{answer}"

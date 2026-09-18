@@ -139,6 +139,38 @@ KNOWN_DIVERGENCES = {
     "attendance_events.distance_m: лишняя колонка",
     "attendance_events: лишнее ограничение: "
     "check (((distance_m is null) or (distance_m >= (0)::numeric)))",
+    # --- офис заводится одним регионом ---
+    #
+    # Адрес больше не обязателен: его, точку на карте и радиус задают в
+    # карточке офиса. Требовать адрес в момент создания значит не дать
+    # завести офис тому, кто его ещё не знает.
+    "offices: ОГРАНИЧЕНИЕ ОТСУТСТВУЕТ: not null address",
+    # --- отдел стал общим для компании ---
+    #
+    # Офис у отдела необязателен: «Продажи» одни на все города. Ключ
+    # уникальности общих отделов частичный, а частичный Django строит
+    # индексом — в pg_constraint он не попадает.
+    "departments: ОГРАНИЧЕНИЕ ОТСУТСТВУЕТ: not null office_id",
+    "departments: лишний индекс: public.departments using btree "
+    "(organization_id, code) where (office_id is null)",
+    # --- отдел: руководитель и описание ---
+    #
+    # Руководитель — SET NULL: отдел переживает своего руководителя, и
+    # исчезновение его строки не должно уносить подразделение.
+    "departments.description: лишняя колонка",
+    "departments.head_employee_id: лишняя колонка",
+    "departments: лишнее ограничение: foreign key (head_employee_id) "
+    "references employees(id) on delete set null",
+    # --- опросы сотрудников ---
+    #
+    # Пять таблиц целиком: шаблон, вопрос, рассылка, получатель, ответ.
+    # Опрос именной — получатель у ответа обязателен, и «ничей» ответ
+    # схемой не предусмотрен.
+    "ЛИШНЯЯ ТАБЛИЦА: survey_templates",
+    "ЛИШНЯЯ ТАБЛИЦА: survey_questions",
+    "ЛИШНЯЯ ТАБЛИЦА: survey_campaigns",
+    "ЛИШНЯЯ ТАБЛИЦА: survey_recipients",
+    "ЛИШНЯЯ ТАБЛИЦА: survey_answers",
 }
 
 
@@ -178,8 +210,9 @@ def test_business_schema_has_expected_shape():
     # + employee_documents, + employee_onboarding_keys,
     # + employee_question_messages, + report_templates,
     # + notification_feed_reads.
-    assert len(snapshot["tables"]) == 53, (
-        f"бизнес-таблиц {len(snapshot['tables'])}, ожидалось 53"
+    # + 5 таблиц опросов: шаблон, вопрос, рассылка, получатель, ответ.
+    assert len(snapshot["tables"]) == 59, (
+        f"бизнес-таблиц {len(snapshot['tables'])}, ожидалось 59"
     )
 
     counts = {"c": 0, "f": 0, "u": 0, "x": 0}
@@ -249,9 +282,25 @@ def test_business_schema_has_expected_shape():
     #   CHECK 118 + 1 — расстояние отметки не бывает отрицательным;
     #   FK    155 + 1 — автор точки отметки;
     #   UNIQUE 25 + 0 — ни описание, ни автор уникальными не бывают.
-    assert counts["c"] == 119, f"CHECK: {counts['c']}, ожидалось 119"
-    assert counts["f"] == 156, f"FOREIGN KEY: {counts['f']}, ожидалось 156"
-    assert counts["u"] == 25, f"UNIQUE: {counts['u']}, ожидалось 25"
+    # Прибавка руководителя отдела:
+    #   CHECK  119 + 0 — ни у описания, ни у ссылки проверок нет;
+    #   FK     156 + 1 — руководитель, SET NULL;
+    #   UNIQUE  25 + 0 — один человек может вести два отдела.
+    # Прибавка опросов:
+    #   CHECK  119 + 9 — вид вопроса, положительный номер и согласование
+    #                    вариантов с видом (3); статус, круг получателей и
+    #                    период повтора рассылки (3); статус получателя и
+    #                    наличие времени завершения (2); непустой ответ (1);
+    #   FK     157 + 13 — организация у каждой из пяти таблиц, шаблон у
+    #                    вопроса и рассылки, автор у шаблона и рассылки,
+    #                    рассылка и сотрудник у получателя, получатель и
+    #                    вопрос у ответа;
+    #   UNIQUE  25 + 3 — номер вопроса в шаблоне, сотрудник в рассылке,
+    #                    ответ на вопрос. Второго ответа на тот же вопрос
+    #                    не бывает: опрос проходят один раз.
+    assert counts["c"] == 129, f"CHECK: {counts['c']}, ожидалось 129"
+    assert counts["f"] == 172, f"FOREIGN KEY: {counts['f']}, ожидалось 172"
+    assert counts["u"] == 29, f"UNIQUE: {counts['u']}, ожидалось 29"
     assert counts["x"] == 2, f"EXCLUDE: {counts['x']}, ожидалось 2"
     assert {"btree_gist", "vector"} <= set(snapshot["extensions"])
 
@@ -279,7 +328,9 @@ def test_every_foreign_key_keeps_its_on_delete_action():
     # +1 — фотография сотрудника (employees/0005), RESTRICT.
     # +6 — переписка обращений (questions/0003).
     # +1 — автор точки отметки (qr_codes/0004), SET NULL.
-    assert len(rows) == 156, f"внешних ключей {len(rows)}, ожидалось 156"
+    # +1 — руководитель отдела (departments/0003), SET NULL.
+    # +13 — ключи опросов (surveys/0002).
+    assert len(rows) == 172, f"внешних ключей {len(rows)}, ожидалось 172"
 
     # 'a' = NO ACTION: значит, действие не задано
     without_action = [f"{t}.{n}" for t, n, kind, _ in rows if kind == "a"]
@@ -311,8 +362,13 @@ def test_every_foreign_key_keeps_its_on_delete_action():
     # запись HR и строка очереди — нет, сообщения живут с обращением.
     # 125 + 1 RESTRICT, 7 + 1 CASCADE — организация и владелец шаблона
     # отчёта: шаблон — личная настройка и уходит вместе с учётной записью.
-    assert actions["r"] == 127, f"RESTRICT: {actions['r']}, ожидалось 127"
+    # 127 + 11 — ключи опросов, кроме двух авторских: шаблон с ответами,
+    # рассылку с получателями и вопрос, на который ответили, удалить нельзя.
+    assert actions["r"] == 140, f"RESTRICT: {actions['r']}, ожидалось 140"
     # 19 + 1 SET NULL — автор точки отметки: учётную запись HR можно
     # отключить, а точка у двери работать не перестаёт.
-    assert actions["n"] == 20, f"SET NULL: {actions['n']}, ожидалось 20"
+    # 20 + 2 — авторы шаблона и рассылки опроса: учётную запись HR можно
+    # отключить, а опрос от этого не исчезает.
+    # 22 + 1 — руководитель отдела: отдел переживает своего руководителя.
+    assert actions["n"] == 23, f"SET NULL: {actions['n']}, ожидалось 23"
     assert actions["c"] == 9, f"CASCADE: {actions['c']}, ожидалось 9"

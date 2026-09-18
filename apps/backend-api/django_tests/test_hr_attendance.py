@@ -161,6 +161,35 @@ class TestPresence:
         # Незакрытой сессии не назначается выдуманное время выхода.
         assert row.last_exit_at is None
 
+    def test_probation_employee_is_part_of_the_shift(
+        self, service, attendance_actor, organization, employee, office
+    ):
+        # Стажёр ходит в тот же офис, в то же время и отмечается тем же
+        # кодом. Отсутствие его в составе смены означало бы, что человек
+        # пришёл и отметился, а «сейчас в офисе» показывает ноль — ровно
+        # так и было, пока состав собирался по одному статусу «ACTIVE».
+        employee.employment_status = "PROBATION"
+        employee.save(update_fields=["employment_status"])
+        open_session(organization, employee, office)
+
+        report = service.presence(attendance_actor, day=DAY, office_id=office.id)
+
+        assert [row.state for row in report.rows] == ["IN_OFFICE"]
+
+    def test_terminated_employee_is_not_part_of_the_shift(
+        self, service, attendance_actor, organization, employee, office
+    ):
+        # Обратная сторона: «работающий» — это не «любой». Уволенного в
+        # составе смены быть не должно, иначе проверка выше проходила бы
+        # и у фильтра, снятого целиком.
+        employee.employment_status = "TERMINATED"
+        employee.save(update_fields=["employment_status"])
+        open_session(organization, employee, office)
+
+        report = service.presence(attendance_actor, day=DAY, office_id=office.id)
+
+        assert report.rows == []
+
     def test_closed_session_shows_as_left(
         self, service, attendance_actor, organization, employee, office
     ):

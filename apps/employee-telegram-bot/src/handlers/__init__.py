@@ -13,9 +13,11 @@ HR-панель — сняты: часть из них была заглушка
 
 from aiogram import Router
 
+from src.handlers.absence_document import router as absence_document_router
 from src.handlers.ask_hr import router as ask_hr_router
 from src.handlers.attendance import router as attendance_router
 from src.handlers.attendance.sticker import router as sticker_router
+from src.handlers.day_start import router as day_start_router
 from src.handlers.fallback import router as fallback_router
 from src.handlers.menu import router as menu_router
 from src.handlers.start import router as start_router
@@ -32,6 +34,13 @@ def build_root_router() -> Router:
     # состояния, поэтому стоять он обязан позже: иначе служебное
     # сообщение съедалось бы ответом «не понял».
     root.include_router(attendance_router)
+    # Ответ на напоминание ждёт причину в своём состоянии. Раньше
+    # меню и `fallback`: иначе написанная причина уходила бы в HR
+    # вопросом или получала бы «не понял».
+    root.include_router(day_start_router)
+    # Загрузка справки ждёт файл в своём состоянии. Раньше меню и
+    # `fallback`: присланный документ иначе получил бы «не понял».
+    root.include_router(absence_document_router)
     root.include_router(menu_router)
     # После меню: кнопка меню, нажатая во время ввода вопроса, остаётся
     # кнопкой меню и не уходит в HR текстом. До `fallback`: он ловит

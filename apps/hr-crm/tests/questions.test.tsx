@@ -9,7 +9,7 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
 
-import { USER, crm, fakeNetwork, json, renderApp, type Call } from './helpers';
+import { USER, crm, fakeNetwork, json, pick, renderApp, type Call } from './helpers';
 
 const HR = {
   ...USER,
@@ -165,7 +165,6 @@ describe('очередь', () => {
 
     const queue = screen.getByRole('region', { name: 'Очередь обращений' });
     expect(await within(queue).findByText('Назаров Фаррух')).toBeTruthy();
-    expect(within(queue).getByText('SLA нарушен')).toBeTruthy();
 
     const talk = screen.getByRole('region', { name: 'Переписка' });
     expect(await within(talk).findByText(/У меня отпуск с 20 сентября/)).toBeTruthy();
@@ -180,8 +179,10 @@ describe('очередь', () => {
     fireEvent.change(screen.getByLabelText('Поиск обращений'), { target: { value: '214' } });
     await waitFor(() => expect(lists(calls).pop()?.url).toContain('search=214'), { timeout: 2000 });
 
-    fireEvent.click(screen.getByRole('button', { name: /Мои/ }));
-    await waitFor(() => expect(lists(calls).pop()?.url).toContain('quick=mine'));
+    // Быстрых фильтров три: все, без ответа, срочные. «Мои» убран
+    // вместе с ролями — администратор один, и все обращения его.
+    fireEvent.click(screen.getByRole('button', { name: /Без ответа/ }));
+    await waitFor(() => expect(lists(calls).pop()?.url).toContain('quick=unanswered'));
   });
 
   test('офис из шапки фильтрует очередь', async () => {
@@ -189,25 +190,23 @@ describe('очередь', () => {
     renderApp('/questions');
     await screen.findByText('Облокулов Шахноза');
 
-    fireEvent.change(await screen.findByLabelText('Офис'), { target: { value: 'o-1' } });
+    await pick('Офис', 'Головной офис');
 
     await waitFor(() => expect(lists(calls).pop()?.url).toContain('office_id=o-1'));
   });
 });
 
 describe('действия', () => {
-  test('«Взять в работу» отправляет запрос и показывает итог', async () => {
-    const calls = network((path, call) =>
-      call.method === 'POST' && path.includes('/take/')
-        ? json(200, { ...QUESTION, status: 'IN_PROGRESS', assignee: { id: HR.id, name: 'Кадровик' }, actions: { ...ACTIONS, take: false } })
-        : null,
-    );
+  test('переписка открыта сразу, без промежуточного «взять в работу»', async () => {
+    // Ответственных больше нет: администратор один, и обращение его по
+    // умолчанию. Кнопка «Взять в работу» просила подтвердить то, что и
+    // так очевидно, и её убрали вместе с ролями.
+    const calls = network();
     renderApp('/questions?id=q-1');
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Взять в работу' }));
-
-    await waitFor(() => expect(posts(calls, 'take')).toHaveLength(1));
-    expect(await screen.findByText('Обращение взято в работу')).toBeTruthy();
+    // Поле ответа появляется само, без промежуточного шага.
+    expect(await screen.findByLabelText('Ответ сотруднику · Telegram')).toBeTruthy();
+    expect(posts(calls, 'take')).toHaveLength(0);
   });
 
   test('закрыть без причины нельзя, с причиной — причина уходит на сервер', async () => {
@@ -265,6 +264,8 @@ describe('ответ в Telegram', () => {
     renderApp('/questions?id=q-1');
 
     fireEvent.change(await screen.findByLabelText('Ответ сотруднику · Telegram'), { target: { value: 'Готово' } });
+    // Уточнение к отправке, а не отдельное действие: чаще всего ответ
+    // и закрывает вопрос.
     fireEvent.click(screen.getByLabelText('Закрыть после отправки'));
     fireEvent.click(screen.getByRole('button', { name: /Отправить/ }));
 
@@ -278,9 +279,12 @@ describe('ответ в Telegram', () => {
     });
     renderApp('/questions?id=q-1');
 
-    fireEvent.change(await screen.findByLabelText('Ответ сотруднику · Telegram'), { target: { value: 'Ответ' } });
+    const field = await screen.findByLabelText('Ответ сотруднику · Telegram');
+    fireEvent.change(field, { target: { value: 'Ответ' } });
 
-    expect(screen.getByText(/сообщение не будет доставлено/)).toBeTruthy();
+    // Причина стоит там, где человек печатает: подсказка поля говорит,
+    // что доставить сообщение некуда.
+    expect(field.getAttribute('placeholder')).toMatch(/отправка недоступна/);
     expect((screen.getByRole('button', { name: /Отправить/ }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: /Отправить/ }));
     expect(posts(calls, 'reply')).toHaveLength(0);
@@ -305,48 +309,33 @@ describe('ответ в Telegram', () => {
 });
 
 describe('черновик ассистента', () => {
-  test('показывает точность и источник и сам не отправляется', async () => {
+  test('готовый ответ вставляется в поле, а не отправляется сам', async () => {
+    // Черновик — подсказка, а не ответ: отправить его за кадровика
+    // значит подписать его именем то, чего он не читал.
     const calls = network();
     renderApp('/questions?id=q-1');
 
-    const draft = await screen.findByRole('region', { name: 'Предложение помощника' });
-    expect(within(draft).getByText(/Высокая точность · 91%/)).toBeTruthy();
-    expect(within(draft).getByText(/«Правила ежегодного отпуска», редакция от 01\.09\.2026/)).toBeTruthy();
-    expect(within(draft).getByRole('link', { name: /Открыть источник/ }).getAttribute('href')).toBe('/knowledge?id=s-1');
-
-    fireEvent.click(within(draft).getByRole('button', { name: 'Использовать ответ' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Ответ от AI/ }));
 
     const field = screen.getByLabelText('Ответ сотруднику · Telegram') as HTMLTextAreaElement;
-    expect(field.value).toBe('Да, даты отпуска можно изменить до его начала.');
+    await waitFor(() =>
+      expect(field.value).toBe('Да, даты отпуска можно изменить до его начала.'),
+    );
     expect(posts(calls, 'reply')).toHaveLength(0);
   });
 
-  test('при конфликте правил ответ не предлагается', async () => {
+  test('без черновика кнопки нет вовсе', async () => {
+    // Кнопка, которая ничего не вставит, хуже её отсутствия: человек
+    // нажимает и решает, что сломалось.
     network(() => null, {
       ...QUESTION,
-      draft: {
-        status: 'CONFLICT', text: null, confidence: '0.7900', generated_at: null, outdated: false,
-        sources: [SOURCE, { ...SOURCE, id: 's-2', title: 'График работы головного офиса' }],
-      },
+      draft: null,
+      actions: { ...ACTIONS, draft: false },
     });
     renderApp('/questions?id=q-1');
 
-    const draft = await screen.findByRole('region', { name: 'Предложение помощника' });
-    expect(within(draft).getByText(/противоречат друг другу/)).toBeTruthy();
-    expect(within(draft).queryByRole('button', { name: 'Использовать ответ' })).toBeNull();
-  });
-
-  test('низкая уверенность — предупреждение, а не «использовать ответ»', async () => {
-    network(() => null, {
-      ...QUESTION,
-      draft: { ...QUESTION.draft, status: 'LOW_CONFIDENCE', confidence: '0.6300' },
-    });
-    renderApp('/questions?id=q-1');
-
-    const draft = await screen.findByRole('region', { name: 'Предложение помощника' });
-    expect(within(draft).getByText(/не уверен в ответе/)).toBeTruthy();
-    expect(within(draft).queryByRole('button', { name: 'Использовать ответ' })).toBeNull();
-    expect(within(draft).getByRole('button', { name: 'Вставить для проверки' })).toBeTruthy();
+    await screen.findByLabelText('Ответ сотруднику · Telegram');
+    expect(screen.queryByRole('button', { name: /Ответ от AI/ })).toBeNull();
   });
 });
 
@@ -359,17 +348,15 @@ describe('контекст сотрудника', () => {
     expect(await within(side).findByText('Пн–Пт · 09:00–18:00')).toBeTruthy();
     expect(within(side).getByText('14 дней')).toBeTruthy();
     expect(within(side).getByText('Всего 6 · Закрыто 5')).toBeTruthy();
-
-    const related = await screen.findByRole('navigation', { name: 'Связанные действия' });
-    expect(within(related).getByRole('link', { name: /Открыть заявку сотрудника/ }).getAttribute('href')).toBe('/requests?request=r-1');
-    // Посещаемость не разрешена — ссылки нет, а не ссылка в отказ.
-    expect(within(related).queryByRole('link', { name: /Посещаемость/ })).toBeNull();
   });
 
-  test('без права на обращения страница так и говорит', async () => {
-    fakeNetwork((path) => (path.includes('/auth/') ? json(200, USER) : crm(path) ?? json(200, { items: [] })));
+  test('очередь открыта администратору без разговоров о правах', async () => {
+    // Прав в интерфейсе больше нет: администратор один. Отказ, если он
+    // понадобится, исполняет сервер.
+    network();
     renderApp('/questions');
 
-    expect(await screen.findByText('Нет права просматривать обращения.')).toBeTruthy();
+    expect(await screen.findByRole('region', { name: 'Очередь обращений' })).toBeTruthy();
+    expect(screen.queryByText('Нет права просматривать обращения.')).toBeNull();
   });
 });

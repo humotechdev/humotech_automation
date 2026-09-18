@@ -168,7 +168,7 @@ class QrPointService(BaseService):
         actor: Actor,
         *,
         office_id: uuid.UUID,
-        name: str,
+        name: str | None = None,
         code: str | None = None,
         description: str | None = None,
         direction_mode: str = "BOTH",
@@ -182,8 +182,11 @@ class QrPointService(BaseService):
 
         Секрет возвращается здесь и больше нигде и никогда.
 
-        Код точки необязателен: HR из CRM даёт название, а код для
-        сверки и журналов подбирается сам — уникальный внутри офиса.
+        Ни код, ни название не обязательны. Код подбирается сам —
+        уникальный внутри офиса. Название, если его не дали, берётся от
+        типа точки: «Вход», «Выход» или «Вход и выход», с номером, если
+        такая уже есть. Пустым оно не остаётся — строка без имени в
+        списке точек нечитаема, а на печатном листе с кодом тем более.
         """
         self.access.require(actor, "qr_points.manage")
         office = self.access.require_office(actor, office_id)
@@ -199,7 +202,10 @@ class QrPointService(BaseService):
                     clean_code(code, field="code") if code
                     else _free_code(office.id)
                 ),
-                name=clean_text(name, field="name", max_length=255),
+                name=(
+                    clean_text(name, field="name", max_length=255)
+                    or _default_name(office.id, direction_mode)
+                ),
                 description=clean_text(
                     description, field="description", max_length=500
                 ) if description else None,
@@ -362,6 +368,41 @@ class QrPointService(BaseService):
             )
         return IssuedPoint(point=point, static_token=token)
 
+    def delete(self, actor: Actor, point_id: uuid.UUID) -> None:
+        """Убрать точку совсем.
+
+        Только ту, по которой никто не отмечался. Точка, попавшая хоть в
+        одну отметку, перестаёт быть строкой справочника и становится
+        частью истории: удалить её значит стереть ответ на вопрос «через
+        какую дверь человек вошёл». Такую точку выключают — код
+        перестаёт работать, а прошлые отметки остаются объяснимыми.
+        """
+        self.access.require(actor, "qr_points.manage")
+        point = self._require_point(actor, point_id)
+
+        from humotech.attendance.models import AttendanceEvent
+
+        used = AttendanceEvent.objects.filter(qr_point_id=point.id).count()
+        if used:
+            raise Conflict(
+                "По этой точке уже отмечались, поэтому удалить её нельзя — "
+                "выключите её: код перестанет работать, а прошлые отметки "
+                "останутся объяснимыми",
+                details={"marks": used},
+            )
+
+        before = snapshot(point, AUDITED_FIELDS)
+        with self.atomic():
+            point.delete()
+            self.audit.record(
+                actor,
+                action="qr.point.delete",
+                entity_type="office_qr_points",
+                entity_id=point_id,
+                before=before,
+                after=None,
+            )
+
     # ------------------------------------------------------------ внутреннее
 
     def _require_point(self, actor: Actor, point_id: uuid.UUID) -> OfficeQrPoint:
@@ -402,6 +443,34 @@ class QrPointService(BaseService):
                     details={"field": "rotation_seconds"},
                 )
             _validate_rotation(rotation_seconds)
+
+
+#: Как зовётся точка, которую не назвали. Тип уже сказал, для чего она.
+DIRECTION_NAMES = {
+    "ENTRY": "Вход",
+    "EXIT": "Выход",
+    "BOTH": "Вход и выход",
+}
+
+
+def _default_name(office_id: uuid.UUID, direction_mode: str) -> str:
+    """Название по типу точки, с номером при повторе.
+
+    Номер добавляется только со второй такой точки: «Вход» и «Вход 2»
+    читаются, а «Вход 1» у единственной двери выглядит ошибкой.
+    """
+    base = DIRECTION_NAMES.get(direction_mode, "Точка")
+    taken = set(
+        OfficeQrPoint.objects.filter(office_id=office_id).values_list(
+            "name", flat=True
+        )
+    )
+    if base not in taken:
+        return base
+    number = 2
+    while f"{base} {number}" in taken:
+        number += 1
+    return f"{base} {number}"
 
 
 def _free_code(office_id: uuid.UUID) -> str:

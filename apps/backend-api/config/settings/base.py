@@ -174,6 +174,7 @@ HUMOTECH_APPS = [
     "humotech.notifications",
     "humotech.audit",
     "humotech.reports",
+    "humotech.surveys",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + HUMOTECH_APPS

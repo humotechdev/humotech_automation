@@ -376,3 +376,40 @@ def test_office_setup_scenario_end_to_end(
     assert card["created_by_name"] == hr.email
     assert card["description"] == "Слева от ресепшен"
     assert "static_token" not in card
+
+    # 6. Попытка из-за пределов радиуса. Отказ обязан назвать и
+    # расстояние, и допуск: «слишком далеко» без чисел — это спор,
+    # в котором человеку нечем проверить, кто прав.
+    far_lat, far_lon = FAR
+    far = bot_client.post(f"{API}/me/attendance/scan", {
+        "token": sticker_link, "client_event_id": "tg-1-101",
+        "latitude": str(far_lat), "longitude": str(far_lon), "accuracy_m": "12",
+    }, format="json", **bot_headers(TG_ID))
+
+    assert far.status_code == 200, far.content
+    refused = far.json()
+    assert refused["status"] == "OUTSIDE_GEOFENCE"
+    assert refused["accepted"] is False
+    assert refused["distance_m"] > 100
+    assert refused["radius_m"] == 100
+
+    # 7. Переименовать точку и убедиться, что удалить её уже нельзя:
+    # по ней отмечались, и это часть истории.
+    point_id = card["id"]
+    renamed = api_client.patch(f"{API}/qr-points/{point_id}/",
+                               {"name": "Вход с улицы"}, format="json")
+    assert renamed.status_code == 200, renamed.content
+    assert renamed.json()["name"] == "Вход с улицы"
+
+    refused_delete = api_client.delete(f"{API}/qr-points/{point_id}/")
+    assert refused_delete.status_code == 409, refused_delete.content
+
+    # А точка без единой отметки убирается совсем — опечатку в
+    # справочнике надо уметь стереть.
+    spare = api_client.post(f"{API}/qr-points/", {
+        "office_id": office_id, "name": "Опечатка",
+        "direction_mode": "EXIT", "qr_mode": "STATIC",
+    }, format="json")
+    assert spare.status_code == 201, spare.content
+    gone = api_client.delete(f"{API}/qr-points/{spare.json()['point']['id']}/")
+    assert gone.status_code == 204, gone.content

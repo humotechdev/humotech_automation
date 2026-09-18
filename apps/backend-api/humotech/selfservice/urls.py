@@ -10,6 +10,7 @@
 from django.urls import path
 
 from humotech.selfservice.absences import (
+    AbsenceApplicationView,
     AbsenceDetailView,
     AbsenceDocumentView,
     AbsenceExtendView,
@@ -21,10 +22,13 @@ from humotech.selfservice.notifications import (
     NotificationListView,
     NotificationReadView,
 )
+from humotech.selfservice.ask import AskView, EscalateView
 from humotech.selfservice.questions import QuestionMessageView
+from humotech.selfservice.surveys import SurveyListView, SurveyView
 from humotech.selfservice.views import (
     HistoryView,
     ProfileView,
+    DayNoticeView,
     ScanView,
     StatisticsView,
     StatusView,
@@ -36,6 +40,14 @@ urlpatterns = [
     path("statistics", StatisticsView.as_view(), name="self-statistics"),
     path("history", HistoryView.as_view(), name="self-history"),
     path("attendance/scan", ScanView.as_view(), name="self-scan"),
+    # Ответ на напоминание о начале дня. Отдельно от отметки: это
+    # не факт присутствия, а объяснение его отсутствия.
+    path("attendance/notice", DayNoticeView.as_view(), name="self-day-notice"),
+    # Вопрос ассистенту и передача его HR — два отдельных действия.
+    # Обращение в CRM заводится только вторым: очередь, забитая тем,
+    # что решилось само, перестаёт быть очередью.
+    path("ask", AskView.as_view(), name="self-ask"),
+    path("ask/escalate", EscalateView.as_view(), name="self-ask-escalate"),
     # Больничные и отпуска — одна механика с разными видами отсутствия.
     # Два набора endpoint'ов означали бы два места, где чинить одну ошибку.
     path("absences", AbsenceListView.as_view(), name="self-absences"),
@@ -45,9 +57,17 @@ urlpatterns = [
          name="self-absence"),
     path("absences/<uuid:request_id>/extend", AbsenceExtendView.as_view(),
          name="self-absence-extend"),
+    # Заявление для печати. Собирается из заявки на каждое
+    # обращение: сохранённый бланк разошёлся бы с продлением.
+    path("absences/<uuid:request_id>/application", AbsenceApplicationView.as_view(),
+         name="self-absence-application"),
     path("absences/<uuid:request_id>/document", AbsenceDocumentView.as_view(),
          name="self-absence-document"),
     path("leave-balance", LeaveBalanceView.as_view(), name="self-leave-balance"),
+    # Опросы. Вопросы отдаются целиком одним ответом: опрос короткий, и
+    # запрос на каждый экран означал бы белый экран на каждом «Далее».
+    path("surveys", SurveyListView.as_view(), name="self-surveys"),
+    path("surveys/<uuid:recipient_id>", SurveyView.as_view(), name="self-survey"),
     # Вопрос в HR. Сообщение ложится в обращение по правилам очереди.
     path("questions/messages", QuestionMessageView.as_view(),
          name="self-question-message"),

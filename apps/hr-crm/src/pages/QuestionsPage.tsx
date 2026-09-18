@@ -23,6 +23,7 @@ import {
 import { Link, useSearchParams } from 'react-router-dom';
 
 import * as api from '../api/crm';
+import { employmentStatus } from '../features/employees/status';
 import { ApiFailure, messageFor } from '../api/errors';
 import { AppShell, initials } from '../components/AppShell';
 import { AppIcon } from '../components/AppIcon';
@@ -119,14 +120,6 @@ const DOCUMENT_STATUS: Record<string, string> = {
   UPLOADED: 'Загружен',
   GENERATED_LATER: 'Будет позже',
   REVIEW: 'На проверке',
-};
-
-const EMPLOYMENT: Record<string, [string, string]> = {
-  ACTIVE: ['ok', 'Активен'],
-  PROBATION: ['ok', 'Испытательный срок'],
-  SUSPENDED: ['warn', 'Приостановлен'],
-  TERMINATED: ['off', 'Уволен'],
-  ARCHIVED: ['off', 'В архиве'],
 };
 
 const CLOSE_REASONS = ['Вопрос решён', 'Дубликат обращения', 'Не по адресу HR', 'Другое'];
@@ -658,7 +651,7 @@ function Conversation({
   }, [question.messages.length]);
 
   const [employmentTone, employmentTitle] = context
-    ? (EMPLOYMENT[context.employee.employment_status] ?? ['off', context.employee.employment_status])
+    ? (([t, n]) => [n, t] as [string, string])(employmentStatus(context.employee.employment_status))
     : [null, null];
 
   return (
@@ -1066,6 +1059,18 @@ function Composer({ question, value, onChange, canKnowledge, canDraft, draftBusy
           </div>
         </div>
         <div className="qs-composer__send">
+          {/* Что сделать с обращением после ответа. Состояние для этого
+              было, а управления не осталось — и кадровик не мог закрыть
+              вопрос ответом, хотя чаще всего ответ его и закрывает. */}
+          <label className="qs-after">
+            <input
+              type="checkbox"
+              checked={after === 'CLOSE'}
+              disabled={sending}
+              onChange={(event) => setAfter(event.target.checked ? 'CLOSE' : 'KEEP')}
+            />
+            Закрыть после отправки
+          </label>
           {canDraft && (
             <button
               type="button"
@@ -1147,7 +1152,7 @@ function ContextPanel({ block, employeeId, officeName, onPick, onHistory, onRetr
 
   const data = block.data;
   const person = data.employee;
-  const [tone, statusTitle] = EMPLOYMENT[person.employment_status] ?? ['off', person.employment_status];
+  const [statusTitle, tone] = employmentStatus(person.employment_status);
   const balance = data.balance?.[0] ?? null;
   const sectionsKnown = data.requests !== null || data.balance !== null || data.corrections !== null || data.documents !== null;
   const nothingRelated = (data.requests?.length ?? 0) === 0 && !balance
@@ -1261,13 +1266,17 @@ function ContextPanel({ block, employeeId, officeName, onPick, onHistory, onRetr
           {data.materials.length === 0 && (
             <p className="qs-side__muted">Ассистент не опирался на материалы базы знаний.</p>
           )}
+          {/* Названия материалов, а не ссылки: отдельного раздела
+              «База знаний» у кадровика больше нет, и вести туда некуда.
+              Знать, на что опирался ассистент, по-прежнему нужно —
+              это объясняет, откуда взялся черновик ответа. */}
           <ul className="qs-materials">
             {data.materials.map((one) => (
               <li key={one.id}>
-                <Link to={`/knowledge?id=${encodeURIComponent(one.id)}`}>
+                <span className="qs-materials__row">
                   <AppIcon name="doc" size={18} />
                   <span>{one.title}</span>
-                </Link>
+                </span>
                 {one.status !== 'ACTIVE' && <small>снят с публикации</small>}
               </li>
             ))}

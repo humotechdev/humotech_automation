@@ -25,6 +25,7 @@ from humotech.analytics.views import (
     AnalyticsView,
     ComparisonView,
     DashboardView,
+    MovementView,
 )
 from humotech.attendance.views import (
     AttendanceViewSet,
@@ -36,7 +37,10 @@ from humotech.attendance.views import (
 )
 from humotech.departments.views import DepartmentViewSet, PositionViewSet
 from humotech.employees.views import EmployeeViewSet
+from humotech.absences.type_views import AbsenceTypeViewSet
 from humotech.absences.views import (
+    AbsenceApplicationView,
+    AbsenceDocumentDecisionView,
     AbsenceDecisionView,
     AbsenceDocumentDownloadView,
     PendingAbsenceRequestsView,
@@ -80,8 +84,11 @@ from humotech.reports.job_views import ExportJobViewSet
 from humotech.reports.views import ExportView
 from humotech.schedules.calendar_views import CalendarExceptionViewSet
 from humotech.schedules.views import EmployeeScheduleViewSet, WorkScheduleViewSet
+from humotech.surveys.views import SurveyCampaignViewSet, SurveyTemplateViewSet
 from humotech.telegram.views import (
+    BotLinkAcceptView,
     BotLinkView,
+    BotRecognizeView,
     BotOutboxView,
     EmployeeTelegramDisconnectView,
     EmployeeTelegramView,
@@ -98,6 +105,9 @@ router.register("work-schedules", WorkScheduleViewSet, basename="work-schedule")
 router.register("qr-points", QrPointViewSet, basename="qr-point")
 router.register("departments", DepartmentViewSet, basename="department")
 router.register("positions", PositionViewSet, basename="position")
+# Справочник причин отсутствия. Удаления у него нет: вид живёт в истории
+# заявок, убирают его выключением.
+router.register("absence-types", AbsenceTypeViewSet, basename="absence-type")
 router.register("users", CrmUserViewSet, basename="crm-user")
 # Очередь уведомлений глазами кадровика: почему сообщение не дошло
 # и как отправить его снова. Отправляет по-прежнему бот.
@@ -133,6 +143,15 @@ router.register(
 router.register(
     "telegram/invitations", TelegramInvitationViewSet, basename="telegram-invitation"
 )
+# Опросы сотрудников. Шаблон — набор вопросов, который переиспользуют;
+# рассылка — одно обращение к названному кругу людей. Разделены не для
+# симметрии: правка шаблона не должна менять то, что уже спросили.
+router.register(
+    "surveys/templates", SurveyTemplateViewSet, basename="survey-template"
+)
+router.register(
+    "surveys/campaigns", SurveyCampaignViewSet, basename="survey-campaign"
+)
 
 urlpatterns = [
     path("auth/login", LoginView.as_view(), name="login"),
@@ -160,6 +179,14 @@ urlpatterns = [
     # Вход бота. Пользователя за ним нет: обращается сам бот, предъявляя
     # общий секрет, а право на операцию даёт токен приглашения.
     path("telegram/bot/link", BotLinkView.as_view(), name="telegram-bot-link"),
+    path("telegram/bot/link/accept", BotLinkAcceptView.as_view(), name="telegram-bot-link-accept"),
+    # Узнавание по имени в Telegram: когда человек открыл бота сам, без
+    # ссылки. Привязка получается такой же ожидающей подтверждения.
+    path(
+        "telegram/bot/recognize",
+        BotRecognizeView.as_view(),
+        name="telegram-bot-recognize",
+    ),
     # Очередь уведомлений. Бот забирает её отсюда, а не из базы: подключения
     # к PostgreSQL у него нет и заводить его ради двух запросов не нужно.
     path("telegram/bot/outbox", BotOutboxView.as_view(), name="telegram-bot-outbox"),
@@ -222,6 +249,9 @@ urlpatterns = [
     # словесным определением формулы: процент без них проверить нечем.
     path("analytics", AnalyticsView.as_view(), name="analytics"),
     path("analytics/compare", ComparisonView.as_view(), name="analytics-compare"),
+    # Движение сотрудников. Отдельно от посещаемости: там единица
+    # измерения — дни, здесь — люди.
+    path("analytics/movement", MovementView.as_view(), name="analytics-movement"),
     # Всё для страницы «Аналитика» одним ответом: сводка с прошлым
     # периодом, дни, рейтинг офисов, ритм прихода, дни недели.
     path("analytics/overview", AnalyticsOverviewView.as_view(), name="analytics-overview"),
@@ -297,11 +327,21 @@ urlpatterns = [
     # он следующим этапом, — но подтверждать больничные надо уже сейчас.
     path("absence-requests/pending", PendingAbsenceRequestsView.as_view(),
          name="absence-requests-pending"),
+    # Заявление для печати. Раньше маршрута с <str:decision>: иначе
+    # «application» разобралось бы как решение по заявке.
+    path("absence-requests/<uuid:request_id>/application",
+         AbsenceApplicationView.as_view(), name="absence-request-application"),
     path("absence-requests/<uuid:request_id>/<str:decision>",
          AbsenceDecisionView.as_view(), name="absence-request-decision"),
     path("absence-requests/<uuid:request_id>/documents/<uuid:document_id>/download",
          AbsenceDocumentDownloadView.as_view(),
          name="absence-request-document-download"),
+    # Решение по справке. Отдельно от решения по заявке: одобренный
+    # больничный с отклонённой справкой — законное состояние.
+    path("absence-requests/<uuid:request_id>/documents/<uuid:document_id>/"
+         "<str:decision>",
+         AbsenceDocumentDecisionView.as_view(),
+         name="absence-request-document-decision"),
     # Личный кабинет сотрудника. Один набор endpoint'ов на Mini App и бота:
     # разные клиенты, но одни и те же цифры.
     path("me/", include("humotech.selfservice.urls")),

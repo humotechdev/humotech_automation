@@ -30,11 +30,23 @@ class OfficeSerializer(serializers.ModelSerializer):
 
 
 class OfficeCreateSerializer(serializers.Serializer):
+    """Обязателен только регион.
+
+    Название пустым можно оставить — офис назовётся по региону. Адрес,
+    координаты и радиус задают в карточке офиса: требовать их в момент
+    создания значит не дать завести офис тому, кто их ещё не знает.
+    """
+
     region_id = serializers.UUIDField()
-    code = serializers.CharField(max_length=50)
-    name = serializers.CharField(max_length=255)
-    address = serializers.CharField()
-    timezone = serializers.CharField(max_length=100)
+    # Код не обязателен: в интерфейсе его не спрашивают, сервер
+    # придумывает сам. Поле осталось для переноса данных.
+    code = serializers.CharField(max_length=50, required=False, allow_blank=True)
+    name = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    address = serializers.CharField(required=False, allow_blank=True)
+    # Пояс не обязателен: в стране он один и берётся у организации.
+    timezone = serializers.CharField(
+        max_length=100, required=False, allow_blank=True, allow_null=True
+    )
     latitude = serializers.DecimalField(
         max_digits=9, decimal_places=6, required=False, allow_null=True
     )

@@ -20,6 +20,11 @@ import { AppIcon, type AppIconName } from '../components/AppIcon';
 import { AppSegmentedControl, Dropdown } from '../components/AppSelect';
 import { EmployeeCard } from '../components/EmployeeCard';
 import { longDate, today as todayIso, useBlock, type Block } from '../features/dashboard/data';
+import {
+  employmentStatus,
+  employmentTitle,
+  isWorking,
+} from '../features/employees/status';
 import '../styles/employees.css';
 
 /** Вкладки. Одна вкладка может покрывать несколько состояний модели. */
@@ -395,12 +400,14 @@ function CardMenu({ onOpen }: { onOpen: () => void }) {
  */
 function Status({ person, className }: { person: api.EmployeeRow; className: string }) {
   const status = person.employment_status;
+  // Трудовой статус сильнее помех: уволенного не называют «без графика».
+  // А вот работающему полезнее увидеть то, что мешает ему прямо сейчас,
+  // чем слово «Работает», которое он и так знает.
   const [tone, title] =
-    status === 'TERMINATED' || status === 'ARCHIVED' ? ['off', 'Уволен']
-      : status === 'SUSPENDED' ? ['off', 'Неактивен']
-        : !person.current_schedule ? ['warn', 'Без графика']
-          : person.telegram_state !== 'ACTIVE' ? ['warn', 'Не подключён']
-            : ['ok', 'Активен'];
+    !isWorking(status) ? [employmentStatus(status)[1], employmentTitle(status)]
+      : !person.current_schedule ? ['warn', 'Без графика']
+        : person.telegram_state !== 'ACTIVE' ? ['warn', 'Не подключён']
+          : [employmentStatus(status)[1], employmentTitle(status)];
   return <span className={`emp-status emp-status--${tone} ${className}`}>{title}</span>;
 }
 

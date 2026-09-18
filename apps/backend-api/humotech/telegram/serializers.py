@@ -93,6 +93,45 @@ class IssuedInvitationSerializer(serializers.Serializer):
 
 class InvitationCreateSerializer(serializers.Serializer):
     employee_id = serializers.UUIDField()
+    replace = serializers.BooleanField(
+        required=False, default=False,
+        help_text=(
+            "true — «отправить повторно»: действующая ссылка отзывается и "
+            "тут же выдаётся новая. Прежняя перестаёт работать"
+        ),
+    )
+
+
+class BotRecognizeSerializer(serializers.Serializer):
+    """Что бот сообщает о человеке, открывшем его без ссылки."""
+
+    telegram_user_id = serializers.IntegerField()
+    telegram_chat_id = serializers.IntegerField()
+    telegram_username = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+    language_code = serializers.CharField(
+        max_length=10, required=False, allow_blank=True, allow_null=True
+    )
+
+
+class WelcomeSerializer(serializers.Serializer):
+    """Чем бот здоровается с узнанным сотрудником.
+
+    Ровно то, что человек и так про себя знает: имя, где работает и по
+    какому графику. Ни зарплаты, ни документов, ни чужих данных — бот
+    здесь ничего не сообщает сверх того, что кадровик уже сказал вслух.
+    """
+
+    status = serializers.CharField(help_text="Состояние привязки: PENDING")
+    full_name = serializers.CharField()
+    employment_status = serializers.CharField()
+    hire_date = serializers.DateField(allow_null=True)
+    office_name = serializers.CharField(allow_null=True)
+    department_name = serializers.CharField(allow_null=True)
+    position_name = serializers.CharField(allow_null=True)
+    schedule_name = serializers.CharField(allow_null=True)
+    manager_name = serializers.CharField(allow_null=True)
 
 
 class BotConsumeSerializer(serializers.Serializer):
@@ -112,6 +151,11 @@ class BotConsumeSerializer(serializers.Serializer):
     language_code = serializers.CharField(
         max_length=10, required=False, allow_null=True, allow_blank=True
     )
+
+
+class BotLinkAcceptSerializer(serializers.Serializer):
+    """Согласие сотрудника с условиями после перехода по персональной ссылке."""
+    telegram_user_id = serializers.IntegerField(min_value=1)
 
 
 class MiniAppAuthSerializer(serializers.Serializer):

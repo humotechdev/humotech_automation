@@ -1750,13 +1750,15 @@ a.qs-linked:hover .qs-linked__text span {
   list-style: none;
 }
 
-.qs-materials a {
+/* Строка материала больше не ссылка: раздела «База знаний» у кадровика
+   нет, и вести отсюда некуда. Синим она тоже не красится — синий здесь
+   обещал бы переход. */
+.qs-materials__row {
   display: flex;
   align-items: center;
   gap: 10px;
   font-size: 13.5px;
-  color: var(--qs-blue);
-  text-decoration: none;
+  color: var(--qs-ink, inherit);
 }
 
 .qs-materials small {
@@ -2317,4 +2319,31 @@ a.qs-linked:hover .qs-linked__text span {
    (это делает контейнерный запрос выше), чем срезать кнопку целиком. */
 .qs-composer__tools {
   overflow: visible;
+}
+
+/* «Закрыть после отправки» — рядом с кнопкой отправки.
+
+   Чекбокс, а не второй ряд кнопок: это уточнение к отправке, а не
+   отдельное действие, и выносить его в ряд с «Отправить» значило бы
+   предлагать выбор там, где его нет. */
+.qs-after {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--muted, #6b7280);
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  /* На телефоне строка отправки переносится: подпись целиком не
+     помещается рядом с двумя кнопками. */
+  .qs-composer__send {
+    flex-wrap: wrap;
+  }
+
+  .qs-after {
+    flex: 1 1 100%;
+    white-space: normal;
+  }
 }

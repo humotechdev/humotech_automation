@@ -15,6 +15,7 @@ from humotech.core.api import ServiceViewSet, validated
 from humotech.core.errors import ValidationFailed
 from humotech.employees.attachments import EmployeeAttachmentService
 from humotech.employees.onboarding import EmployeeOnboardingService
+from humotech.employees.lifecycle import EmployeeLifecycleService
 from humotech.employees.serializers import (
     AssignmentChangeSerializer,
     AttachedFileSerializer,
@@ -25,7 +26,9 @@ from humotech.employees.serializers import (
     EmployeeSearchItemSerializer,
     EmployeeOnboardSerializer,
     EmployeeUpdateSerializer,
+    EndProbationSerializer,
     OnboardedSerializer,
+    PromoteSerializer,
     TerminateSerializer,
 )
 from humotech.employees.services import EmployeeService
@@ -260,6 +263,49 @@ class EmployeeViewSet(ServiceViewSet):
     @action(detail=True, methods=["post"])
     def reactivate(self, request, pk=None):
         return self.item_response(self.service.reactivate(self.actor, pk))
+
+    @extend_schema(
+        summary="Принять стажёра в штат",
+        description=(
+            "Статус меняется со «Стажировки» на «Работает». Должность "
+            "можно пересмотреть по итогам стажировки — тогда она "
+            "меняется до смены статуса, чтобы уведомление назвало ту, "
+            "на которую человека приняли."
+        ),
+        request=PromoteSerializer,
+        responses={200: EmployeeCardSerializer},
+    )
+    @action(detail=True, methods=["post"], url_path="promote")
+    def promote(self, request, pk=None):
+        payload = validated(PromoteSerializer, request.data)
+        return self.item_response(
+            EmployeeLifecycleService().promote_to_staff(
+                self.actor, pk,
+                position_id=payload.get("position_id"),
+                effective_from=payload.get("effective_from"),
+            )
+        )
+
+    @extend_schema(
+        summary="Завершить стажировку",
+        description=(
+            "Расставание по итогам испытательного срока. Это увольнение "
+            "с причиной «Не прошёл стажировку»: отдельного статуса для "
+            "такого случая нет и быть не должно."
+        ),
+        request=EndProbationSerializer,
+        responses={200: EmployeeCardSerializer},
+    )
+    @action(detail=True, methods=["post"], url_path="end-probation")
+    def end_probation(self, request, pk=None):
+        payload = validated(EndProbationSerializer, request.data)
+        return self.item_response(
+            EmployeeLifecycleService().end_probation(
+                self.actor, pk,
+                last_day=payload.get("last_day"),
+                reason=payload.get("reason"),
+            )
+        )
 
     @action(detail=True, methods=["post"])
     def terminate(self, request, pk=None):

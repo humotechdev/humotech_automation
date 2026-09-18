@@ -44,6 +44,28 @@ GEOFENCE_MIN_M = 50
 GEOFENCE_MAX_M = 500
 
 
+def _organization_timezone(organization_id) -> str:
+    """Пояс организации. Он же пояс любого её офиса."""
+    from humotech.organizations.models import Organization
+
+    return Organization.objects.only("default_timezone").get(
+        id=organization_id
+    ).default_timezone
+
+
+def _free_office_code(organization_id) -> str:
+    """Свободный код офиса внутри организации."""
+    taken = set(
+        Office.objects.filter(organization_id=organization_id).values_list(
+            "code", flat=True
+        )
+    )
+    number = len(taken) + 1
+    while f"OFF-{number}" in taken:
+        number += 1
+    return f"OFF-{number}"
+
+
 def check_location(office: Office) -> None:
     """Точка на карте и радиус согласованы между собой.
 
@@ -117,12 +139,36 @@ class OfficeService(BaseService):
         actor: Actor,
         *,
         region_id: uuid.UUID,
-        code: str,
-        name: str,
-        address: str,
-        timezone: str,
+        name: str | None = None,
+        address: str | None = None,
+        timezone: str | None = None,
+        code: str | None = None,
         **extra,
     ) -> Office:
+        """Заводится по одному региону: остальное — настройка.
+
+        Название необязательно. Пока офис один на регион, «Ташкентская
+        область» — достаточное имя, и заставлять придумывать второе
+        значит задерживать человека на пустом месте. Пустое имя
+        заменяется названием региона, а не остаётся пустым: строка без
+        имени в списке нечитаема.
+
+        Адрес необязателен тоже: его, точку на карте и радиус задают в
+        карточке офиса. Требовать адрес при создании значит не дать
+        завести офис тому, кто его ещё не знает.
+
+        Код и часовой пояс не спрашивают.
+
+        Код придумывает сервер: офис человек опознаёт названием и
+        адресом, а `OFF-4` нужен только уникальному ключу и выгрузкам.
+
+        Пояс берётся у организации. Компания работает в одной стране, и
+        выбор пояса у каждого офиса был бы выбором без вариантов — зато
+        с возможностью ошибиться и получить офис, живущий на час в
+        стороне от остальных. Колонка остаётся: по ней считаются начало
+        дня и опоздания, и явное значение в строке надёжнее, чем взгляд
+        на организацию при каждом расчёте.
+        """
         self.access.require(actor, "offices.manage")
         region = self.access.require_region(actor, region_id)
         if region.status != "ACTIVE":
@@ -135,10 +181,19 @@ class OfficeService(BaseService):
             office = Office.objects.create(
                 organization_id=actor.organization_id,
                 region=region,
-                code=clean_code(code),
-                name=clean_text(name, field="name", required=True),
-                address=clean_text(address, field="address", required=True),
-                timezone=validate_timezone(timezone),
+                code=(
+                    clean_code(code) if code
+                    else _free_office_code(actor.organization_id)
+                ),
+                # Без имени офис зовётся по региону: строка без имени
+                # в списке нечитаема, а регион известен всегда.
+                name=clean_text(name, field="name", max_length=255) or region.name,
+                address=clean_text(address, field="address"),
+                # Пояс организации, если его не назвали явно: в стране он
+                # один, и спрашивать его у кадровика не о чем.
+                timezone=validate_timezone(
+                    timezone or _organization_timezone(actor.organization_id)
+                ),
                 status="ACTIVE",
                 **{k: extra.get(k) for k in SIMPLE_FIELDS if k in extra},
             )

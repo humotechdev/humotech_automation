@@ -18,7 +18,7 @@
  */
 
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 
 import * as api from '../api/crm';
 import { ApiFailure, messageFor } from '../api/errors';
@@ -138,8 +138,15 @@ const EMPLOYMENT_TYPES = [
  * сохранялись бы одинаково, обещал бы, что система помнит дату окончания
  * — а она её не помнит. Когда появится поле с датой, вернутся и сроки.
  */
+/**
+ * Кем человек выходит: на стажировку или сразу в штат.
+ *
+ * Названия те же, что и в карточке: увидеть «Испытательный срок» при
+ * приёме и «Стажировка» на следующем экране — значит решить, что это
+ * два разных состояния.
+ */
 const PROBATION = [
-  { id: 'PROBATION', name: 'Испытательный срок' },
+  { id: 'PROBATION', name: 'Стажировка' },
 ];
 
 /** Что система сделает сама. Список не рекламный: каждая строка — шаг. */
@@ -176,8 +183,13 @@ export function NewEmployeePage() {
   const [common, setCommon] = useState<string | null>(null);
   const [asking, setAsking] = useState(false);
   const [sending, setSending] = useState(false);
-  const [made, setMade] = useState<api.Onboarded | null>(null);
-  const [copied, setCopied] = useState(false);
+  // Ссылка одноразовая, поэтому показываем именно ту, которую вернул
+  // сервер при создании сотрудника. HR передаёт её сотруднику любым
+  // удобным каналом; дальше бот и система обходятся без HR.
+  const [telegramInvite, setTelegramInvite] = useState<{
+    employeeId: string;
+    link: string;
+  } | null>(null);
 
   const [photo, setPhoto] = useState<Paper | null>(null);
   const [papers, setPapers] = useState<Paper[]>([]);
@@ -404,7 +416,13 @@ export function NewEmployeePage() {
       };
       const result = await api.onboardEmployee(body);
       setAsking(false);
-      setMade(result);
+      if (result.telegram.link) {
+        setTelegramInvite({ employeeId: result.employee.id, link: result.telegram.link });
+      } else {
+        // Telegram необязателен: если его не подготовили, не держим HR
+        // в пустом окне, а сразу открываем карточку.
+        navigate(`/employees/${result.employee.id}`, { replace: true });
+      }
     } catch (error) {
       setAsking(false);
       const named = error instanceof ApiFailure ? error.field : null;
@@ -416,20 +434,6 @@ export function NewEmployeePage() {
     } finally {
       setSending(false);
     }
-  }
-
-  if (made) {
-    return (
-      <Done
-        made={made}
-        copied={copied}
-        onCopy={() => {
-          const link = made.telegram.link;
-          if (!link) return;
-          void navigator.clipboard?.writeText(link).then(() => setCopied(true));
-        }}
-      />
-    );
   }
 
   return (
@@ -565,8 +569,8 @@ export function NewEmployeePage() {
                       errors={errors} value={draft.employment_type}
                       empty="Выберите тип" options={EMPLOYMENT_TYPES}
                       onChange={(value) => set('employment_type', value)} />
-              <Chosen label="Испытательный срок" name="probation" errors={errors}
-                      value={draft.probation} empty="Без испытательного срока"
+              <Chosen label="Выходит на" name="probation" errors={errors}
+                      value={draft.probation} empty="Сразу в штат"
                       options={PROBATION}
                       onChange={(value) => set('probation', value)} />
               <Chosen label="График работы" required name="schedule_id"
@@ -733,6 +737,12 @@ export function NewEmployeePage() {
           sending={sending}
           onBack={() => setAsking(false)}
           onConfirm={() => void send()}
+        />
+      )}
+      {telegramInvite && (
+        <TelegramInvite
+          link={telegramInvite.link}
+          onOpenEmployee={() => navigate(`/employees/${telegramInvite.employeeId}`, { replace: true })}
         />
       )}
     </AppShell>
@@ -1067,126 +1077,78 @@ function Confirm({ name, office, region, department, position, date, schedule,
   );
 }
 
-/** «1 документ», «2 документа», «5 документов». */
-function papersWord(count: number): string {
-  const last = count % 10;
-  const two = count % 100;
-  if (two >= 11 && two <= 14) return 'документов';
-  if (last === 1) return 'документ';
-  if (last >= 2 && last <= 4) return 'документа';
-  return 'документов';
-}
+/** Последнее действие HR: передать персональную ссылку новому сотруднику. */
+function TelegramInvite({ link, onOpenEmployee }: {
+  link: string;
+  onOpenEmployee: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
 
-function Line({ title, value }: { title: string; value: string }) {
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  }
+
   return (
-    <div className="modal__line">
-      <dt>{title}</dt>
-      <dd>{value || '—'}</dd>
+    <div className="modal" role="dialog" aria-modal="true"
+         aria-label="Ссылка для подключения Telegram">
+      <div className="modal__box hire__invite">
+        <h2 className="modal__title">Ссылка для подключения Telegram готова</h2>
+        <p className="modal__text">
+          Передайте её сотруднику. Он откроет ссылку, нажмёт Start, ознакомится
+          с правилами и подтвердит условия использования.
+        </p>
+        <p className="hire__invite-link">
+          <a href={link} target="_blank" rel="noreferrer">{link}</a>
+        </p>
+        <p className="hire__invite-note">
+          После согласия Telegram подключится автоматически. Подтверждать
+          привязку в HR больше не нужно.
+        </p>
+        <div className="modal__actions">
+          <button type="button" className="btn" onClick={() => void copy()}>
+            <AppIcon name={copied ? 'check' : 'send'} size={16} />
+            {copied ? 'Ссылка скопирована' : 'Скопировать ссылку'}
+          </button>
+          <button type="button" className="btn btn--dark" onClick={onOpenEmployee}>
+            Открыть карточку сотрудника
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
 
-// --- результат --------------------------------------------------------------
+/** Строка сверки в окне подтверждения. */
+function Line({ title, value }: { title: string; value: string }) {
+  return (
+    <>
+      <dt>{title}</dt>
+      <dd>{value}</dd>
+    </>
+  );
+}
 
-function Done({ made, copied, onCopy }: {
-  made: api.Onboarded;
-  copied: boolean;
-  onCopy: () => void;
-}) {
-  const linked = made.telegram.state === 'CONNECTED';
-  const waiting = made.telegram.state === 'INVITED';
-  /*
-   * Повторное приглашение.
-   *
-   * Отдельный вызов по УЖЕ СОЗДАННОМУ сотруднику, а не повторный приём:
-   * второго человека он не заводит, ссылка просто выпускается заново.
-   * Нужен, когда сотрудник не ответил или потерял сообщение.
-   */
-  const [again, setAgain] = useState<'idle' | 'busy' | 'done' | 'failed'>('idle');
-  const [link, setLink] = useState<string | null>(made.telegram.link ?? null);
-
-  async function resend() {
-    if (again === 'busy') return;
-    setAgain('busy');
-    try {
-      const fresh = await api.inviteToTelegram(made.employee.id);
-      setLink(fresh.link ?? fresh.url ?? null);
-      setAgain('done');
-    } catch {
-      setAgain('failed');
-    }
+/** «1 документ», «2 документа», «5 документов». */
+function papersWord(count: number): string {
+  const tail = count % 100;
+  if (tail >= 11 && tail <= 14) return 'документов';
+  switch (count % 10) {
+    case 1:
+      return 'документ';
+    case 2:
+    case 3:
+    case 4:
+      return 'документа';
+    default:
+      return 'документов';
   }
-  return (
-    <AppShell breadcrumb="Новый сотрудник" section="employees">
-      <header className="head head--tight">
-        <div>
-          <h1 className="head__title">Сотрудник успешно добавлен</h1>
-          <p className="head__sub">
-            {made.employee.full_name}
-          </p>
-        </div>
-      </header>
-
-      <section className="panel hire__result">
-        <ul className="hire__steps">
-          <Step done title="Карточка создана" />
-          <Step done title="Назначение создано" />
-          <Step done={made.schedule_assigned} title="График назначен" />
-          <Step
-            done={linked}
-            title={
-              linked ? 'Telegram подключён'
-                : waiting ? 'Telegram: ожидается первый запуск'
-                  : 'Telegram: доступ не подготовлен'
-            }
-          />
-        </ul>
-
-        {made.telegram.message && (
-          <p className="hire__result-note">{made.telegram.message}</p>
-        )}
-
-        <div className="hire__result-actions">
-          <Link className="btn btn--dark" to={`/employees/${made.employee.id}`}>
-            <AppIcon name="users" size={16} />
-            Открыть карточку сотрудника
-          </Link>
-          {/* Копируется та ссылка, что показана сейчас: после повторной
-              отправки прежняя уже не действует. */}
-          {link && (
-            <button type="button" className="btn"
-                    onClick={() => { void navigator.clipboard?.writeText(link); onCopy(); }}>
-              <AppIcon name={copied ? 'check' : 'send'} size={16} />
-              {copied ? 'Ссылка скопирована' : 'Скопировать ссылку Telegram'}
-            </button>
-          )}
-          {!linked && (
-            <button type="button" className="btn" onClick={() => void resend()}
-                    disabled={again === 'busy'}>
-              <AppIcon name="refresh" size={16} />
-              {again === 'busy' ? 'Отправляем…'
-                : again === 'done' ? 'Приглашение отправлено заново'
-                  : again === 'failed' ? 'Не удалось — повторить'
-                    : 'Отправить приглашение повторно'}
-            </button>
-          )}
-          <Link className="link link--go" to="/employees">
-            Ко всем сотрудникам <AppIcon name="arrow" size={16} />
-          </Link>
-        </div>
-      </section>
-    </AppShell>
-  );
 }
 
-function Step({ done, title }: { done: boolean; title: string }) {
-  return (
-    <li className={done ? 'hire__step hire__step--done' : 'hire__step'}>
-      <AppIcon name={done ? 'check' : 'clock'} size={20} />
-      {title}
-    </li>
-  );
-}
 
 // --- мелочи -----------------------------------------------------------------
 

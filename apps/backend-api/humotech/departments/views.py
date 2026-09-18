@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import uuid
 
-from rest_framework import serializers
+from rest_framework import serializers, status
 from rest_framework.decorators import action
+from rest_framework.response import Response
 
 from humotech.core.api import ServiceViewSet, validated
 from humotech.core.errors import ValidationFailed
@@ -14,25 +15,53 @@ from humotech.departments.services import DepartmentService, PositionService
 
 class DepartmentSerializer(serializers.Serializer):
     id = serializers.UUIDField()
-    office_id = serializers.UUIDField()
-    office_name = serializers.CharField(source="office.name")
+    office_id = serializers.UUIDField(allow_null=True)
+    office_name = serializers.CharField(
+        source="office.name", allow_null=True, default=None
+    )
     parent_department_id = serializers.UUIDField(allow_null=True)
     code = serializers.CharField()
     name = serializers.CharField()
+    description = serializers.CharField(allow_null=True)
+    head_employee_id = serializers.UUIDField(allow_null=True)
+    head_employee_name = serializers.SerializerMethodField()
+    # Сколько человек числится в отделе сегодня. Нужно не для красоты:
+    # архивировать отдел с людьми нельзя, и число объясняет отказ до
+    # того, как кадровик его получит.
+    staff = serializers.IntegerField(required=False)
     status = serializers.CharField()
     created_at = serializers.DateTimeField()
     updated_at = serializers.DateTimeField()
 
+    def get_head_employee_name(self, department) -> str | None:
+        head = getattr(department, "head_employee", None)
+        if head is None:
+            return None
+        parts = [head.last_name, head.first_name, head.middle_name]
+        return " ".join(part for part in parts if part) or None
+
 
 class DepartmentCreateSerializer(serializers.Serializer):
-    office_id = serializers.UUIDField()
-    code = serializers.CharField(max_length=50)
+    # Офис необязателен: обычный отдел общий для компании. Указывают его
+    # только для подразделения, которое существует в одном месте.
+    office_id = serializers.UUIDField(required=False, allow_null=True)
+    # Код не обязателен: в интерфейсе его не спрашивают, и сервер
+    # придумывает его сам. Поле остаётся для переноса данных, где код
+    # задан заранее.
+    code = serializers.CharField(max_length=50, required=False, allow_blank=True)
     name = serializers.CharField(max_length=255)
+    description = serializers.CharField(required=False, allow_blank=True)
+    head_employee_id = serializers.UUIDField(required=False, allow_null=True)
     parent_department_id = serializers.UUIDField(required=False, allow_null=True)
 
 
 class DepartmentUpdateSerializer(serializers.Serializer):
-    name = serializers.CharField(max_length=255)
+    name = serializers.CharField(max_length=255, required=False)
+    description = serializers.CharField(required=False, allow_blank=True)
+    head_employee_id = serializers.UUIDField(required=False, allow_null=True)
+    clear_head = serializers.BooleanField(
+        required=False, help_text="true — снять руководителя отдела"
+    )
 
 
 class PositionSerializer(serializers.Serializer):
@@ -40,13 +69,15 @@ class PositionSerializer(serializers.Serializer):
     code = serializers.CharField()
     name = serializers.CharField()
     description = serializers.CharField(allow_null=True)
+    #: Сколько человек занимают должность сегодня.
+    staff = serializers.IntegerField(required=False)
     status = serializers.CharField()
     created_at = serializers.DateTimeField()
     updated_at = serializers.DateTimeField()
 
 
 class PositionCreateSerializer(serializers.Serializer):
-    code = serializers.CharField(max_length=50)
+    code = serializers.CharField(max_length=50, required=False, allow_blank=True)
     name = serializers.CharField(max_length=255)
     description = serializers.CharField(required=False, allow_blank=True)
 
@@ -98,6 +129,11 @@ class DepartmentViewSet(ServiceViewSet):
         payload = validated(DepartmentUpdateSerializer, request.data)
         return self.item_response(self.service.update(self.actor, pk, **payload))
 
+
+    def destroy(self, request, pk=None):
+        """Убрать совсем. Сервер откажет, если на запись уже ссылались."""
+        self.service.delete(self.actor, pk)
+        return Response(status=status.HTTP_204_NO_CONTENT)
     @action(detail=True, methods=["post"])
     def deactivate(self, request, pk=None):
         return self.item_response(
@@ -134,6 +170,11 @@ class PositionViewSet(ServiceViewSet):
         payload = validated(PositionUpdateSerializer, request.data)
         return self.item_response(self.service.update(self.actor, pk, **payload))
 
+
+    def destroy(self, request, pk=None):
+        """Убрать совсем. Сервер откажет, если на запись уже ссылались."""
+        self.service.delete(self.actor, pk)
+        return Response(status=status.HTTP_204_NO_CONTENT)
     @action(detail=True, methods=["post"])
     def deactivate(self, request, pk=None):
         return self.item_response(

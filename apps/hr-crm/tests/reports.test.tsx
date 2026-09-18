@@ -286,18 +286,25 @@ describe('конструктор', () => {
     expect((screen.getByRole('button', { name: /Сформировать отчёт/ }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  test('вид без права на данные недоступен', async () => {
+  test('все виды отчётов доступны администратору', async () => {
+    // Прав в интерфейсе больше нет: администратор один, и ему открыто
+    // всё. Отказ, если он когда-нибудь понадобится, исполняет сервер —
+    // запрет в браузере проверяется там, где его легче всего обойти.
     network({ permissions: ['reports.export', 'employees.read'] });
     renderApp('/reports');
+
     const card = await screen.findByRole('radio', { name: /Сотрудники/ });
     await waitFor(() => expect((card as HTMLButtonElement).disabled).toBe(false));
-    expect((screen.getByRole('radio', { name: /Посещаемость/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('radio', { name: /Посещаемость/ }) as HTMLButtonElement).disabled)
+      .toBe(false);
   });
 
-  test('без права на выгрузку — понятный отказ', async () => {
+  test('страница отчётов открывается без разговоров о правах', async () => {
     network({ permissions: ['attendance.read'], items: [] });
     renderApp('/reports');
-    expect(await screen.findByText(/Нет права на выгрузку отчётов/)).toBeTruthy();
+
+    await screen.findByRole('radio', { name: /Сотрудники/ });
+    expect(screen.queryByText(/Нет права на выгрузку отчётов/)).toBeNull();
   });
 
   test('ошибка предпросмотра показывает причину и повтор', async () => {
@@ -399,18 +406,16 @@ describe('история', () => {
     expect(screen.getByText(/автоматически удаляются через 3 дня/)).toBeTruthy();
   });
 
-  test('чужой готовый файл скачивается только с reports.download_any', async () => {
+  test('чужой готовый файл виден и скачивается', async () => {
+    // Администратор один, и очередь выгрузок у него общая: прятать
+    // чужой файл в браузере значит показывать строку «Готов» без
+    // возможности его открыть — то есть тупик вместо ограничения.
     const foreign = { ...JOB, id: 'j-9', requested_by_user_id: 'someone-else', requested_by: 'hr2@humotech.local' };
     network({ items: [foreign] });
-    const view = renderApp('/reports');
-    await screen.findByText('hr2@humotech.local');
-    expect(screen.queryByRole('link', { name: /Скачать/ })).toBeNull();
-    expect(screen.getByText('Готов')).toBeTruthy();
-    view.unmount();
-
-    network({ items: [foreign], permissions: [...ALL, 'reports.download_any'] });
     renderApp('/reports');
+
     await screen.findByText('hr2@humotech.local');
+    expect(screen.getByText('Готов')).toBeTruthy();
     expect(screen.getByRole('link', { name: /Скачать/ }).getAttribute('href'))
       .toContain('/export-jobs/j-9/download/');
   });

@@ -44,6 +44,11 @@ from humotech.absences.models import (
     EmployeeAbsence,
     LeaveBalance,
 )
+from humotech.absences.application_pdf import (
+    APPLICATION_DOCUMENT,
+    Application,
+    build as build_application,
+)
 from humotech.absences.policy import AbsencePolicy, policy_for
 from humotech.core.errors import Conflict, NotFound, PermissionDenied, ValidationFailed
 from humotech.core.rbac import Actor, snapshot
@@ -149,6 +154,19 @@ class AbsenceService(BaseService):
             # Чужая заявка отвечает так же, как отсутствие записи.
             raise NotFound("Заявка не найдена")
         return self._view(context, row)
+
+    def application(self, context, request_id: uuid.UUID) -> bytes:
+        """Печатное заявление по заявке — готовым PDF.
+
+        Собирается заново на каждое обращение, а не хранится файлом.
+        Заявка живёт: даты продлевают, статус меняется, — и бланк,
+        сохранённый однажды, разошёлся бы с ней молча. Сборка стоит
+        миллисекунды, рассинхрон стоит спора в кадровом деле.
+        """
+        view = self.request(context, request_id)
+        return build_application(
+            _application_of(view.request, context.employee, context.timezone)
+        )
 
     def balances(self, context, *, year: int | None = None) -> list[BalanceView]:
         target = year or timezone.now().year
@@ -652,6 +670,143 @@ class AbsenceService(BaseService):
             raise NotFound("Документ не найден")
         return open_stored(document.file), document.file
 
+    def verify_document(
+        self,
+        actor: Actor,
+        request_id,
+        document_id,
+        *,
+        accept: bool,
+        comment: str | None = None,
+    ) -> AbsenceDocument:
+        """Принять справку или отклонить её с причиной.
+
+        Отклонение без объяснения — тупик: человек приносит ту же бумагу
+        второй раз и не понимает, почему её опять не берут. Поэтому
+        причина обязательна, и она уходит человеку дословно: пересказ
+        своими словами однажды смягчит «нечитаемое фото» до «нужен
+        другой документ».
+
+        Решение по бумаге не меняет решения по заявке. Одобренный
+        больничный с отклонённой справкой — законное состояние: HR
+        ждёт правильный документ, а человек всё это время болеет, а
+        не числится прогулявшим.
+        """
+        self.access.require(actor, "absences.documents")
+
+        document = (
+            AbsenceDocument.objects.filter(
+                id=document_id,
+                absence_request_id=request_id,
+                organization_id=actor.organization_id,
+            )
+            .select_related("absence_request", "absence_request__absence_type")
+            .first()
+        )
+        if document is None:
+            raise NotFound("Документ не найден")
+
+        visible = self._scope_ids(actor)
+        if visible is not None and not visible.filter(
+            employee_id=document.absence_request.employee_id
+        ).exists():
+            raise NotFound("Документ не найден")
+
+        if document.document_type == APPLICATION_DOCUMENT:
+            raise Conflict(
+                "Это системный бланк заявления, а не справка сотрудника",
+                details={"document_type": document.document_type},
+            )
+
+        text = (comment or "").strip() or None
+        if not accept and not text:
+            raise ValidationFailed(
+                "Укажите причину: человек должен понять, что принести взамен",
+                details={"field": "comment"},
+            )
+
+        request = document.absence_request
+        with self.atomic():
+            document.verification_status = "VERIFIED" if accept else "REJECTED"
+            document.verified_by_user_id = actor.user_id
+            document.verified_at = timezone.now()
+            document.verification_comment = text
+            document.save(
+                update_fields=[
+                    "verification_status", "verified_by_user_id",
+                    "verified_at", "verification_comment", "updated_at",
+                ]
+            )
+            self._act(
+                None, request,
+                "DOCUMENT_VERIFIED" if accept else "DOCUMENT_REJECTED",
+                None, None, actor=actor, comment=text,
+            )
+            self._notify_document(request, document, accept=accept, reason=text)
+        return document
+
+    def _notify_document(self, request, document, *, accept: bool, reason) -> None:
+        """Сообщение о судьбе справки.
+
+        Ключ повтора включает документ: у заявки их бывает несколько, и
+        общий ключ на заявку проглотил бы решение по второй бумаге.
+        """
+        if accept:
+            body = messages.DOCUMENT_ACCEPTED
+        elif reason:
+            body = messages.DOCUMENT_REJECTED.format(reason=reason)
+        else:
+            body = messages.DOCUMENT_REJECTED_NO_REASON
+
+        enqueue(
+            organization_id=request.organization_id,
+            employee_id=request.employee_id,
+            notification_type=(
+                "absence.document_accepted" if accept
+                else "absence.document_rejected"
+            ),
+            body=body,
+            idempotency_key=(
+                f"absence-doc:{document.id}:"
+                f"{'accepted' if accept else 'rejected'}"
+            ),
+            related_entity_type=ENTITY_REQUEST,
+            related_entity_id=request.id,
+        )
+
+    def hr_application(self, actor: Actor, request_id) -> bytes:
+        """То же заявление, но глазами кадровика.
+
+        Нужно, когда человек принёс не ту бумагу или не принёс вовсе:
+        кадровик печатает бланк сам и не заставляет сотрудника искать
+        телефон. Сборщик тот же — два способа собрать один бланк
+        однажды разойдутся.
+        """
+        self.access.require(actor, "absences.read")
+        request = (
+            AbsenceRequest.objects.filter(
+                id=request_id, organization_id=actor.organization_id
+            )
+            .select_related("absence_type", "employee")
+            .first()
+        )
+        if request is None:
+            raise NotFound("Заявка не найдена")
+
+        # Область видимости: чужой офис отвечает так же, как отсутствие
+        # записи, — иначе перебором идентификаторов читают чужие заявки.
+        # `_scope_ids` отдаёт назначения, а не идентификаторы людей,
+        # поэтому проверка идёт запросом, а не вхождением в множество.
+        visible = self._scope_ids(actor)
+        if visible is not None and not visible.filter(
+            employee_id=request.employee_id
+        ).exists():
+            raise NotFound("Заявка не найдена")
+
+        return build_application(
+            _application_of(request, request.employee, _zone_of(request.employee))
+        )
+
     def pending(self, actor: Actor):
         """Заявки, ждущие решения. Для будущего интерфейса HR."""
         self.access.require(actor, "absences.read")
@@ -727,7 +882,13 @@ class AbsenceService(BaseService):
         return RequestView(
             request=request,
             working_days=working,
-            documents=len(request.documents.all()),
+            # Считаются только бумаги, принесённые человеком. Системное
+            # заявление тоже лежит в этой таблице, и посчитать его
+            # справкой значило бы, что больничный подтверждает сам себя.
+            documents=sum(
+                1 for one in request.documents.all()
+                if one.document_type != APPLICATION_DOCUMENT
+            ),
             extension_pending=self._pending_extension(request) is not None,
             absence=absence,
         )
@@ -1268,3 +1429,61 @@ def hr_period_summary(request: AbsenceRequest) -> dict:
 
 
 __all__ = ["AbsenceService", "BalanceView", "RequestView", "hr_period_summary"]
+
+
+def _zone_of(employee):
+    """Пояс офиса, в котором человек числится."""
+    from humotech.core.timeframes import office_zone
+    from humotech.employees.models import EmployeeAssignment
+
+    place = (
+        EmployeeAssignment.objects.filter(employee_id=employee.id, is_primary=True)
+        .select_related("office", "office__organization")
+        .order_by("-valid_from")
+        .first()
+    )
+    return office_zone(place.office if place else None)
+
+
+def _application_of(request, employee, tz) -> Application:
+    """Заявка и человек — в поля бланка.
+
+    Один сборщик на сотрудника и на кадровика: два одинаковых бланка,
+    собранных по-разному, однажды разойдутся, и спорить придётся уже
+    о том, какой из них настоящий.
+    """
+    from humotech.employees.models import EmployeeAssignment
+    from humotech.organizations.models import Organization
+
+    first_day = request.requested_start_at.astimezone(tz).date()
+    last_day = request.requested_end_at.astimezone(tz).date()
+    place = (
+        EmployeeAssignment.objects.filter(employee_id=employee.id, is_primary=True)
+        .select_related("office", "department", "position")
+        .order_by("-valid_from")
+        .first()
+    )
+    organization = Organization.objects.filter(
+        id=request.organization_id
+    ).first()
+
+    return Application(
+        organization=organization.name if organization else "HUMOTECH",
+        employee_name=" ".join(
+            one for one in
+            [employee.last_name, employee.first_name, employee.middle_name]
+            if one
+        ),
+        position=place.position.name if place and place.position else None,
+        department=place.department.name if place and place.department else None,
+        office=place.office.name if place and place.office else None,
+        absence_name=request.absence_type.name,
+        absence_code=request.absence_type.code,
+        first_day=first_day,
+        last_day=last_day,
+        days=(last_day - first_day).days + 1,
+        comment=request.employee_comment,
+        # Восемь знаков идентификатора: достаточно, чтобы найти заявку,
+        # и коротко настолько, чтобы переписать с бумаги от руки.
+        number=str(request.id)[:8].upper(),
+    )

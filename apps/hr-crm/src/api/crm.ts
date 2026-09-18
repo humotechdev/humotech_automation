@@ -170,6 +170,39 @@ export type OverviewQuery = {
   weekday?: string;
 };
 
+// --- движение сотрудников --------------------------------------------------
+
+/** Итоги одного периода: сколько пришло, сколько ушло, что осталось. */
+export type MovementSpan = {
+  first: string;
+  last: string;
+  hired: number;
+  left: number;
+  /** Чистое изменение. Отрицательное — людей стало меньше. */
+  difference: number;
+};
+
+export type MovementReport = {
+  current: MovementSpan;
+  /** Столько же дней непосредственно перед периодом. */
+  previous: MovementSpan;
+  month_before: MovementSpan;
+  year_before: MovementSpan;
+  /** Сколько человек числится на конец периода. */
+  headcount: number;
+};
+
+/**
+ * Движение сотрудников.
+ *
+ * Отдельно от посещаемости: там единица измерения — дни, здесь — люди,
+ * и складывать их в одном блоке значит путать два разных вопроса.
+ */
+export const analyticsMovement = (
+  params: { date_from: string; date_to: string; region_id?: string; office_id?: string },
+  signal?: AbortSignal,
+) => request<MovementReport>(`/analytics/movement${query(params)}`, signal ? { signal } : {});
+
 export const analyticsOverview = (params: OverviewQuery, signal?: AbortSignal) =>
   request<Overview>(`/analytics/overview${query(params)}`, signal ? { signal } : {});
 
@@ -401,6 +434,30 @@ export const employeeCounts = (params: EmployeeQuery, signal?: AbortSignal) =>
 export const employee = (id: string, signal?: AbortSignal) =>
   request<Record<string, unknown>>(`/employees/${id}/`, signal ? { signal } : {});
 
+/**
+ * Принять стажёра в штат.
+ *
+ * Должность передаётся, только если её пересмотрели по итогам
+ * стажировки: перевод в штат сам по себе не повод её менять.
+ */
+export const promoteEmployee = (id: string, body: { position_id?: string } = {}) =>
+  request<Record<string, unknown>>(`/employees/${id}/promote/`, {
+    method: 'POST',
+    body,
+  });
+
+/**
+ * Завершить стажировку расставанием.
+ *
+ * Это увольнение с причиной «Не прошёл стажировку» — отдельного статуса
+ * для такого случая нет и заводить его не нужно.
+ */
+export const endProbation = (id: string, body: { reason?: string } = {}) =>
+  request<Record<string, unknown>>(`/employees/${id}/end-probation/`, {
+    method: 'POST',
+    body,
+  });
+
 export const employeeAssignments = (id: string, signal?: AbortSignal) =>
   request<Items<Assignment>>(`/employees/${id}/assignments/`, signal ? { signal } : {});
 
@@ -420,10 +477,17 @@ export const employeeTelegram = (id: string, signal?: AbortSignal) =>
   request<TelegramLink>(`/employees/${id}/telegram`, signal ? { signal } : {});
 
 /** Приглашение создаётся ТОЛЬКО по нажатию — не при открытии страницы. */
-export const inviteToTelegram = (employee_id: string) =>
+/**
+ * Выдать ссылку привязки Telegram.
+ *
+ * `replace` — это «отправить повторно»: действующая ссылка отзывается и
+ * тут же выдаётся новая. Без него повтор упирается в ссылку, выданную
+ * минуту назад при приёме сотрудника, и не срабатывает никогда.
+ */
+export const inviteToTelegram = (employee_id: string, replace = false) =>
   request<{ id: string; link?: string; url?: string; token?: string; expires_at?: string }>(
     '/telegram/invitations/',
-    { method: 'POST', body: { employee_id } },
+    { method: 'POST', body: { employee_id, replace } },
   );
 
 export type Department = { id: string; name: string; office_id?: string | null };
@@ -438,6 +502,8 @@ export type DocumentRow = {
   document_type: string;
   verification_status: 'PENDING' | 'VERIFIED' | 'REJECTED' | string;
   verified_at: string | null;
+  /** Что кадровик написал о справке. Уходит сотруднику дословно. */
+  verification_comment?: string | null;
   file: {
     id: string;
     name: string;
@@ -526,6 +592,31 @@ export const queueCounts = (params: QueueQuery, signal?: AbortSignal) =>
 export const absenceDocumentUrl = (requestId: string, documentId: string) =>
   apiUrl(`/absence-requests/${requestId}/documents/${documentId}/download`);
 
+/** Печатное заявление по заявке — тот же бланк, что видит сотрудник. */
+export const absenceApplicationUrl = (requestId: string) =>
+  apiUrl(`/absence-requests/${requestId}/application`);
+
+/**
+ * Решение по справке.
+ *
+ * Отдельно от решения по заявке: одобренный больничный с отклонённой
+ * справкой — законное состояние, HR ждёт правильный документ, а человек
+ * всё это время болеет, а не прогуливает.
+ *
+ * Причина при отказе обязательна — её проверяет сервер и отправляет
+ * человеку дословно.
+ */
+export const decideAbsenceDocument = (
+  requestId: string,
+  documentId: string,
+  decision: 'accept' | 'reject',
+  comment?: string,
+) =>
+  request<{ id: string; verification_status: string; verification_comment: string | null }>(
+    `/absence-requests/${requestId}/documents/${documentId}/${decision}`,
+    { method: 'POST', body: comment ? { comment } : {} },
+  );
+
 /** Решение по заявке на отсутствие. `decision` — часть адреса, как у backend. */
 export const decideAbsence = (id: string, decision: 'approve' | 'reject', comment: string) =>
   request<unknown>(`/absence-requests/${id}/${decision}`, {
@@ -565,6 +656,15 @@ export type PresenceRow = {
   scheduled_end: string | null;
   absence_code: string | null;
   absence_name: string | null;
+  /**
+   * Что человек сам сказал про день: `LATE` — задерживается, `ABSENT` —
+   * не придёт, `null` — промолчал.
+   *
+   * Это предупреждение, а не оформленное отсутствие: отпуск и
+   * больничный проходят согласование и живут своими заявками.
+   */
+  notice_kind: string | null;
+  notice_comment: string | null;
   conflicting_marks: boolean;
   /**
    * Отрезки присутствия за день, по одному на сессию.
@@ -700,6 +800,35 @@ export const regionsPage = (
   signal?: AbortSignal,
 ) => request<Cursored<RegionFull>>(`/regions/${query(params)}`, signal ? { signal } : {});
 
+/**
+ * Завести регион и офис.
+ *
+ * Кода в форме нет: его придумывает сервер. Человек опознаёт регион
+ * названием, а офис — названием и адресом; `OFF-4` нужен уникальному
+ * ключу и выгрузкам, и спрашивать его у кадровика незачем.
+ */
+export const createRegion = (body: { name: string; timezone?: string | null }) =>
+  request<RegionFull>('/regions/', { method: 'POST', body });
+
+export const updateRegion = (
+  id: string,
+  changes: { name?: string; timezone?: string | null },
+) => request<RegionFull>(`/regions/${id}/`, { method: 'PATCH', body: changes });
+
+/**
+ * Часового пояса в теле нет: он один на страну и берётся у организации
+ * на сервере. Передать его отсюда значило бы дать интерфейсу
+ * возможность завести офис, живущий на час в стороне от остальных.
+ */
+export const createOffice = (body: {
+  region_id: string;
+  /** Пусто — офис назовётся по региону. */
+  name?: string;
+  /** Адрес задают в карточке офиса, а не при заведении. */
+  address?: string;
+  opened_at?: string;
+}) => request<OfficeFull>('/offices/', { method: 'POST', body });
+
 export const setRegionActive = (id: string, active: boolean) =>
   request<RegionFull>(`/regions/${id}/${active ? 'reactivate' : 'deactivate'}/`, {
     method: 'POST',
@@ -742,8 +871,19 @@ export type IssuedQrPoint = {
 
 export const createQrPoint = (body: {
   office_id: string;
-  name: string;
+  /** Пусто — точка назовётся по своему типу: «Вход», «Выход». */
+  name?: string;
   direction_mode: 'ENTRY' | 'EXIT' | 'BOTH';
+  /**
+   * Режим кода. `STATIC` — печатный лист на стене: секрет выдаётся один
+   * раз, и по нему работает ссылка в Telegram. `ROTATING` — экран,
+   * который сам меняет код, и ему нужен период смены.
+   *
+   * Передаётся всегда: без него сервер берёт `ROTATING` по умолчанию и
+   * отказывает, потому что периода смены никто не прислал.
+   */
+  qr_mode?: 'STATIC' | 'ROTATING';
+  rotation_seconds?: number;
   description?: string;
 }) => request<IssuedQrPoint>('/qr-points/', {
   method: 'POST',
@@ -752,6 +892,15 @@ export const createQrPoint = (body: {
 
 export const updateQrPoint = (id: string, changes: { name?: string; description?: string; direction_mode?: string }) =>
   request<QrPoint>(`/qr-points/${id}/`, { method: 'PATCH', body: changes });
+
+/**
+ * Убрать точку совсем.
+ *
+ * Сервер откажет, если по ней уже отмечались, и объяснит почему: такая
+ * точка — часть истории, её выключают, а не стирают.
+ */
+export const deleteQrPoint = (id: string) =>
+  request<void>(`/qr-points/${id}/`, { method: 'DELETE' });
 
 export const setQrPointActive = (id: string, active: boolean) =>
   request<QrPoint>(`/qr-points/${id}/${active ? 'activate' : 'deactivate'}/`, {
@@ -1802,12 +1951,27 @@ export const crmUserCounts = (params: CrmUserQuery, signal?: AbortSignal) =>
 export const crmUser = (id: string, signal?: AbortSignal) =>
   request<CrmUser>(`/users/${id}/`, signal ? { signal } : {});
 
-export const createCrmUser = (body: { email: string; employee_id?: string }) =>
+/**
+ * `email` — это логин. Адресом почты он быть не обязан: `malika.hr`
+ * ничем не хуже. Без пароля запись создаётся отключённой.
+ */
+export const createCrmUser = (body: {
+  email: string;
+  full_name?: string;
+  password?: string;
+  employee_id?: string;
+}) =>
   request<CrmUser>('/users/', { method: 'POST', body });
 
 export const updateCrmUser = (
   id: string,
-  body: { email?: string; employee_id?: string; unlink_employee?: boolean },
+  body: {
+    /** Логин. Адресом почты быть не обязан. */
+    email?: string;
+    full_name?: string;
+    employee_id?: string;
+    unlink_employee?: boolean;
+  },
 ) => request<CrmUser>(`/users/${id}/`, { method: 'PATCH', body });
 
 /**
@@ -1835,6 +1999,8 @@ export type RoleFull = {
   description: string | null;
   is_system: boolean;
   permissions: string[];
+  /** Предлагается ли роль в форме выдачи доступа. Каталог шире набора. */
+  offered?: boolean;
   /** Может ли ЭТОТ пользователь выдать роль. Считает сервер. */
   grantable: boolean;
   missing_permissions: string[];
@@ -1939,6 +2105,16 @@ export const assignRole = (body: {
   valid_to_date?: string;
   valid_to?: string | null;
 }) => request<Grant>('/grants', { method: 'POST', body });
+
+/**
+ * Отозвать роль.
+ *
+ * Сервер не стирает строку, а закрывает её срок: «кто и когда дал
+ * человеку этот доступ» — вопрос, ответ на который должен пережить
+ * отзыв. Отказ, если это последний суперадминистратор.
+ */
+export const revokeRole = (grant_id: string) =>
+  request<Grant>(`/grants/${grant_id}`, { method: 'DELETE' });
 
 export const setGrantValidity = (
   id: string,
@@ -2152,6 +2328,14 @@ export type ScheduleDay = {
   is_working_day: boolean;
   start_time: string | null;
   end_time: string | null;
+  /** Перерывы дня. Приходят только в карточке графика, не в списке. */
+  breaks?: Array<{
+    id: string;
+    name: string;
+    start_time: string;
+    end_time: string;
+    is_paid: boolean;
+  }>;
 };
 
 export type WorkScheduleDetail = {
@@ -2186,8 +2370,19 @@ export const workSchedule = (id: string, signal?: AbortSignal) =>
 
 export type Position = { id: string; name: string; code?: string; status?: string };
 
+/**
+ * Должности для выбора при приёме — только действующие.
+ *
+ * Архивную должность потому и архивировали, что на неё больше не
+ * принимают: показать её в списке значит предложить завести человека
+ * на упразднённую роль. У тех, кто уже на ней работает, она остаётся —
+ * это история, и её карточка берёт название отдельно.
+ */
 export const positions = (signal?: AbortSignal) =>
-  request<Cursored<Position>>('/positions/?limit=200', signal ? { signal } : {});
+  request<Cursored<Position>>(
+    '/positions/?status=ACTIVE&limit=200',
+    signal ? { signal } : {},
+  );
 
 export type ScheduleRow = {
   id: string;
@@ -2203,10 +2398,15 @@ export const workSchedules = (signal?: AbortSignal) =>
     signal ? { signal } : {},
   );
 
-/** Отделы одного офиса: состав отделов у офисов разный. */
+/**
+ * Отделы одного офиса: состав отделов у офисов разный.
+ *
+ * Только действующие — по той же причине, что и должности: в
+ * расформированный отдел человека не принимают.
+ */
 export const officeDepartments = (office_id: string, signal?: AbortSignal) =>
   request<Cursored<Department>>(
-    `/departments/${query({ office_id, limit: '200' })}`,
+    `/departments/${query({ office_id, status: 'ACTIVE', limit: '200' })}`,
     signal ? { signal } : {},
   );
 
@@ -2297,3 +2497,413 @@ export type Onboarded = {
  */
 export const onboardEmployee = (body: OnboardBody) =>
   request<Onboarded>('/employees/onboard/', { method: 'POST', body });
+
+// --- справочники раздела «Администрирование» --------------------------------
+/*
+ * Структура компании: отделы, должности, графики и причины отсутствия.
+ * Всё это настраивается в одном месте и нигде больше — кроме офисов:
+ * офис создаётся и настраивается только на странице «Офисы и регионы»,
+ * отсюда его можно лишь выбрать.
+ *
+ * Удаления ни у одного из справочников нет. На отдел, должность, график
+ * и причину ссылаются закрытые назначения и заявки прошлых лет: стереть
+ * их значило бы потерять ответ на вопрос, кем человек работал и почему
+ * его не было в марте. Есть только перевод в неактивные.
+ */
+
+export type DepartmentRow = {
+  id: string;
+  /** null — отдел общий для компании, а не подразделение одного офиса. */
+  office_id: string | null;
+  office_name: string | null;
+  parent_department_id: string | null;
+  name: string;
+  description: string | null;
+  head_employee_id: string | null;
+  head_employee_name: string | null;
+  /** Сколько человек числится в отделе сегодня. */
+  staff?: number;
+  status: string;
+};
+
+export const departmentsPage = (
+  params: { search?: string; status?: string; office_id?: string; limit?: string },
+  signal?: AbortSignal,
+) =>
+  request<Cursored<DepartmentRow>>(
+    `/departments/${query({ limit: '200', ...params })}`,
+    signal ? { signal } : {},
+  );
+
+/**
+ * Офис необязателен: обычный отдел общий для всей компании. Указывают
+ * его только для подразделения, которое существует в одном месте.
+ */
+export const createDepartment = (body: {
+  name: string;
+  office_id?: string;
+  description?: string;
+  head_employee_id?: string;
+}) => request<DepartmentRow>('/departments/', { method: 'POST', body });
+
+export const updateDepartment = (
+  id: string,
+  changes: {
+    name?: string;
+    description?: string;
+    head_employee_id?: string;
+    clear_head?: boolean;
+  },
+) => request<DepartmentRow>(`/departments/${id}/`, { method: 'PATCH', body: changes });
+
+/**
+ * Убрать совсем. Сервер откажет, если на запись уже ссылались: тогда
+ * остаётся архив. Кнопка «Удалить», которая на самом деле прячет,
+ * обманывает — человек считает, что убрал опечатку, а она в отчётах.
+ */
+export const deleteDepartment = (id: string) =>
+  request<void>(`/departments/${id}/`, { method: 'DELETE' });
+
+export const deletePosition = (id: string) =>
+  request<void>(`/positions/${id}/`, { method: 'DELETE' });
+
+export const deleteAbsenceType = (id: string) =>
+  request<void>(`/absence-types/${id}/`, { method: 'DELETE' });
+
+export const deleteSchedule = (id: string) =>
+  request<void>(`/work-schedules/${id}/`, { method: 'DELETE' });
+
+export const setDepartmentActive = (id: string, active: boolean) =>
+  request<DepartmentRow>(
+    `/departments/${id}/${active ? 'reactivate' : 'deactivate'}/`,
+    { method: 'POST' },
+  );
+
+export type PositionRow = {
+  id: string;
+  name: string;
+  description: string | null;
+  /** Сколько человек занимают должность сегодня. */
+  staff?: number;
+  status: string;
+};
+
+export const positionsPage = (
+  params: { search?: string; status?: string; limit?: string },
+  signal?: AbortSignal,
+) =>
+  request<Cursored<PositionRow>>(
+    `/positions/${query({ limit: '200', ...params })}`,
+    signal ? { signal } : {},
+  );
+
+export const createPosition = (body: { name: string; description?: string }) =>
+  request<PositionRow>('/positions/', { method: 'POST', body });
+
+export const updatePosition = (
+  id: string,
+  changes: { name?: string; description?: string },
+) => request<PositionRow>(`/positions/${id}/`, { method: 'PATCH', body: changes });
+
+export const setPositionActive = (id: string, active: boolean) =>
+  request<PositionRow>(
+    `/positions/${id}/${active ? 'reactivate' : 'deactivate'}/`,
+    { method: 'POST' },
+  );
+
+export type AbsenceTypeRow = {
+  id: string;
+  name: string;
+  is_paid: boolean;
+  requires_approval: boolean;
+  requires_document: boolean;
+  document_required_after_days: number | null;
+  deducts_leave_balance: boolean;
+  is_active: boolean;
+  /** Сколько раз причина уже встречается в заявках и периодах. */
+  used?: number;
+};
+
+export const absenceTypes = (
+  params: { search?: string; status?: string; limit?: string } = {},
+  signal?: AbortSignal,
+) =>
+  request<Cursored<AbsenceTypeRow>>(
+    `/absence-types/${query({ limit: '200', ...params })}`,
+    signal ? { signal } : {},
+  );
+
+export type AbsenceTypeDraft = {
+  name: string;
+  is_paid?: boolean;
+  requires_approval?: boolean;
+  requires_document?: boolean;
+  document_required_after_days?: number | null;
+  deducts_leave_balance?: boolean;
+};
+
+export const createAbsenceType = (body: AbsenceTypeDraft) =>
+  request<AbsenceTypeRow>('/absence-types/', { method: 'POST', body });
+
+export const updateAbsenceType = (id: string, changes: Partial<AbsenceTypeDraft>) =>
+  request<AbsenceTypeRow>(`/absence-types/${id}/`, {
+    method: 'PATCH',
+    body: changes,
+  });
+
+export const setAbsenceTypeActive = (id: string, active: boolean) =>
+  request<AbsenceTypeRow>(
+    `/absence-types/${id}/${active ? 'reactivate' : 'deactivate'}/`,
+    { method: 'POST' },
+  );
+
+export const schedulesPage = (
+  params: { search?: string; status?: string; limit?: string } = {},
+  signal?: AbortSignal,
+) =>
+  request<Cursored<ScheduleRow>>(
+    `/work-schedules/${query({ limit: '200', ...params })}`,
+    signal ? { signal } : {},
+  );
+
+export type DayDraft = {
+  weekday: number;
+  is_working_day: boolean;
+  start_time?: string | null;
+  end_time?: string | null;
+  crosses_midnight?: boolean;
+  breaks?: Array<{
+    name: string;
+    start_time: string;
+    end_time: string;
+    is_paid?: boolean;
+  }>;
+};
+
+export type ScheduleDraft = {
+  name: string;
+  timezone: string;
+  weekly_minutes: number;
+  late_grace_minutes?: number;
+  early_leave_grace_minutes?: number;
+  is_flexible?: boolean;
+  days: DayDraft[];
+};
+
+export const createSchedule = (body: ScheduleDraft) =>
+  request<WorkScheduleDetail>('/work-schedules/', { method: 'POST', body });
+
+export const updateSchedule = (id: string, changes: Partial<ScheduleDraft>) =>
+  request<WorkScheduleDetail>(`/work-schedules/${id}/`, {
+    method: 'PATCH',
+    body: changes,
+  });
+
+export const setScheduleActive = (id: string, active: boolean) =>
+  request<ScheduleRow>(
+    `/work-schedules/${id}/${active ? 'reactivate' : 'deactivate'}/`,
+    { method: 'POST' },
+  );
+
+export const assignScheduleToEmployee = (
+  id: string,
+  body: { employee_id: string; valid_from: string },
+) => request<ScheduleAssignment>(`/work-schedules/${id}/assign/`, {
+  method: 'POST',
+  body,
+});
+
+/**
+ * Назначить график отделу — это снимок состава на дату, а не правило.
+ * Пришедший в отдел завтра графика от этого назначения не получит:
+ * иначе табель за прошлый месяц менялся бы от каждого перевода.
+ */
+export const assignScheduleToDepartment = (
+  id: string,
+  body: { department_id: string; valid_from: string },
+) =>
+  request<{ assigned: string[]; skipped: Array<{ employee_id: string; reason: string }> }>(
+    `/work-schedules/${id}/assign-department/`,
+    { method: 'POST', body },
+  );
+
+// --- опросы сотрудников ------------------------------------------------------
+/*
+ * Шаблон — набор вопросов, который переиспользуют; рассылка — одно
+ * обращение к названному кругу людей. Разделены не для симметрии:
+ * правка шаблона не должна менять то, что уже спросили.
+ *
+ * Опрос ИМЕННОЙ. Ответы приходят вместе с именем, офисом и отделом — HR
+ * идёт по ним разговаривать с человеком, а не считает настроение в
+ * среднем. Сводка рядом их не заменяет и анонимности не добавляет.
+ */
+
+export type SurveyQuestionKind = 'SINGLE' | 'MULTI' | 'SCALE' | 'TEXT';
+
+export type SurveyQuestion = {
+  id: string;
+  position: number;
+  text: string;
+  kind: SurveyQuestionKind;
+  is_required: boolean;
+  options: string[] | null;
+};
+
+export type SurveyTemplate = {
+  id: string;
+  title: string;
+  description: string | null;
+  questions: SurveyQuestion[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type SurveyQuestionDraft = {
+  text: string;
+  kind: SurveyQuestionKind;
+  is_required?: boolean;
+  options?: string[] | null;
+};
+
+export const surveyTemplates = (
+  params: { search?: string; limit?: string } = {},
+  signal?: AbortSignal,
+) =>
+  request<Cursored<SurveyTemplate>>(
+    `/surveys/templates/${query({ limit: '100', ...params })}`,
+    signal ? { signal } : {},
+  );
+
+export const surveyTemplate = (id: string, signal?: AbortSignal) =>
+  request<SurveyTemplate>(`/surveys/templates/${id}/`, signal ? { signal } : {});
+
+export const createSurveyTemplate = (body: {
+  title: string;
+  description?: string;
+  questions: SurveyQuestionDraft[];
+}) => request<SurveyTemplate>('/surveys/templates/', { method: 'POST', body });
+
+export const updateSurveyTemplate = (
+  id: string,
+  body: { title?: string; description?: string; questions?: SurveyQuestionDraft[] },
+) => request<SurveyTemplate>(`/surveys/templates/${id}/`, {
+  method: 'PATCH',
+  body,
+});
+
+/** Копия со всеми вопросами: основа для правки уже отвеченного шаблона. */
+export const copySurveyTemplate = (id: string) =>
+  request<SurveyTemplate>(`/surveys/templates/${id}/copy/`, { method: 'POST' });
+
+export const archiveSurveyTemplate = (id: string) =>
+  request<SurveyTemplate>(`/surveys/templates/${id}/archive/`, { method: 'POST' });
+
+export type SurveyAudienceKind = 'EMPLOYEES' | 'DEPARTMENT' | 'OFFICE' | 'ALL';
+
+export type SurveyCampaign = {
+  id: string;
+  template_id: string;
+  template_title: string;
+  title: string;
+  status: 'DRAFT' | 'SCHEDULED' | 'ACTIVE' | 'FINISHED' | 'CANCELLED';
+  audience_kind: SurveyAudienceKind;
+  audience_ids: string[] | null;
+  scheduled_at: string | null;
+  repeat_months: number | null;
+  next_send_at: string | null;
+  sent_at: string | null;
+  total?: number;
+  done?: number;
+  created_at: string;
+};
+
+export const surveyCampaigns = (
+  params: { status?: string; limit?: string } = {},
+  signal?: AbortSignal,
+) =>
+  request<Cursored<SurveyCampaign>>(
+    `/surveys/campaigns/${query({ limit: '100', ...params })}`,
+    signal ? { signal } : {},
+  );
+
+export const surveyCampaign = (id: string, signal?: AbortSignal) =>
+  request<SurveyCampaign>(`/surveys/campaigns/${id}/`, signal ? { signal } : {});
+
+export const createSurveyCampaign = (body: {
+  template_id: string;
+  title?: string;
+  audience_kind: SurveyAudienceKind;
+  audience_ids?: string[];
+  scheduled_at?: string | null;
+  repeat_months?: number | null;
+  send_now?: boolean;
+}) => request<SurveyCampaign>('/surveys/campaigns/', { method: 'POST', body });
+
+export const sendSurveyCampaign = (id: string) =>
+  request<SurveyCampaign>(`/surveys/campaigns/${id}/send/`, { method: 'POST' });
+
+export const cancelSurveyCampaign = (id: string) =>
+  request<SurveyCampaign>(`/surveys/campaigns/${id}/cancel/`, { method: 'POST' });
+
+export type SurveyRecipient = {
+  id: string;
+  employee_id: string;
+  full_name: string;
+  status: 'PENDING' | 'SENT' | 'STARTED' | 'COMPLETED';
+  sent_at: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+};
+
+export const surveyRecipients = (
+  id: string,
+  params: { status?: string } = {},
+  signal?: AbortSignal,
+) =>
+  request<Items<SurveyRecipient>>(
+    `/surveys/campaigns/${id}/recipients/${query(params)}`,
+    signal ? { signal } : {},
+  );
+
+export type SurveyFilledAnswer = {
+  question_id: string;
+  question_text: string;
+  kind: SurveyQuestionKind;
+  text: string | null;
+  number: number | null;
+  options: string[] | null;
+};
+
+/** Пройденный опрос конкретного человека. Имя — по замыслу, не по недосмотру. */
+export type SurveyFilled = SurveyRecipient & {
+  office_name: string | null;
+  department_name: string | null;
+  answers: SurveyFilledAnswer[];
+};
+
+export const surveyAnswers = (id: string, signal?: AbortSignal) =>
+  request<Items<SurveyFilled>>(
+    `/surveys/campaigns/${id}/answers/`,
+    signal ? { signal } : {},
+  );
+
+export type SurveySummary = {
+  progress: { total: number; sent: number; started: number; completed: number };
+  questions: Array<{
+    id: string;
+    text: string;
+    kind: SurveyQuestionKind;
+    answered: number;
+    average?: number | null;
+    distribution?: Record<string, number>;
+    texts?: string[];
+  }>;
+  offices: Array<{ name: string; total: number; completed: number }>;
+  departments: Array<{ name: string; total: number; completed: number }>;
+};
+
+export const surveySummary = (id: string, signal?: AbortSignal) =>
+  request<SurveySummary>(
+    `/surveys/campaigns/${id}/summary/`,
+    signal ? { signal } : {},
+  );

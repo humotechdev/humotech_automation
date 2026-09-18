@@ -35,6 +35,7 @@ from datetime import date, datetime, time, timedelta
 from django.db.models import Q, QuerySet
 
 from humotech.absences.models import EmployeeAbsence
+from humotech.attendance.reminders import notices_of_day
 from humotech.attendance.models import (
     AttendanceCorrectionRequest,
     AttendanceEvent,
@@ -51,7 +52,10 @@ from humotech.core.rbac import Actor
 from humotech.core.service import BaseService
 from humotech.core.timeframes import day_bounds, office_zone, range_bounds
 from humotech.employees.models import Employee, EmployeeAssignment
-from humotech.employees.services import current_primary_assignment_filter
+from humotech.employees.services import (
+    WORKING_STATUSES,
+    current_primary_assignment_filter,
+)
 from humotech.offices.models import Office
 from humotech.schedules.models import CalendarException, EmployeeScheduleAssignment
 
@@ -78,6 +82,10 @@ PRESENCE_STATES = (
     "OTHER_ABSENCE",
     "IN_OFFICE",
     "LEFT",
+    # Человек сам сказал, что задерживается. Отдельно от «не пришёл»:
+    # предупредивший и пропавший — разные люди с точки зрения кадровика,
+    # и одна плашка на двоих стирает единственную разницу между ними.
+    "LATE",
     "NOT_COME",
     "DAY_OFF",
     "NO_SCHEDULE",
@@ -127,9 +135,16 @@ class PresenceRow:
 
     absence_code: str | None
     absence_name: str | None
+
     # Отметка есть, хотя человек числится отсутствующим. Не ошибка сама
     # по себе — повод посмотреть.
     conflicting_marks: bool
+
+    # Что человек сам сказал про этот день: `LATE`, `ABSENT` или ничего.
+    # Это не отметка и не заявка — объяснение пустой строки, и держать
+    # его рядом с фактами можно только отдельным полем.
+    notice_kind: str | None = None
+    notice_comment: str | None = None
 
     # Отрезки присутствия за день, по одному на сессию, по возрастанию
     # времени. Нужны шкале рабочего дня: из первого входа и последнего
@@ -245,6 +260,8 @@ class AttendanceHrService(BaseService):
             office_ids=[office.id for office in offices],
         )
 
+        notices = notices_of_day(employee_ids, day)
+
         result = [
             self._presence_row(
                 assignment=assignment,
@@ -254,6 +271,7 @@ class AttendanceHrService(BaseService):
                 absence=absences.get(employee_id),
                 schedule=scheduled.get(employee_id),
                 calendar=calendar,
+                notice=notices.get(employee_id),
             )
             for employee_id, assignment in rows.items()
         ]
@@ -382,6 +400,7 @@ class AttendanceHrService(BaseService):
                 absence=absence,
                 schedule=scheduled.get(employee_id),
                 calendar=calendar,
+                notice=notices_of_day([employee_id], day).get(employee_id),
             )
             open_session = row.open_session_id is not None
             rows.append(
@@ -886,7 +905,14 @@ class AttendanceHrService(BaseService):
             employee__organization_id=actor.organization_id,
         ).select_related("employee", "office", "department", "position")
         if not include_inactive:
-            assignments = assignments.filter(employee__employment_status="ACTIVE")
+            # Работающий — это и стажёр тоже. Он ходит в тот же офис, в то
+            # же время и отмечается тем же кодом; отсутствие его в составе
+            # смены означало бы, что человек пришёл, а «сейчас в офисе»
+            # показывает ноль. Из состава выпадают уволенные и
+            # отстранённые, а не те, у кого не кончился испытательный срок.
+            assignments = assignments.filter(
+                employee__employment_status__in=WORKING_STATUSES
+            )
 
         if department_id:
             assignments = assignments.filter(department_id=department_id)
@@ -1033,6 +1059,7 @@ class AttendanceHrService(BaseService):
         absence: EmployeeAbsence | None,
         schedule: tuple[time | None, time | None, bool, int] | None,
         calendar: dict,
+        notice=None,
     ) -> PresenceRow:
         employee = assignment.employee
         first_entry = sessions[0].started_at if sessions else None
@@ -1065,6 +1092,7 @@ class AttendanceHrService(BaseService):
             open_session=open_session is not None,
             has_schedule=has_schedule,
             is_working=is_working,
+            notice_kind=notice.kind if notice else None,
         )
 
         late_minutes = None
@@ -1098,6 +1126,8 @@ class AttendanceHrService(BaseService):
             scheduled_end=scheduled_end,
             absence_code=absence_code,
             absence_name=absence_name,
+            notice_kind=notice.kind if notice else None,
+            notice_comment=notice.comment if notice else None,
             conflicting_marks=bool(absence and sessions),
             intervals=tuple(
                 Interval(
@@ -1191,6 +1221,7 @@ def _state_of(
     open_session: bool,
     has_schedule: bool,
     is_working: bool,
+    notice_kind: str | None = None,
 ) -> tuple[str, str | None, str | None]:
     if absence is not None:
         code = absence.absence_type.code if absence.absence_type_id else None
@@ -1205,6 +1236,11 @@ def _state_of(
         return "IN_OFFICE", None, None
     if has_marks:
         return "LEFT", None, None
+    # Сказанное человеком слабее факта отметки и слабее оформленного
+    # отсутствия, но сильнее молчания: предупредивший о задержке — это
+    # не прогул, и называть его так значит наказывать за предупреждение.
+    if notice_kind == "LATE" and is_working:
+        return "LATE", None, None
     if not has_schedule:
         # Не «прогул»: сравнивать не с чем. Отдельное состояние, чтобы
         # ненастроенный график не превращался в обвинение человеку.

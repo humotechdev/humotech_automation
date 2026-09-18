@@ -78,6 +78,21 @@ export function AnalyticsPage() {
     `overview|${start}|${end}|${region}|${office}|${weekday}`,
   );
 
+  // Движение сотрудников. Отдельным запросом, а не полем обзора:
+  // единица измерения здесь другая — люди, а не дни, — и держать их в
+  // одном ответе значит смешивать два разных вопроса.
+  const [movement, reloadMovement] = useBlock(
+    (signal) => api.analyticsMovement(
+      {
+        date_from: start,
+        date_to: end,
+        ...(office ? { office_id: office } : region ? { region_id: region } : {}),
+      },
+      signal,
+    ),
+    `movement|${start}|${end}|${region}|${office}`,
+  );
+
   const [directory] = useBlock(
     (signal) =>
       Promise.all([api.regions(signal), api.offices(signal)]).then(([r, o]) => ({
@@ -187,6 +202,8 @@ export function AnalyticsPage() {
           <DayPanel day={chosen} loading={!data && overview.state === 'loading'}
                     link={chosen ? attendanceLink(chosen.day, region, office) : ''} />
         </div>
+
+        <Movement block={movement} onRetry={reloadMovement} />
 
         <div className="an-row an-row--bottom">
           <Ranking block={overview} compare={compare} current={office}
@@ -872,3 +889,119 @@ function plural(n: number, forms: [string, string, string]): string {
 const daysWord = (n: number) => plural(n, ['день', 'дня', 'дней']);
 const officesWord = (n: number) => plural(n, ['офис', 'офиса', 'офисов']);
 const peopleWord = (n: number) => plural(n, ['сотрудник', 'сотрудника', 'сотрудников']);
+
+/**
+ * Движение сотрудников: принято, уволено, разница.
+ *
+ * Три числа периода и три сравнения: с предыдущим равным периодом, с
+ * тем же периодом месяцем раньше и годом раньше. Больше здесь не нужно:
+ * блок отвечает на вопрос «нас становится больше или меньше», а не
+ * заменяет кадровый отчёт.
+ *
+ * Сравнение — с равным по длине периодом, а не с календарным. Иначе
+ * десять дней сравнивались бы с месяцем, и разница объяснялась бы
+ * длиной, а не событиями.
+ */
+function Movement({ block, onRetry }: {
+  block: Block<api.MovementReport>;
+  onRetry: () => void;
+}) {
+  if (block.state === 'loading') {
+    return (
+      <section className="an-card an-movement" aria-label="Движение сотрудников">
+        <h2 className="an-card__title">Движение сотрудников</h2>
+        <p className="empty" role="status">Считаем…</p>
+      </section>
+    );
+  }
+  if (block.state !== 'ready') {
+    return (
+      <section className="an-card an-movement" aria-label="Движение сотрудников">
+        <h2 className="an-card__title">Движение сотрудников</h2>
+        <p className="empty empty--bad">
+          Не удалось посчитать.{' '}
+          <button type="button" className="link" onClick={onRetry}>Повторить</button>
+        </p>
+      </section>
+    );
+  }
+
+  const { current, previous, month_before: month, year_before: year, headcount } =
+    block.data;
+
+  // Ответ без обязательных полей — это не повод обрушить всю страницу
+  // аналитики. Так бывает у старого сервера и у прокси, подменившего
+  // тело: блок молчит, остальные продолжают работать.
+  if (!current || !previous || !month || !year) {
+    return (
+      <section className="an-card an-movement" aria-label="Движение сотрудников">
+        <h2 className="an-card__title">Движение сотрудников</h2>
+        <p className="empty">Данных за период нет.</p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="an-card an-movement" aria-label="Движение сотрудников">
+      <div className="an-card__head">
+        <h2 className="an-card__title">Движение сотрудников</h2>
+        <span className="an-card__note">На конец периода: {headcount} чел.</span>
+      </div>
+
+      <div className="an-movement__cards">
+        <MovementCard title="Принято" value={current.hired} tone="ok" />
+        <MovementCard title="Уволено" value={current.left} tone="bad" />
+        <MovementCard title="Разница" value={current.difference} tone="plain" signed />
+      </div>
+
+      <table className="an-movement__table">
+        <caption className="visually-hidden">Сравнение с прошлыми периодами</caption>
+        <thead>
+          <tr>
+            <th scope="col">Период</th>
+            <th scope="col">Принято</th>
+            <th scope="col">Уволено</th>
+            <th scope="col">Разница</th>
+          </tr>
+        </thead>
+        <tbody>
+          <MovementRow title="Выбранный период" row={current} />
+          <MovementRow title="Предыдущий период" row={previous} />
+          <MovementRow title="Месяцем раньше" row={month} />
+          <MovementRow title="Годом раньше" row={year} />
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
+function MovementCard({ title, value, tone, signed = false }: {
+  title: string;
+  value: number;
+  tone: 'ok' | 'bad' | 'plain';
+  signed?: boolean;
+}) {
+  // Знак у разницы обязателен: «3» и «−3» — противоположные новости,
+  // и различать их по цвету одному нельзя.
+  const shown = signed && value > 0 ? `+${value}` : String(value);
+  return (
+    <div className={`an-movement__card an-movement__card--${tone}`}>
+      <p className="an-movement__cardTitle">{title}</p>
+      <p className="an-movement__cardValue">{shown}</p>
+    </div>
+  );
+}
+
+function MovementRow({ title, row }: { title: string; row: api.MovementSpan }) {
+  return (
+    <tr>
+      <th scope="row">
+        {title}
+        <small>{row.first} — {row.last}</small>
+      </th>
+      <td>{row.hired}</td>
+      <td>{row.left}</td>
+      <td>{row.difference > 0 ? `+${row.difference}` : row.difference}</td>
+    </tr>
+  );
+}

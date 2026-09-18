@@ -18,6 +18,15 @@ import * as api from '../api/crm';
 import { messageFor } from '../api/errors';
 import { AppShell, initials } from '../components/AppShell';
 import { AppIcon, type AppIconName } from '../components/AppIcon';
+import {
+  PERIODS,
+  isPeriodKind,
+  lengthOf,
+  spanOf,
+  spanTitle,
+  type PeriodKind,
+  type Span,
+} from '../features/attendance/period';
 import { DatePicker } from '../components/DatePicker';
 import { AppFilterButton, AppSegmentedControl, Dropdown } from '../components/AppSelect';
 import { DayCard } from '../components/DayCard';
@@ -38,8 +47,17 @@ function stateOf(row: api.PresenceRow): { title: string; tone: Tone } {
       return late > 0 ? { title: `Опоздал на ${late} мин`, tone: 'warn' } : { title: 'В офисе', tone: 'ok' };
     case 'LEFT':
       return { title: 'Ушёл', tone: 'idle' };
+    case 'LATE':
+      // Человек сам предупредил, что задерживается. Называть его «нет
+      // отметки» — значит стереть единственную разницу между тем, кто
+      // написал, и тем, кто пропал.
+      return { title: 'Опаздывает', tone: 'warn' };
     case 'NOT_COME':
-      return { title: 'Нет отметки', tone: 'warn' };
+      // Сказавший «не приду» тоже не отметился, но он предупредил, и
+      // кадровику это видно сразу, а не в карточке.
+      return row.notice_kind === 'ABSENT'
+        ? { title: 'Не придёт', tone: 'warn' }
+        : { title: 'Нет отметки', tone: 'warn' };
     case 'VACATION':
       return { title: 'В отпуске', tone: 'violet' };
     case 'SICK_LEAVE':
@@ -58,6 +76,7 @@ function stateOf(row: api.PresenceRow): { title: string; tone: Tone } {
 const STATUS_OPTIONS = [
   { id: 'IN_OFFICE', name: 'В офисе' },
   { id: 'LEFT', name: 'Ушли' },
+  { id: 'LATE', name: 'Опаздывают' },
   { id: 'NOT_COME', name: 'Нет отметки' },
   { id: 'VACATION', name: 'В отпуске' },
   { id: 'SICK_LEAVE', name: 'На больничном' },
@@ -108,6 +127,14 @@ export function AttendancePage() {
   const [params, setParams] = useSearchParams();
   const day = params.get('date') ?? today();
   const tab = params.get('tab') === 'log' ? 'log' : 'day';
+  // Период живёт в адресе рядом с днём: ссылка на «неделю Каримова»
+  // должна открываться той же неделей, а не сегодняшним днём.
+  const rawPeriod = params.get('period');
+  const period: PeriodKind = isPeriodKind(rawPeriod) ? rawPeriod : 'day';
+  const span = spanOf(period, day, {
+    from: params.get('from') ?? undefined,
+    to: params.get('to') ?? undefined,
+  });
   const search = params.get('search') ?? '';
   const office = params.get('office_id') ?? '';
   const state = params.get('state') ?? '';
@@ -177,6 +204,22 @@ export function AttendancePage() {
   const [directory] = useBlock(
     (signal) => api.offices(signal).then((o) => o.items.filter((one) => one.status === 'ACTIVE')),
     'offices',
+  );
+
+  // Сводка за период. Грузится только когда период шире дня: за день
+  // всё уже посчитано карточками дашборда, и второй запрос показал бы
+  // те же числа, посчитанные другим способом.
+  const [summary] = useBlock(
+    (signal) => api.analyticsOverview(
+      {
+        date_from: span.from,
+        date_to: span.to,
+        ...(office ? { office_id: office } : {}),
+      },
+      signal,
+    ),
+    `overview|${span.from}|${span.to}|${office}|${attempt}`,
+    tab === 'day' && period !== 'day',
   );
 
   const card = cards.state === 'ready'
@@ -272,8 +315,41 @@ export function AttendancePage() {
           <Journal day={day} office={office} />
         ) : (
           <>
-            <Today counts={counts} past={past} rows={everyone} zone={zone}
-                   chosen={chosen} onPick={choose} block={cards} />
+            {/* Период стоит выше показателей: сначала человек решает,
+                за что смотрит, и только потом — на что именно. */}
+            <div className="att-period">
+              <AppSegmentedControl className="att-period__tabs" role="tablist"
+                label="Период" value={period}
+                options={PERIODS}
+                onChange={(value) => patch({
+                  period: value === 'day' ? null : value,
+                  // Границы произвольного периода живут только с ним:
+                  // оставленные от прошлого выбора, они сбивали бы
+                  // неделю и месяц незаметно.
+                  from: null, to: null,
+                })} />
+
+              {period === 'range' ? (
+                <span className="att-period__range">
+                  <input type="date" className="input input--time" value={span.from}
+                         aria-label="Начало периода" max={span.to}
+                         onChange={(event) => patch({ from: event.target.value })} />
+                  <span className="att-period__dash">—</span>
+                  <input type="date" className="input input--time" value={span.to}
+                         aria-label="Конец периода" min={span.from}
+                         onChange={(event) => patch({ to: event.target.value })} />
+                </span>
+              ) : (
+                <span className="att-period__title">{spanTitle(period, span)}</span>
+              )}
+            </div>
+
+            {period === 'day' ? (
+              <Today counts={counts} past={past} rows={everyone} zone={zone}
+                     chosen={chosen} onPick={choose} block={cards} />
+            ) : (
+              <PeriodSummary block={summary} span={span} period={period} />
+            )}
 
             <div className="att-grid">
 
@@ -686,6 +762,27 @@ function Person({ row, day, zone, canFix, onFix }: {
           * ещё не отмечался. Офис, отдел и график при этом остаются: они
           * известны и нужны тому, кто разбирается.
           */}
+        {/* Что человек сам сказал про день. Стоит выше событий: если он
+            предупредил, это первое, что должен увидеть кадровик, —
+            иначе он открывает карточку, видит пустоту и звонит. */}
+        {row.notice_kind && (
+          <div className="att-person__notice">
+            <span className="att-person__noticeIcon" aria-hidden="true">
+              <AppIcon name="alert" size={18} />
+            </span>
+            <p className="att-person__noticeText">
+              <b>
+                {row.notice_kind === 'LATE'
+                  ? 'Сотрудник предупредил, что опаздывает'
+                  : 'Сотрудник предупредил, что не придёт'}
+              </b>
+              {row.notice_comment
+                ? <span>{row.notice_comment}</span>
+                : <span>Причину не назвал</span>}
+            </p>
+          </div>
+        )}
+
         {nothingYet ? (
           <div className="att-person__blank">
             <span className="att-person__blankIcon" aria-hidden="true">
@@ -695,7 +792,9 @@ function Person({ row, day, zone, canFix, onFix }: {
               {day === today() ? 'Нет отметок за сегодня' : 'Нет отметок за этот день'}
             </p>
             <p className="att-person__blankText">Сотрудник ещё не отметил вход или выход</p>
-            <span className="att-status att-status--warn">Нет отметки</span>
+            <span className="att-status att-status--warn">
+              {stateOf(row).title}
+            </span>
           </div>
         ) : (
           <>
@@ -934,3 +1033,93 @@ export function span(seconds: number): string {
 }
 
 export { clock, clockOnDay };
+
+/**
+ * Сводка за период: неделя, месяц или произвольные даты.
+ *
+ * Показывает пять чисел и ничего больше. Здесь намеренно нет графиков,
+ * разрезов и сравнений — для них есть «Аналитика». Задача этого блока
+ * другая: кадровик выбрал неделю и должен за секунду понять, как она
+ * прошла, а не изучать её.
+ *
+ * Явка считается от тех, кого ждали, а не от всей организации: человек
+ * в отпуске не «не пришёл», и делить на него значит занижать явку всей
+ * компании за каждый отпуск.
+ */
+function PeriodSummary({ block, span, period }: {
+  block: Block<api.Overview>;
+  span: Span;
+  period: PeriodKind;
+}) {
+  if (block.state === 'loading') {
+    return <p className="empty" role="status">Считаем период…</p>;
+  }
+  if (block.state === 'denied') {
+    return <p className="empty empty--bad">Период закрыт вашей областью доступа.</p>;
+  }
+  if (block.state === 'error') {
+    return <p className="empty empty--bad">Не удалось посчитать период.</p>;
+  }
+
+  const { summary } = block.data;
+  const days = lengthOf(span);
+  const attendance = summary.attendance.percent;
+  const moved = summary.difference_points;
+
+  return (
+    <section className="att-summary" aria-label="Итоги периода">
+      <div className="att-summary__cards">
+        <Metric
+          title="Явка"
+          value={attendance === null ? '—' : `${Math.round(attendance)}%`}
+          note={
+            attendance === null
+              ? 'Ждать было некого'
+              : `${summary.attendance.numerator} из ${summary.attendance.denominator}`
+          }
+          hint={
+            moved === null || moved === 0
+              ? undefined
+              : `${moved > 0 ? '+' : ''}${Math.round(moved)} п.п. к прошлому периоду`
+          }
+        />
+        <Metric title="Опоздания" value={String(summary.late.numerator)}
+                note={`из ${summary.late.denominator} приходов`} />
+        <Metric title="Не пришли" value={String(summary.missed_days)}
+                note={days === 1 ? 'за день' : `за ${days} дн.`} />
+        <Metric title="Отпуск" value={String(summary.vacation_days)} note="дней" />
+        <Metric title="Больничный" value={String(summary.sick_leave_days)} note="дней" />
+      </div>
+
+      {summary.open_sessions > 0 && (
+        <p className="att-note">
+          Незакрытых смен за период: <b>{summary.open_sessions}</b>. Человек
+          отметил вход и не отметил выход — время за такой день не посчитано.
+        </p>
+      )}
+
+      <p className="att-summary__more">
+        {period === 'month' ? 'Разрезы по офисам и дням недели' : 'Подробные разрезы'}
+        {' — в '}
+        <Link to={`/analytics?date_from=${span.from}&date_to=${span.to}`}>аналитике</Link>.
+      </p>
+    </section>
+  );
+}
+
+/** Одно число с подписью. Без стрелок и цвета: это сводка, а не оценка. */
+function Metric({ title, value, note, hint }: {
+  title: string;
+  value: string;
+  note: string;
+  hint?: string | undefined;
+}) {
+  return (
+    <div className="att-metric">
+      <p className="att-metric__title">{title}</p>
+      <p className="att-metric__value">{value}</p>
+      <p className="att-metric__note">{note}</p>
+      {hint && <p className="att-metric__hint">{hint}</p>}
+    </div>
+  );
+}

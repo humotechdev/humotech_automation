@@ -59,6 +59,16 @@ export class ApiFailure extends Error {
    * и «Telegram не подключён», и совет у них разный.
    */
   readonly code: string | null;
+  /**
+   * Текст отказа, как его написал сервер.
+   *
+   * Общая фраза по виду ошибки говорит, ЧТО случилось («конфликт»), но
+   * не почему именно: «в отделе ещё числятся семеро» знает только
+   * сервер. Без этого поля причина отказа до человека не доходила.
+   *
+   * `null` — сервер причины не назвал; тогда показывают общую фразу.
+   */
+  readonly detail: string | null;
 
   constructor(
     kind: FailureKind,
@@ -66,6 +76,7 @@ export class ApiFailure extends Error {
     fields: Record<string, string[]> = {},
     field: string | null = null,
     code: string | null = null,
+    detail: string | null = null,
   ) {
     super(kind);
     this.name = 'ApiFailure';
@@ -74,6 +85,7 @@ export class ApiFailure extends Error {
     this.fields = fields;
     this.field = field;
     this.code = code;
+    this.detail = detail;
   }
 }
 

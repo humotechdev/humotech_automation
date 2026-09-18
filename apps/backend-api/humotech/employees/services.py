@@ -48,7 +48,8 @@ from humotech.telegram.models import TelegramAccount
 CARD_FIELDS = (
     "employee_number", "first_name", "last_name", "middle_name", "phone",
     "corporate_email", "personal_email", "birth_date", "hire_date",
-    "termination_date", "preferred_language", "employment_status",
+    "termination_date", "termination_reason", "preferred_language",
+    "employment_status",
 )
 ASSIGNMENT_FIELDS = (
     "office_id", "department_id", "position_id", "manager_employee_id",
@@ -892,6 +893,10 @@ class EmployeeService(BaseService):
         with self.atomic():
             employee.employment_status = "TERMINATED"
             employee.termination_date = termination_date
+            if reason:
+                employee.termination_reason = clean_text(
+                    reason, field="reason", max_length=255
+                )
             employee.save()
 
             # Циклом, а не queryset.update(): у моделей есть `updated_at`,
@@ -977,7 +982,9 @@ class EmployeeService(BaseService):
         ).first()
         if department is None:
             raise NotFound("Отдел не найден")
-        if department.office_id != office_id:
+        # У общего отдела офиса нет, и сверять его не с чем: «Продажи»
+        # одни на всю компанию, и человек из любого офиса в них числится.
+        if department.office_id is not None and department.office_id != office_id:
             raise ValidationFailed(
                 "Отдел относится к другому офису",
                 details={"department_id": str(department_id),

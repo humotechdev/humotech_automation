@@ -144,17 +144,18 @@ function NewPoint({ officeId, onCancel, onCreated }: {
 
   async function create() {
     if (sending) return;
-    if (!name.trim()) {
-      setFailed('Назовите точку — например, «Главный вход».');
-      return;
-    }
     setSending(true);
     setFailed(null);
     try {
       const result = await api.createQrPoint({
         office_id: officeId,
-        name: name.trim(),
+        // Пустое имя не отправляем: сервер назовёт точку по её типу.
+        ...(name.trim() ? { name: name.trim() } : {}),
         direction_mode: mode,
+        // Печатная точка: лист с кодом висит на стене, секрет выдаётся
+        // один раз. Без этого сервер считает точку экранной и отказывает
+        // — «для поворотной точки нужен период смены кода».
+        qr_mode: 'STATIC',
         ...(description.trim() ? { description: description.trim() } : {}),
       });
       onCreated(result);
@@ -170,10 +171,13 @@ function NewPoint({ officeId, onCancel, onCreated }: {
       <h3 className="ofs-card__title">Новая QR-точка</h3>
       <div className="ofs-new__grid">
         <label className="ofs-field">
-          <span className="ofs-field__label">Название</span>
+          <span className="ofs-field__label">Название — необязательно</span>
           <input className="ofs-field__input" value={name} maxLength={255}
-                 placeholder="Главный вход" aria-label="Название точки"
+                 placeholder={DEFAULT_NAME[mode]} aria-label="Название точки"
                  onChange={(event) => setName(event.target.value)} />
+          <span className="ofs-field__hint">
+            Можно не заполнять — точка будет называться «{DEFAULT_NAME[mode]}»
+          </span>
         </label>
         <div className="ofs-field">
           <span className="ofs-field__label">Тип</span>
@@ -319,10 +323,44 @@ function PointCard({ point, canManage, onChanged, onIssued }: {
   onChanged: () => void;
   onIssued: (issued: api.IssuedQrPoint) => void;
 }) {
-  const [busy, setBusy] = useState<'reissue' | 'toggle' | null>(null);
-  const [confirm, setConfirm] = useState<'reissue' | 'off' | null>(null);
+  const [busy, setBusy] = useState<'reissue' | 'toggle' | 'rename' | 'delete' | null>(null);
+  const [confirm, setConfirm] = useState<'reissue' | 'off' | 'delete' | null>(null);
+  const [renaming, setRenaming] = useState<string | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const printable = point.qr_mode === 'STATIC';
+
+  async function rename() {
+    const name = (renaming ?? '').trim();
+    if (!name) return;
+    setBusy('rename');
+    setFailed(null);
+    try {
+      await api.updateQrPoint(point.id, { name });
+      setRenaming(null);
+      onChanged();
+    } catch (error) {
+      setFailed(messageFor(error));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function remove() {
+    setBusy('delete');
+    setFailed(null);
+    try {
+      await api.deleteQrPoint(point.id);
+      setConfirm(null);
+      onChanged();
+    } catch (error) {
+      // Отказ сервера показывается его словами: он объясняет, что по
+      // точке уже отмечались и её надо выключить, а не удалять.
+      setFailed(messageFor(error));
+      setConfirm(null);
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function reissue() {
     setBusy('reissue');
@@ -355,7 +393,22 @@ function PointCard({ point, canManage, onChanged, onIssued }: {
     <li className={point.is_active ? 'ofs-point' : 'ofs-point ofs-point--off'}>
       <div className="ofs-point__main">
         <div className="ofs-point__title">
-          <b title={point.name}>{point.name}</b>
+          {renaming === null ? (
+            <b title={point.name}>{point.name}</b>
+          ) : (
+            <span className="ofs-point__rename">
+              <input className="ofs-field__input" value={renaming} autoFocus
+                     aria-label="Название точки" maxLength={255}
+                     onChange={(event) => setRenaming(event.target.value)} />
+              <button type="button" className="ofs-btn ofs-btn--blue"
+                      disabled={busy !== null || !renaming.trim()}
+                      onClick={() => void rename()}>
+                {busy === 'rename' ? 'Сохраняем…' : 'Сохранить'}
+              </button>
+              <button type="button" className="ofs-btn"
+                      onClick={() => setRenaming(null)}>Отмена</button>
+            </span>
+          )}
           <span className="ofs-chip">{MODE_TITLE[point.direction_mode] ?? point.direction_mode}</span>
           <span className={point.is_active ? 'ofs-state ofs-state--ok' : 'ofs-state ofs-state--off'}>
             <i aria-hidden="true" />
@@ -370,6 +423,16 @@ function PointCard({ point, canManage, onChanged, onIssued }: {
           {point.rotated_at && <span>Код перевыпущен {shortDate(point.rotated_at)}</span>}
           {!printable && <span>Код на экране меняется сам</span>}
         </p>
+        {/* Секрет показывается один раз — в базе только его хеш. Без этой
+            строки человек, закрывший окно создания, ищет кнопку «показать
+            код» и не находит её: она называется «Перевыпустить». */}
+        {printable && (
+          <p className="ofs-point__hint">
+            Сам код показывается один раз, при выпуске: в системе хранится
+            только его отпечаток. Потеряли картинку — перевыпустите, но
+            учтите: распечатанный лист со старым кодом перестанет работать.
+          </p>
+        )}
         {failed && <p className="ofs-alert" role="alert">{failed}</p>}
       </div>
 
@@ -391,8 +454,22 @@ function PointCard({ point, canManage, onChanged, onIssued }: {
               </button>
               <button type="button" className="ofs-btn" onClick={() => setConfirm(null)}>Отмена</button>
             </div>
+          ) : confirm === 'delete' ? (
+            <div className="ofs-confirm" role="alertdialog" aria-label="Удалить точку">
+              <span>Точка исчезнет совсем. Удалить?</span>
+              <button type="button" className="ofs-btn ofs-btn--danger"
+                      disabled={busy !== null} onClick={() => void remove()}>
+                {busy === 'delete' ? 'Удаляем…' : 'Удалить'}
+              </button>
+              <button type="button" className="ofs-btn" onClick={() => setConfirm(null)}>Отмена</button>
+            </div>
           ) : (
             <>
+              <button type="button" className="ofs-btn" disabled={busy !== null}
+                      onClick={() => setRenaming(point.name)}>
+                <AppIcon name="pencil" size={16} />
+                Переименовать
+              </button>
               {printable && (
                 <button type="button" className="ofs-btn" disabled={busy !== null} onClick={() => setConfirm('reissue')}>
                   <AppIcon name="refresh" size={16} />
@@ -408,6 +485,13 @@ function PointCard({ point, canManage, onChanged, onIssued }: {
                   {busy === 'toggle' ? 'Включаем…' : 'Включить'}
                 </button>
               )}
+              {/* Удаление стоит последним и только у точки без отметок:
+                  сервер откажет и объяснит, если по ней уже ходили. */}
+              <button type="button" className="ofs-btn ofs-btn--quiet"
+                      disabled={busy !== null} onClick={() => setConfirm('delete')}>
+                <AppIcon name="cross" size={16} />
+                Удалить
+              </button>
             </>
           )}
         </div>
@@ -421,6 +505,13 @@ function shortDate(iso: string): string {
   if (Number.isNaN(date.getTime())) return iso.slice(0, 10);
   return date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
+
+/** Как назовётся точка, которую не назвали. Тот же выбор на сервере. */
+const DEFAULT_NAME: Record<'ENTRY' | 'EXIT' | 'BOTH', string> = {
+  ENTRY: 'Вход',
+  EXIT: 'Выход',
+  BOTH: 'Вход и выход',
+};
 
 function slug(value: string): string {
   const cleaned = value.toLowerCase().replace(/[^a-z0-9а-яё]+/gi, '-').replace(/^-+|-+$/g, '');

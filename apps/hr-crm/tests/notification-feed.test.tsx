@@ -312,10 +312,12 @@ describe('колокольчик', () => {
   test('показывает число непрочитанного с сервера', async () => {
     feedNetwork();
     renderApp('/');
+    // Число берётся из ответа сервера (`COUNTS.unread`), а не из
+    // длины списка: список постраничный, и его длина — не счётчик.
     const bell = await screen.findByRole('button', {
-      name: /Уведомления, непрочитанных 6/,
+      name: /Уведомления, непрочитанных 4/,
     });
-    expect(within(bell).getByText('6')).toBeTruthy();
+    expect(within(bell).getByText('4')).toBeTruthy();
   });
 
   test('пока сервер не ответил, числа нет', async () => {
@@ -387,10 +389,10 @@ describe('колокольчик', () => {
     const panel = await screen.findByRole('dialog', { name: 'Уведомления' });
 
     fireEvent.click(within(panel).getAllByText('Новая заявка на отпуск')[0]!);
-    // Пять на месте шести означало бы прочтение, которого сервер не принял.
+    // Три на месте четырёх означало бы прочтение, которого сервер не принял.
     await waitFor(() =>
       expect(within(panel).getByRole('heading', { name: /Уведомления/ }).textContent)
-        .toContain('6'),
+        .toContain('4'),
     );
   });
 

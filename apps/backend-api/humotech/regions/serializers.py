@@ -26,7 +26,7 @@ class RegionSerializer(serializers.ModelSerializer):
 
 
 class RegionCreateSerializer(serializers.Serializer):
-    code = serializers.CharField(max_length=50)
+    code = serializers.CharField(max_length=50, required=False, allow_blank=True)
     name = serializers.CharField(max_length=255)
     timezone = serializers.CharField(
         max_length=100, required=False, allow_null=True

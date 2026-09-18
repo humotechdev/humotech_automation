@@ -979,3 +979,61 @@
     flex-wrap: wrap;
   }
 }
+
+/* Полоса решения по стажировке.
+
+   Стоит между шапкой и вкладками — там, где её нельзя пролистать мимо,
+   но она и не притворяется частью карточки: у неё своя рамка и свой
+   фон. Жёлтый, а не красный: идущая стажировка — это не тревога, это
+   состояние, требующее решения в известный срок. */
+.ep-probation {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 0 0 16px;
+  padding: 14px 16px;
+  border: 1px solid #f0d9a8;
+  border-radius: 12px;
+  background: #fdf8ec;
+}
+
+.ep-probation__mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #f6e6c2;
+  color: #8a6212;
+}
+
+.ep-probation__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 260px;
+  min-width: 0;
+  margin: 0;
+}
+
+.ep-probation__text b {
+  font-size: 14px;
+  color: #6f4f0c;
+}
+
+.ep-probation__text span {
+  font-size: 13px;
+  line-height: 1.45;
+  color: #7a6238;
+}
+
+@media (max-width: 720px) {
+  /* На узком экране кнопки уходят под текст во всю ширину: две штуки
+     по 160 px рядом с текстом не помещаются и вылезают за край. */
+  .ep-probation .btn {
+    flex: 1 1 100%;
+  }
+}

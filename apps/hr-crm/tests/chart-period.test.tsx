@@ -114,15 +114,18 @@ describe('переключение периода графика', () => {
 
       const officesBefore = count(calls, '/attendance/presence');
       const dashboardBefore = count(calls, '/dashboard');
+      const talksBefore = count(calls, '/knowledge/escalations');
       const chartBefore = count(calls, '/analytics');
 
       fireEvent.click(period(title));
       await waitFor(() => expect(count(calls, '/analytics')).toBeGreaterThan(chartBefore));
 
-      // Соседние блоки не трогали.
+      // Соседние блоки не трогали. Считается прирост за переключение,
+      // а не общее число: тест гоняется по нескольким периодам подряд,
+      // и запросы предыдущих проходов к этому отношения не имеют.
       expect(count(calls, '/attendance/presence')).toBe(officesBefore);
       expect(count(calls, '/dashboard')).toBe(dashboardBefore);
-      expect(count(calls, '/knowledge/escalations')).toBeLessThanOrEqual(1);
+      expect(count(calls, '/knowledge/escalations')).toBe(talksBefore);
     },
   );
 

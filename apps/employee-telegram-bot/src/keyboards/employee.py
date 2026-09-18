@@ -67,6 +67,13 @@ BTN_HELP = "❓ Помощь"
 #: Выход из ввода вопроса. В общем меню её нет: она нужна только там.
 BTN_CANCEL = "✖️ Отмена"
 BTN_SEND_LOCATION = "📍 Отправить геопозицию"
+LINK_ACCEPT = "link:accept"
+
+
+def link_consent() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Согласен с условиями", callback_data=LINK_ACCEPT)
+    ]])
 
 # Все подписи разом — по ним фильтруются хендлеры, и список должен быть один.
 #

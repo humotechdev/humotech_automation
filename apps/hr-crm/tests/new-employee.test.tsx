@@ -154,7 +154,7 @@ const pdf = () =>
   new File([new Uint8Array([37, 80, 68, 70])], 'passport.pdf', { type: 'application/pdf' });
 
 const add = () => screen.getByRole('button', { name: /Добавить сотрудника/ });
-const confirm = () => screen.getByRole('button', { name: 'Подтвердить добавление' });
+const confirm = () => screen.getByRole('button', { name: 'Создать сотрудника' });
 
 describe('фотография и документы', () => {
   test('файл уходит отдельным запросом, а приём ссылается на него', async () => {
@@ -232,6 +232,23 @@ describe('фотография и документы', () => {
 });
 
 describe('форма приёма', () => {
+  test('архивные отделы и должности не предлагаются', async () => {
+    // Значение архивируют именно потому, что на него больше не
+    // принимают. Предложить его в списке — значит завести человека
+    // в расформированный отдел на упразднённую должность.
+    const { calls } = network();
+    await openForm();
+    // Отделы запрашиваются только под выбранный офис: состав отделов
+    // у офисов разный.
+    await fill();
+
+    const asked = calls.map((one) => one.url);
+    expect(asked.some((url) => url.includes('/positions/')
+      && url.includes('status=ACTIVE'))).toBe(true);
+    expect(asked.some((url) => url.includes('/departments/')
+      && url.includes('status=ACTIVE'))).toBe(true);
+  });
+
   test('без обязательных полей запрос не уходит', async () => {
     const { sent } = network();
     await openForm();
@@ -280,7 +297,7 @@ describe('форма приёма', () => {
     const dialog = screen.getByRole('dialog');
     // Текст собран из нескольких узлов, поэтому проверяется всё окно
     // целиком, а не отдельный узел с точным совпадением.
-    expect(dialog.textContent).toContain('Добавить сотрудника?');
+    expect(dialog.textContent).toContain('Создать сотрудника?');
     expect(dialog.textContent).toContain('Каримова Нигина');
     expect(within(dialog).getByText('Головной офис')).toBeTruthy();
     expect(sent).toHaveLength(0);
@@ -292,7 +309,7 @@ describe('форма приёма', () => {
     await fill();
     fireEvent.click(add());
 
-    fireEvent.click(screen.getByRole('button', { name: 'Вернуться к редактированию' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Назад и изменить' }));
 
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(sent).toHaveLength(0);
@@ -419,49 +436,18 @@ describe('отказы сервера', () => {
   });
 });
 
-describe('результат', () => {
-  test('успех показывает шаги и ссылку на карточку', async () => {
-    network();
+describe('после создания', () => {
+  test('HR получает персональную ссылку Telegram перед переходом в карточку', async () => {
+    const { calls } = network();
     await openForm();
     await fill();
     fireEvent.click(add());
     fireEvent.click(confirm());
 
-    await screen.findByText('Сотрудник успешно добавлен');
-    expect(document.body.textContent).toContain('HT-0001');
-    expect(screen.getByText('Карточка создана')).toBeTruthy();
-    expect(screen.getByText('Назначение создано')).toBeTruthy();
-    expect(screen.getByText('График назначен')).toBeTruthy();
-    // Telegram не обещает подключения, которого нет: бот не может
-    // написать первым, пока человек не нажал Start.
-    expect(screen.getByText('Telegram: ожидается первый запуск')).toBeTruthy();
-    expect(
-      screen.getByRole('link', { name: /Открыть карточку сотрудника/ }),
-    ).toBeTruthy();
-    expect(
-      screen.getByRole('button', { name: /Скопировать ссылку Telegram/ }),
-    ).toBeTruthy();
-  });
-
-  test('привязанный Telegram показан подключённым', async () => {
-    network({
-      onboard: () =>
-        json(201, {
-          ...CREATED,
-          telegram: { state: 'CONNECTED', link: null, message: 'Telegram подключён' },
-        }),
-    });
-    await openForm();
-    await fill();
-    fireEvent.click(add());
-    fireEvent.click(confirm());
-
-    // Слова «Telegram подключён» стоят и в списке шагов, и в пояснении
-    // под ним, поэтому проверяется наличие хотя бы одного.
-    await waitFor(() =>
-      expect(screen.getAllByText('Telegram подключён').length).toBeGreaterThan(0),
-    );
-    // Ссылки нет — и кнопки копирования тоже: копировать нечего.
-    expect(screen.queryByRole('button', { name: /Скопировать/ })).toBeNull();
+    await screen.findByText('Ссылка для подключения Telegram готова');
+    expect(screen.getByText(CREATED.telegram.link)).toBeTruthy();
+    expect(calls.some((one) => one.url.includes('/employees/e-new'))).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Открыть карточку сотрудника' }));
+    await waitFor(() => expect(calls.some((one) => one.url.includes('/employees/e-new'))).toBe(true));
   });
 });

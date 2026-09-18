@@ -10,16 +10,21 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { call } from '../src/api';
+import { call, placeOf } from '../src/api';
 import {
   CODE_PREFIX,
+  SCAN_RESULTS,
+  SCAN_UNKNOWN,
   cameraAvailable,
   hasBarcodeDetector,
+  isSticker,
   looksLikeOurCode,
   newAttemptId,
+  scanView,
   scanWithTelegram,
   telegramScanner,
 } from '../src/scanner';
+import { requestPosition } from '../src/telegram';
 
 function windowWith(webApp: object | null): Window {
   return (webApp ? { Telegram: { WebApp: webApp } } : {}) as unknown as Window;
@@ -58,6 +63,55 @@ describe('свой код', () => {
     ]) {
       expect(looksLikeOurCode(foreign)).toBe(false);
     }
+  });
+
+  it('печатный код отличается от кода с экрана', () => {
+    // Разница решает, ждать ли геопозицию: без неё сервер печатный код
+    // не принимает, а код с экрана принимает. Спутать одно с другим
+    // значит либо отказывать у двери, либо ждать место впустую.
+    const secret = 'A'.repeat(43);
+    expect(isSticker(`https://t.me/humotech_bot?start=qr_${secret}`)).toBe(true);
+    expect(isSticker(`  qr_${secret}  `)).toBe(true);
+    expect(isSticker(`${CODE_PREFIX}abcdef`)).toBe(false);
+    expect(isSticker('')).toBe(false);
+  });
+});
+
+// --- итог отметки словами --------------------------------------------------
+
+describe('итог отметки', () => {
+  it('у каждого ответа сервера есть свой текст', () => {
+    // «Не получилось» на любой отказ — это тупик: «слишком далеко» и
+    // «точка выключена» требуют разных действий, а общий текст
+    // предлагает одно и то же, что не поможет ни в одном из случаев.
+    for (const status of [
+      'ENTERED', 'EXITED', 'ALREADY_INSIDE', 'NOT_INSIDE', 'QR_EXPIRED',
+      'QR_INVALID', 'QR_ALREADY_USED', 'QR_POINT_INACTIVE',
+      'OFFICE_NOT_ALLOWED', 'OUTSIDE_GEOFENCE', 'LOCATION_TOO_VAGUE',
+      'NETWORK_REQUIRED', 'GEOLOCATION_REQUIRED', 'QR_REVOKED',
+      'GEOFENCE_NOT_CONFIGURED', 'TOO_SOON',
+    ]) {
+      expect(SCAN_RESULTS[status], status).toBeTruthy();
+    }
+  });
+
+  it('«слишком далеко» называет расстояние и радиус', () => {
+    const view = scanView({
+      status: 'OUTSIDE_GEOFENCE', distance_m: 341.7, radius_m: 100,
+    });
+    expect(view.title).toBe('Вы слишком далеко от офиса');
+    expect(view.hint).toContain('342 м');
+    expect(view.hint).toContain('100 м');
+  });
+
+  it('без расстояния остаётся общий текст, а не «до офиса null м»', () => {
+    const view = scanView({ status: 'OUTSIDE_GEOFENCE', distance_m: null,
+                            radius_m: null });
+    expect(view.hint).toBe(SCAN_RESULTS.OUTSIDE_GEOFENCE!.hint);
+  });
+
+  it('незнакомый ответ не роняет экран', () => {
+    expect(scanView({ status: 'ЧТО-ТО_НОВОЕ' }).title).toBe(SCAN_UNKNOWN.title);
   });
 });
 
@@ -118,6 +172,141 @@ describe('ключ попытки', () => {
     // В старых вебвью его нет, и отметка не должна из-за этого падать.
     vi.stubGlobal('crypto', {});
     expect(newAttemptId()).toBeTruthy();
+  });
+});
+
+// --- откуда берётся место --------------------------------------------------
+
+describe('определение места', () => {
+  /** Телефон, отдающий точки одну за другой. */
+  function phone(
+    fixes: Array<{ latitude: number; longitude: number; accuracy: number }>,
+    webApp: object | null = null,
+  ) {
+    const clearWatch = vi.fn();
+    const source = {
+      ...(webApp ? { Telegram: { WebApp: webApp } } : {}),
+      navigator: {
+        geolocation: {
+          getCurrentPosition: vi.fn(),
+          clearWatch,
+          watchPosition: vi.fn((ok: (position: unknown) => void) => {
+            for (const fix of fixes) ok({ coords: fix });
+            return 7;
+          }),
+        },
+      },
+    } as unknown as Window;
+    return { source, clearWatch };
+  }
+
+  it('берётся самая точная точка, а не первая', async () => {
+    // Первой почти всегда приходит точка по вышкам — она мгновенная и
+    // врёт на сотню метров. Спутниковая приходит следом. Взять первую
+    // значит отказать человеку, стоящему у самой двери.
+    const { source } = phone([
+      { latitude: 41.305215, longitude: 69.335188, accuracy: 100 },
+      { latitude: 41.304151, longitude: 69.332442, accuracy: 12 },
+    ]);
+
+    const place = await requestPosition({ source });
+
+    expect(place?.accuracy).toBe(12);
+    expect(place?.latitude).toBe(41.304151);
+  });
+
+  it('хорошая точка прекращает ожидание сразу', async () => {
+    const { source, clearWatch } = phone([
+      { latitude: 41.304151, longitude: 69.332442, accuracy: 8 },
+    ]);
+
+    await requestPosition({ source });
+
+    // Наблюдение снимается: держать включённым GPS после ответа незачем.
+    expect(clearWatch).toHaveBeenCalledWith(7);
+  });
+
+  it('грубая точка Telegram уточняется браузером', async () => {
+    // `LocationManager` отдаёт ровно одну точку и второй раз даст ту же.
+    // Если она грубая, единственный способ узнать место точнее —
+    // дождаться спутников браузерным наблюдением.
+    const { source } = phone(
+      [{ latitude: 41.304151, longitude: 69.332442, accuracy: 9 }],
+      {
+        version: '8.0',
+        isVersionAtLeast: () => true,
+        LocationManager: {
+          isInited: true,
+          getLocation: (done: (location: unknown) => void) =>
+            done({ latitude: 41.305215, longitude: 69.335188,
+                   horizontal_accuracy: 100 }),
+        },
+      },
+    );
+
+    const place = await requestPosition({ source });
+
+    expect(place?.accuracy).toBe(9);
+    expect(place?.latitude).toBe(41.304151);
+  });
+
+  it('точную точку Telegram браузером не переспрашивают', async () => {
+    const { source } = phone(
+      [{ latitude: 41.3, longitude: 69.3, accuracy: 5 }],
+      {
+        version: '8.0',
+        isVersionAtLeast: () => true,
+        LocationManager: {
+          isInited: true,
+          getLocation: (done: (location: unknown) => void) =>
+            done({ latitude: 41.304151, longitude: 69.332442,
+                   horizontal_accuracy: 11 }),
+        },
+      },
+    );
+
+    const place = await requestPosition({ source });
+
+    expect(place?.accuracy).toBe(11);
+    // Лишний запрос разрешения там, где всё и так хорошо, — плата ни за что.
+    const watching = (source.navigator.geolocation as unknown as
+      { watchPosition: ReturnType<typeof vi.fn> }).watchPosition;
+    expect(watching).not.toHaveBeenCalled();
+  });
+
+  it('без геолокации возвращается пусто, а не выдуманная точка', async () => {
+    const source = { navigator: {} } as unknown as Window;
+    expect(await requestPosition({ source })).toBeNull();
+  });
+});
+
+// --- координаты ------------------------------------------------------------
+
+describe('координаты для сервера', () => {
+  it('округляются до шести знаков', () => {
+    // Поле на сервере объявлено с шестью знаками после запятой и лишние
+    // не отбрасывает, а отвергает запрос целиком. Телефон же выдаёт
+    // тринадцать знаков всегда — без округления отметка ломалась бы на
+    // каждом устройстве и выглядела бы так же, как отказ по месту.
+    expect(placeOf({ latitude: 41.3111234567, longitude: 69.2405678912,
+                     accuracy: 18.446 })).toEqual({
+      latitude: 41.311123,
+      longitude: 69.240568,
+      accuracy_m: 18.45,
+    });
+  });
+
+  it('нулевая погрешность не выдаётся за точность', () => {
+    // Ноль на сервере — признак подделки, а не идеального GPS.
+    expect(placeOf({ latitude: 41.3, longitude: 69.3, accuracy: 0 }).accuracy_m)
+      .toBe(30);
+  });
+
+  it('без места полей просто нет', () => {
+    expect(placeOf(null)).toEqual({});
+    expect(placeOf(undefined)).toEqual({});
+    expect(placeOf({ latitude: Number.NaN, longitude: 69.3, accuracy: 5 }))
+      .toEqual({});
   });
 });
 

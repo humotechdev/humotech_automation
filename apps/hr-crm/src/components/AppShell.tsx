@@ -42,14 +42,26 @@ const WORKSPACE: Item[] = [
   { key: 'offices', title: 'Офисы и регионы', icon: 'pin', to: '/offices' },
   { key: 'analytics', title: 'Аналитика', icon: 'chart', to: '/analytics' },
   { key: 'questions', title: 'Обращения', icon: 'chat', to: '/questions' },
+  { key: 'surveys', title: 'Опросы', icon: 'sheet', to: '/surveys' },
 ];
 
+/*
+ * «Базы знаний» и «Настроек» здесь нет намеренно.
+ *
+ * Материалы ассистента остались на сервере — бот отвечает по ним
+ * по-прежнему, — но отдельного раздела для кадровика у них больше нет:
+ * он туда не ходил, а пункт меню обещал работу, которой там не было.
+ *
+ * Настройки не вынесены в отдельное место, потому что настройки
+ * бывают только у чего-то: структура компании и доступ — в
+ * «Администрировании», адреса, геозона и QR-точки — в «Офисах и
+ * регионах». Общая страница «Настройки» неизбежно становится свалкой
+ * того, чему не нашлось места.
+ */
 const MANAGEMENT: Item[] = [
   { key: 'reports', title: 'Отчёты', icon: 'report', to: '/reports' },
-  { key: 'knowledge', title: 'База знаний', icon: 'book', to: '/knowledge' },
   { key: 'notifications', title: 'Уведомления', icon: 'bell', to: '/notifications' },
-  { key: 'admin', title: 'Администрирование', icon: 'admin', to: '/admin' },
-  { key: 'settings', title: 'Настройки', icon: 'settings', to: '/settings' },
+  { key: 'admin', title: 'Администрирование', icon: 'admin', to: '/administration' },
 ];
 
 /** Человеческие названия ролей. Незнакомый код показывается как есть. */

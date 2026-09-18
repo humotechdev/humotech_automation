@@ -278,6 +278,19 @@ class QrPointViewSet(ServiceViewSet):
         payload = validated(QrPointUpdateSerializer, request.data)
         return self.item_response(self.service.update(self.actor, pk, **payload))
 
+    @extend_schema(
+        summary="Удалить точку отметки",
+        description=(
+            "Только ту, по которой никто не отмечался. Точка, попавшая "
+            "хоть в одну отметку, — часть истории: её выключают, а не "
+            "стирают."
+        ),
+        responses={204: None},
+    )
+    def destroy(self, request, pk=None):
+        self.service.delete(self.actor, pk)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
     @action(detail=True, methods=["post"])
     def activate(self, request, pk=None):
         return self.item_response(

@@ -4,17 +4,11 @@ import { useNavigate } from 'react-router-dom';
 
 import * as api from '../api/crm';
 import { AppIcon, ICON_SIZE } from './AppIcon';
+import { employmentTitle, isWorking } from '../features/employees/status';
 
 export function normalizeEmployeeSearch(value: string): string {
   return value.trim().toLocaleLowerCase('ru-RU').replaceAll('ё', 'е').replace(/\s+/g, ' ');
 }
-
-const statusLabel: Record<string, string> = {
-  ACTIVE: 'Работает',
-  PROBATION: 'Испытательный срок',
-  TERMINATED: 'Уволен',
-  ARCHIVED: 'Архив',
-};
 
 function initials(name: string) {
   return name.split(/\s+/).slice(0, 2).map((part) => part[0] ?? '').join('').toUpperCase();
@@ -187,7 +181,7 @@ export function GlobalEmployeeSearch() {
                   </span>
                   <span className="global-search__place">
                     {row.office_name && <small>{row.office_name}</small>}
-                    {!['ACTIVE', 'PROBATION'].includes(row.employment_status) && <em>{statusLabel[row.employment_status] ?? row.employment_status}</em>}
+                    {!isWorking(row.employment_status) && <em>{employmentTitle(row.employment_status)}</em>}
                   </span>
                   <AppIcon name="chevron" size={16} />
                 </button>

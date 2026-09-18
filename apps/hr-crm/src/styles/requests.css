@@ -1753,3 +1753,26 @@
   width: 17px;
   height: 17px;
 }
+
+/* Решение по справке.
+
+   Стоит под карточкой документа, а не рядом с решением по заявке: это
+   разные решения, и ставить их в один ряд значит предлагать принять
+   больничный нажатием, предназначенным для бумаги. */
+.rq-doc__decide {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.rq-doc__decideRow {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.rq-doc__decide textarea.input {
+  width: 100%;
+  resize: vertical;
+}

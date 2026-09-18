@@ -11,6 +11,7 @@ from humotech.core.enums import (
     ATTENDANCE_SESSION_STATUSES,
     ATTENDANCE_SOURCES,
     CORRECTION_REQUEST_STATUSES,
+    DAY_NOTICE_KINDS,
     VERIFICATION_STATUSES,
     choices,
     status_check,
@@ -343,3 +344,66 @@ class AttendanceCorrectionRequest(
 
     def __str__(self) -> str:
         return f"заявка {self.employee_id} ({self.status})"
+
+
+class DayNotice(UUIDPrimaryKeyModel, OrganizationScopedModel, TimestampedModel):
+    """Что человек сам сказал про свой день: опаздывает или не придёт.
+
+    Это НЕ отметка и не заявка. Отметка — факт, подтверждённый кодом на
+    двери; заявка на отпуск проходит согласование и меняет учёт. Сказанное
+    в чате не делает ни того, ни другого: оно объясняет пустую строку в
+    табеле и ничего больше.
+
+    Отсюда два правила, которые легко нарушить:
+
+    **«Не приду» не ставит отпуск и не открывает больничный.** Иначе
+    любой человек оформлял бы себе отсутствие одной кнопкой, минуя
+    согласование. Бот на этот ответ отвечает просьбой подать заявку.
+
+    **Одна строка на человека и день.** Сказавший «опаздываю» и потом
+    «не приду» не должен превращаться в две записи, из которых табель
+    выберет случайную: строка обновляется, а прежнее значение видно в
+    журнале аудита.
+    """
+
+    employee = models.ForeignKey(
+        "employees.Employee",
+        on_delete=models.PROTECT,
+        db_column="employee_id",
+        db_index=False,
+        related_name="day_notices",
+    )
+    #: День, о котором речь, в поясе офиса. Дата, а не момент: «сегодня»
+    #: у сервера и у человека совпадает только так.
+    day = models.DateField()
+    kind = models.CharField(max_length=20, choices=choices(DAY_NOTICE_KINDS))
+    #: Причина словами. Необязательна намеренно: требовать объяснение у
+    #: того, кто стоит в пробке, — способ не получить ни объяснения, ни
+    #: предупреждения.
+    comment = models.TextField(null=True, blank=True)
+    #: Когда человек это сказал. Отдельно от `created_at`: строку
+    #: обновляют, и время первого ответа иначе потерялось бы.
+    noticed_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "attendance_day_notices"
+        verbose_name = "сообщение сотрудника о дне"
+        verbose_name_plural = "сообщения сотрудников о дне"
+        constraints = [
+            status_check(
+                "kind", DAY_NOTICE_KINDS, "ck_attendance_day_notices_kind"
+            ),
+            models.UniqueConstraint(
+                fields=["employee", "day"],
+                name="uq_attendance_day_notices_employee_day",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["organization", "day"],
+                name="ix_attendance_day_notices_org_day",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.kind} {self.employee_id} {self.day}"

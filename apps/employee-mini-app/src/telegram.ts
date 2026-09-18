@@ -420,9 +420,35 @@ export function requestPosition(
 ): Promise<Position | null> {
   const native = webApp(source)?.LocationManager;
   if (native?.getLocation && atLeast('8.0', source)) {
-    return withTimeout(fromTelegram(native), timeoutMs);
+    return withTimeout(bestOf(native, source), timeoutMs);
   }
   return withTimeout(fromBrowser(source), timeoutMs);
+}
+
+/**
+ * Точка от Telegram, а если она грубая — уточнённая браузером.
+ *
+ * `LocationManager` отдаёт ОДНУ точку и больше ничего не обещает: какую
+ * даст система в этот момент, такую и вернёт. В помещении и сразу после
+ * разблокировки это точка по вышкам с ошибкой в сотню метров, и второй
+ * раз спрашивать бесполезно — ответ будет тот же.
+ *
+ * Браузерное наблюдение умеет дождаться спутников, поэтому при грубой
+ * точке мы уточняем им и берём лучшее из двух. Запускается это только
+ * когда точность и правда плоха: лишний запрос разрешения там, где всё
+ * и так хорошо, — плата ни за что.
+ */
+async function bestOf(
+  manager: NonNullable<TelegramWebApp['LocationManager']>,
+  source: Window,
+): Promise<Position | null> {
+  const native = await fromTelegram(manager);
+  if (native && native.accuracy <= GOOD_ENOUGH_M) return native;
+
+  const browser = await fromBrowser(source);
+  if (!browser) return native;
+  if (!native) return browser;
+  return browser.accuracy < native.accuracy ? browser : native;
 }
 
 function fromTelegram(
@@ -461,24 +487,120 @@ function readTelegram(location: TelegramLocation | null): Position | null {
   };
 }
 
-function fromBrowser(source: Window): Promise<Position | null> {
+/**
+ * Точность, при которой ждать дальше нечего.
+ *
+ * Тридцать пять метров — это уверенный спутниковый приём. Радиус офиса
+ * обычно сто метров, и на таком фоне разница между двадцатью метрами и
+ * тридцатью ни на что не влияет: ждать ради неё ещё несколько секунд
+ * значит держать человека у двери без всякой пользы.
+ */
+const GOOD_ENOUGH_M = 35;
+
+/** Сколько ждать спутники, прежде чем отдать лучшее, что есть. */
+const SETTLE_MS = 9_000;
+
+/**
+ * Место браузером. Не первое, какое дали, а лучшее за несколько секунд.
+ *
+ * Первая точка почти всегда приходит не со спутников, а от вышек и
+ * Wi-Fi: она появляется мгновенно и врёт на сотню метров. Спутниковая
+ * приходит следом, через несколько секунд, и врёт на десять. Взять
+ * первую значит отказать человеку, стоящему у самой двери, — ровно то,
+ * что и происходило: телефон сообщал «±100 м», сервер прибавлял эту
+ * сотню к радиусу и всё равно видел двести пятьдесят.
+ *
+ * Поэтому здесь `watchPosition`, а не `getCurrentPosition`: точки
+ * приходят одна за другой, мы держим самую точную и прекращаем ждать,
+ * как только она стала достаточно хорошей. Ожидание бесплатное —
+ * оно идёт, пока человек наводит камеру на код.
+ */
+function fromBrowser(source: Window, settleMs = SETTLE_MS): Promise<Position | null> {
   const api = source.navigator?.geolocation;
   if (!api?.getCurrentPosition) return Promise.resolve(null);
+
+  const options: PositionOptions = {
+    enableHighAccuracy: true,
+    timeout: settleMs,
+    // Кэш не берём вовсе: вчерашняя точка у дома — худшее, что можно
+    // предъявить как «где человек сейчас».
+    maximumAge: 0,
+  };
+
+  const read = (position: GeolocationPosition): Position => ({
+    latitude: position.coords.latitude,
+    longitude: position.coords.longitude,
+    accuracy: position.coords.accuracy || 30,
+  });
+
+  if (!api.watchPosition) {
+    // Старый вебвью: одна попытка, что дадут — то и берём.
+    return new Promise((resolve) => {
+      try {
+        api.getCurrentPosition(
+          (position) => resolve(read(position)),
+          () => resolve(null),
+          options,
+        );
+      } catch {
+        resolve(null);
+      }
+    });
+  }
+
   return new Promise((resolve) => {
+    let best: Position | null = null;
+    let watch: number | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let settled = false;
+
+    /** Снять наблюдение. Отдельно от `finish`: точка может прийти
+        синхронно, ещё до того, как `watchPosition` вернул свой номер, —
+        и тогда снимать в `finish` нечего, а GPS останется включённым. */
+    const stopWatching = () => {
+      if (watch === null) return;
+      try {
+        api.clearWatch(watch);
+      } catch {
+        // Наблюдение уже снято — не повод падать.
+      }
+      watch = null;
+    };
+
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (timer !== null) clearTimeout(timer);
+      stopWatching();
+      resolve(best);
+    };
+
     try {
-      api.getCurrentPosition(
-        (position) =>
-          resolve({
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
-            accuracy: position.coords.accuracy || 30,
-          }),
-        () => resolve(null),
-        { enableHighAccuracy: true, timeout: 10_000, maximumAge: 30_000 },
+      watch = api.watchPosition(
+        (position) => {
+          const next = read(position);
+          if (best === null || next.accuracy < best.accuracy) best = next;
+          if (best.accuracy <= GOOD_ENOUGH_M) finish();
+        },
+        // Отказ после уже полученной точки не отменяет её: «дальше не
+        // получилось» — это не «того, что было, не было».
+        finish,
+        options,
       );
     } catch {
       resolve(null);
+      return;
     }
+
+    // Точка могла прийти синхронно и закрыть ожидание раньше, чем мы
+    // узнали номер наблюдения. Тогда снимаем его здесь — иначе GPS
+    // останется работать до ухода с экрана.
+    if (settled) {
+      stopWatching();
+      return;
+    }
+
+    timer = setTimeout(finish, settleMs);
   });
 }
 

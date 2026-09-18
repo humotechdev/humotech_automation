@@ -7,7 +7,7 @@ describe('единый выбор диапазона дат', () => {
   test('обе даты используют один календарный стиль и сохраняют границы диапазона', () => {
     const onFromChange = vi.fn();
     const onToChange = vi.fn();
-    render(<AppDateRangePicker label="Период" now="2026-09-16" from="2026-09-01" to="2026-09-16" onFromChange={onFromChange} onToChange={onToChange} />);
+    const view = render(<AppDateRangePicker label="Период" now="2026-09-16" from="2026-09-01" to="2026-09-16" onFromChange={onFromChange} onToChange={onToChange} />);
     fireEvent.click(screen.getByLabelText('Период: начало'));
     const dialog = screen.getByRole('dialog', { name: 'Выбор даты: Период: начало' });
     const grid = within(dialog).getByRole('grid');
@@ -15,6 +15,11 @@ describe('единый выбор диапазона дат', () => {
     fireEvent.click(within(grid).getByLabelText('05.09.2026'));
     expect(onFromChange).toHaveBeenCalledWith('2026-09-05');
 
+    // Компонент управляемый: выбор начала становится нижней границей
+    // конца только после того, как значение вернулось сверху. Мок его
+    // не применяет, поэтому перерисовываем сами — иначе тест проверял
+    // бы не ограничение, а старое значение.
+    view.rerender(<AppDateRangePicker label="Период" now="2026-09-16" from="2026-09-05" to="2026-09-16" onFromChange={onFromChange} onToChange={onToChange} />);
     fireEvent.click(screen.getByLabelText('Период: конец'));
     const endGrid = within(screen.getByRole('dialog', { name: 'Выбор даты: Период: конец' })).getByRole('grid');
     expect(within(endGrid).getByLabelText('01.09.2026').hasAttribute('disabled')).toBe(true);

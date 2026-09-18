@@ -105,6 +105,11 @@ class PresenceRowSerializer(serializers.Serializer):
 
     absence_code = serializers.CharField(allow_null=True)
     absence_name = serializers.CharField(allow_null=True)
+    # Что человек сам сказал про день: «LATE» — задерживается, «ABSENT» —
+    # не придёт. Это предупреждение, а не оформленное отсутствие: отпуск
+    # и больничный проходят согласование и живут своими заявками.
+    notice_kind = serializers.CharField(allow_null=True)
+    notice_comment = serializers.CharField(allow_null=True)
     conflicting_marks = serializers.BooleanField()
     # Отрезки присутствия за день. Шкале рабочего дня их не собрать из
     # первого входа и последнего выхода: обед между ними пропал бы.

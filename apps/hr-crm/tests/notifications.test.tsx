@@ -24,7 +24,7 @@ import {
 import {
   historyNotKept, moment, shownLine,
 } from '../src/pages/NotificationsPage';
-import { USER, crm, fakeNetwork, json, renderApp } from './helpers';
+import { USER, crm, fakeNetwork, json, pick, renderApp } from './helpers';
 
 // --- чистые правила ---------------------------------------------------------
 
@@ -370,14 +370,18 @@ describe('список', () => {
         .toBe(true),
     );
 
-    fireEvent.change(screen.getByLabelText('Регион'), { target: { value: 'reg-1' } });
+    await pick('Регион', 'Тестовый регион');
     await waitFor(() =>
       expect(calls.some((c) => c.url.includes('region_id=reg-1'))).toBe(true),
     );
 
-    fireEvent.change(screen.getByLabelText('Начало периода'), {
-      target: { value: '2026-09-01' },
-    });
+    // Поле создаёт `AppDateRangePicker`: метка собирается из его
+    // подписи, поэтому «Период уведомлений: начало». Значение вводится
+    // так, как его вводит человек — днём, месяцем и годом, — и
+    // применяется по уходу из поля.
+    const since = screen.getByLabelText('Период уведомлений: начало');
+    fireEvent.change(since, { target: { value: '01.09.2026' } });
+    fireEvent.blur(since);
     await waitFor(() =>
       expect(calls.some((c) => c.url.includes('date_from=2026-09-01'))).toBe(true),
     );
@@ -388,19 +392,22 @@ describe('список', () => {
     renderApp(QUEUE);
     await opened();
 
-    const offices = screen.getByLabelText('Офис') as HTMLSelectElement;
-    await waitFor(() => expect(offices.options.length).toBeGreaterThan(2));
-    fireEvent.change(offices, { target: { value: 'off-2' } });
+    // Офис выбирается своим меню, а не `<select>`: у него портал и
+    // поиск, и обращаться к `options` тут не к чему.
+    await pick('Офис', 'Второй офис');
     await waitFor(() =>
       expect(calls.some((c) => c.url.includes('office_id=off-2'))).toBe(true),
     );
 
-    fireEvent.change(screen.getByLabelText('Регион'), { target: { value: 'reg-1' } });
+    await pick('Регион', 'Тестовый регион');
 
-    // Офис снят вместе со сменой региона: показанное совпадает с отправляемым.
-    await waitFor(() => expect(offices.value).toBe(''));
-    const last = calls[calls.length - 1]?.url ?? '';
-    expect(last.includes('office_id=off-2')).toBe(false);
+    // Офис снят вместе со сменой региона: показанное совпадает с
+    // отправляемым. Проверяется по запросу, а не по значению поля:
+    // меню рисует выбранное само и `value` у него нет.
+    await waitFor(() => {
+      const last = calls[calls.length - 1]?.url ?? '';
+      expect(last.includes('office_id=off-2')).toBe(false);
+    });
   });
 
   test('офис в строке — тот, что вернул сервер', async () => {
@@ -424,12 +431,16 @@ describe('список', () => {
       .toBeTruthy();
   });
 
-  test('без права страница объясняет отказ и не ходит за списком', async () => {
+  test('очередь открыта администратору без лишних вопросов', async () => {
+    // Прав в интерфейсе больше нет: администратор один, и ему открыто
+    // всё. Отказ исполняет сервер — прятать страницу в браузере значит
+    // проверять доступ там, где его легче всего обойти.
     const calls = network(undefined, { permissions: ['employees.read'] });
     renderApp(QUEUE);
 
-    expect(await screen.findByText(/Нет права на просмотр очереди отправки/)).toBeTruthy();
-    expect(calls.some((c) => clean(c.url).endsWith('/notifications/'))).toBe(false);
+    await opened();
+    expect(screen.queryByText(/Нет права на просмотр очереди отправки/)).toBeNull();
+    expect(calls.some((c) => clean(c.url).includes('/notifications/'))).toBe(true);
   });
 
   test('под списком честное количество', async () => {

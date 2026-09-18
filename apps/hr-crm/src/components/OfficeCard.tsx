@@ -25,6 +25,7 @@ import { Link } from 'react-router-dom';
 
 import * as api from '../api/crm';
 import { AppIcon } from './AppIcon';
+import { AppSelectField } from './AppSelect';
 import { initials } from './AppShell';
 import { messageFor } from '../api/errors';
 import { formatTime, longDate, today, useBlock, type Block } from '../features/dashboard/data';
@@ -215,11 +216,16 @@ function geoNote(row: OfficeStats): string {
 export function OfficeForm({ office, onCancel, onDone }: {
   office: api.OfficeFull; onCancel?: () => void; onDone: (office: api.OfficeFull) => void;
 }) {
+  // Ни адреса, ни часового пояса. Адрес подставляется сам, когда точку
+  // ставят на карту, — набирать его руками значит держать два ответа на
+  // вопрос «где офис». Пояс в Узбекистане один, и выбирать тут нечего.
   const [form, setForm] = useState({
     name: office.name,
-    address: office.address ?? '',
-    timezone: office.timezone,
+    // Пустая строка, а не null: `AppSelectField` работает со строкой, и
+    // «регион не выбран» здесь — это не значение, а его отсутствие.
+    region_id: office.region_id ?? '',
   });
+  const [regions] = useBlock((signal) => api.regions(signal), 'office-regions');
   const [sending, setSending] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
   const [fields, setFields] = useState<Record<string, string[]>>({});
@@ -235,8 +241,7 @@ export function OfficeForm({ office, onCancel, onDone }: {
     try {
       const saved = await api.updateOffice(office.id, {
         name: form.name,
-        address: form.address,
-        timezone: form.timezone,
+        region_id: form.region_id,
       });
       onDone(saved);
     } catch (error) {
@@ -253,10 +258,21 @@ export function OfficeForm({ office, onCancel, onDone }: {
   return (
     <div className="ofs-form">
       <Field label="Название" value={form.name} onChange={set('name')} errors={fields['name']} />
-      <Field label="Адрес" value={form.address} onChange={set('address')}
-             errors={fields['address']} placeholder="Улица, дом" />
-      <Field label="Часовой пояс" value={form.timezone} onChange={set('timezone')}
-             errors={fields['timezone']} placeholder="Asia/Tashkent" />
+
+      <label className="ofs-field">
+        <span className="ofs-field__label">Регион</span>
+        <AppSelectField label="Регион" value={form.region_id} searchable
+                        onChange={set('region_id')}>
+          {regions.state === 'ready'
+            ? regions.data.items.map((one) => (
+                <option key={one.id} value={one.id}>{one.name}</option>
+              ))
+            : <option value={form.region_id}>{office.region_name ?? '—'}</option>}
+        </AppSelectField>
+        {fields['region_id'] && (
+          <span className="ofs-field__error">{fields['region_id'].join(' ')}</span>
+        )}
+      </label>
 
       {failed && <p className="ofs-alert" role="alert">{failed}</p>}
 

@@ -15,21 +15,13 @@ import { Link, useLocation } from 'react-router-dom';
 
 import * as api from '../api/crm';
 import { AppIcon } from './AppIcon';
+import { employmentTitle } from '../features/employees/status';
 import { initials } from './AppShell';
 import { messageFor } from '../api/errors';
 import { useBlock, type Block } from '../features/dashboard/data';
 
 const TABS = ['Обзор', 'Назначения', 'График', 'Telegram'] as const;
 
-/** Кадровое состояние человеческими словами. Код показывается, только
- *  если он незнаком — молча прятать его хуже, чем показать как есть. */
-const STATUS_TITLE: Record<string, string> = {
-  ACTIVE: 'Активен',
-  PROBATION: 'Испытательный срок',
-  SUSPENDED: 'Приостановлен',
-  TERMINATED: 'Уволен',
-  ARCHIVED: 'В архиве',
-};
 
 const STATE_TITLE: Record<string, string> = {
   ACTIVE: 'Привязан',
@@ -145,8 +137,9 @@ function Overview({ person }: { person: Record<string, string | null> }) {
   );
 }
 
-const title = (code: string | null | undefined) =>
-  code ? STATUS_TITLE[code] ?? code : '—';
+/** Подпись трудового статуса. Словарь один на всю CRM. */
+const title = (code: unknown) =>
+  employmentTitle(code === null || code === undefined ? null : String(code));
 
 function History({ rows }: { rows: api.Assignment[] }) {
   if (rows.length === 0) return <p className="empty">Назначений пока нет.</p>;

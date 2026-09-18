@@ -13,6 +13,7 @@ from humotech.analytics.metrics import AnalyticsService
 from humotech.analytics.overview import OverviewService
 from humotech.core.errors import ValidationFailed
 from humotech.attendance.views import _date_param, _uuid_param
+from humotech.analytics.movement import MovementService
 from humotech.core.rbac import Actor
 
 
@@ -257,6 +258,78 @@ class OverviewResponseSerializer(serializers.Serializer):
     offices = serializers.ListField(child=serializers.DictField())
     arrivals = serializers.DictField()
     weekdays = serializers.DictField()
+
+
+class MovementSpanSerializer(serializers.Serializer):
+    first = serializers.DateField()
+    last = serializers.DateField()
+    hired = serializers.IntegerField()
+    left = serializers.IntegerField()
+    difference = serializers.IntegerField()
+
+
+class MovementResponseSerializer(serializers.Serializer):
+    current = MovementSpanSerializer()
+    previous = MovementSpanSerializer()
+    month_before = MovementSpanSerializer()
+    year_before = MovementSpanSerializer()
+    headcount = serializers.IntegerField()
+
+
+class MovementView(APIView):
+    """Движение сотрудников: принято, уволено, разница.
+
+    Отдельно от посещаемости: там единица измерения — дни, здесь —
+    люди, и складывать их в одном ответе значит путать два разных
+    вопроса.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Движение сотрудников",
+        description=(
+            "Приём считается по дате выхода, увольнение — по дате "
+            "увольнения, а не по дате создания карточки: человека "
+            "оформляют заранее. Сравнение идёт с равным по длине "
+            "предыдущим периодом, а также с тем же периодом месяцем и "
+            "годом раньше."
+        ),
+        parameters=PERIOD_PARAMS
+        + [
+            OpenApiParameter("region_id", str),
+            OpenApiParameter("office_id", str),
+        ],
+        responses=MovementResponseSerializer,
+        tags=["Аналитика"],
+    )
+    def get(self, request):
+        actor = Actor.from_user(request.user)
+        first, last = _period(request)
+        report = MovementService().report(
+            actor,
+            first=first,
+            last=last,
+            office_id=_uuid_param(request, "office_id"),
+            region_id=_uuid_param(request, "region_id"),
+        )
+        return Response({
+            "current": _movement_json(report.current),
+            "previous": _movement_json(report.previous),
+            "month_before": _movement_json(report.month_before),
+            "year_before": _movement_json(report.year_before),
+            "headcount": report.headcount,
+        })
+
+
+def _movement_json(row) -> dict:
+    return {
+        "first": row.first.isoformat(),
+        "last": row.last.isoformat(),
+        "hired": row.hired,
+        "left": row.left,
+        "difference": row.difference,
+    }
 
 
 class AnalyticsOverviewView(APIView):

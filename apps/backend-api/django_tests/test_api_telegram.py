@@ -18,6 +18,7 @@ import pytest
 from django_tests.conftest import (
     HR_FULL_PERMISSIONS,
     TEST_BOT_SECRET,
+    bot_headers,
     build_init_data,
 )
 from humotech.telegram.models import TelegramAccount, TelegramLinkInvitation
@@ -182,6 +183,21 @@ def test_bot_consumes_the_link_into_pending(hr_client, api_client, employee):
     assert response.status_code == 201
     assert response.json()["status"] == "PENDING"
     assert TelegramAccount.objects.get(employee=employee).status == "PENDING"
+
+
+def test_bot_accepts_terms_and_activates_the_link(hr_client, api_client, employee):
+    body = _invite(hr_client, employee)
+    _consume(api_client, body["token"], telegram_user_id=770_777)
+
+    response = api_client.post(
+        f"{API}/telegram/bot/link/accept",
+        {"telegram_user_id": 770_777},
+        **BOT_HEADERS,
+    )
+
+    assert response.status_code == 200, response.json()
+    assert response.json()["status"] == "ACTIVE"
+    assert TelegramAccount.objects.get(employee=employee).status == "ACTIVE"
 
 
 def test_bot_gets_a_readable_reason_for_every_failure(
@@ -503,3 +519,139 @@ def test_bot_contract_error_body_carries_the_reason(hr_client, api_client, emplo
     assert set(error) == {"code", "message", "details"}
     assert error["code"] == "conflict"
     assert error["details"]["reason"] == "revoked"
+
+
+@pytest.mark.django_db
+def test_resend_replaces_the_live_invitation(hr_client, employee, telegram_settings):
+    """«Отправить повторно» заменяет ссылку, а не упирается в неё.
+
+    Сотруднику ссылку выдают сразу при приёме. Без замены повтор всегда
+    натыкался бы на собственную ссылку минутной давности, и кнопка не
+    срабатывала бы никогда.
+    """
+    from humotech.telegram.models import TelegramLinkInvitation
+
+    first = hr_client.post(
+        f"{API}/telegram/invitations/", {"employee_id": str(employee.id)},
+        format="json",
+    )
+    assert first.status_code == 201, first.content
+
+    # Без явной замены повтор по-прежнему отказывает: две живые ссылки на
+    # одного человека — это две двери.
+    refused = hr_client.post(
+        f"{API}/telegram/invitations/", {"employee_id": str(employee.id)},
+        format="json",
+    )
+    assert refused.status_code == 409
+
+    again = hr_client.post(
+        f"{API}/telegram/invitations/",
+        {"employee_id": str(employee.id), "replace": True},
+        format="json",
+    )
+    assert again.status_code == 201, again.content
+    assert again.json()["link"] != first.json()["link"]
+
+    rows = {
+        one.status
+        for one in TelegramLinkInvitation.objects.filter(employee_id=employee.id)
+    }
+    assert rows == {"REVOKED", "ACTIVE"}
+    assert TelegramLinkInvitation.objects.filter(
+        employee_id=employee.id, status="ACTIVE"
+    ).count() == 1
+
+
+@pytest.mark.django_db
+class TestRecognize:
+    """Узнавание по имени в Telegram: когда человек открыл бота сам.
+
+    Бот не может написать первым — это правило Telegram. Всё, что можно
+    сделать, — узнать пришедшего по `@username`, который кадровик указал
+    в карточке, и поздороваться с ним по имени.
+    """
+
+    def ask(self, bot_client, **over):
+        body = {
+            "telegram_user_id": 990_100,
+            "telegram_chat_id": 990_100,
+            "telegram_username": "azizbek",
+            "language_code": "ru",
+        }
+        body.update(over)
+        return bot_client.post(
+            f"{API}/telegram/bot/recognize", body, format="json", **bot_headers()
+        )
+
+    def test_known_username_is_greeted_by_name(
+        self, hr_client, bot_client, employee, telegram_settings,
+    ):
+        hr_client.post(
+            f"{API}/telegram/invitations/",
+            {"employee_id": str(employee.id)}, format="json",
+        )
+        # Имя-подсказка живёт на приглашении: кадровик указал его в карточке.
+        TelegramLinkInvitation.objects.filter(employee_id=employee.id).update(
+            expected_username="azizbek"
+        )
+
+        answer = self.ask(bot_client)
+        assert answer.status_code == 201, answer.content
+        body = answer.json()
+        # Привязка ещё не рабочая: узнавание доводит до того же окна
+        # подтверждения, что и ссылка.
+        assert body["status"] == "PENDING"
+        assert body["full_name"] == "Иванов Иван"
+        assert body["office_name"]
+
+    def test_unknown_username_is_sent_to_hr(self, bot_client, telegram_settings):
+        answer = self.ask(bot_client, telegram_username="nobody")
+        assert answer.status_code == 409
+        assert answer.json()["error"]["details"]["reason"] == "unknown"
+
+    def test_without_username_there_is_nothing_to_recognize(
+        self, bot_client, telegram_settings,
+    ):
+        answer = self.ask(bot_client, telegram_username="")
+        assert answer.status_code == 409
+        assert answer.json()["error"]["details"]["reason"] == "no_username"
+
+    def test_recognition_needs_a_live_invitation(
+        self, bot_client, employee, telegram_settings,
+    ):
+        """Без действующего приглашения узнавание не работает.
+
+        Иначе оно стало бы отдельной дорогой в обход кадровика: кто угодно
+        с подходящим именем привязался бы к сотруднику, которого никто не
+        приглашал.
+        """
+        answer = self.ask(bot_client)
+        assert answer.status_code == 409
+        # Без живого приглашения человека никто не звал: и узнать его,
+        # и отличить от постороннего с тем же именем невозможно.
+        assert answer.json()["error"]["details"]["reason"] == "unknown"
+
+    def test_same_username_on_two_cards_is_refused(
+        self, hr_client, bot_client, employee, organization, office, telegram_settings,
+    ):
+        """Одно имя у двух карточек — ошибка данных, а не повод гадать."""
+        from datetime import date
+
+        from humotech.employees.models import Employee
+
+        other = Employee.objects.create(
+            organization=organization, employee_number="EMP-9100",
+            first_name="Пётр", last_name="Петров", hire_date=date(2024, 3, 1),
+            employment_status="ACTIVE",
+        )
+        for one in (employee, other):
+            hr_client.post(
+                f"{API}/telegram/invitations/", {"employee_id": str(one.id)},
+                format="json",
+            )
+        TelegramLinkInvitation.objects.all().update(expected_username="azizbek")
+
+        answer = self.ask(bot_client)
+        assert answer.status_code == 409
+        assert answer.json()["error"]["details"]["reason"] == "ambiguous"

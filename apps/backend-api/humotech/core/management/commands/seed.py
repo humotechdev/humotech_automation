@@ -33,6 +33,34 @@ from humotech.core.permissions_catalog import (
 )
 from humotech.organizations.models import Organization
 from humotech.rbac.models import Permission, Role, RolePermission
+from humotech.regions.models import Region
+
+#: Часовой пояс страны. Один на всё: Узбекистан живёт в UTC+5 целиком,
+#: и выбор пояса у офиса, региона или графика был бы выбором без вариантов.
+COUNTRY_TIMEZONE = "Asia/Tashkent"
+
+#: Области Узбекистана. Это география, а не данные клиента: список
+#: закрыт, новых областей не появляется, и заводить их руками означало бы
+#: получить «Ташкенская» рядом с «Ташкентской».
+#:
+#: Город Ташкент стоит рядом с областями: по устройству страны это
+#: отдельная единица, но офис в нём завести надо, и выбирать его
+#: кадровик должен там же, где остальные.
+DEFAULT_REGIONS: tuple[tuple[str, str], ...] = (
+    ("TASHKENT_CITY", "город Ташкент"),
+    ("ANDIJAN", "Андижанская область"),
+    ("BUKHARA", "Бухарская область"),
+    ("FERGANA", "Ферганская область"),
+    ("JIZZAKH", "Джизакская область"),
+    ("KASHKADARYA", "Кашкадарьинская область"),
+    ("KHOREZM", "Хорезмская область"),
+    ("NAMANGAN", "Наманганская область"),
+    ("NAVOIY", "Навоийская область"),
+    ("SAMARKAND", "Самаркандская область"),
+    ("SIRDARYO", "Сырдарьинская область"),
+    ("SURKHANDARYA", "Сурхандарьинская область"),
+    ("TASHKENT", "Ташкентская область"),
+)
 
 # code, name, is_paid, requires_approval, requires_document,
 # document_required_after_days, deducts_leave_balance
@@ -113,8 +141,30 @@ def seed_absence_types(organization_id: uuid.UUID) -> int:
     return added
 
 
+def seed_regions(organization_id: uuid.UUID) -> int:
+    """Области Узбекистана для одной организации.
+
+    Идемпотентна и ничего не переименовывает: если область уже заведена
+    под другим названием, это решение организации, а не ошибка.
+    """
+    added = 0
+    for code, name in DEFAULT_REGIONS:
+        _, created = Region.objects.get_or_create(
+            organization_id=organization_id,
+            code=code,
+            defaults={
+                "name": name,
+                # Пояс не задаём: он один на страну и берётся у организации.
+                "timezone": None,
+                "status": "ACTIVE",
+            },
+        )
+        added += int(created)
+    return added
+
+
 class Command(BaseCommand):
-    help = "Наполняет справочники разрешений, ролей и типов отсутствий"
+    help = "Наполняет справочники разрешений, ролей, областей и типов отсутствий"
 
     def add_arguments(self, parser) -> None:
         parser.add_argument("--organization-code",
@@ -123,8 +173,10 @@ class Command(BaseCommand):
                             help="создать организацию с этим кодом")
         parser.add_argument("--name", default=None,
                             help="название новой организации")
-        parser.add_argument("--timezone", default="Asia/Dushanbe",
+        parser.add_argument("--timezone", default=COUNTRY_TIMEZONE,
                             help="часовой пояс новой организации")
+        parser.add_argument("--only", choices=["regions", "absence-types"],
+                            help="наполнить только один справочник организации")
 
     @transaction.atomic
     def handle(self, *args, **options) -> None:
@@ -154,6 +206,13 @@ class Command(BaseCommand):
                 )
 
         if organization is not None:
-            self.stdout.write(
-                f"типов отсутствий добавлено: {seed_absence_types(organization.id)}"
-            )
+            only = options.get("only")
+            if only in (None, "regions"):
+                self.stdout.write(
+                    f"областей добавлено: {seed_regions(organization.id)}"
+                )
+            if only in (None, "absence-types"):
+                self.stdout.write(
+                    f"типов отсутствий добавлено: "
+                    f"{seed_absence_types(organization.id)}"
+                )

@@ -971,3 +971,87 @@
   max-width: 320px;
   margin-top: 4px;
 }
+
+/* Подсказка под полем: чем станет пустое значение. Без неё
+   «необязательно» в подписи не говорит, что будет вместо. */
+.ofs-field__hint {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--ofs-muted, #64748b);
+}
+
+/* Подсказка в строке точки: почему кода не видно и как получить его
+   заново. Без неё человек ищет кнопку «показать код», которой нет. */
+.ofs-point__hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ofs-muted, #64748b);
+}
+
+/* Удаление точки — действие редкое и необратимое, поэтому кнопка тише
+   остальных: она не должна соперничать за внимание с «Переименовать» и
+   «Перевыпустить», которыми пользуются постоянно. */
+.ofs-btn--quiet {
+  border-color: transparent;
+  color: var(--ofs-muted);
+}
+
+.ofs-btn--quiet:hover:not(:disabled) {
+  border-color: #e7a19c;
+  color: var(--ofs-red);
+}
+
+/* Правка названия прямо в строке: поле занимает место заголовка, а
+   кнопки встают рядом, чтобы строка не подпрыгивала по высоте. */
+.ofs-point__rename {
+  display: flex;
+  flex: 1 1 260px;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.ofs-point__rename .ofs-field__input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Телефон: строка QR-точки и её кнопки.
+
+   Три кнопки в ряд (переименовать, перевыпустить, удалить) на узком
+   экране вылезают за край карточки. Переносим их и растягиваем: на
+   телефоне промахнуться по узкой кнопке легче, чем по широкой. */
+@media (max-width: 720px) {
+  .ofs-point {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ofs-point__actions {
+    flex-wrap: wrap;
+  }
+
+  .ofs-point__actions .ofs-btn {
+    flex: 1 1 140px;
+    justify-content: center;
+  }
+
+  .ofs-point__rename {
+    flex-wrap: wrap;
+  }
+
+  .ofs-point__rename .ofs-field__input {
+    flex: 1 1 100%;
+  }
+
+  /* Подтверждения («Отключить?», «Удалить?») — тем же правилом: текст
+     сверху, кнопки под ним во всю ширину. */
+  .ofs-confirm {
+    flex-wrap: wrap;
+  }
+
+  .ofs-confirm span {
+    flex: 1 1 100%;
+  }
+}

@@ -195,6 +195,13 @@ class EmployeeCardSerializer(serializers.Serializer):
         source="employee.preferred_language"
     )
     employment_status = serializers.CharField(source="employee.employment_status")
+    # Подпись статуса считает сервер: «Работает» вместо `ACTIVE` — это
+    # не оформление, а название состояния, и собирать его заново в
+    # каждом клиенте значит однажды получить три разных слова.
+    employment_status_title = serializers.SerializerMethodField()
+    termination_reason = serializers.CharField(
+        source="employee.termination_reason", allow_null=True
+    )
     gender = serializers.CharField(source="employee.gender", allow_null=True)
     marital_status = serializers.CharField(source="employee.marital_status",
                                            allow_null=True)
@@ -212,6 +219,11 @@ class EmployeeCardSerializer(serializers.Serializer):
     current_schedule = serializers.SerializerMethodField()
     telegram = TelegramBindingSerializer()
     assignment_history = AssignmentSerializer(many=True)
+
+    def get_employment_status_title(self, card) -> str:
+        from humotech.employees.lifecycle import title_of
+
+        return title_of(card.employee.employment_status)
 
     def get_photo(self, card) -> dict | None:
         record = card.employee.photo
@@ -310,6 +322,31 @@ class AssignmentChangeSerializer(serializers.Serializer):
 class TerminateSerializer(serializers.Serializer):
     termination_date = serializers.DateField()
     reason = serializers.CharField(required=False, allow_null=True)
+
+
+class PromoteSerializer(serializers.Serializer):
+    """Приём стажёра в штат.
+
+    Оба поля необязательны: чаще всего должность остаётся прежней, а
+    датой считается сегодняшний день. Требовать их значило бы заставлять
+    кадровика подтверждать то, что и так очевидно.
+    """
+
+    position_id = serializers.UUIDField(required=False, allow_null=True)
+    effective_from = serializers.DateField(required=False, allow_null=True)
+
+
+class EndProbationSerializer(serializers.Serializer):
+    """Расставание по итогам стажировки.
+
+    Причина подставляется сама («Не прошёл стажировку»), но её можно
+    уточнить: обстоятельства бывают разные, и формулировка остаётся в
+    карточке навсегда.
+    """
+
+    last_day = serializers.DateField(required=False, allow_null=True)
+    reason = serializers.CharField(required=False, allow_null=True,
+                                   max_length=255)
 
 
 class EmployeeDocumentInputSerializer(serializers.Serializer):

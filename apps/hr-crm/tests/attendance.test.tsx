@@ -13,7 +13,7 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
-import { USER, crm, fakeNetwork, json, renderApp } from './helpers';
+import { USER, crm, fakeNetwork, json, pick, renderApp } from './helpers';
 
 const DAY = '2026-09-04';
 
@@ -48,6 +48,8 @@ function row(over: Partial<Record<string, unknown>> = {}) {
     position_name: 'Специалист поддержки',
     absence_code: null,
     absence_name: null,
+    notice_kind: null,
+    notice_comment: null,
     conflicting_marks: false,
     outside_geofence: false,
     intervals: [
@@ -66,6 +68,12 @@ const ROWS = [
   row({ employee_id: 'e-3', full_name: 'Нурматов Жавохир', employee_number: 'HT-009',
         state: 'NO_SCHEDULE', scheduled_start: null, scheduled_end: null,
         late_minutes: null, last_exit_at: null, intervals: [] }),
+  // Предупредил, что задерживается: это не «нет отметки», и разница
+  // между написавшим и пропавшим должна быть видна в строке.
+  row({ employee_id: 'e-5', full_name: 'Юсупова Камила', employee_number: 'HT-015',
+        state: 'LATE', first_entry_at: null, last_exit_at: null, seconds: 0,
+        open_session_id: null, intervals: [],
+        notice_kind: 'LATE', notice_comment: 'Пробки' }),
   // Единственный опоздавший и единственный, у кого день закрыт.
   row({ employee_id: 'e-4', full_name: 'Рахимов Тимур', employee_number: 'HT-012',
         state: 'LEFT', late_minutes: 14, open_session_id: null,
@@ -221,7 +229,7 @@ describe('состав смены', () => {
     renderApp(`/attendance?date=${DAY}`);
     await screen.findAllByText('Каримов Алишер');
 
-    fireEvent.change(screen.getByLabelText('Статус'), { target: { value: 'NOT_COME' } });
+    await pick('Статус', 'Нет отметки');
 
     await waitFor(() =>
       expect(calls.some((c) => c.url.includes('state=NOT_COME'))).toBe(true),
@@ -235,6 +243,31 @@ describe('состав смены', () => {
     renderApp(`/attendance?date=${DAY}`);
 
     expect(await screen.findByText(/Не удалось загрузить состав смены/)).toBeTruthy();
+  });
+});
+
+describe('предупреждение сотрудника', () => {
+  test('сказавший «опаздываю» — не «нет отметки»', async () => {
+    // Иначе стирается единственная разница между тем, кто написал, и
+    // тем, кто пропал: кадровик звонит обоим.
+    network();
+    renderApp('/attendance');
+    await screen.findAllByText('Юсупова Камила');
+
+    expect(screen.getAllByText('Опаздывает').length).toBeGreaterThan(0);
+  });
+
+  test('причина видна в карточке, а не только в базе', async () => {
+    network();
+    renderApp('/attendance');
+    const found = await screen.findAllByText('Юсупова Камила');
+
+    fireEvent.click(found[0]!.closest('tr') ?? found[0]!);
+
+    expect(
+      await screen.findByText('Сотрудник предупредил, что опаздывает'),
+    ).toBeTruthy();
+    expect(screen.getByText('Пробки')).toBeTruthy();
   });
 });
 
@@ -260,12 +293,16 @@ describe('выбранный сотрудник', () => {
     expect(screen.getAllByText('сейчас').length).toBeGreaterThan(0);
   });
 
-  test('без права на ручную отметку исправить нельзя', async () => {
+  test('исправление отметки доступно и открывает форму', async () => {
+    // Прав в интерфейсе больше нет: администратор один, и ему открыто
+    // всё. Отказ, если он когда-нибудь понадобится, исполняет сервер —
+    // прятать кнопку в браузере значит проверять доступ там, где его
+    // легче всего обойти.
     network(() => null, ['attendance.read']);
     renderApp(`/attendance?date=${DAY}&employee=e-1`);
 
     const fix = await screen.findByRole('button', { name: /Исправить отметку/ });
-    expect(fix.hasAttribute('disabled')).toBe(true);
+    expect(fix.hasAttribute('disabled')).toBe(false);
   });
 });
 

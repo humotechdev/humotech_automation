@@ -172,7 +172,27 @@ class TestHttp:
         on = client.post(f"{API}/departments/{department_id}/reactivate/")
         assert on.json()["status"] == "ACTIVE"
 
-    def test_no_delete_method(self, client, office):
+    def test_shared_department_is_offered_in_every_office(
+        self, client, office, other_office,
+    ):
+        """Общий отдел виден при отборе по любому офису.
+
+        Отдел без офиса существует во всех сразу. Форма приёма сотрудника
+        спрашивает отделы конкретного офиса, и без этого она показывала бы
+        пустой список: «Продажи» есть, а офиса у них нет.
+        """
+        client.post(f"{API}/departments/", {"name": "Продажи"}, format="json")
+
+        for one in (office, other_office):
+            listing = client.get(f"{API}/departments/?office_id={one.id}").json()
+            assert any(row["name"] == "Продажи" for row in listing["items"]), one.code
+
+    def test_unused_department_is_deleted_for_real(self, client, office):
+        """Опечатку убирают совсем, а не прячут.
+
+        Кнопка «Удалить», которая на самом деле архивирует, обманывает:
+        человек считает, что убрал лишнее, а оно осталось в отчётах.
+        """
         created = client.post(
             f"{API}/departments/",
             {"office_id": str(office.id), "code": "NODEL", "name": "Отдел"},
@@ -180,7 +200,38 @@ class TestHttp:
         ).json()
 
         response = client.delete(f"{API}/departments/{created['id']}/")
-        assert response.status_code in (403, 404, 405)
+        assert response.status_code == 204
+
+        listing = client.get(f"{API}/departments/").json()
+        assert all(one["id"] != created["id"] for one in listing["items"])
+
+    def test_department_with_people_is_not_deleted(
+        self, client, office, employee, organization,
+    ):
+        """Отдел, где кто-то работал, удалить нельзя — только архивировать.
+
+        Строка назначения отвечает на вопрос, где человек работал в
+        прошлом году, и удаление отдела стёрло бы ответ.
+        """
+        from datetime import date
+
+        from humotech.departments.models import Department
+        from humotech.employees.models import EmployeeAssignment
+
+        department = Department.objects.create(
+            organization=organization, office=office, code="USED",
+            name="Занятый", status="ACTIVE",
+        )
+        EmployeeAssignment.objects.create(
+            organization=organization, employee=employee, office=office,
+            department=department, employment_type="FULL_TIME",
+            work_mode="ONSITE", is_primary=False, valid_from=date(2024, 5, 1),
+        )
+
+        refused = client.delete(f"{API}/departments/{department.id}/")
+        assert refused.status_code == 409
+        assert "архивировать" in refused.json()["error"]["message"]
+        assert Department.objects.filter(id=department.id).exists()
 
     def test_positions_over_http(self, client):
         created = client.post(

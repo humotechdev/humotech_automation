@@ -40,6 +40,7 @@ from humotech.core.validation import (
     validate_pinfl,
 )
 from humotech.employees.attachments import EmployeeAttachmentService
+from humotech.employees.lifecycle import EmployeeLifecycleService
 from humotech.employees.models import (
     Employee,
     EmployeeDocument,
@@ -224,6 +225,15 @@ class EmployeeOnboardingService(BaseService):
             attached=wanted,
             files=files,
         )
+
+        # Человек узнаёт о приёме от бота, а не от коллег. Сообщение
+        # ставится в очередь даже тогда, когда Telegram ещё не привязан:
+        # оно уйдёт, как только он нажмёт «Старт», — и это лучше, чем не
+        # отправить его вовсе, потому что в момент оформления чата не было.
+        EmployeeLifecycleService().announce_hire(
+            Employee.objects.get(pk=employee_id)
+        )
+
         return Onboarded(
             card=self._card_on_first_day(actor, employee_id),
             created=True,
@@ -492,7 +502,10 @@ class EmployeeOnboardingService(BaseService):
 
         `@username` не служит доказательством личности ни в одной из веток:
         имя меняется и передаётся другому человеку, а отметки о приходе на
-        работу привязались бы к прежнему владельцу.
+        работу привязались бы к прежнему владельцу. Оно уходит в
+        приглашение подсказкой — чтобы узнать открывшего бота человека, —
+        но узнанный приходит к тому же подтверждению кадровика, что и
+        перешедший по ссылке.
         """
         username = clean_text(
             telegram_username, field="telegram_username", max_length=255
@@ -509,7 +522,11 @@ class EmployeeOnboardingService(BaseService):
             )
 
         try:
-            issued = self.telegram.create_invitation(actor, employee_id)
+            # Имя в Telegram уходит в приглашение подсказкой: если человек
+            # откроет бота сам, его узнают и без ссылки.
+            issued = self.telegram.create_invitation(
+                actor, employee_id, expected_username=username,
+            )
         except Exception as exc:  # noqa: BLE001 — причина уходит в ответ
             # Нет права на Telegram или не настроено имя бота — это не повод
             # отменять приём: карточка, назначение и график уже правильные, а

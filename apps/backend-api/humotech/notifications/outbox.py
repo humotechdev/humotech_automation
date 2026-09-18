@@ -92,6 +92,10 @@ class Outgoing:
     text: str
     notification_type: str
     attempts: int
+    #: На что ссылается уведомление. Нужно там, где к сообщению
+    #: прикладывают кнопку: без идентификатора бот знает, что опрос
+    #: пришёл, но не знает какой.
+    related_entity_id: str | None = None
 
 
 def enqueue(
@@ -208,6 +212,10 @@ def claim(*, limit: int = 20, now: datetime | None = None) -> list[Outgoing]:
                     text=row.body,
                     notification_type=row.notification_type,
                     attempts=row.attempts,
+                    related_entity_id=(
+                        str(row.related_entity_id)
+                        if row.related_entity_id else None
+                    ),
                 )
             )
     return ready

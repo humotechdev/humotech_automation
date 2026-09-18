@@ -18,12 +18,13 @@ import { AttendancePage } from '../pages/AttendancePage';
 import { OfficesPage } from '../pages/OfficesPage';
 import { OfficeSetupPage } from '../pages/OfficeSetupPage';
 import { QuestionsPage } from '../pages/QuestionsPage';
+import { SurveysPage } from '../pages/SurveysPage';
+import { SurveyCampaignPage } from '../pages/SurveyCampaignPage';
 import { AnalyticsPage } from '../pages/AnalyticsPage';
 import { ReportsPage } from '../pages/ReportsPage';
-import { KnowledgePage } from '../pages/KnowledgePage';
 import { NotificationsPage } from '../pages/NotificationsPage';
-import { AdminPage } from '../pages/AdminPage';
-import { SettingsPage } from '../pages/SettingsPage';
+import { AdministrationPage } from '../pages/AdministrationPage';
+import { AuditPage } from '../pages/admin/AuditPage';
 import { LoginPage } from '../pages/LoginPage';
 import { useSession } from '../features/auth/session';
 import { ShellLayout } from '../components/AppShell';
@@ -54,12 +55,27 @@ export function App() {
         <Route path="/offices" element={<OfficesPage />} />
         <Route path="/offices/:id/setup" element={<OfficeSetupPage />} />
         <Route path="/questions" element={<QuestionsPage />} />
+        {/* Опросы: список рассылок и шаблонов, карточка одной рассылки
+            с именными ответами. */}
+        <Route path="/surveys" element={<SurveysPage />} />
+        <Route path="/surveys/:id" element={<SurveyCampaignPage />} />
         <Route path="/analytics" element={<AnalyticsPage />} />
         <Route path="/reports" element={<ReportsPage />} />
-        <Route path="/knowledge" element={<KnowledgePage />} />
+        {/* Адресов `/knowledge` и `/settings` больше нет: материалы
+            ассистента живут на сервере и кадровику отдельным разделом не
+            показываются, а настройки стоят рядом с тем, что настраивают.
+            Старые ссылки попадают в общее перенаправление на главную. */}
         <Route path="/notifications" element={<NotificationsPage />} />
-        <Route path="/admin" element={<AdminPage />} />
-        <Route path="/settings" element={<SettingsPage />} />
+        {/* «Администрирование» — ОДИН экран: пять справочников
+            раскрываются на месте. Отдельные страницы были ошибкой:
+            справочник из трёх строк не стоит перехода. Офисов среди них
+            нет — они настраиваются в разделе «Офисы и регионы».
+            Старый адрес `/admin` ведёт сюда же: ссылки на него
+            остались в закладках. */}
+        <Route path="/administration" element={<AdministrationPage />} />
+        <Route path="/administration/audit" element={<AuditPage />} />
+        <Route path="/admin" element={<Navigate to="/administration" replace />} />
+        <Route path="/admin/*" element={<Navigate to="/administration" replace />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

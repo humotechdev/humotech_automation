@@ -208,15 +208,17 @@ describe('карточка офиса', () => {
     expect(screen.queryByText(/Онлайн/)).toBeNull();
   });
 
-  test('без права управления кнопки «Настроить» нет', async () => {
+  test('кнопки не прячутся по правам: отказ даёт сервер', async () => {
+    // Прав в интерфейсе нет — администратор один, и ему открыто всё.
+    // Скрытая кнопка защитой никогда и не была: проверку исполняет
+    // сервер, и прятать действие значит лишь спрятать причину отказа.
     network((path) =>
       path.includes('/auth/') ? json(200, { ...USER, permissions: ['offices.read'] }) : null,
     );
     renderApp('/offices?office=o-1');
 
     await screen.findAllByText('Главный офис');
-    expect(screen.queryByRole('link', { name: /Настроить/ })).toBeNull();
-    // Открыть офис можно и без права правки — посмотреть.
+    expect(screen.getByRole('link', { name: /Настроить/ })).toBeTruthy();
     expect(screen.getByRole('link', { name: /Открыть офис/ })).toBeTruthy();
   });
 

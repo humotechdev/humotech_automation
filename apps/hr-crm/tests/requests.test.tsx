@@ -184,6 +184,67 @@ describe('подробности', () => {
   });
 });
 
+describe('решение по справке', () => {
+  test('принятая справка уходит на свой адрес, а не на адрес заявки', async () => {
+    // Это разные решения: одобренный больничный с отклонённой справкой —
+    // законное состояние, и путать их адресами нельзя.
+    const calls = network((path, method) =>
+      method === 'POST' && path.includes('/documents/d-1/accept')
+        ? json(200, { id: 'd-1', verification_status: 'VERIFIED',
+                      verification_comment: null })
+        : null,
+    );
+    renderApp('/requests?request=r-1');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Принять справку' }));
+
+    await waitFor(() =>
+      expect(calls.filter((c) => c.url.includes('/documents/d-1/accept')))
+        .toHaveLength(1),
+    );
+    // Решение по самой заявке при этом не трогается.
+    expect(calls.filter((c) => c.url.endsWith('/approve'))).toHaveLength(0);
+  });
+
+  test('возврат справки без причины на сервер не уходит', async () => {
+    // Человек принесёт ту же бумагу второй раз и не поймёт, почему её
+    // опять не взяли.
+    const calls = network();
+    renderApp('/requests?request=r-1');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Вернуть справку' }));
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Вернуть на доработку' }),
+    );
+
+    expect(await screen.findByRole('alert')).toBeTruthy();
+    expect(calls.filter((c) => c.url.includes('/documents/d-1/reject')))
+      .toHaveLength(0);
+  });
+
+  test('причина уходит вместе с возвратом', async () => {
+    const calls = network((path, method) =>
+      method === 'POST' && path.includes('/documents/d-1/reject')
+        ? json(200, { id: 'd-1', verification_status: 'REJECTED',
+                      verification_comment: 'Фото нечитаемое' })
+        : null,
+    );
+    renderApp('/requests?request=r-1');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Вернуть справку' }));
+    fireEvent.change(
+      await screen.findByPlaceholderText(/Что не так со справкой/),
+      { target: { value: 'Фото нечитаемое' } },
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Вернуть на доработку' }));
+
+    await waitFor(() => {
+      const sent = calls.find((c) => c.url.includes('/documents/d-1/reject'));
+      expect(sent?.body).toEqual({ comment: 'Фото нечитаемое' });
+    });
+  });
+});
+
 describe('решение', () => {
   test('повторное нажатие не отправляет второй запрос', async () => {
     const calls = network((path, method) =>
