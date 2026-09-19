@@ -106,6 +106,24 @@ function network(
     const own = handler(path, call.method);
     if (own) return own;
     if (path.includes('/auth/')) return json(200, { ...USER, permissions });
+    if (path.includes('/regions/')) {
+      return json(200, {
+        items: [
+          { id: 'r-1', name: 'Ташкент', code: 'TASHKENT', status: 'ACTIVE' },
+          { id: 'r-2', name: 'Бухара', code: 'BUKHARA', status: 'ACTIVE' },
+        ],
+        next_cursor: null, has_more: false,
+      });
+    }
+    if (path.includes('/departments/')) {
+      return json(200, {
+        items: [
+          { id: 'd-1', name: 'Операционный отдел', office_id: 'o-1',
+            office_name: 'Главный офис', status: 'ACTIVE', staff: 4 },
+        ],
+        next_cursor: null, has_more: false,
+      });
+    }
     if (path.includes('/dashboard')) {
       return json(200, {
         date: DAY,
@@ -243,6 +261,64 @@ describe('состав смены', () => {
     renderApp(`/attendance?date=${DAY}`);
 
     expect(await screen.findByText(/Не удалось загрузить состав смены/)).toBeTruthy();
+  });
+});
+
+describe('фильтры', () => {
+  test('регион, офис и отдел уходят на сервер', async () => {
+    const calls = network();
+    renderApp(`/attendance?date=${DAY}&region_id=r-1&office_id=o-1&department_id=d-1`);
+    await screen.findAllByText('Каримов Алишер');
+
+    const asked = calls.map((one) => one.url).filter((url) => url.includes('/presence'));
+    expect(asked.some((url) => url.includes('office_id=o-1'))).toBe(true);
+    expect(asked.some((url) => url.includes('department_id=d-1'))).toBe(true);
+  });
+
+  test('выбранный день запрашивается именно он, а не сегодня', async () => {
+    // Иначе календарь показывает одну дату, а таблица — другую, и
+    // расхождение видно только по времени событий.
+    const calls = network();
+    renderApp(`/attendance?date=${DAY}`);
+    await screen.findAllByText('Каримов Алишер');
+
+    const asked = calls.map((one) => one.url).filter((url) => url.includes('/presence'));
+    expect(asked.every((url) => url.includes(`date=${DAY}`))).toBe(true);
+  });
+
+  test('смена региона снимает офис другого региона', async () => {
+    // Офис чужого региона дал бы заведомо пустой список без объяснения.
+    network();
+    renderApp(`/attendance?date=${DAY}&office_id=o-1`);
+    await screen.findAllByText('Каримов Алишер');
+
+    await pick('Регион', 'Ташкент');
+
+    await waitFor(() =>
+      expect(window.location.search).not.toContain('office_id=o-1'),
+    );
+  });
+});
+
+describe('карточка дня', () => {
+  test('показывает все события дня, а не первые три', async () => {
+    network();
+    renderApp(`/attendance?date=${DAY}&employee=e-1`);
+
+    // У человека с обедом событий четыре: обрезанный список прячет как
+    // раз то, из-за чего карточку открыли.
+    expect(await screen.findByText('Вход · Главный вход')).toBeTruthy();
+    expect(screen.getByText('Выход · Служебный вход')).toBeTruthy();
+  });
+
+  test('пустой день объясняется словами, а не белой панелью', async () => {
+    network((path) =>
+      path.includes('/attendance/events') ? json(200, { items: [], next_cursor: null, has_more: false }) : null,
+    );
+    renderApp(`/attendance?date=${DAY}&employee=e-2`);
+
+    expect(await screen.findByText('Нет отметок за выбранный период')).toBeTruthy();
+    expect(screen.getByText(/не отмечал ни входа, ни выхода/)).toBeTruthy();
   });
 });
 

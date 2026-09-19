@@ -1,13 +1,24 @@
 /**
  * Страница «Сотрудники».
  *
- * Вёрстка повторяет эталон 1672×941 (`ChatGPT Image Sep 13, 2026,
- * 03_29_40 PM.png`): слева панель со списком, справа панель «Сегодня в
- * команде». Все размеры — в `styles/employees.css`, классы с префиксом
- * `emp-`, чтобы правки этой страницы не задевали остальные.
+ * Список во всю ширину. Правая колонка «Сегодня в команде» убрана: она
+ * повторяла главную, а списку оставляла две трети экрана — при трёх
+ * карточках в ряд фамилии обрывались.
+ *
+ * Отборы многозначные: офисы, регионы, отделы, должности и занятость
+ * принимают по несколько значений сразу. Кадровик спрашивает «двое
+ * стажёров в Самарканде и Бухаре», а не «по одному офису за раз».
+ * Внутри одного отбора значения складываются, между отборами —
+ * пересекаются; офисы и регионы — один географический отбор, и они
+ * складываются между собой (иначе «Головной офис + Самаркандская
+ * область» дало бы пусто и читалось как поломка).
+ *
+ * Выбранное видно строкой плашек под отборами: свёрнутый в «Офисы · 2»
+ * список не говорит, ЧТО именно выбрано, а ошибка отбора дороже строки.
  *
  * Состояние списка живёт в адресе: вернувшись из карточки, человек видит
- * тот же поиск, фильтр, вид и страницу.
+ * тот же поиск, отборы, вид и страницу. Значения в адресе — через
+ * запятую, их же понимает сервер.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -17,29 +28,26 @@ import * as api from '../api/crm';
 import { messageFor } from '../api/errors';
 import { AppShell, initials } from '../components/AppShell';
 import { AppIcon, type AppIconName } from '../components/AppIcon';
-import { AppSegmentedControl, Dropdown } from '../components/AppSelect';
-import { EmployeeCard } from '../components/EmployeeCard';
-import { longDate, today as todayIso, useBlock, type Block } from '../features/dashboard/data';
+import { AppMultiSelect } from '../components/AppSelect';
+import { useBlock, type Block } from '../features/dashboard/data';
 import {
+  EMPLOYMENT_STATUS,
   employmentStatus,
   employmentTitle,
   isWorking,
 } from '../features/employees/status';
 import '../styles/employees.css';
 
-/** Вкладки. Одна вкладка может покрывать несколько состояний модели. */
-const TABS = [
-  { key: 'all', title: 'Все', statuses: [] as string[] },
-  { key: 'active', title: 'Активные', statuses: ['ACTIVE', 'PROBATION'] },
-  { key: 'inactive', title: 'Неактивные', statuses: ['SUSPENDED'] },
-  { key: 'left', title: 'Уволенные', statuses: ['TERMINATED', 'ARCHIVED'] },
-] as const;
-
 const ACTIVE_STATUSES = ['ACTIVE', 'PROBATION'];
-/** Сколько сотрудников на странице. Значение одно и не настраивается:
- *  выбор «8 / 16 / 32» ничего не решал, а место в строке занимал. */
-const PAGE_SIZE = '16';
-const WEEKDAYS = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
+/** Сколько сотрудников на странице. Пятнадцать, а не шестнадцать: в ряду
+ *  три карточки, и шестнадцатая оставляла последний ряд с одной
+ *  карточкой и двумя дырами. Значение одно и не настраивается — выбор
+ *  «8 / 16 / 32» ничего не решал, а место в строке занимал. */
+const PAGE_SIZE = '15';
+
+/** Занятость — отбор по трудовому статусу. Названия те же, что в плашке. */
+const EMPLOYMENT = Object.entries(EMPLOYMENT_STATUS)
+  .map(([value, [label]]) => ({ value, label }));
 
 const TELEGRAM_TITLE: Record<string, string> = {
   ACTIVE: 'Привязан',
@@ -67,15 +75,24 @@ export function EmployeesPage() {
     },
     [navigate, place.pathname, place.search],
   );
-  const tab = TABS.find((t) => t.key === params.get('tab')) ?? TABS[0];
+  /*
+   * `?employee=<id>` открывал боковое окно. Окна больше нет, а ссылки на
+   * него остались — в уведомлениях, в закладках, в чужих сообщениях.
+   * Такой адрес молча ведёт на саму карточку.
+   */
+  const stale = params.get('employee') ?? '';
+  useEffect(() => {
+    if (stale) navigate(`/employees/${stale}`, { replace: true });
+  }, [stale, navigate]);
+
   const search = params.get('search') ?? '';
-  const office = params.get('office_id') ?? '';
-  const department = params.get('department_id') ?? '';
+  const offices = listOf(params.get('office_id'));
+  const regions = listOf(params.get('region_id'));
+  const departments = listOf(params.get('department_id'));
+  const positions = listOf(params.get('position_id'));
+  const employment = listOf(params.get('status'));
   const limit = PAGE_SIZE;
   const page = Math.max(1, Number(params.get('page') ?? '1'));
-  const opened = params.get('employee') ?? '';
-  const picked = params.get('picked') ?? '';
-  const view = params.get('view') === 'table' ? 'table' : 'cards';
 
   const [draft, setDraft] = useState(search);
   useEffect(() => setDraft(search), [search]);
@@ -100,6 +117,12 @@ export function EmployeesPage() {
     [setParams],
   );
 
+  /** Отбор уходит в адрес через запятую — ровно так его читает сервер. */
+  const setList = useCallback(
+    (key: string, values: string[]) => patch({ [key]: values.join(',') || null }),
+    [patch],
+  );
+
   // Поиск не бьёт по серверу на каждую букву.
   useEffect(() => {
     if (draft === search) return;
@@ -110,12 +133,18 @@ export function EmployeesPage() {
   const filters: api.EmployeeQuery = useMemo(
     () => ({
       ...(search ? { search } : {}),
-      ...(office ? { office_id: office } : {}),
-      ...(department ? { department_id: department } : {}),
+      ...(offices.length ? { office_id: offices.join(',') } : {}),
+      ...(regions.length ? { region_id: regions.join(',') } : {}),
+      ...(departments.length ? { department_id: departments.join(',') } : {}),
+      ...(positions.length ? { position_id: positions.join(',') } : {}),
     }),
-    [search, office, department],
+    // Строки, а не массивы: массив каждый раз новый, и `useMemo` терял смысл.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [search, offices.join(','), regions.join(','), departments.join(','), positions.join(',')],
   );
   const offset = (page - 1) * Number(limit);
+  const key = [search, offices.join('+'), regions.join('+'), departments.join('+'),
+               positions.join('+'), employment.join('+')].join('|');
 
   const [list] = useBlock(
     (signal) =>
@@ -124,36 +153,45 @@ export function EmployeesPage() {
           ...filters,
           limit,
           ...(offset ? { offset: String(offset) } : {}),
-          ...(tab.statuses.length ? { status: tab.statuses.join(',') } : {}),
+          ...(employment.length ? { status: employment.join(',') } : {}),
         },
         signal,
       ),
-    `${tab.key}|${search}|${office}|${department}|${limit}|${page}`,
+    `people|${key}|${page}`,
   );
 
-  const [counts] = useBlock(
-    (signal) => api.employeeCounts(filters, signal),
-    `counts|${search}|${office}|${department}`,
-  );
+  const [counts] = useBlock((signal) => api.employeeCounts(filters, signal), `counts|${key}`);
 
   const [directory] = useBlock(
     (signal) =>
-      Promise.all([api.offices(signal), api.departments(signal)]).then(([o, d]) => ({
+      Promise.all([
+        api.offices(signal),
+        api.regions(signal),
+        api.departments(signal),
+        api.positions(signal),
+      ]).then(([o, r, d, p]) => ({
         offices: o.items.filter((one) => one.status === 'ACTIVE'),
+        regions: r.items,
         departments: d.items,
+        positions: p.items,
       })),
-    'directory',
+    'directory|employees',
   );
 
-  const [presence] = useBlock((signal) => api.presence({}, signal), 'presence|today');
-
-  const [highlights] = useBlock(
-    (signal) => api.employeeHighlights(
-      { ...(office ? { office_id: office } : {}), ...(department ? { department_id: department } : {}) },
-      signal,
-    ),
-    `highlights|${office}|${department}`,
-  );
+  /*
+   * Состояние дня — одним запросом на всех, а не по сотруднику.
+   *
+   * В подвале карточки стоит «В офисе» или «На больничном»; спрашивать
+   * это по одному значило бы шестнадцать запросов на страницу.
+   */
+  const [presence] = useBlock((signal) => api.presenceDay({}, signal), 'presence|day');
+  const today = useMemo(() => {
+    const map = new Map<string, api.PresenceRow>();
+    if (presence.state === 'ready') {
+      for (const row of presence.data.items) map.set(row.employee_id, row);
+    }
+    return map;
+  }, [presence]);
 
   const [updated, setUpdated] = useState<Date | null>(null);
   useEffect(() => {
@@ -168,7 +206,11 @@ export function EmployeesPage() {
     setOrdering(true);
     setOrdered(null);
     try {
-      await api.orderExport({ kind: 'employees', fmt: 'xlsx', ...(office ? { office_id: office } : {}) });
+      await api.orderExport({
+        kind: 'employees',
+        fmt: 'xlsx',
+        ...(offices.length === 1 ? { office_id: offices[0] as string } : {}),
+      });
       setOrdered('Выгрузка поставлена в очередь');
     } catch (error) {
       setOrdered(messageFor(error));
@@ -177,10 +219,40 @@ export function EmployeesPage() {
     }
   }
 
-  const total = counts.state === 'ready' ? count(counts.data, tab.statuses) : 0;
+  const books = directory.state === 'ready' ? directory.data : null;
+  const officeOptions = (books?.offices ?? []).map((one) => ({
+    value: one.id, label: one.name, ...(one.region_name ? { note: one.region_name } : {}),
+  }));
+  const regionOptions = (books?.regions ?? []).map((one) => ({ value: one.id, label: one.name }));
+  const departmentOptions = (books?.departments ?? []).map((one) => ({ value: one.id, label: one.name }));
+  const positionOptions = (books?.positions ?? []).map((one) => ({ value: one.id, label: one.name }));
+
+  /** Что выбрано — плашками, по одной на значение. */
+  const chips: { group: string; key: string; value: string; label: string }[] = [
+    ...pick('Офисы', 'office_id', offices, officeOptions),
+    ...pick('Регионы', 'region_id', regions, regionOptions),
+    ...pick('Отделы', 'department_id', departments, departmentOptions),
+    ...pick('Должности', 'position_id', positions, positionOptions),
+    ...pick('Занятость', 'status', employment, EMPLOYMENT),
+  ];
+
+  const drop = (key: string, value: string) => {
+    const was = listOf(params.get(key));
+    setList(key, was.filter((one) => one !== value));
+  };
+
+  const clearAll = () =>
+    patch({
+      search: null, office_id: null, region_id: null,
+      department_id: null, position_id: null, status: null,
+    });
+
+  const total = counts.state === 'ready'
+    ? count(counts.data, employment)
+    : 0;
   const pages = Math.max(1, Math.ceil(total / Number(limit)));
   const items = list.state === 'ready' ? list.data.items : [];
-  const chosen = items.find((one) => one.id === picked) ?? items[0] ?? null;
+  const anything = Boolean(search || chips.length);
 
   return (
     <AppShell breadcrumb="Сотрудники" section="employees">
@@ -196,10 +268,10 @@ export function EmployeesPage() {
                   <span>{count(counts.data, ACTIVE_STATUSES)} активных</span>
                 </>
               )}
-              {directory.state === 'ready' && (
+              {books && (
                 <>
                   <i className="emp-head__dot">•</i>
-                  <span>{plural(directory.data.offices.length, 'офис')}</span>
+                  <span>{plural(books.offices.length, 'офис')}</span>
                 </>
               )}
               {updated && (
@@ -229,168 +301,256 @@ export function EmployeesPage() {
           </p>
         )}
 
-        <div className="emp-grid">
-          <section className="emp-list" aria-label="Список сотрудников">
-            <div className="emp-filters">
-              <label className="emp-search">
-                <AppIcon name="search" size={18} />
-                <input
-                  type="search"
-                  value={draft}
-                  placeholder="Поиск по ФИО, должности или Telegram"
-                  aria-label="Поиск по ФИО, должности или Telegram"
-                  onChange={(event) => setDraft(event.target.value)}
-                />
-              </label>
-              <Select label="Офис" empty="Все офисы" value={office}
-                      options={directory.state === 'ready' ? directory.data.offices : []}
-                      onChange={(value) => patch({ office_id: value || null })} />
-              <Select label="Отдел" empty="Все отделы" value={department}
-                      options={directory.state === 'ready' ? directory.data.departments : []}
-                      onChange={(value) => patch({ department_id: value || null })} />
-              {/* Статус и вкладки — одна ось отбора: список меняет вкладку. */}
-              <Select label="Статус" empty="Все статусы" value={tab.key === 'all' ? '' : tab.key}
-                      options={TABS.filter((one) => one.key !== 'all')
-                        .map((one) => ({ id: one.key, name: one.title }))}
-                      onChange={(value) => patch({ tab: value || null })} />
-              <AppSegmentedControl className="emp-view" label="Вид списка" value={view} options={[
-                { value: 'table', label: 'Таблица', icon: 'list' },
-                { value: 'cards', label: 'Карточки', icon: 'grid' },
-              ]} onChange={(next) => patch({ view: next === 'cards' ? null : 'table' }, true)} />
+        <section className="emp-list" aria-label="Список сотрудников">
+          <div className="emp-filters">
+            <label className="emp-search">
+              <AppIcon name="search" size={18} />
+              <input
+                type="search"
+                value={draft}
+                placeholder="Поиск по имени или должности"
+                aria-label="Поиск по имени, должности или Telegram"
+                onChange={(event) => setDraft(event.target.value)}
+              />
+            </label>
+            <Pick title="Офисы" empty="Все офисы" heading="Выберите офисы" find="Найти офис"
+                  value={offices} options={officeOptions}
+                  onChange={(next) => setList('office_id', next)} />
+            <Pick title="Регионы" empty="Все регионы" heading="Выберите регионы" find="Найти регион"
+                  value={regions} options={regionOptions}
+                  onChange={(next) => setList('region_id', next)} />
+            <Pick title="Отделы" empty="Все отделы" heading="Выберите отделы" find="Найти отдел"
+                  value={departments} options={departmentOptions}
+                  onChange={(next) => setList('department_id', next)} />
+            <Pick title="Должности" empty="Все должности" heading="Выберите должности"
+                  find="Найти должность" value={positions} options={positionOptions}
+                  onChange={(next) => setList('position_id', next)} />
+            <Pick title="Занятость" empty="Любая занятость" heading="Выберите занятость"
+                  find="Найти" value={employment} options={EMPLOYMENT}
+                  onChange={(next) => setList('status', next)} />
+          </div>
+
+          {anything && (
+            <div className="emp-chips">
+              {groupsOf(chips).map(([group, rows]) => (
+                <span key={group} className="emp-chips__group">
+                  <span className="emp-chips__label">{group}:</span>
+                  {rows.map((chip) => (
+                    <span key={`${chip.key}:${chip.value}`} className="emp-chip">
+                      {chip.label}
+                      <button type="button" aria-label={`Убрать «${chip.label}»`}
+                              onClick={() => drop(chip.key, chip.value)}>
+                        <AppIcon name="close" size={16} />
+                      </button>
+                    </span>
+                  ))}
+                </span>
+              ))}
+              {search && (
+                <span className="emp-chips__group">
+                  <span className="emp-chips__label">Поиск:</span>
+                  <span className="emp-chip">
+                    {search}
+                    <button type="button" aria-label="Очистить поиск"
+                            onClick={() => patch({ search: null })}>
+                      <AppIcon name="close" size={16} />
+                    </button>
+                  </span>
+                </span>
+              )}
+              <button type="button" className="emp-chips__clear" onClick={clearAll}>
+                Сбросить всё
+              </button>
             </div>
+          )}
 
-            <AppSegmentedControl className="emp-tabs" label="Статус сотрудников" role="tablist" value={tab.key}
-              options={TABS.map((item) => ({ value: item.key, label: item.title, count: counts.state === 'ready' ? count(counts.data, item.statuses) : null }))}
-              onChange={(key) => patch({ tab: key === 'all' ? null : key })} />
+          <div className="emp-body">
+            <Rows block={list}>
+              {(data) =>
+                data.items.length === 0 ? (
+                  <p className="emp-empty">
+                    {anything
+                      ? 'По этим условиям никого не нашлось.'
+                      : 'В доступной области нет сотрудников.'}
+                  </p>
+                ) : (
+                  <div className="emp-cards">
+                    {data.items.map((person) => (
+                      <PersonCard key={person.id} person={person} today={today.get(person.id)}
+                                  onOpen={() => openProfile(person.id)} />
+                    ))}
+                  </div>
+                )
+              }
+            </Rows>
+          </div>
 
-            <div className="emp-body">
-              <Rows block={list}>
-                {(data) =>
-                  data.items.length === 0 ? (
-                    <p className="emp-empty">
-                      {search || office || department
-                        ? 'По этим условиям никого не нашлось.'
-                        : 'В доступной области нет сотрудников.'}
-                    </p>
-                  ) : view === 'cards' ? (
-                    <div className="emp-cards">
-                      {data.items.map((person) => (
-                        <PersonCard
-                          key={person.id}
-                          person={person}
-                          chosen={person.id === chosen?.id}
-                          onPick={() => patch({ picked: person.id }, true)}
-                          onOpen={() => openProfile(person.id)}
-                        />
-                      ))}
-                    </div>
-                  ) : (
-                    <PeopleTable rows={data.items} chosen={chosen?.id ?? ''}
-                                 onPick={(id) => patch({ picked: id }, true)} />
-                  )
-                }
-              </Rows>
-            </div>
-
-            <footer className="emp-pager">
-              <p className="emp-pager__note">
-                {list.state === 'ready'
-                  ? `Показано ${items.length} из ${plural(total, 'сотрудник')}`
-                  : ''}
-              </p>
-              <Pages page={page} pages={pages}
-                     onGo={(next) => patch({ page: next === 1 ? null : String(next) }, true)} />
-            </footer>
-          </section>
-
-          <TeamPanel
-            presence={presence}
-            highlights={highlights}
-            person={chosen}
-            onOpen={() => chosen && openProfile(chosen.id)}
-          />
-        </div>
+          <footer className="emp-pager">
+            <p className="emp-pager__note">
+              {list.state === 'ready'
+                ? `Показано ${items.length} из ${plural(total, 'сотрудник')}`
+                : ''}
+            </p>
+            <Pages page={page} pages={pages}
+                   onGo={(next) => patch({ page: next === 1 ? null : String(next) }, true)} />
+          </footer>
+        </section>
       </div>
-
-      {opened && <EmployeeCard id={opened} onClose={() => patch({ employee: null }, true)} />}
     </AppShell>
   );
 }
 
+/** Один многозначный отбор. Ширину задаёт страница, не компонент. */
+function Pick({ title, empty, heading, find, value, options, onChange }: {
+  title: string;
+  empty: string;
+  heading: string;
+  find: string;
+  value: string[];
+  options: { value: string; label: string; note?: string }[];
+  onChange: (value: string[]) => void;
+}) {
+  return (
+    <AppMultiSelect className="emp-pick" label={title} title={title} empty={empty}
+                    heading={heading} findLabel={find} value={value} options={options}
+                    disabled={options.length === 0} onChange={onChange} />
+  );
+}
+
+/** Значения отбора из адреса: «a,b» → ['a','b']. */
+function listOf(raw: string | null): string[] {
+  return (raw ?? '').split(',').map((one) => one.trim()).filter(Boolean);
+}
+
+/** Плашки одного отбора: только те значения, для которых есть название. */
+function pick(
+  group: string,
+  key: string,
+  values: string[],
+  options: { value: string; label: string }[],
+): { group: string; key: string; value: string; label: string }[] {
+  return values.map((value) => ({
+    group,
+    key,
+    value,
+    label: options.find((one) => one.value === value)?.label ?? value,
+  }));
+}
+
+/** Плашки по отборам, в порядке появления. */
+function groupsOf<T extends { group: string }>(rows: T[]): [string, T[]][] {
+  const groups = new Map<string, T[]>();
+  for (const row of rows) {
+    const kept = groups.get(row.group);
+    if (kept) kept.push(row);
+    else groups.set(row.group, [row]);
+  }
+  return [...groups];
+}
+
 // --- список ----------------------------------------------------------------
 
-function PersonCard({ person, chosen, onPick, onOpen }: {
+function PersonCard({ person, today, onOpen }: {
   person: api.EmployeeRow;
-  chosen: boolean;
-  onPick: () => void;
+  /** Что у человека сегодня. `undefined` — отметок дня нет вовсе. */
+  today: api.PresenceRow | undefined;
   onOpen: () => void;
 }) {
   const at = person.current_assignment;
   const telegram = person.telegram_username;
+  const state = dayState(today);
   return (
-    <article
-      className={chosen ? 'emp-card emp-card--on' : 'emp-card'}
-      tabIndex={0}
-      aria-current={chosen || undefined}
-      onClick={onPick}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          onPick();
-        }
-      }}
-    >
-      <Photo id={person.id} name={person.full_name} has={person.photo} className="emp-card__photo" />
-      <div className="emp-card__body">
-        {/* Имя и состояние — одной строкой. Состояние стояло отдельным
-            слоем поверх карточки, и под ним приходилось держать пустое
-            поле справа: при трёх карточках в ряд фамилия в это поле
-            уже не помещалась и обрывалась. */}
-        <div className="emp-card__title">
-          <h3 className="emp-card__name">{shortName(person.full_name)}</h3>
-          <Status person={person} className="emp-card__status" />
+    <article className="emp-card">
+      <div className="emp-card__top">
+        <Photo id={person.id} name={person.full_name} has={person.photo} className="emp-card__photo" />
+        <div className="emp-card__body">
+          {/* Имя и состояние — одной строкой. Состояние стояло отдельным
+              слоем поверх карточки, и под ним приходилось держать пустое
+              поле справа: при трёх карточках в ряд фамилия в это поле
+              уже не помещалась и обрывалась. */}
+          <div className="emp-card__title">
+            <h3 className="emp-card__name">{shortName(person.full_name)}</h3>
+            <Status person={person} className="emp-card__status" />
+          </div>
+          <p className="emp-card__role">
+            {at?.position_name
+              ? <>Должность: <b>{at.position_name}</b></>
+              : 'Должность не назначена'}
+          </p>
+          <p className="emp-card__meta">
+            <Bit icon="pin" text={[at?.region_name, at?.office_name].filter(Boolean).join(' · ') || '—'} />
+            <Bit icon="clock" text={scheduleLine(person.current_schedule)} />
+            {telegram
+              ? <Bit icon="send" text={`@${telegram}`} tone="link"
+                     href={`https://t.me/${telegram.replace(/^@/, '')}`} />
+              : <Bit icon="doc" text={telegramShort(person.telegram_state)} />}
+          </p>
         </div>
-        <p className="emp-card__role">{at?.position_name ?? 'Должность не назначена'}</p>
-        <p className="emp-card__dept">{at?.department_name ?? '—'}</p>
-        <p className="emp-card__meta">
-          <Bit icon="pin" text={at?.office_name ?? '—'} />
-          <Bit icon="clock" text={scheduleLine(person.current_schedule)} />
-          {telegram
-            ? <Bit icon="send" text={`@${telegram}`} tone="link" />
-            : <Bit icon="doc" text={telegramShort(person.telegram_state)} />}
-        </p>
       </div>
-      <CardMenu onOpen={onOpen} />
+
+      {/* Подвал: что с человеком сегодня и дорога в карточку. Трудовой
+          статус вверху — «кем числится», здесь — «где он сейчас». */}
+      <footer className="emp-card__foot">
+        <span className={`emp-day emp-day--${state.tone}`}>
+          <i aria-hidden="true" />
+          {state.title}
+        </span>
+        <button type="button" className="emp-card__go" onClick={onOpen}>
+          Открыть профиль
+          <AppIcon name="next" size={16} />
+        </button>
+      </footer>
     </article>
   );
 }
 
-function Bit({ icon, text, tone }: { icon: AppIconName; text: string; tone?: 'link' }) {
-  return (
-    <span className={tone ? `emp-bit emp-bit--${tone}` : 'emp-bit'}>
-      <AppIcon name={icon} size={16} />
-      <span className="emp-bit__text">{text}</span>
-    </span>
-  );
+/** Порядок и цвет состояний дня — те же, что на «Посещаемости». */
+function dayState(row: api.PresenceRow | undefined): {
+  title: string; tone: 'ok' | 'warn' | 'idle' | 'blue' | 'violet';
+} {
+  if (!row) return { title: 'Нет данных', tone: 'idle' };
+  const late = row.late_minutes ?? 0;
+  switch (row.state) {
+    case 'IN_OFFICE':
+      return late > 0 ? { title: `Опоздал на ${late} мин`, tone: 'warn' } : { title: 'В офисе', tone: 'ok' };
+    case 'LEFT': return { title: 'Ушёл', tone: 'idle' };
+    case 'LATE': return { title: 'Опаздывает', tone: 'warn' };
+    case 'NOT_COME':
+      return row.notice_kind === 'ABSENT'
+        ? { title: 'Не придёт', tone: 'warn' }
+        : { title: 'Нет отметки', tone: 'idle' };
+    case 'VACATION': return { title: 'В отпуске', tone: 'blue' };
+    case 'SICK_LEAVE': return { title: 'На больничном', tone: 'violet' };
+    case 'OTHER_ABSENCE': return { title: row.absence_name ?? 'Отсутствует', tone: 'violet' };
+    case 'DAY_OFF': return { title: 'Выходной', tone: 'idle' };
+    case 'NO_SCHEDULE': return { title: 'Без графика', tone: 'idle' };
+    default: return { title: 'Нет отметки', tone: 'idle' };
+  }
 }
 
-function CardMenu({ onOpen }: { onOpen: () => void }) {
-  const [open, setOpen] = useState(false);
+/**
+ * Строчка сведений карточки: значок и текст.
+ *
+ * С `href` становится ссылкой — так открывается Telegram сотрудника.
+ * Адрес ведёт на сам Telegram и уходит из CRM, поэтому новая вкладка и
+ * `rel="noreferrer"`: чужая страница не должна получить доступ к нашей.
+ */
+function Bit({ icon, text, tone, href }: {
+  icon: AppIconName; text: string; tone?: 'link'; href?: string;
+}) {
+  const shape = tone ? `emp-bit emp-bit--${tone}` : 'emp-bit';
+  const inside = (
+    <>
+      <AppIcon name={icon} size={16} />
+      <span className="emp-bit__text">{text}</span>
+    </>
+  );
+  if (!href) return <span className={shape}>{inside}</span>;
   return (
-    <span className="emp-menu">
-      <button type="button" className="emp-menu__dots" aria-label="Действия" aria-expanded={open}
-              onClick={(event) => { event.stopPropagation(); setOpen((was) => !was); }}>
-        <i /><i /><i />
-      </button>
-      {open && (
-        <span className="emp-menu__drop" role="menu">
-          <button type="button" role="menuitem"
-                  onClick={(event) => { event.stopPropagation(); setOpen(false); onOpen(); }}>
-            Открыть профиль
-          </button>
-        </span>
-      )}
-    </span>
+    <a className={`${shape} emp-bit--go`} href={href} target="_blank" rel="noreferrer"
+       title={`Открыть ${text} в Telegram`}>
+      {inside}
+    </a>
   );
 }
 
@@ -434,55 +594,6 @@ function Photo({ id, name, has, className }: {
   );
 }
 
-function PeopleTable({ rows, chosen, onPick }: {
-  rows: api.EmployeeRow[];
-  chosen: string;
-  onPick: (id: string) => void;
-}) {
-  return (
-    <div className="emp-table-wrap">
-      <table className="emp-table table-cards">
-        <thead>
-          <tr>
-            <th>Сотрудник</th>
-            <th>Должность / отдел</th>
-            <th>Офис</th>
-            <th>График</th>
-            <th>Telegram</th>
-            <th>Статус</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((person) => (
-            <tr key={person.id} tabIndex={0}
-                className={person.id === chosen ? 'emp-table__on' : undefined}
-                onClick={() => onPick(person.id)}
-                onKeyDown={(event) => { if (event.key === 'Enter') onPick(person.id); }}>
-              <td>
-                <span className="emp-table__who">
-                  <Photo id={person.id} name={person.full_name} has={person.photo} className="emp-table__photo" />
-                  <span>
-                    <b>{shortName(person.full_name)}</b>
-                    <small>{person.current_assignment?.office_name ?? ''}</small>
-                  </span>
-                </span>
-              </td>
-              <td data-label="Должность / отдел">
-                {person.current_assignment?.position_name ?? '—'}
-                <small>{person.current_assignment?.department_name ?? ''}</small>
-              </td>
-              <td data-label="Офис">{person.current_assignment?.office_name ?? '—'}</td>
-              <td data-label="График">{scheduleLine(person.current_schedule)}</td>
-              <td data-label="Telegram">{person.telegram_username ? `@${person.telegram_username}` : telegramShort(person.telegram_state)}</td>
-              <td data-label="Статус"><Status person={person} className="" /></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
 /** Номера страниц: первые пять, соседи текущей и последняя. */
 function Pages({ page, pages, onGo }: { page: number; pages: number; onGo: (next: number) => void }) {
   const shown: (number | 'gap')[] = [];
@@ -510,212 +621,15 @@ function Pages({ page, pages, onGo }: { page: number; pages: number; onGo: (next
       )}
       <button type="button" className="emp-pages__arrow" aria-label="Следующая"
               disabled={page >= pages} onClick={() => onGo(page + 1)}>
-        <AppIcon name="next" size={16} />
+        {/* Парная стрелка к «назад»: `next` — узкий шеврон из другого
+            набора, и рядом с ней он читался как другая кнопка. */}
+        <AppIcon name="arrow" size={16} />
       </button>
     </nav>
   );
 }
 
-// --- правая панель -----------------------------------------------------------
-
-function TeamPanel({ presence, highlights, person, onOpen }: {
-  presence: Block<api.Presence>;
-  highlights: Block<api.EmployeeHighlights>;
-  person: api.EmployeeRow | null;
-  onOpen: () => void;
-}) {
-  const counts = presence.state === 'ready' ? presence.data.counts : {};
-  const here = counts['IN_OFFICE'] ?? 0;
-  const left = counts['LEFT'] ?? 0;
-  const away = (counts['NOT_COME'] ?? 0) + (counts['VACATION'] ?? 0)
-    + (counts['SICK_LEAVE'] ?? 0) + (counts['OTHER_ABSENCE'] ?? 0);
-  const total = here + left + away;
-  const share = total ? Math.round((here / total) * 100) : 0;
-  const day = todayIso();
-
-  return (
-    <aside className="emp-team" aria-label="Сегодня в команде">
-      <div className="emp-team__head">
-        <h2 className="emp-team__title">Сегодня в команде</h2>
-        <span className="emp-team__date">
-          {longDate(day)}, {WEEKDAYS[new Date(`${day}T12:00:00`).getDay()]}
-        </span>
-      </div>
-
-      <div className="emp-sum">
-        <Ring share={share} />
-        <p className="emp-sum__main">
-          <strong>{here} из {total}</strong>
-          <span>сотрудников на месте</span>
-        </p>
-      </div>
-
-      {highlights.state === 'ready' ? (
-        <>
-          <Tile icon="user" tone="blue" title="Онбординг"
-                line={plural(highlights.data.recent_hires, 'новый')}
-                note="за последние 30 дней"
-                // Ход приёма: у скольких новичков уже назначен график.
-                progress={{
-                  done: Math.max(highlights.data.recent_hires - highlights.data.without_schedule, 0),
-                  of: highlights.data.recent_hires,
-                }} />
-          <Tile icon="calendar" tone="red" title="Дни рождения"
-                line={highlights.data.birthdays_today
-                  ? plural(highlights.data.birthdays_today, 'сотрудник') : 'Сегодня никого'}
-                note={highlights.data.birthdays_today ? 'сегодня' : ''}
-                faces={highlights.data.birthdays} total={highlights.data.birthdays_today} />
-          <Tile icon="clock" tone="amber" title="Нет графика"
-                line={highlights.data.without_schedule
-                  ? plural(highlights.data.without_schedule, 'сотрудник') : 'У всех назначен'}
-                note={highlights.data.without_schedule ? 'требуют настройки' : ''}
-                faces={highlights.data.unscheduled} total={highlights.data.without_schedule} />
-        </>
-      ) : (
-        <p className="emp-team__wait">
-          {highlights.state === 'loading' ? 'Загружаем…' : 'Не удалось загрузить сводку.'}
-        </p>
-      )}
-
-      <div className="emp-chosen">
-        <div className="emp-chosen__head">
-          <h2 className="emp-team__title">Выбранный сотрудник</h2>
-          <button type="button" className="emp-chosen__go" aria-label="Открыть профиль"
-                  onClick={onOpen} disabled={!person}>
-            <AppIcon name="next" size={20} />
-          </button>
-        </div>
-        {person ? <Chosen person={person} onOpen={onOpen} /> : (
-          <p className="emp-team__wait">Выберите сотрудника в списке.</p>
-        )}
-      </div>
-    </aside>
-  );
-}
-
-function Ring({ share }: { share: number }) {
-  const radius = 35;
-  const length = 2 * Math.PI * radius;
-  const filled = (Math.min(Math.max(share, 0), 100) / 100) * length;
-  return (
-    <svg className="emp-ring" viewBox="0 0 80 80" width={80} height={80}
-         role="img" aria-label={`На месте ${share} процентов`}>
-      <circle className="emp-ring__track" cx="40" cy="40" r={radius} />
-      {share > 0 && (
-        <circle className="emp-ring__fill" cx="40" cy="40" r={radius}
-                strokeDasharray={`${filled} ${length}`} transform="rotate(-90 40 40)" />
-      )}
-      <text className="emp-ring__text" x="40" y="41">{share}%</text>
-    </svg>
-  );
-}
-
-function Tile({ icon, tone, title, line, note, faces, total, progress }: {
-  icon: AppIconName;
-  tone: 'blue' | 'red' | 'amber';
-  title: string;
-  line: string;
-  note: string;
-  faces?: api.EmployeeBrief[];
-  total?: number;
-  progress?: { done: number; of: number };
-}) {
-  return (
-    <div className={progress ? 'emp-tile emp-tile--progress' : 'emp-tile'} role="group" aria-label={title}>
-      <span className={`emp-tile__icon emp-tile__icon--${tone}`}>
-        <AppIcon name={icon} size={20} />
-      </span>
-      <span className="emp-tile__text">
-        <b>{title}</b>
-        <span>{line}</span>
-        {note && <small>{note}</small>}
-      </span>
-      {faces && <Faces rows={faces} total={total ?? 0} />}
-      {progress && (
-        <>
-          <span className="emp-tile__of">{progress.done} из {progress.of}</span>
-          <span className="emp-tile__bar" role="img"
-                aria-label={`Оформлено ${progress.done} из ${progress.of}`}>
-            <i style={{ width: `${progress.of ? Math.round((progress.done / progress.of) * 100) : 0}%` }} />
-          </span>
-        </>
-      )}
-      <AppIcon name="next" size={20} className="emp-tile__go" />
-    </div>
-  );
-}
-
-function Faces({ rows, total }: { rows: api.EmployeeBrief[]; total: number }) {
-  if (rows.length === 0) return null;
-  const shown = rows.slice(0, 3);
-  const rest = total - shown.length;
-  return (
-    <span className={shown.length > 2 ? 'emp-faces emp-faces--tight' : 'emp-faces'}>
-      {shown.map((one) => (
-        <Photo key={one.id} id={one.id} name={one.full_name} has={one.photo} className="emp-faces__one" />
-      ))}
-      {rest > 0 && <span className="emp-faces__rest">+{rest}</span>}
-    </span>
-  );
-}
-
-function Chosen({ person, onOpen }: { person: api.EmployeeRow; onOpen: () => void }) {
-  const at = person.current_assignment;
-  const email = person.corporate_email;
-  return (
-    <>
-      <div className="emp-chosen__who">
-        <Photo id={person.id} name={person.full_name} has={person.photo} className="emp-chosen__photo" />
-        <div className="emp-chosen__text">
-          <p className="emp-chosen__top">
-            <b>{shortName(person.full_name)}</b>
-            <Status person={person} className="" />
-          </p>
-          <p className="emp-chosen__role">{at?.position_name ?? 'Должность не назначена'}</p>
-          <p className="emp-chosen__dept">{at?.department_name ?? '—'}</p>
-        </div>
-      </div>
-
-      <div className="emp-chosen__facts">
-        <p className="emp-chosen__row">
-          <Bit icon="pin" text={at?.office_name ?? '—'} />
-          <Bit icon="clock" text={scheduleLine(person.current_schedule)} />
-        </p>
-        <p className="emp-chosen__row">
-          <Bit icon="send" text={person.telegram_username
-            ? `@${person.telegram_username}` : telegramShort(person.telegram_state)} />
-        </p>
-        <p className="emp-chosen__row">
-          <Bit icon="inbox" text={email ?? 'Почта не указана'} />
-        </p>
-      </div>
-
-      <div className="emp-chosen__actions">
-        <button type="button" className="emp-btn emp-btn--outline" onClick={onOpen}>
-          Открыть профиль
-        </button>
-        {/* «Написать» ведёт на почту: другого канала из CRM нет. */}
-        <a className={email ? 'emp-btn emp-btn--blue' : 'emp-btn emp-btn--blue emp-btn--off'}
-           href={email ? `mailto:${email}` : undefined}
-           aria-disabled={email ? undefined : true}>
-          Написать
-        </a>
-      </div>
-    </>
-  );
-}
-
 // --- мелочи ------------------------------------------------------------------
-
-function Select({ label, empty, value, options, onChange }: {
-  label: string;
-  empty: string;
-  value: string;
-  options: { id: string; name: string }[];
-  onChange: (value: string) => void;
-}) {
-  return <Dropdown label={label} empty={empty} value={value} options={options} onChange={onChange} />;
-}
 
 function Rows<T>({ block, children }: { block: Block<T>; children: (data: T) => React.ReactNode }) {
   if (block.state === 'loading') return <p className="emp-empty">Загружаем список…</p>;

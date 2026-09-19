@@ -114,6 +114,27 @@ function day(date: string, weekday: number, over: Record<string, unknown> = {}) 
 }
 
 /** Понедельник 3 — воскресенье 9 августа 2026. */
+// Новые разрезы обзора: регионы и рейтинг людей.
+const REGION_ROWS = [
+  { id: 'r-1', name: 'Ташкент', position: 1,
+    attendance: { numerator: 24, denominator: 25, percent: 96 },
+    previous_attendance: { numerator: 20, denominator: 25, percent: 80 },
+    difference_points: 16 },
+  { id: 'r-2', name: 'Самарканд', position: 2,
+    attendance: { numerator: 8, denominator: 10, percent: 80 },
+    previous_attendance: { numerator: 9, denominator: 10, percent: 90 },
+    difference_points: -10 },
+];
+
+const PEOPLE = [
+  { id: 'e-9', name: 'Саидова Дилноза',
+    attendance: { numerator: 3, denominator: 5, percent: 60 },
+    late_days: 2, late_minutes: 35, missed_days: 2 },
+  { id: 'e-1', name: 'Каримов Алишер',
+    attendance: { numerator: 5, denominator: 5, percent: 100 },
+    late_days: 0, late_minutes: 0, missed_days: 0 },
+];
+
 const OVERVIEW = {
   period: { first: '2026-08-03', last: '2026-08-09', days: 7 },
   previous_period: { first: '2026-07-27', last: '2026-08-02' },
@@ -158,6 +179,9 @@ const OVERVIEW = {
     })),
     best: 5,
   },
+  // Новые разрезы: та же явка по регионам и рейтинг людей.
+  regions: REGION_ROWS,
+  employees: PEOPLE,
 };
 
 const REGIONS = { items: [{ id: 'r-1', code: 'C', name: 'Центр', status: 'ACTIVE' }] };
@@ -184,6 +208,73 @@ function network(handler: (path: string, method: string) => Response | null = ()
 
 const PAGE = '/analytics?from=2026-08-03&to=2026-08-09';
 const overviewCalls = (calls: { url: string }[]) => calls.filter((c) => c.url.includes('/analytics/overview'));
+
+describe('регионы и сотрудники', () => {
+  test('регионы сравниваются столбцами, а не кругами', async () => {
+    // Доли целого здесь нет: есть величины, которые сравнивают между
+    // собой, и длина столбца читается точнее, чем угол сектора.
+    network();
+    renderApp(PAGE);
+
+    const block = await screen.findByLabelText('Регионы');
+    expect(within(block).getByRole('button', { name: /Ташкент/ })).toBeTruthy();
+    expect(within(block).getByText('96%')).toBeTruthy();
+  });
+
+  test('нажатие по региону сужает всю страницу', async () => {
+    const calls = network();
+    renderApp(PAGE);
+
+    const block = await screen.findByLabelText('Регионы');
+    fireEvent.click(within(block).getByRole('button', { name: /Самарканд/ }));
+
+    await waitFor(() =>
+      expect(overviewCalls(calls).pop()?.url).toContain('region_id=r-2'),
+    );
+  });
+
+  test('рейтинг ставит худшую явку сверху', async () => {
+    // Страницу открывают, чтобы найти проблему, а не полюбоваться
+    // отличниками.
+    network();
+    renderApp(PAGE);
+
+    const block = await screen.findByLabelText('Сотрудники');
+    const names = within(block).getAllByRole('row').slice(1)
+      .map((row) => row.textContent ?? '');
+    expect(names[0]).toContain('Саидова Дилноза');
+    expect(names[0]).toContain('60%');
+    // Опоздания показаны днями и минутами сверх допуска.
+    expect(names[0]).toContain('2 дн · 35 мин');
+  });
+
+  test('выбор сотрудника сужает страницу и снимается', async () => {
+    const calls = network();
+    renderApp(PAGE);
+
+    const block = await screen.findByLabelText('Сотрудники');
+    fireEvent.click(within(block).getByRole('button', { name: 'Саидова Дилноза' }));
+
+    await waitFor(() =>
+      expect(overviewCalls(calls).pop()?.url).toContain('employee_id=e-9'),
+    );
+    // И его видно в фильтрах, иначе человек не поймёт, почему цифры
+    // вдруг стали другими.
+    expect(await screen.findByRole('button', { name: /Саидова Дилноза ✕/ }))
+      .toBeTruthy();
+  });
+
+  test('ответ без новых блоков не роняет страницу', async () => {
+    network((path) =>
+      path.includes('/analytics/overview')
+        ? json(200, { ...OVERVIEW, regions: undefined, employees: undefined })
+        : null,
+    );
+    renderApp('/analytics?from=2026-06-01&to=2026-06-07');
+
+    expect(await screen.findByText(/сравнивать нечего/)).toBeTruthy();
+  });
+});
 
 describe('движение сотрудников', () => {
   test('показывает принято, уволено и разницу со знаком', async () => {
@@ -271,7 +362,9 @@ describe('фильтры', () => {
       expect(last?.url).not.toContain('date_from=2026-08-03');
     });
 
-    await pick('Регион', 'Центр');
+    // Метка триггера — «Регион: <выбранное>», и она не спорит с
+    // заголовком блока сравнения «Регионы».
+    await pick(/^Регион: /, 'Центр');
     await waitFor(() => expect(overviewCalls(calls).pop()?.url).toContain('region_id=r-1'));
   });
 

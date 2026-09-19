@@ -136,7 +136,9 @@ export function AttendancePage() {
     to: params.get('to') ?? undefined,
   });
   const search = params.get('search') ?? '';
+  const region = params.get('region_id') ?? '';
   const office = params.get('office_id') ?? '';
+  const department = params.get('department_id') ?? '';
   const state = params.get('state') ?? '';
   const rawFlag = params.get('flag');
   const flag = rawFlag === 'late' || rawFlag === 'open' || rawFlag === 'geo' ? rawFlag : '';
@@ -174,10 +176,14 @@ export function AttendancePage() {
   }, [draft, search, patch]);
 
   const scope = useMemo(
-    () => ({ date: day, ...(office ? { office_id: office } : {}) }),
-    [day, office],
+    () => ({
+      date: day,
+      ...(office ? { office_id: office } : region ? { region_id: region } : {}),
+      ...(department ? { department_id: department } : {}),
+    }),
+    [day, office, region, department],
   );
-  const wide = `${day}|${office}|${attempt}`;
+  const wide = `${day}|${region}|${office}|${department}|${attempt}`;
   const narrowed = Boolean(state || search);
 
   // Показатели дня — у дашборда: он считает их по всему составу.
@@ -202,9 +208,28 @@ export function AttendancePage() {
   const shift = narrowed ? narrow : base;
 
   const [directory] = useBlock(
-    (signal) => api.offices(signal).then((o) => o.items.filter((one) => one.status === 'ACTIVE')),
-    'offices',
+    (signal) =>
+      Promise.all([
+        api.regions(signal),
+        api.offices(signal),
+        api.departmentsPage({ limit: '200', status: 'ACTIVE' }, signal),
+      ]).then(([regions, offices, departments]) => ({
+        regions: regions.items.filter((one) => one.status === 'ACTIVE'),
+        offices: offices.items.filter((one) => one.status === 'ACTIVE'),
+        departments: departments.items,
+      })),
+    'attendance-directory',
   );
+
+  // Офисы сужаются выбранным регионом: предлагать офис другого региона
+  // после того, как регион выбран, — значит показывать заведомо пустой
+  // результат и заставлять человека гадать, почему список пуст.
+  const officeOptions = useMemo(() => {
+    if (directory.state !== 'ready') return [];
+    return region
+      ? directory.data.offices.filter((one) => one.region_id === region)
+      : directory.data.offices;
+  }, [directory, region]);
 
   // Сводка за период. Грузится только когда период шире дня: за день
   // всё уже посчитано карточками дашборда, и второй запрос показал бы
@@ -214,11 +239,11 @@ export function AttendancePage() {
       {
         date_from: span.from,
         date_to: span.to,
-        ...(office ? { office_id: office } : {}),
+        ...(office ? { office_id: office } : region ? { region_id: region } : {}),
       },
       signal,
     ),
-    `overview|${span.from}|${span.to}|${office}|${attempt}`,
+    `overview|${span.from}|${span.to}|${region}|${office}|${attempt}`,
     tab === 'day' && period !== 'day',
   );
 
@@ -262,8 +287,11 @@ export function AttendancePage() {
     setOrdered(null);
     try {
       await api.orderExport({
-        kind: 'attendance', fmt: 'xlsx', date_from: day, date_to: day,
-        ...(office ? { office_id: office } : {}),
+        kind: 'attendance', fmt: 'xlsx',
+        // Выгружается ровно то, что на экране: период, а не всегда день.
+        date_from: span.from, date_to: span.to,
+        ...(office ? { office_id: office } : region ? { region_id: region } : {}),
+        ...(department ? { department_id: department } : {}),
       });
       setOrdered('Выгрузка поставлена в очередь');
     } catch (error) {
@@ -364,9 +392,20 @@ export function AttendancePage() {
                            aria-label="Поиск сотрудника"
                            onChange={(event) => setDraft(event.target.value)} />
                   </label>
+                  <Select label="Регион" empty="Все регионы" value={region}
+                          options={directory.state === 'ready' ? directory.data.regions : []}
+                          onChange={(value) => patch({
+                            region_id: value || null,
+                            // Офис другого региона после смены региона
+                            // показывал бы пустой список без объяснения.
+                            office_id: null,
+                          })} />
                   <Select label="Офис" empty="Все офисы" value={office}
-                          options={directory.state === 'ready' ? directory.data : []}
+                          options={officeOptions}
                           onChange={(value) => patch({ office_id: value || null })} />
+                  <Select label="Отдел" empty="Все отделы" value={department}
+                          options={directory.state === 'ready' ? directory.data.departments : []}
+                          onChange={(value) => patch({ department_id: value || null })} />
                   <Select label="Статус" empty="Все статусы" value={state} options={STATUS_OPTIONS}
                           onChange={(value) => patch({ state: value || null, flag: null })} />
                 </div>
@@ -382,7 +421,9 @@ export function AttendancePage() {
                   <Section block={shift} name="состав смены">
                     {(data) => rows.length === 0 ? (
                       <p className="att-empty">
-                        {state || flag || search || office ? 'По этим условиям никого нет.' : 'На выбранный день отметок нет.'}
+                        {state || flag || search || office || region || department
+                          ? 'По этим условиям никого нет.'
+                          : 'Нет отметок за выбранный период.'}
                       </p>
                     ) : (
                       <>
@@ -711,7 +752,7 @@ function Person({ row, day, zone, canFix, onFix }: {
     (signal) => row
       ? api.events({
         employee_id: row.employee_id, date_from: day, date_to: day,
-        verification_status: 'ACCEPTED', limit: '20',
+        verification_status: 'ACCEPTED', limit: '100',
       }, signal)
       : Promise.resolve({ items: [], has_more: false, next_cursor: null } as unknown as api.Cursored<api.EventRow>),
     `events|${row?.employee_id ?? ''}|${day}`,
@@ -725,8 +766,11 @@ function Person({ row, day, zone, canFix, onFix }: {
     );
   }
   const status = stateOf(row);
+  // Все события дня, а не первые три: у человека с обедом их четыре, и
+  // обрезанный список прячет как раз то, из-за чего карточку открыли.
+  // Длинный список прокручивается внутри себя.
   const list = events.state === 'ready'
-    ? [...events.data.items].sort((a, b) => a.occurred_at.localeCompare(b.occurred_at)).slice(0, 3)
+    ? [...events.data.items].sort((a, b) => a.occurred_at.localeCompare(b.occurred_at))
     : [];
   // Отметок нет и время в офисе не набрано — показывать нечего, кроме
   // самого факта. Пока события грузятся, пустым состоянием не мигаем.
@@ -753,6 +797,21 @@ function Person({ row, day, zone, canFix, onFix }: {
           <dd>{row.department_name ?? '—'}</dd>
           <dt><AppIcon name="calendar" size={18} />График</dt>
           <dd>{hours(row)}</dd>
+          {/* Опоздание показывается, только когда его есть с чем
+              сравнивать: `null` означает «графика нет» или «человек не
+              приходил», а не «пришёл вовремя». */}
+          {(row.late_minutes ?? 0) > 0 && (
+            <>
+              <dt><AppIcon name="clock" size={18} />Опоздание</dt>
+              <dd>{row.late_minutes} мин</dd>
+            </>
+          )}
+          {row.absence_name && (
+            <>
+              <dt><AppIcon name="doc" size={18} />Отсутствие</dt>
+              <dd>{row.absence_name}</dd>
+            </>
+          )}
         </dl>
 
         {/*
@@ -788,10 +847,12 @@ function Person({ row, day, zone, canFix, onFix }: {
             <span className="att-person__blankIcon" aria-hidden="true">
               <AppIcon name="clock" size={20} />
             </span>
-            <p className="att-person__blankTitle">
-              {day === today() ? 'Нет отметок за сегодня' : 'Нет отметок за этот день'}
+            <p className="att-person__blankTitle">Нет отметок за выбранный период</p>
+            <p className="att-person__blankText">
+              {day === today()
+                ? 'Сотрудник сегодня ещё не отмечал вход или выход.'
+                : 'В этот день сотрудник не отмечал ни входа, ни выхода.'}
             </p>
-            <p className="att-person__blankText">Сотрудник ещё не отметил вход или выход</p>
             <span className="att-status att-status--warn">
               {stateOf(row).title}
             </span>

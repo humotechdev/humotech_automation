@@ -277,14 +277,17 @@
   border: 0;
   border-radius: 8px;
   background: none;
-  color: var(--text-muted);
+  color: var(--text-heading);
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: transform 0.15s ease;
 }
 
-.adm-modal__close:hover {
-  background: rgb(15 23 42 / 6%);
-  color: var(--text-heading);
+/* При наведении крестик чуть подрастает — и только. Серая плашка под
+   ним читалась как отдельная кнопка внутри шапки окна. */
+.adm-modal__close:hover,
+.adm-modal__close:focus-visible {
+  background: none;
+  transform: scale(1.18);
 }
 
 .adm-modal__form {
@@ -853,4 +856,329 @@
   .adm-row {
     flex-wrap: wrap;
   }
+}
+
+
+/* ============================================================================
+   Новый облик: тот же язык, что у «Нового сотрудника».
+
+   Блок идёт последним намеренно. Выше лежит прежняя вёрстка — один
+   белый лист с разделителями и плотными строками. Она не была
+   неправильной, но рядом с мастером приёма читалась как другая
+   программа: другие радиусы, другой шрифт заголовка, другие кнопки.
+   Здесь всё это приведено к одному виду и перекрыто по одному разу.
+
+   Колонка по центру, а не во всю ширину: строки справочника короткие,
+   и растянутые на полтора экрана они превращаются в подпись слева и
+   кнопку справа через пустоту.
+   ========================================================================== */
+
+.adm-top,
+.adm-sheet,
+.adm-foot {
+  width: 100%;
+  max-width: 1060px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.adm-top {
+  margin-bottom: 22px;
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+}
+
+.adm-top__title {
+  font-size: 30px;
+  line-height: 34px;
+  font-weight: 700;
+  color: #13295a;
+}
+
+.adm-top__sub {
+  margin-top: 8px;
+  font-size: 15px;
+  line-height: 21px;
+  color: #6b7c98;
+}
+
+/* Лист распадается на карточки: у каждого справочника своя, с воздухом
+   между ними. Общая рамка вокруг всех четырёх делала из настроек
+   таблицу, в которой не видно, где кончается один список. */
+.adm-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+.adm-block {
+  border: 1px solid rgba(221, 229, 239, 0.9);
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 6px 24px rgba(30, 64, 120, 0.06);
+  overflow: hidden;
+  transition: box-shadow 0.16s ease, border-color 0.16s ease;
+}
+
+.adm-block:hover {
+  border-color: #cfdcec;
+}
+
+.adm-block--open {
+  box-shadow: 0 10px 30px rgba(30, 64, 120, 0.1);
+}
+
+.adm-block + .adm-block {
+  border-top: 1px solid rgba(221, 229, 239, 0.9);
+}
+
+.adm-block__head {
+  gap: 16px;
+  padding: 18px 22px;
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+}
+
+.adm-block__icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+}
+
+.adm-block__title {
+  font-size: 17px;
+  font-weight: 700;
+  color: #13295a;
+}
+
+.adm-block__about {
+  font-size: 13.5px;
+  line-height: 19px;
+  color: #6b7c98;
+}
+
+/* Число — спокойная подпись, а не плашка: счётчик в цветной капсуле
+   спорил с кнопкой «Добавить» за внимание в той же строке. */
+.adm-block__count {
+  font-size: 13px;
+  font-weight: 600;
+  color: #4a5c78;
+}
+
+.adm-block__add {
+  height: 42px;
+  padding: 0 20px;
+  border: 1px solid #1b6ef3;
+  border-radius: 9px;
+  background: #1b6ef3;
+  font-size: 14.5px;
+  font-weight: 600;
+  color: #ffffff;
+  box-shadow: none;
+}
+
+.adm-block__add:hover:not(:disabled) {
+  border-color: #185fc4;
+  background: #185fc4;
+}
+
+.adm-block__chevron {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  color: #6b7c98;
+}
+
+.adm-block__chevron:hover {
+  background: #f2f7ff;
+  color: #1466d8;
+}
+
+.adm-block__body {
+  padding: 0 22px 18px;
+  border-top: 1px solid #eef2f8;
+}
+
+.adm-block__empty {
+  padding: 18px 0 4px;
+  font-size: 14px;
+  color: #6b7c98;
+}
+
+/* --- строки справочника --- */
+
+.adm-rows {
+  gap: 0;
+  margin-top: 4px;
+}
+
+.adm-row {
+  align-items: center;
+  gap: 14px;
+  min-height: 58px;
+  padding: 10px 12px;
+  border: 0;
+  border-bottom: 1px solid #eef2f8;
+  border-radius: 10px;
+  background: transparent;
+}
+
+.adm-rows > .adm-row:last-child {
+  border-bottom: 0;
+}
+
+.adm-row:hover {
+  background: #f7fafe;
+}
+
+.adm-row__title {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: #13295a;
+}
+
+.adm-row__note {
+  font-size: 12.5px;
+  line-height: 17px;
+  color: #6b7c98;
+}
+
+.adm-row--off .adm-row__title {
+  color: #8c9bb2;
+}
+
+.adm-row__tool {
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #6b7c98;
+}
+
+.adm-row__tool:hover:not(:disabled) {
+  background: #eef4fb;
+  color: #1466d8;
+}
+
+.adm-row__tool--bad:hover:not(:disabled) {
+  background: #fdf1ef;
+  color: #b42318;
+}
+
+.adm-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 18px;
+  font-size: 13px;
+  color: #6b7c98;
+}
+
+/* --- окна --- */
+
+/* Те же окна, что у мастера приёма: радиус, тень, заголовок и кнопки
+   совпадают. Два похожих, но разных окна в одной программе человек
+   читает как два разных механизма. */
+.adm-modal {
+  background: rgba(15, 28, 56, 0.45);
+}
+
+.adm-modal__box {
+  width: min(520px, 100%);
+  padding: 26px 28px 24px;
+  border-radius: 14px;
+  box-shadow: 0 24px 60px rgba(13, 32, 70, 0.3);
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  color: #22355c;
+}
+
+.adm-modal__title {
+  font-size: 20px;
+  font-weight: 700;
+  color: #13295a;
+}
+
+.adm-modal__form {
+  gap: 16px;
+}
+
+.adm-modal__tools {
+  gap: 10px;
+  margin-top: 6px;
+  padding-top: 18px;
+  border-top: 1px solid #e1e8f1;
+}
+
+/* Поля окна — той же высоты и скругления, что в мастере. */
+.adm-modal .input,
+.adm-modal .app-select__trigger {
+  min-height: 44px;
+  border-radius: 8px;
+  font-size: 14.5px;
+}
+
+/* Кнопки окна: «Отмена» контуром, действие синим. */
+.adm-modal__tools .btn {
+  height: 44px;
+  padding: 0 22px;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.adm-modal__tools .btn--primary {
+  border-color: #1b6ef3;
+  background: #1b6ef3;
+  color: #ffffff;
+  box-shadow: none;
+}
+
+.adm-modal__tools .btn--primary:hover:not(:disabled) {
+  border-color: #185fc4;
+  background: #185fc4;
+}
+
+/* Дни недели и часы — мягче и крупнее: по ним попадают мышью. */
+.adm-day {
+  height: 38px;
+  min-width: 46px;
+  border-radius: 9px;
+  font-size: 13.5px;
+}
+
+.adm-day--on {
+  border-color: #1b6ef3;
+  background: #1b6ef3;
+  color: #ffffff;
+}
+
+@media (max-width: 720px) {
+  .adm-block__head {
+    grid-template-columns: 44px minmax(0, 1fr) 36px;
+    row-gap: 12px;
+    padding: 16px;
+  }
+
+  .adm-block__add {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .adm-block__body {
+    padding: 0 16px 16px;
+  }
+}
+
+/* Колонки шапки под новые размеры значка и стрелки. */
+.adm-block__head {
+  grid-template-columns: 44px minmax(0, 1fr) auto 36px;
+}
+
+/* Список листается внутри карточки, но высоты ему добавлено: при 264
+   пикселях в графиках виднелось три строки из семи. */
+.adm-rows {
+  max-height: 380px;
 }

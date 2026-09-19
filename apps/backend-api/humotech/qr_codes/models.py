@@ -45,8 +45,23 @@ class OfficeQrPoint(
     qr_mode = models.CharField(
         max_length=20, choices=choices(QR_MODES), db_default="ROTATING"
     )
-    # Только хеш статического токена: сам токен в базе не лежит.
+    # Хеш статического токена — по нему узнаётся отсканированный код.
     static_token_hash = models.TextField(null=True, blank=True)
+    # Сам токен наклейки.
+    #
+    # Раньше его не хранили вовсе, и код показывался ровно один раз, при
+    # выпуске. На деле это значило: потерял картинку — меняй код и бегай
+    # переклеивать наклейку у каждой двери. Кадровик должен уметь
+    # открыть и распечатать код офиса в любой день.
+    #
+    # Что это даёт тому, кто добрался до базы: ровно то же, что снимок
+    # наклейки на стене. Отметку по печатному коду сервер принимает
+    # только с координатами внутри радиуса офиса, поэтому знание кода
+    # само по себе отметиться из дома не позволяет.
+    #
+    # У точек, выпущенных до этой колонки, здесь пусто: восстановить
+    # прежний код неоткуда, его заменяют новым.
+    static_token = models.TextField(null=True, blank=True)
     rotation_seconds = models.IntegerField(null=True, blank=True)
     token_version = models.IntegerField(db_default=1)
     require_geolocation = models.BooleanField(db_default=False)

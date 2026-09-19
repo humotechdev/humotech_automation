@@ -18,7 +18,7 @@
   flex-direction: column;
   gap: 10px;
   margin: -8px 0 0 3px;
-  font-family: 'Segoe UI', 'Open Sans', system-ui, sans-serif;
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
   color: var(--an-text);
 }
 
@@ -1261,4 +1261,104 @@
 .an-movement__table thead th {
   color: var(--muted, #6b7280);
   font-weight: 500;
+}
+
+/* Сравнение регионов и рейтинг сотрудников — в один ряд на широком
+   экране, друг под другом на узком. */
+.an-row--compare {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  gap: 16px;
+  margin: 0 0 16px;
+}
+
+@media (max-width: 1100px) {
+  .an-row--compare {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Столбцы сравнения. Длина читается точнее, чем угол сектора, поэтому
+   здесь полосы, а не круги. */
+.an-bars {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.an-bar {
+  display: grid;
+  grid-template-columns: minmax(80px, 1fr) minmax(0, 2fr) 48px;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
+}
+
+.an-bar:hover { background: rgba(31, 111, 224, 0.06); }
+.an-bar--on { border-color: rgba(31, 111, 224, 0.4); background: rgba(31, 111, 224, 0.08); }
+
+.an-bar__name { min-width: 0; overflow-wrap: anywhere; }
+
+.an-bar__track {
+  height: 10px;
+  border-radius: 6px;
+  background: rgba(31, 111, 224, 0.12);
+  overflow: hidden;
+}
+
+.an-bar__track i {
+  display: block;
+  height: 100%;
+  background: #1f6fe0;
+}
+
+.an-bar__value { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Таблица сотрудников. Фиксированная раскладка и перенос в первой
+   колонке: фамилии длинные, и без этого таблица вылезает за карточку. */
+.an-people {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 13px;
+}
+
+.an-people th,
+.an-people td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line, #e5e7eb);
+  text-align: right;
+}
+
+.an-people th[scope="row"] {
+  text-align: left;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+
+.an-people thead th {
+  color: var(--muted, #6b7280);
+  font-weight: 500;
+}
+
+.an-people__on { background: rgba(31, 111, 224, 0.07); }
+
+/* Выбранный сотрудник в строке фильтров. */
+.an-chip--clear {
+  border: 1px solid rgba(31, 111, 224, 0.4);
+  border-radius: 999px;
+  padding: 6px 12px;
+  background: rgba(31, 111, 224, 0.08);
+  font-size: 13px;
+  cursor: pointer;
 }

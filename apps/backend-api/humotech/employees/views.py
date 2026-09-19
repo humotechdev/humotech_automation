@@ -20,14 +20,17 @@ from humotech.employees.serializers import (
     AssignmentChangeSerializer,
     AttachedFileSerializer,
     AssignmentSerializer,
+    DocumentAttachSerializer,
     EmployeeCardSerializer,
     EmployeeCreateSerializer,
+    EmployeeDocumentSerializer,
     EmployeeListItemSerializer,
     EmployeeSearchItemSerializer,
     EmployeeOnboardSerializer,
     EmployeeUpdateSerializer,
     EndProbationSerializer,
     OnboardedSerializer,
+    PhotoSetSerializer,
     PromoteSerializer,
     TerminateSerializer,
 )
@@ -40,8 +43,9 @@ class EmployeeViewSet(ServiceViewSet):
 
     # ------------------------------------------------------------------ чтение
 
-    #: Фильтры списка, которые приходят из строки запроса как есть.
-    SCOPE_PARAMS = ("office_id", "region_id", "department_id")
+    #: Фильтры списка. Каждый принимает несколько значений через запятую:
+    #: кадровик смотрит «два офиса и три отдела», а не по одному.
+    SCOPE_PARAMS = ("office_id", "region_id", "department_id", "position_id")
 
     def list(self, request):
         params = self.list_params()
@@ -109,11 +113,19 @@ class EmployeeViewSet(ServiceViewSet):
         return Response({"items": EmployeeSearchItemSerializer(rows, many=True).data})
 
     def _scope(self, request) -> dict:
+        """Фильтры списка списками значений.
+
+        `office_id=a,b` — «в офисе a ИЛИ b». Одно значение остаётся
+        одним значением: прежние ссылки и закладки продолжают работать.
+        """
         found = {}
         for name in self.SCOPE_PARAMS:
             value = request.query_params.get(name)
-            if value:
-                found[name] = value
+            if not value:
+                continue
+            values = [part.strip() for part in str(value).split(",") if part.strip()]
+            if values:
+                found[name] = values
         return found
 
     def retrieve(self, request, pk=None):
@@ -208,6 +220,56 @@ class EmployeeViewSet(ServiceViewSet):
             filename=record.original_filename,
             content_type=record.mime_type,
         )
+
+    @extend_schema(
+        summary="Приложить бумагу заведённому сотруднику",
+        description=(
+            "Строка чек-листа заполняется, а не дублируется: на "
+            "сотрудника приходится одна бумага каждого вида. «Прочее» "
+            "— исключение, его может быть сколько угодно."
+        ),
+        request=DocumentAttachSerializer,
+        responses={201: EmployeeDocumentSerializer},
+    )
+    @action(detail=True, methods=["post"], url_path="documents")
+    def document_attach(self, request, pk=None):
+        payload = validated(DocumentAttachSerializer, request.data)
+        row = EmployeeAttachmentService().attach_document(self.actor, pk, **payload)
+        return Response(EmployeeDocumentSerializer(row).data, status=201)
+
+    @extend_schema(
+        summary="Снять файл с бумаги",
+        description=(
+            "Строка чек-листа остаётся и возвращается в исходное "
+            "состояние: «паспорта нет» — это факт, который кадровику "
+            "нужно видеть. Свободная бумага удаляется целиком."
+        ),
+        parameters=[
+            OpenApiParameter(
+                "document_id", OpenApiTypes.UUID, OpenApiParameter.PATH
+            )
+        ],
+        responses={204: None},
+    )
+    @action(
+        detail=True,
+        methods=["delete"],
+        url_path="documents/(?P<document_id>[^/.]+)",
+    )
+    def document_detach(self, request, pk=None, document_id=None):
+        EmployeeAttachmentService().detach_document(self.actor, pk, document_id)
+        return Response(status=204)
+
+    @extend_schema(
+        summary="Заменить фотографию сотрудника",
+        request=PhotoSetSerializer,
+        responses={200: AttachedFileSerializer},
+    )
+    @action(detail=True, methods=["post"], url_path="photo-set")
+    def photo_set(self, request, pk=None):
+        payload = validated(PhotoSetSerializer, request.data)
+        record = EmployeeAttachmentService().set_photo(self.actor, pk, **payload)
+        return Response(AttachedFileSerializer(record).data)
 
     @extend_schema(
         # Тип параметра из адреса сам не выводится: путь задан регулярным

@@ -109,6 +109,17 @@ export type OverviewOffice = {
   difference_points: number | null;
 };
 
+/** Строка рейтинга сотрудников: явка и опоздания за период. */
+export type OverviewPerson = {
+  id: string;
+  name: string;
+  attendance: Share;
+  late_days: number;
+  /** Минуты сверх допуска, а не вся разница со временем начала смены. */
+  late_minutes: number;
+  missed_days: number;
+};
+
 export type ArrivalBucket = {
   /** Минуты от начала личной смены: −60 … +90. */
   from: number;
@@ -144,6 +155,10 @@ export type Overview = {
   days: OverviewDay[];
   previous_days: { day: string; attended: number; expected: number; percent: number | null }[];
   offices: OverviewOffice[];
+  /** Та же явка уровнем выше: регионы собраны из своих офисов. */
+  regions: OverviewOffice[];
+  /** Худшая явка сверху: страницу открывают, чтобы найти проблему. */
+  employees: OverviewPerson[];
   arrivals: {
     bucket_minutes: number;
     from_minutes: number;
@@ -167,6 +182,9 @@ export type OverviewQuery = {
   date_to: string;
   region_id?: string;
   office_id?: string;
+  /** Отдел и сотрудник сужают состав, а не пересчитывают правила. */
+  department_id?: string;
+  employee_id?: string;
   weekday?: string;
 };
 
@@ -435,6 +453,77 @@ export const employee = (id: string, signal?: AbortSignal) =>
   request<Record<string, unknown>>(`/employees/${id}/`, signal ? { signal } : {});
 
 /**
+ * Правка карточки: только собственные данные человека.
+ *
+ * Офис, отдел, должность и график сюда не входят — у них есть период
+ * действия, и меняются они переводом (`changeEmployeeAssignment`).
+ * Сервер отвергнет весь запрос, если среди полей окажется чужое.
+ */
+export type EmployeeEdit = {
+  first_name?: string;
+  last_name?: string;
+  middle_name?: string | null;
+  phone?: string | null;
+  corporate_email?: string | null;
+  birth_date?: string | null;
+  gender?: string | null;
+  marital_status?: string | null;
+};
+
+export const updateEmployee = (id: string, body: EmployeeEdit) =>
+  request<Record<string, unknown>>(`/employees/${id}/`, { method: 'PATCH', body });
+
+/**
+ * Перевод: другой офис, отдел, должность, руководитель или вид занятости.
+ *
+ * Это НОВЫЙ период назначения, а не правка прежнего: отметки за
+ * прошлый месяц обязаны остаться отнесёнными к тому офису, где человек
+ * тогда работал. Отсюда и `effective_from` — он должен быть позже
+ * начала действующего назначения, иначе сервер откажет.
+ */
+/**
+ * Приложить бумагу уже заведённому сотруднику.
+ *
+ * Файл сначала уходит `uploadEmployeeFile`, затем привязывается сюда:
+ * до привязки это просто файл организации, ни на кого не ссылающийся.
+ * Строка чек-листа заполняется, а не дублируется — на сотрудника
+ * приходится одна бумага каждого вида, кроме «прочего».
+ */
+export const attachEmployeeDocument = (
+  id: string,
+  body: { kind: EmployeeDocumentKind; file_id: string; title?: string },
+) => request<Record<string, unknown>>(`/employees/${id}/documents/`, {
+  method: 'POST',
+  body,
+});
+
+/** Снять файл с бумаги. Строка чек-листа остаётся пустой, «прочее» исчезает. */
+export const removeEmployeeDocument = (id: string, documentId: string) =>
+  request<void>(`/employees/${id}/documents/${documentId}/`, { method: 'DELETE' });
+
+/** Заменить фотографию в карточке. Файл — из `uploadEmployeeFile`. */
+export const setEmployeePhoto = (id: string, file_id: string) =>
+  request<AttachedFile>(`/employees/${id}/photo-set/`, {
+    method: 'POST',
+    body: { file_id },
+  });
+
+export const changeEmployeeAssignment = (
+  id: string,
+  body: {
+    effective_from: string;
+    office_id?: string;
+    department_id?: string | null;
+    position_id?: string | null;
+    manager_employee_id?: string | null;
+    employment_type?: string;
+  },
+) => request<Assignment>(`/employees/${id}/change-assignment/`, {
+  method: 'POST',
+  body,
+});
+
+/**
  * Принять стажёра в штат.
  *
  * Должность передаётся, только если её пересмотрели по итогам
@@ -690,7 +779,15 @@ export type PresencePage = {
 };
 
 export const presenceDay = (
-  params: { date?: string; region_id?: string; office_id?: string; state?: string; search?: string },
+  params: {
+    date?: string;
+    region_id?: string;
+    office_id?: string;
+    /** Отдел сотрудника. Сервер умел его давно — интерфейс не спрашивал. */
+    department_id?: string;
+    state?: string;
+    search?: string;
+  },
   signal?: AbortSignal,
 ) => request<PresencePage>(`/attendance/presence${query(params)}`, signal ? { signal } : {});
 
@@ -854,6 +951,8 @@ export type QrPoint = {
   token_version?: number;
   /** Попыток за сегодня в поясе офиса. `null` — не считали. */
   scans_today?: number | null;
+  /** Когда сканировали в последний раз. `null` — ни разу. */
+  last_scan_at?: string | null;
 };
 
 export const qrPoints = (params: { office_id?: string }, signal?: AbortSignal) =>
@@ -910,6 +1009,18 @@ export const setQrPointActive = (id: string, active: boolean) =>
 
 export const reissueQrPoint = (id: string) =>
   request<IssuedQrPoint>(`/qr-points/${id}/reissue-token/`, { method: 'POST', body: {} });
+
+/**
+ * Ссылка наклейки — посмотреть, скачать или распечатать код заново.
+ *
+ * Сервер откажет с объяснением, если точка выпущена до того, как коды
+ * стали храниться: такой код не восстановить, его заменяют новым.
+ */
+export const qrPointSticker = (id: string, signal?: AbortSignal) =>
+  request<{ sticker_link: string | null }>(
+    `/qr-points/${id}/sticker/`,
+    signal ? { signal } : {},
+  );
 
 export const office = (id: string, signal?: AbortSignal) =>
   request<OfficeFull>(`/offices/${id}/`, signal ? { signal } : {});

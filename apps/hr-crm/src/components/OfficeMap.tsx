@@ -55,10 +55,12 @@ export function OfficeMap({ place, radius, picking, editable, onPlace, focus = n
   const circle = useRef<L.Circle | null>(null);
   const handler = useRef(onPlace);
   const pickingRef = useRef(picking);
+  const editableRef = useRef(editable);
   const [failed, setFailed] = useState(false);
 
   handler.current = onPlace;
   pickingRef.current = picking;
+  editableRef.current = editable;
 
   // Карта создаётся один раз на жизнь компонента.
   useEffect(() => {
@@ -71,17 +73,45 @@ export function OfficeMap({ place, radius, picking, editable, onPlace, focus = n
         zoom: place ? 17 : 12,
         zoomControl: true,
         attributionControl: true,
+        // Колесо карта слушает сама — ниже, и только вместе с Ctrl.
+        scrollWheelZoom: false,
       });
       L.tileLayer(TILES, { maxZoom: 19, attribution: ATTRIBUTION }).addTo(created);
     } catch {
       setFailed(true);
       return;
     }
+    // Нажатие по карте ставит точку сразу, без отдельного режима:
+    // тащить метку через полгорода — работа, которой можно не быть.
     created.on('click', (event: L.LeafletMouseEvent) => {
-      if (!pickingRef.current) return;
+      if (!editableRef.current) return;
       handler.current({ lat: event.latlng.lat, lon: event.latlng.lng });
     });
     map.current = created;
+
+    /*
+     * Два пальца по тачпаду листают страницу, а не масштабируют карту.
+     *
+     * Браузер шлёт и прокрутку, и щипок одним событием `wheel`; щипок
+     * отличает `ctrlKey`. Карта во всю высоту окна перехватывала оба, и
+     * страница переставала листаться, стоило увести указатель на карту.
+     *
+     * Шаг копится: щипок по тачпаду сыплет events по паре пикселей, и
+     * масштабировать на каждое — значит улететь на весь мир с одного
+     * движения.
+     */
+    const canvas = box.current;
+    let gathered = 0;
+    const onWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey) return;
+      event.preventDefault();
+      gathered += event.deltaY;
+      const step = gathered <= -40 ? 1 : gathered >= 40 ? -1 : 0;
+      if (step === 0) return;
+      gathered = 0;
+      created.setZoomAround(created.mouseEventToLatLng(event), created.getZoom() + step);
+    };
+    canvas.addEventListener('wheel', onWheel, { passive: false });
 
     // Контейнер меняет размер вместе с окном и вкладками: без этого
     // Leaflet дорисовывает тайлы только в исходный прямоугольник.
@@ -91,6 +121,7 @@ export function OfficeMap({ place, radius, picking, editable, onPlace, focus = n
     observer?.observe(box.current);
 
     return () => {
+      canvas.removeEventListener('wheel', onWheel);
       observer?.disconnect();
       created.remove();
       map.current = null;
@@ -160,41 +191,84 @@ export function OfficeMap({ place, radius, picking, editable, onPlace, focus = n
 
 export type Found = { label: string; place: Place };
 
-/**
- * Поиск адреса в OpenStreetMap (Nominatim). Только по явному нажатию
- * «Найти», не на каждую букву: у сервиса ограничение — запрос в секунду.
+/*
+ * Геокодер — Photon (komoot), а не Nominatim.
+ *
+ * Nominatim отвечает браузеру «Access denied»: его правила запрещают
+ * ходить туда прямо со страницы, и поиск адреса на странице просто не
+ * работал — человек набирал улицу и не получал ничего. Photon построен
+ * на тех же данных OSM, отдаёт CORS-заголовки и ключа не требует.
+ *
+ * Русского языка у Photon нет: названия приходят так, как записаны в
+ * OSM — «Namozgoh ko'chasi». Для Узбекистана это привычная запись, а с
+ * ключом Google геокодирование всё равно уходит к нему и по-русски.
  */
+
+/** Границы Узбекистана: запад, юг, восток, север. */
+const UZ_BOX = '55.9,37.1,73.2,45.6';
+
+type Spot = {
+  name?: string;
+  street?: string;
+  housenumber?: string;
+  district?: string;
+  city?: string;
+  state?: string;
+  county?: string;
+};
+
+/** Из частей адреса — одна строка без повторов. */
+function labelOf(one: Spot): string {
+  const street = [one.street, one.housenumber].filter(Boolean).join(' ');
+  const parts = [one.name, street, one.city ?? one.district ?? one.county, one.state];
+  const seen = new Set<string>();
+  return parts
+    .filter((part): part is string => Boolean(part))
+    .filter((part) => !seen.has(part) && seen.add(part))
+    .join(', ');
+}
+
 export async function searchAddress(text: string, signal?: AbortSignal): Promise<Found[]> {
-  const url = new URL('https://nominatim.openstreetmap.org/search');
-  url.searchParams.set('format', 'jsonv2');
+  const url = new URL('https://photon.komoot.io/api/');
   url.searchParams.set('q', text);
-  url.searchParams.set('limit', '5');
-  url.searchParams.set('accept-language', 'ru');
+  url.searchParams.set('limit', '8');
+  // Рамка страны и середина Ташкента: без них «Бухара» находится
+  // сперва в Румынии, а «Навои» — в Японии.
+  url.searchParams.set('bbox', UZ_BOX);
+  url.searchParams.set('lat', String(DEFAULT_CENTER.lat));
+  url.searchParams.set('lon', String(DEFAULT_CENTER.lon));
   const response = await fetch(url, signal ? { signal } : {});
   if (!response.ok) throw new Error(`search ${response.status}`);
-  const rows = (await response.json()) as { display_name: string; lat: string; lon: string }[];
-  return rows
-    .map((row) => ({ label: row.display_name, place: { lat: Number(row.lat), lon: Number(row.lon) } }))
-    .filter((row) => Number.isFinite(row.place.lat) && Number.isFinite(row.place.lon));
+  const body = (await response.json()) as {
+    features?: { properties?: Spot & { countrycode?: string };
+      geometry?: { coordinates?: [number, number] } }[];
+  };
+  return (body.features ?? [])
+    .filter((one) => (one.properties?.countrycode ?? 'UZ') === 'UZ')
+    .flatMap((one) => {
+      const at = one.geometry?.coordinates;
+      const label = labelOf(one.properties ?? {});
+      if (!at || !label) return [];
+      const [lon, lat] = at;
+      return Number.isFinite(lat) && Number.isFinite(lon) ? [{ label, place: { lat, lon } }] : [];
+    });
 }
 
 /** Адрес точки на карте — чтобы HR не набирал его заново. */
 export async function addressOf(place: Place, signal?: AbortSignal): Promise<string | null> {
-  const url = new URL('https://nominatim.openstreetmap.org/reverse');
-  url.searchParams.set('format', 'jsonv2');
+  const url = new URL('https://photon.komoot.io/reverse');
   url.searchParams.set('lat', String(place.lat));
   url.searchParams.set('lon', String(place.lon));
-  url.searchParams.set('zoom', '18');
-  url.searchParams.set('accept-language', 'ru');
+  url.searchParams.set('limit', '1');
   const response = await fetch(url, signal ? { signal } : {});
   if (!response.ok) return null;
-  const body = (await response.json()) as { display_name?: string; address?: Record<string, string> };
-  const parts = body.address;
-  if (parts) {
-    const street = [parts['road'], parts['house_number']].filter(Boolean).join(', ');
-    const city = parts['city'] ?? parts['town'] ?? parts['village'] ?? parts['state'];
-    const short = [city, street].filter(Boolean).join(', ');
-    if (short) return short;
-  }
-  return body.display_name ?? null;
+  const body = (await response.json()) as { features?: { properties?: Spot }[] };
+  const one = body.features?.[0]?.properties;
+  if (!one) return null;
+  // В карточку офиса идёт короткая запись: город и улица. Название
+  // ближайшей аптеки адресом офиса не является.
+  const street = [one.street, one.housenumber].filter(Boolean).join(' ');
+  const city = one.city ?? one.district ?? one.county ?? one.state;
+  const short = [city, street].filter(Boolean).join(', ');
+  return short || labelOf(one) || null;
 }

@@ -113,6 +113,7 @@ class QrPointSerializer(serializers.Serializer):
     created_by_name = serializers.SerializerMethodField()
     rotated_at = serializers.DateTimeField(allow_null=True)
     scans_today = serializers.SerializerMethodField()
+    last_scan_at = serializers.SerializerMethodField()
     created_at = serializers.DateTimeField()
     updated_at = serializers.DateTimeField()
 
@@ -135,11 +136,22 @@ class QrPointSerializer(serializers.Serializer):
                 return full
         return user.email
 
+    @extend_schema_field(serializers.DateTimeField(allow_null=True))
+    def get_last_scan_at(self, point):
+        """Когда точку сканировали в последний раз. `null` — ни разу."""
+        return getattr(point, "last_scan_at", None)
+
     @extend_schema_field(serializers.IntegerField(allow_null=True))
     def get_scans_today(self, point) -> int | None:
         # Считает сервис списка и карточки; у точки из ответа на выпуск
         # подсчёта нет, и ноль там был бы неправдой.
         return getattr(point, "scans_today", None)
+
+
+class StickerSerializer(serializers.Serializer):
+    """Ссылка наклейки. `null` — имя бота Telegram не настроено."""
+
+    sticker_link = serializers.CharField(allow_null=True)
 
 
 class IssuedQrPointSerializer(serializers.Serializer):

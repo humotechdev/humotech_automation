@@ -7,7 +7,7 @@
  */
 
 .emp {
-  font-family: 'Segoe UI', 'Open Sans', system-ui, sans-serif;
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
   --emp-ink: #13295a;
   --emp-text: #22355c;
   --emp-muted: #6b7c98;
@@ -457,10 +457,12 @@
   color: #1466d8;
 }
 
+/* Состояние стоит в строке имени, а не поверх карточки.
+   Прежние `position: absolute; right: 55px` оставляли место под меню
+   «•••» в правом верхнем углу; меню убрано, а полсотни пикселей
+   пустоты остались — из-за них «Стажировка» висела у середины. */
 .emp-card__status {
-  position: absolute;
-  top: 17px;
-  right: 55px;
+  position: static;
 }
 
 /* --- плашка состояния -------------------------------------------------------- */
@@ -1845,4 +1847,350 @@
 .emp-sum {
   min-height: 104px;
   margin: 10px 0 12px;
+}
+
+
+/* ============================================================================
+   Список во всю ширину: правой колонки больше нет.
+
+   Блок идёт последним намеренно. Выше лежат правила, подогнанные под
+   прежнюю раскладку в две колонки — пятиколоночная сетка отборов,
+   ширина карточек под 430 пикселей, поля под панель «Сегодня в
+   команде». Переписывать их по месту значило бы тронуть десяток
+   медиазапросов; здесь они перекрыты целиком и по одному разу.
+   ========================================================================== */
+
+.emp-list {
+  width: 100%;
+  margin-left: 0;
+  padding: 18px 18px 18px;
+}
+
+/* --- строка отборов --- */
+
+.emp-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  height: auto;
+  grid-template-columns: none;
+}
+
+.emp-filters .emp-search {
+  flex: 1 1 260px;
+  min-width: 220px;
+  height: 42px;
+  border-radius: 9px;
+}
+
+/* Ширина у каждого отбора своя: у общего списка она 100%, и шесть
+   таких в строке вытесняли бы друг друга на отдельные строки. */
+.emp-pick {
+  flex: 0 0 auto;
+  width: 172px;
+}
+
+.emp-pick .app-select__trigger {
+  min-height: 42px;
+  border-radius: 9px;
+  background: #ffffff;
+}
+
+.emp-filters .emp-view {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+/* --- что выбрано --- */
+
+/* Свёрнутый «Офисы · 2» не говорит, ЧТО выбрано. Плашки говорят, и
+   каждую можно снять по одной, не открывая список заново. */
+.emp-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  margin-top: 12px;
+}
+
+.emp-chips__group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.emp-chips__label {
+  font-size: 13px;
+  color: var(--emp-muted);
+}
+
+.emp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 4px 0 10px;
+  border: 1px solid #cfe0f5;
+  border-radius: 8px;
+  background: #f2f7fd;
+  font-size: 13px;
+  color: #1c4c93;
+}
+
+.emp-chip button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: #5b7ba6;
+  cursor: pointer;
+}
+
+.emp-chip button:hover {
+  color: #0b3f8c;
+}
+
+.emp-chips__clear {
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #1466d8;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* --- карточки --- */
+
+/* Три в ряд на широком экране: панели справа больше нет, и место под
+   третью карточку освободилось. 320 — предел, ниже которого фамилия
+   перестаёт помещаться в строку рядом с состоянием. */
+.emp-cards {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+  grid-auto-rows: auto;
+  gap: 14px;
+}
+
+.emp-card {
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+  border-radius: 12px;
+  cursor: default;
+}
+
+.emp-card:hover {
+  border-color: #c7d7ea;
+  box-shadow: 0 6px 18px rgba(26, 72, 140, 0.08);
+}
+
+.emp-card__top {
+  display: flex;
+  gap: 14px;
+  min-width: 0;
+  padding: 16px 16px 14px;
+}
+
+.emp-card__photo {
+  width: 56px;
+  height: 56px;
+  border-radius: 12px;
+  font-size: 18px;
+}
+
+.emp-card__name {
+  padding-right: 0;
+  font-size: 16.5px;
+  line-height: 22px;
+}
+
+.emp-card__role {
+  margin-top: 2px !important;
+  font-size: 13.5px;
+  line-height: 19px;
+  color: var(--emp-muted);
+}
+
+.emp-card__meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  margin-top: 10px !important;
+}
+
+/* --- подвал карточки --- */
+
+.emp-card__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  padding: 11px 16px;
+  border-top: 1px solid var(--emp-line);
+}
+
+/* Состояние дня: цветом говорит точка, слово остаётся тёмным. */
+.emp-day {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13.5px;
+  color: var(--emp-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.emp-day i {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #97a5bb;
+}
+
+.emp-day--ok i { background: #1aa35a; }
+.emp-day--warn i { background: #e08507; }
+.emp-day--blue i { background: #1b6ef3; }
+.emp-day--violet i { background: #7b5cf0; }
+
+.emp-card__go {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #1466d8;
+  cursor: pointer;
+}
+
+.emp-card__go:hover {
+  color: #0b4ea8;
+}
+
+/* Таблица ведёт туда же, куда карточка. */
+.emp-table tbody tr {
+  cursor: pointer;
+}
+
+/* Кнопки шапки — крупнее: в строке с заголовком «Сотрудники» они
+   выглядели тоньше всего остального. Ширина не задаётся числом, а
+   растёт от подписи: «Добавить сотрудника» длиннее «Экспорта», и
+   одинаковые 142 и 229 пикселей подходили только этим двум словам. */
+.emp-head__actions .emp-btn {
+  height: 48px;
+  padding: 0 24px;
+  border-radius: 10px;
+  font-size: 15.5px;
+  font-weight: 600;
+}
+
+.emp-head__actions .emp-btn--light {
+  width: auto;
+  min-width: 150px;
+}
+
+.emp-head__actions .emp-btn--blue {
+  width: auto;
+  min-width: 240px;
+}
+
+/* Заголовок и список — не впритык. После укрупнения кнопок отступ в
+   два пикселя превратил шапку и белую панель в один слипшийся блок. */
+.emp-head {
+  margin-bottom: 18px;
+}
+
+/* Состояние в карточке — слово цветом, без плашки и кружка: подложка
+   делала из подписи кнопку, которой она не является. Прижато к правому
+   краю строки имени. */
+.emp-card__title {
+  justify-content: space-between;
+}
+
+.emp-card .emp-status {
+  height: auto;
+  padding: 0;
+  margin-left: auto;
+  border-radius: 0;
+  background: none;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.emp-card .emp-status::before {
+  display: none;
+}
+
+.emp-card .emp-status--ok { color: #1b7e4c; }
+.emp-card .emp-status--warn { color: #c0660a; }
+.emp-card .emp-status--off { color: #4f5f78; }
+
+/* «Должность: Менеджер» — подпись серая, само название тёмное. */
+.emp-card__role b {
+  font-weight: 600;
+  color: var(--emp-ink);
+}
+
+/* Строка имени — гибкая, и без отбивки справа.
+   `padding-right: 30px` выше по файлу держал место под меню «•••» в
+   углу карточки. Меню убрано, а тридцать пикселей пустоты остались —
+   из-за них «Стажировка» не доходила до края. */
+.emp-card__title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding-right: 0;
+}
+
+/* Небольшой просвет после двоеточия: «Должность:  Менеджер». */
+.emp-card__role b {
+  margin-left: 4px;
+}
+
+/* Состояние прижато к правому краю карточки.
+   В старой вёрстке оно было выведено из потока: `position: absolute;
+   right: 55px` — те самые полсотни пикселей пустоты, из-за которых
+   «Стажировка» висела ближе к середине. Возвращаем его в строку имени
+   и снимаем координаты: место теперь определяет сама строка. */
+.emp-card .emp-card__title .emp-card__status {
+  position: static;
+  top: auto;
+  right: auto;
+  flex: none;
+  margin: 0 0 0 auto;
+  padding: 0;
+  height: auto;
+  border-radius: 0;
+  background: none;
+}
+
+/* Telegram в карточке — ссылка на сам Telegram. Подчёркивание только
+   под наведением: десяток подчёркнутых строк в списке рябит. */
+.emp-bit--go {
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.emp-bit--go:hover .emp-bit__text {
+  text-decoration: underline;
 }

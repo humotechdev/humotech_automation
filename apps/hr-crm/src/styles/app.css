@@ -44,11 +44,14 @@ body {
   margin: 0;
   background: var(--surface-1);
   color: var(--ink);
-  /* Узкий шрифт задан здесь, а не только в crm.css: этот файл
-     подключается раньше, и правило `body` из него выигрывало по порядку.
-     Держать одно свойство в двух местах — верный способ однажды
-     поменять не то. */
-  font-family: 'Roboto Condensed', 'Arial Narrow', 'Segoe UI', Roboto, sans-serif;
+  /* Шрифт задан здесь, а не только в crm.css: этот файл подключается
+     раньше, и правило `body` из него выигрывало по порядку. Держать
+     одно свойство в двух местах — верный способ однажды поменять не то.
+
+     Inter, а не узкий Roboto Condensed: сжатые буквы экономят ширину,
+     которой на этих экранах и так хватает, а читаются тяжелее — особенно
+     цифры в таблицах и кириллица в подписях. */
+  font-family: 'Inter', 'Segoe UI', Roboto, system-ui, sans-serif;
   font-size: 15px;
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;

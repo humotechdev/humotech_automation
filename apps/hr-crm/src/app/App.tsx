@@ -49,6 +49,10 @@ export function App() {
             совпал бы с `:id` и страница пыталась бы открыть сотрудника с
             идентификатором «new». */}
         <Route path="/employees/new" element={<NewEmployeePage />} />
+        {/* Правка — та же форма, что и приём, только с данными человека
+            и с «Сохранить изменения» вместо «Добавить». Тоже выше
+            маршрута карточки: «edit» не должен стать идентификатором. */}
+        <Route path="/employees/:id/edit" element={<NewEmployeePage />} />
         <Route path="/employees/:id" element={<EmployeePage />} />
         <Route path="/requests" element={<RequestsPage />} />
         <Route path="/attendance" element={<AttendancePage />} />

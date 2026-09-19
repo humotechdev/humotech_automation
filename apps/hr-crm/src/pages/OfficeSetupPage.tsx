@@ -18,32 +18,54 @@ import * as api from '../api/crm';
 import { messageFor } from '../api/errors';
 import { AppShell } from '../components/AppShell';
 import { AppIcon } from '../components/AppIcon';
-import { Field, OfficeForm, Staff } from '../components/OfficeCard';
+import { OfficeForm } from '../components/OfficeCard';
+import { OfficeStaff } from '../components/OfficeStaff';
 import { OfficeMap, addressOf, searchAddress, type Found, type Place } from '../components/OfficeMap';
+import {
+  GOOGLE_KEY, GoogleOfficeMap, googleAddress, googleSearch,
+} from '../components/GoogleOfficeMap';
 import { QrPointsManager } from '../components/QrPointsManager';
 import { useBlock } from '../features/dashboard/data';
 import '../styles/offices.css';
 import '../styles/office-setup.css';
 
 const TABS = [
-  { key: 'main', title: 'Основное', icon: 'building' },
-  { key: 'geo', title: 'Геолокация', icon: 'pin' },
-  { key: 'qr', title: 'QR-точки', icon: 'grid' },
-  { key: 'staff', title: 'Сотрудники', icon: 'users' },
+  { key: 'main', title: 'Основное' },
+  { key: 'geo', title: 'Геолокация' },
+  { key: 'qr', title: 'QR-точки' },
+  { key: 'staff', title: 'Сотрудники' },
 ] as const;
 
 type TabKey = (typeof TABS)[number]['key'];
 
+/*
+ * Карта — Google, когда для неё дан ключ.
+ *
+ * Подложка OpenStreetMap в Узбекистане подписана редко: дома без
+ * номеров, организации почти не отмечены, и HR не узнаёт место, где
+ * должен поставить точку. Без ключа остаётся OSM: показать карту,
+ * пусть и бедную, лучше, чем пустой прямоугольник.
+ */
+const MapView = GOOGLE_KEY ? GoogleOfficeMap : OfficeMap;
+const lookupAddress = GOOGLE_KEY
+  ? (place: Place) => googleAddress(place)
+  : (place: Place, signal?: AbortSignal) => addressOf(place, signal);
+const lookupPlaces = GOOGLE_KEY
+  ? (text: string, _signal?: AbortSignal) => googleSearch(text)
+  : (text: string, signal?: AbortSignal) => searchAddress(text, signal);
+
+/*
+ * Вкладки во всю ширину, без сводки слева.
+ *
+ * Карте сводка отнимает треть ширины, а точку ставят именно по карте.
+ * Таблицам QR-точек и состава офиса она обрезает столбцы. И на всех трёх
+ * она повторяет то, что человек прямо сейчас правит.
+ */
+const WIDE = new Set<TabKey>(['geo', 'qr', 'staff']);
+
 const RADIUS_MIN = 50;
 const RADIUS_MAX = 500;
 const RADIUS_DEFAULT = 100;
-
-const STATUS_TITLE: Record<string, string> = {
-  ACTIVE: 'Активен',
-  INACTIVE: 'Отключён',
-  CLOSED: 'Закрыт',
-  ARCHIVED: 'В архиве',
-};
 
 export function OfficeSetupPage() {
   const { id = '' } = useParams();
@@ -91,19 +113,20 @@ export function OfficeSetupPage() {
         <header className="ofs-head">
           <Link className="ofs-back" to="/offices">
             <AppIcon name="back" size={16} />
-            Офисы и регионы
+            К офисам и регионам
           </Link>
           <div className="ofs-head__row">
             <div className="ofs-head__text">
-              <h1 className="ofs-head__title">{office ? office.name : 'Настройка офиса'}</h1>
+              <h1 className="ofs-head__title">
+                {office ? office.name : 'Настройка офиса'}
+              </h1>
               {office && (
                 <p className="ofs-head__sub">
-                  <span className={office.status === 'ACTIVE' ? 'ofs-state ofs-state--ok' : 'ofs-state ofs-state--off'}>
-                    <i aria-hidden="true" />
-                    {STATUS_TITLE[office.status] ?? office.status}
+                  <span className="ofs-head__name">{office.region_name ?? '—'}</span>
+                  <i aria-hidden="true">·</i>
+                  <span className={office.status === 'ACTIVE' ? 'ofs-live ofs-live--ok' : 'ofs-live ofs-live--off'}>
+                    {office.status === 'ACTIVE' ? 'Активен' : 'Неактивен'}
                   </span>
-                  <span>{office.region_name ?? '—'}</span>
-                  <span>{office.timezone}</span>
                 </p>
               )}
             </div>
@@ -113,7 +136,6 @@ export function OfficeSetupPage() {
               <button key={item.key} type="button" role="tab" aria-selected={tab === item.key}
                       className={tab === item.key ? 'ofs-tab ofs-tab--on' : 'ofs-tab'}
                       onClick={() => pick(item.key)}>
-                <AppIcon name={item.icon} size={16} />
                 {item.title}
               </button>
             ))}
@@ -127,14 +149,19 @@ export function OfficeSetupPage() {
         )}
 
         {office && (
-          <div className="ofs-grid">
-            <Summary office={office} points={points.state === 'ready' ? points.data.items : null}
-                     onTab={pick} />
+          <div className={WIDE.has(tab) ? 'ofs-grid ofs-grid--wide' : 'ofs-grid'}>
+            {/* На карте сводка слева ни к чему: она повторяет то, что
+                человек прямо сейчас правит, и отнимает у карты треть
+                ширины — а точку ставят именно по ней. */}
+            {!WIDE.has(tab) && (
+              <Summary office={office} points={points.state === 'ready' ? points.data.items : null}
+                       onTab={pick} />
+            )}
             <section className="ofs-main" aria-label={TABS.find((item) => item.key === tab)?.title}>
               {tab === 'main' && (
                 <div className="ofs-card">
                   <h2 className="ofs-title">Основное</h2>
-                  <p className="ofs-sub">Название, адрес и часовой пояс. По часовому поясу считаются опоздания.</p>
+                  <p className="ofs-sub">Название и регион офиса.</p>
                   {can('offices.manage') ? (
                     <OfficeForm key={office.updated_at} office={office} onDone={saved} />
                   ) : (
@@ -152,18 +179,12 @@ export function OfficeSetupPage() {
               {tab === 'qr' && (
                 <QrPointsManager office={office} canManage={can('qr_points.manage')}
                                  located={isLocated(office)}
+                                 onGeo={() => pick('geo')}
                                  onChanged={() => setPointsAttempt((n) => n + 1)} />
               )}
               {tab === 'staff' && (
                 <div className="ofs-card">
-                  <h2 className="ofs-title">Сотрудники офиса</h2>
-                  <p className="ofs-sub">
-                    Кто назначен в этот офис. Графики работы назначаются в карточке
-                    сотрудника.
-                  </p>
-                  <div className="ofs-staff">
-                    <Staff officeId={office.id} />
-                  </div>
+                  <OfficeStaff officeId={office.id} />
                 </div>
               )}
             </section>
@@ -188,17 +209,19 @@ function Summary({ office, points, onTab }: {
 
   return (
     <aside className="ofs-summary" aria-label="Краткая карточка офиса">
+      <h2 className="ofs-title">Офис</h2>
+      {/* Часового пояса здесь нет: в стране он один, и строка про него
+          только отодвигала вниз то, ради чего сюда смотрят. */}
       <dl className="ofs-facts">
-        <div><dt>Адрес</dt><dd title={office.address ?? undefined}>{office.address || 'Не указан'}</dd></div>
         <div><dt>Регион</dt><dd>{office.region_name ?? '—'}</dd></div>
-        <div><dt>Часовой пояс</dt><dd>{office.timezone}</dd></div>
+        <div><dt>Адрес</dt><dd title={office.address ?? undefined}>{office.address || 'Не указан'}</dd></div>
         <div>
-          <dt>Геозона</dt>
-          <dd>{located ? `${office.geofence_radius_m} м` : 'не настроена'}</dd>
+          <dt>Радиус</dt>
+          <dd>{located ? `${office.geofence_radius_m} м` : 'не задан'}</dd>
         </div>
         <div>
           <dt>QR-точки</dt>
-          <dd>{points === null ? '—' : `${active.length} активных из ${points.length}`}</dd>
+          <dd>{points === null ? '—' : `${active.length} активные из ${points.length}`}</dd>
         </div>
       </dl>
 
@@ -219,12 +242,11 @@ function Summary({ office, points, onTab }: {
 function Step({ done, title, onClick }: { done: boolean; title: string; onClick: () => void }) {
   return (
     <li>
+      {/* Только слово о состоянии. Кружок со галочкой повторял то же
+          самое рисунком и занимал место в узкой колонке. */}
       <button type="button" className={done ? 'ofs-step ofs-step--done' : 'ofs-step'} onClick={onClick}>
-        <span className="ofs-step__mark" aria-hidden="true">
-          {done ? <AppIcon name="check" size={16} /> : null}
-        </span>
         <span className="ofs-step__title">{title}</span>
-        <span className="ofs-step__state">{done ? 'готово' : 'настроить'}</span>
+        <span className="ofs-step__state">{done ? 'Готово' : 'Не готово'}</span>
       </button>
     </li>
   );
@@ -233,6 +255,52 @@ function Step({ done, title, onClick }: { done: boolean; title: string; onClick:
 // --- геолокация ------------------------------------------------------------------
 
 type Draft = { place: Place | null; radius: number; address: string };
+
+/**
+ * Пара полей с координатами.
+ *
+ * Своё состояние строками, а не числами: пока человек набирает
+ * «41.3», строка ещё не число, и превращать её в точку рано. Наверх
+ * уходит только разобранная пара в допустимых пределах.
+ */
+function Coordinates({ place, onPlace }: {
+  place: Place | null;
+  onPlace: (place: Place) => void;
+}) {
+  const [lat, setLat] = useState(place ? String(Number(place.lat.toFixed(6))) : '');
+  const [lon, setLon] = useState(place ? String(Number(place.lon.toFixed(6))) : '');
+
+  // Точку могли передвинуть на карте — поля идут следом.
+  useEffect(() => {
+    if (!place) return;
+    setLat(String(Number(place.lat.toFixed(6))));
+    setLon(String(Number(place.lon.toFixed(6))));
+  }, [place]);
+
+  const apply = (nextLat: string, nextLon: string) => {
+    const a = Number(nextLat.replace(',', '.'));
+    const b = Number(nextLon.replace(',', '.'));
+    if (nextLat.trim() && nextLon.trim() && Number.isFinite(a) && Number.isFinite(b)
+        && Math.abs(a) <= 90 && Math.abs(b) <= 180) {
+      onPlace({ lat: a, lon: b });
+    }
+  };
+
+  return (
+    <div className="ofs-coords">
+      <label>
+        <span>Широта</span>
+        <input className="ofs-field__input" value={lat} inputMode="decimal" placeholder="41.311081"
+               onChange={(event) => { setLat(event.target.value); apply(event.target.value, lon); }} />
+      </label>
+      <label>
+        <span>Долгота</span>
+        <input className="ofs-field__input" value={lon} inputMode="decimal" placeholder="69.240562"
+               onChange={(event) => { setLon(event.target.value); apply(lat, event.target.value); }} />
+      </label>
+    </div>
+  );
+}
 
 function draftOf(office: api.OfficeFull): Draft {
   const lat = office.latitude === null ? NaN : Number(office.latitude);
@@ -261,8 +329,8 @@ function GeoEditor({ office, canManage, onSaved }: {
   const [fields, setFields] = useState<Record<string, string[]>>({});
   const [done, setDone] = useState<string | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
-  const [manual, setManual] = useState(false);
   const lookup = useRef<AbortController | null>(null);
+  const hunt = useRef<AbortController | null>(null);
 
   useEffect(() => setDraft(initial), [initial]);
 
@@ -281,7 +349,7 @@ function GeoEditor({ office, canManage, onSaved }: {
     lookup.current?.abort();
     const stop = new AbortController();
     lookup.current = stop;
-    addressOf(next, stop.signal)
+    lookupAddress(next, stop.signal)
       .then((text) => {
         if (!text || stop.signal.aborted) return;
         setDraft((was) => (was.address.trim() && was.address !== initial.address ? was : { ...was, address: text }));
@@ -289,24 +357,46 @@ function GeoEditor({ office, canManage, onSaved }: {
       .catch(() => undefined);
   }, [initial.address]);
 
-  async function find() {
-    const text = query.trim();
-    if (!text) return;
+  /**
+   * Поиск идёт сам, пока человек набирает.
+   *
+   * Кнопки «Найти» рядом со строкой нет, и её отсутствие читалось как
+   * «поиск не работает»: набрал — и ничего. Пауза в полсекунды нужна
+   * не для красоты: у Nominatim ограничение в один запрос в секунду,
+   * и посылать его на каждую букву нельзя.
+   */
+  const find = useCallback(async (text: string) => {
+    hunt.current?.abort();
+    const stop = new AbortController();
+    hunt.current = stop;
     setSearching(true);
-    setFound(null);
     try {
-      setFound(await searchAddress(text));
+      const rows = await lookupPlaces(text, stop.signal);
+      if (!stop.signal.aborted) setFound(rows);
     } catch {
-      setFound([]);
+      if (!stop.signal.aborted) setFound([]);
     } finally {
-      setSearching(false);
+      if (!stop.signal.aborted) setSearching(false);
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    const text = query.trim();
+    if (text.length < 3) {
+      hunt.current?.abort();
+      setFound(null);
+      setSearching(false);
+      return;
+    }
+    const timer = setTimeout(() => void find(text), 500);
+    return () => clearTimeout(timer);
+  }, [query, find]);
 
   function choose(item: Found) {
     setDraft((was) => ({ ...was, place: item.place, address: shortLabel(item.label) }));
     setFocus(item.place);
     setFound(null);
+    setQuery('');
     setPicking(false);
     setDone(null);
   }
@@ -342,17 +432,46 @@ function GeoEditor({ office, canManage, onSaved }: {
   return (
     <div className="ofs-geo">
       <div className="ofs-map">
-        <OfficeMap place={draft.place} radius={draft.radius} picking={picking}
+        <MapView place={draft.place} radius={draft.radius} picking={picking}
                    editable={canManage} onPlace={place} focus={focus} />
-        {canManage && !draft.place && !picking && (
-          <div className="ofs-map__overlay">
-            <p>У офиса ещё нет точки на карте.</p>
-            <button type="button" className="ofs-btn ofs-btn--blue" onClick={() => setPicking(true)}>
-              <AppIcon name="pin" size={16} />
-              Указать на карте
-            </button>
+
+        {canManage && (
+          <div className="ofs-map__tools">
+            <form className="ofs-find" role="search"
+                  onSubmit={(event) => { event.preventDefault(); void find(query.trim()); }}>
+              <AppIcon name="search" size={18} />
+              <input value={query} placeholder="Найти адрес или место" aria-label="Поиск адреса"
+                     onChange={(event) => setQuery(event.target.value)} />
+              {searching && <span className="ofs-find__state">Ищем…</span>}
+              {!searching && query && (
+                <button type="button" className="ofs-find__clear" aria-label="Очистить поиск"
+                        onClick={() => { setQuery(''); setFound(null); }}>
+                  <AppIcon name="close" size={16} />
+                </button>
+              )}
+            </form>
+
+            {found !== null && (
+              <div className="ofs-found">
+                {found.length === 0 ? (
+                  <p className="ofs-found__none">Ничего не нашлось. Попробуйте короче или поставьте точку на карте.</p>
+                ) : (
+                  <ul>
+                    {found.map((item) => (
+                      <li key={`${item.place.lat},${item.place.lon}`}>
+                        <button type="button" onClick={() => choose(item)}>
+                          <AppIcon name="pin" size={16} />
+                          <span>{item.label}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
           </div>
         )}
+
         {picking && (
           <div className="ofs-map__hint" role="status">
             Нажмите на карту там, где вход в офис
@@ -361,51 +480,52 @@ function GeoEditor({ office, canManage, onSaved }: {
         )}
       </div>
 
-      <div className="ofs-card ofs-geo__panel">
-        <h2 className="ofs-title">Расположение и допустимая зона</h2>
+      <div className="ofs-geo__panel">
+        <h2 className="ofs-title">Точка и зона</h2>
 
-        {canManage && (
-          <form className="ofs-search" role="search" onSubmit={(event) => { event.preventDefault(); void find(); }}>
-            <AppIcon name="search" size={16} />
-            <input value={query} placeholder="Найти адрес: Ташкент, Амира Темура 107"
-                   aria-label="Поиск адреса" onChange={(event) => setQuery(event.target.value)} />
-            <button type="submit" className="ofs-btn" disabled={searching || !query.trim()}>
-              {searching ? 'Ищем…' : 'Найти'}
-            </button>
-          </form>
-        )}
-        {found !== null && (
-          found.length === 0 ? (
-            <p className="ofs-empty">Ничего не нашлось. Попробуйте короче или поставьте точку на карте.</p>
+        <div className="ofs-geo__fact">
+          <span className="ofs-geo__label">Адрес</span>
+          <p className="ofs-geo__value">
+            {draft.address || <span className="ofs-geo__none">Появится по точке на карте</span>}
+          </p>
+        </div>
+
+        <div className="ofs-geo__fact">
+          <span className="ofs-geo__value--row ofs-geo__label">
+            Координаты
+            {canManage && (
+              <button type="button" className="ofs-link" onClick={() => setPicking(true)}>
+                {draft.place ? 'Изменить на карте' : 'Указать на карте'}
+              </button>
+            )}
+          </span>
+          {canManage ? (
+            /* Числа можно и набрать: координаты приходят из договора
+               или от службы безопасности готовыми, и заставлять искать
+               то же место мышью — лишняя работа с худшей точностью. */
+            <Coordinates place={draft.place}
+                         onPlace={(next) => { setDraft((was) => ({ ...was, place: next })); setFocus(next); }} />
           ) : (
-            <ul className="ofs-found">
-              {found.map((item) => (
-                <li key={`${item.place.lat},${item.place.lon}`}>
-                  <button type="button" onClick={() => choose(item)}>
-                    <AppIcon name="pin" size={16} />
-                    <span>{item.label}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )
-        )}
-
-        <label className="ofs-field">
-          <span className="ofs-field__label">Адрес на карточке офиса</span>
-          <input className="ofs-field__input" value={draft.address} disabled={!canManage}
-                 aria-label="Адрес офиса" placeholder="Заполнится по точке на карте"
-                 onChange={(event) => setDraft((was) => ({ ...was, address: event.target.value }))} />
-          {fields['address'] && <span className="ofs-field__error">{fields['address'].join(' ')}</span>}
-        </label>
+            <p className="ofs-geo__value">
+              {draft.place
+                ? `${draft.place.lat.toFixed(6)}, ${draft.place.lon.toFixed(6)}`
+                : <span className="ofs-geo__none">Точка не выбрана</span>}
+            </p>
+          )}
+          {(fields['latitude'] || fields['longitude']) && (
+            <span className="ofs-field__error">
+              {[...(fields['latitude'] ?? []), ...(fields['longitude'] ?? [])].join(' ')}
+            </span>
+          )}
+        </div>
 
         <div className="ofs-radius">
           <div className="ofs-radius__head">
-            <span className="ofs-field__label">Радиус зоны</span>
+            <span className="ofs-geo__label">Радиус допуска</span>
             <b>{draft.radius} м</b>
           </div>
           <input type="range" min={RADIUS_MIN} max={RADIUS_MAX} step={10} value={draft.radius}
-                 disabled={!canManage} aria-label="Радиус зоны, метров"
+                 disabled={!canManage} aria-label="Радиус допуска, метров"
                  onChange={(event) => setDraft((was) => ({ ...was, radius: Number(event.target.value) }))} />
           <div className="ofs-radius__scale"><span>{RADIUS_MIN} м</span><span>{RADIUS_MAX} м</span></div>
           {fields['geofence_radius_m'] && (
@@ -413,25 +533,9 @@ function GeoEditor({ office, canManage, onSaved }: {
           )}
         </div>
 
-        <p className="ofs-info">
-          <AppIcon name="alert" size={16} />
-          Сотрудник сможет отметить вход или выход только в пределах этой зоны.
+        <p className="ofs-hint">
+          Сотрудник может отметить вход или выход только внутри этой зоны.
         </p>
-
-        <p className="ofs-coords">
-          {draft.place
-            ? <>Точка: {draft.place.lat.toFixed(6)}, {draft.place.lon.toFixed(6)}</>
-            : 'Точка не выбрана'}
-          {canManage && (
-            <button type="button" className="ofs-link" onClick={() => setManual((was) => !was)}>
-              {manual ? 'Скрыть ввод координат' : 'Ввести координаты вручную'}
-            </button>
-          )}
-        </p>
-        {manual && canManage && (
-          <ManualCoordinates place={draft.place} errors={fields}
-                             onPlace={(next) => { setDraft((was) => ({ ...was, place: next })); setFocus(next); }} />
-        )}
 
         {failed && <p className="ofs-alert" role="alert">{failed}</p>}
         {done && <p className="ofs-done" role="status">{done}</p>}
@@ -450,57 +554,19 @@ function GeoEditor({ office, canManage, onSaved }: {
               <button type="button" className="ofs-btn" onClick={() => setConfirmClear(false)}>Отмена</button>
             </div>
           ) : (
-            <div className="ofs-actions ofs-actions--wrap">
+            <div className="ofs-geo__actions">
+              <button type="button" className="ofs-btn"
+                      disabled={sending || initial.place === null} onClick={() => setConfirmClear(true)}>
+                Очистить
+              </button>
               <button type="button" className="ofs-btn ofs-btn--blue"
                       disabled={sending || !draft.place || !dirty} onClick={() => void save(draft)}>
-                {sending ? 'Сохраняем…' : 'Сохранить расположение'}
-              </button>
-              <button type="button" className="ofs-btn" disabled={sending || !dirty}
-                      onClick={() => { setDraft(initial); setFailed(null); setFields({}); setFocus(initial.place); }}>
-                Отменить изменения
-              </button>
-              <button type="button" className="ofs-btn ofs-btn--ghost"
-                      disabled={sending || initial.place === null} onClick={() => setConfirmClear(true)}>
-                Очистить геолокацию
+                {sending ? 'Сохраняем…' : 'Сохранить'}
               </button>
             </div>
           )
         )}
       </div>
-    </div>
-  );
-}
-
-function ManualCoordinates({ place, errors, onPlace }: {
-  place: Place | null;
-  errors: Record<string, string[]>;
-  onPlace: (place: Place) => void;
-}) {
-  const [lat, setLat] = useState(place ? String(place.lat) : '');
-  const [lon, setLon] = useState(place ? String(place.lon) : '');
-  useEffect(() => {
-    if (!place) return;
-    setLat(String(Number(place.lat.toFixed(6))));
-    setLon(String(Number(place.lon.toFixed(6))));
-  }, [place]);
-
-  const apply = (nextLat: string, nextLon: string) => {
-    const a = Number(nextLat.replace(',', '.'));
-    const b = Number(nextLon.replace(',', '.'));
-    if (nextLat.trim() && nextLon.trim() && Number.isFinite(a) && Number.isFinite(b)
-        && Math.abs(a) <= 90 && Math.abs(b) <= 180) {
-      onPlace({ lat: a, lon: b });
-    }
-  };
-
-  return (
-    <div className="ofs-manual">
-      <Field label="Широта" value={lat} inputMode="decimal" placeholder="41.311081"
-             errors={errors['latitude']}
-             onChange={(value) => { setLat(value); apply(value, lon); }} />
-      <Field label="Долгота" value={lon} inputMode="decimal" placeholder="69.240562"
-             errors={errors['longitude']}
-             onChange={(value) => { setLon(value); apply(lat, value); }} />
     </div>
   );
 }

@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from datetime import datetime, time
 from zoneinfo import ZoneInfo
 
-from django.db.models import Count
+from django.db.models import Count, Max
 from django.utils import timezone
 
 from humotech.core.enums import QR_DIRECTION_MODES, QR_MODES
@@ -36,6 +36,7 @@ from humotech.core.rbac import Actor, snapshot
 from humotech.core.service import BaseService
 from humotech.core.validation import clean_code, clean_text
 from humotech.qr_codes.models import OfficeQrPoint
+from humotech.qr_codes import stickers
 from humotech.qr_codes.stickers import token_hash
 
 AUDITED_FIELDS = (
@@ -107,8 +108,20 @@ def with_scans_today(points: list[OfficeQrPoint]) -> list[OfficeQrPoint]:
             .annotate(total=Count("id"))
             .values_list("qr_point_id", "total")
         )
+        # Когда точку сканировали в последний раз — без ограничения по
+        # дню. «Сегодня ноль» не отличает исправную наклейку в выходной
+        # от сорванной неделю назад, а эта дата отличает.
+        latest = dict(
+            AttendanceEvent.objects.filter(
+                qr_point_id__in=[point.id for point in group],
+            )
+            .values_list("qr_point_id")
+            .annotate(last=Max("occurred_at"))
+            .values_list("qr_point_id", "last")
+        )
         for point in group:
             point.scans_today = counts.get(point.id, 0)
+            point.last_scan_at = latest.get(point.id)
     return points
 
 
@@ -216,6 +229,7 @@ class QrPointService(BaseService):
                     rotation_seconds if qr_mode == "ROTATING" else None
                 ),
                 static_token_hash=_hash(token) if token else None,
+                static_token=token,
                 require_geolocation=require_geolocation,
                 require_office_network=require_office_network,
                 allowed_location_accuracy_m=allowed_location_accuracy_m,
@@ -350,12 +364,13 @@ class QrPointService(BaseService):
         before = snapshot(point, AUDITED_FIELDS)
         with self.atomic():
             point.static_token_hash = _hash(token)
+            point.static_token = token
             point.token_version = (point.token_version or 1) + 1
             point.rotated_at = timezone.now()
             point.save(
                 update_fields=[
-                    "static_token_hash", "token_version", "rotated_at",
-                    "updated_at",
+                    "static_token_hash", "static_token", "token_version",
+                    "rotated_at", "updated_at",
                 ]
             )
             self.audit.record(
@@ -367,6 +382,45 @@ class QrPointService(BaseService):
                 after=snapshot(point, AUDITED_FIELDS),
             )
         return IssuedPoint(point=point, static_token=token)
+
+    def sticker(self, actor: Actor, point_id: uuid.UUID) -> str | None:
+        """Ссылка наклейки: посмотреть, скачать, распечатать заново.
+
+        Требует права на управление точками — того же, что и выпуск.
+        Право на чтение здесь не подходит: список точек могут смотреть и
+        те, кому незачем знать сам код.
+
+        Обращение записывается в журнал. Код — то же, что наклейка на
+        стене, но кто его открывал и когда, знать полезно.
+
+        `Conflict` — у точки нет сохранённого кода: она выпущена до
+        того, как коды стали храниться. Такой код не восстановить, его
+        заменяют новым.
+        """
+        self.access.require(actor, "qr_points.manage")
+        point = self._require_point(actor, point_id)
+        if point.qr_mode != "STATIC":
+            raise Conflict(
+                "Код наклейки есть только у статической точки; поворотная "
+                "показывает его на экране сама",
+                details={"qr_mode": point.qr_mode},
+            )
+        if not point.static_token:
+            raise Conflict(
+                "Код этой точки выпущен раньше, чем коды стали храниться, "
+                "и восстановить его нельзя. Замените код — новый будет "
+                "виден здесь всегда",
+                details={"reason": "no_stored_token"},
+            )
+        self.audit.record(
+            actor,
+            action="qr.point.token.show",
+            entity_type="office_qr_points",
+            entity_id=point.id,
+            before=None,
+            after=None,
+        )
+        return stickers.link(point.static_token)
 
     def delete(self, actor: Actor, point_id: uuid.UUID) -> None:
         """Убрать точку совсем.

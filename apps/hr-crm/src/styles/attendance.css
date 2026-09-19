@@ -22,7 +22,7 @@
   /* Общее правило раздвигало блоки страницы на 16 точек: отступы здесь
      заданы у каждого блока отдельно, по эталону. */
   gap: 0;
-  font-family: 'Segoe UI', 'Open Sans', system-ui, sans-serif;
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
   color: var(--att-text);
 }
 
@@ -1046,6 +1046,12 @@
   margin: 8px 0 0;
   padding: 0;
   list-style: none;
+  /* Все события дня, а не первые три: у человека с обедом их четыре.
+     Список прокручивается внутри себя, чтобы карточка не растягивалась
+     на весь экран и кнопки под ней оставались видны. */
+  max-height: 210px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .att-events li {

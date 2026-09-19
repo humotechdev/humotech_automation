@@ -158,7 +158,7 @@ describe('связанный объект', () => {
     expect(relatedLink(row('employee_questions', 'q-1'))?.to)
       .toBe('/questions?id=q-1');
     expect(relatedLink(row('telegram_accounts', 't-1'))?.to)
-      .toBe('/employees?employee=e-1');
+      .toBe('/employees/e-1');
   });
 
   test('для неизвестного вида ссылки нет — «открыть» в никуда хуже', () => {

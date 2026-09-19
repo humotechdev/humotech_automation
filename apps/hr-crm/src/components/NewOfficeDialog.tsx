@@ -26,14 +26,20 @@ import { AppIcon } from './AppIcon';
 import { AppSelectField } from './AppSelect';
 import { ApiFailure, messageFor } from '../api/errors';
 
-export function NewOfficeDialog({ regions, onClose, onCreated }: {
+export function NewOfficeDialog({ regions, region, onClose, onCreated }: {
   regions: api.RegionFull[];
+  /**
+   * Регион, выбранный заранее. Приходит с карты: человек ткнул в
+   * область и нажал «добавить офис» — спрашивать его о том же ещё раз
+   * значит не поверить тому, что он уже сказал.
+   */
+  region?: string | undefined;
   onClose: () => void;
   /** Список на странице обновляется, даже если переход не случился. */
   onCreated: () => void;
 }) {
   const navigate = useNavigate();
-  const [regionId, setRegionId] = useState('');
+  const [regionId, setRegionId] = useState(region ?? '');
   const [name, setName] = useState('');
   const [touched, setTouched] = useState(false);
   const [busy, setBusy] = useState(false);

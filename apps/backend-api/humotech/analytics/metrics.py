@@ -340,7 +340,9 @@ class AnalyticsService(BaseService):
             queryset = queryset.filter(visible)
         if region_id:
             queryset = queryset.filter(region_id=region_id)
-        return list(queryset.order_by("name"))
+        # Регион подтягивается сразу: обзор группирует офисы по регионам,
+        # и без этого получился бы запрос на каждый офис.
+        return list(queryset.select_related("region").order_by("name"))
 
     def _build(
         self,

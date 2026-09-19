@@ -1,20 +1,26 @@
 /**
- * QR-точки офиса: список, добавление, печатный код, перевыпуск.
+ * QR-точки офиса: список, добавление, печать кода и его замена.
  *
- * Про печатный код одно правило, и оно пришло с сервера: **секрет
- * показывается один раз** — в ответе на создание и на перевыпуск. В
- * базе лежит только его хеш, и получить код повторно нельзя ни этой
- * страницей, ни API. Поэтому QR, «Скачать PNG», «Распечатать» и
- * «Скопировать ссылку» доступны сразу после выпуска, пока окно открыто.
- * Потеряли код — «Перевыпустить QR»: прежняя наклейка перестанет
- * действовать в тот же миг, и это ровно то, что нужно, если её
- * сфотографировали.
+ * Точка — место отметки: главный вход, служебный выход. Её код печатают
+ * и вешают у двери; сотрудник сканирует его телефоном.
  *
- * Картинка QR собирается в браузере из ссылки: на сервер секрет второй
- * раз не уходит, а в журнал — вовсе.
+ * Код точки хранится на сервере и открывается по требованию: «Посмотреть
+ * QR», «Печать QR» и «Скачать QR в PNG» работают в любой день, а не
+ * только в минуту выпуска. Раньше секрет показывался один раз, и
+ * потерянная картинка означала замену кода и поход переклеивать
+ * наклейки. Точки, выпущенные до этого, кода не хранят — их заменяют.
+ *
+ * Картинка QR собирается в браузере из ссылки: на сервер она второй раз
+ * не уходит, а в журнал — вовсе.
+ *
+ * «Печать QR» отдаёт файл, а не открывает окно печати. Окно печати жило
+ * во всплывающей вкладке, а её браузер закрывал: код приходит с сервера,
+ * и к моменту `window.open` жест мыши уже «остыл». Нажатие не делало
+ * ничего. Скачанный PNG печатается из любой программы просмотра.
  */
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import QRCode from 'qrcode';
 
 import * as api from '../api/crm';
@@ -34,15 +40,15 @@ const MODE_TITLE: Record<string, string> = {
   BOTH: 'Вход и выход',
 };
 
-type Issued = { point: api.QrPoint; link: string | null };
-
-export function QrPointsManager({ office, canManage, located, onChanged }: {
+export function QrPointsManager({ office, canManage, located, onChanged, onGeo }: {
   office: api.OfficeFull;
   canManage: boolean;
   /** Есть ли у офиса точка на карте и радиус: без них печатный код не работает. */
   located: boolean;
   /** Точки изменились — сводке слева пора пересчитать готовность. */
   onChanged?: () => void;
+  /** Уйти к геолокации: без неё коды не принимают отметки. */
+  onGeo?: () => void;
 }) {
   const [attempt, setAttempt] = useState(0);
   const [list] = useBlock(
@@ -50,81 +56,508 @@ export function QrPointsManager({ office, canManage, located, onChanged }: {
     `office-qr|${office.id}|${attempt}`,
   );
   const [adding, setAdding] = useState(false);
-  const [issued, setIssued] = useState<Issued | null>(null);
+  const [shown, setShown] = useState<api.QrPoint | null>(null);
+  // Ссылки, уже полученные в этой вкладке: второй раз за ними не ходим.
+  const [links, setLinks] = useState<Record<string, string | null>>({});
 
   const reload = () => {
     setAttempt((n) => n + 1);
     onChanged?.();
   };
   const points = list.state === 'ready' ? list.data.items : [];
+  const active = points.filter((point) => point.is_active);
+  const entry = active.some((point) => point.direction_mode !== 'EXIT');
+  const leave = active.some((point) => point.direction_mode !== 'ENTRY');
+
+  /** Ссылка наклейки: из памяти или с сервера. */
+  async function linkOf(point: api.QrPoint): Promise<string | null> {
+    if (point.id in links) return links[point.id] ?? null;
+    const answer = await api.qrPointSticker(point.id);
+    setLinks((was) => ({ ...was, [point.id]: answer.sticker_link }));
+    return answer.sticker_link;
+  }
 
   return (
     <div className="ofs-qr">
-      <div className="ofs-section-head">
-        <div>
-          <h2 className="ofs-title">QR-точки <span className="ofs-count">{points.length}</span></h2>
-          <p className="ofs-sub">
-            Точка — место отметки: вход, служебный вход, выход со склада. Её код
-            печатается и вешается у двери.
-          </p>
+      <div className="ofs-qr__main">
+        <div className="ofs-qr__head">
+          <h2 className="ofs-title">
+            QR-точки <span className="ofs-qr__count">· {points.length}</span>
+          </h2>
+          {canManage && !adding && (
+            <button type="button" className="ofs-btn ofs-btn--blue"
+                    onClick={() => setAdding(true)}>
+              <AppIcon name="plus" size={16} />
+              Добавить QR-точку
+            </button>
+          )}
         </div>
-        {canManage && !adding && (
-          <button type="button" className="ofs-btn ofs-btn--blue" onClick={() => { setAdding(true); setIssued(null); }}>
-            <AppIcon name="plus" size={16} />
-            Добавить QR-точку
-          </button>
+
+        {!located && (
+          <p className="ofs-warn" role="status">
+            У офиса ещё нет точки на карте. Печатный QR-код начнёт принимать отметки
+            только после того, как расположение и радиус будут сохранены во вкладке
+            «Геолокация».
+          </p>
+        )}
+
+        {adding && (
+          <NewPoint
+            officeId={office.id}
+            onCancel={() => setAdding(false)}
+            onCreated={(result) => {
+              setAdding(false);
+              setLinks((was) => ({ ...was, [result.point.id]: result.sticker_link }));
+              setShown(result.point);
+              reload();
+            }}
+          />
+        )}
+
+        {list.state === 'loading' && <p className="ofs-empty">Загружаем QR-точки…</p>}
+        {list.state === 'denied' && <p className="ofs-empty">Нет доступа к QR-точкам.</p>}
+        {list.state === 'error' && <p className="ofs-empty ofs-empty--bad">Не удалось загрузить QR-точки.</p>}
+        {list.state === 'ready' && points.length === 0 && !adding && (
+          <p className="ofs-empty">
+            Точек пока нет. {canManage ? 'Добавьте первую — например, «Главный вход».' : ''}
+          </p>
+        )}
+
+        {points.length > 0 && (
+          <div className="ofs-table-wrap">
+            <table className="ofs-table">
+              <thead>
+                <tr>
+                  <th>Точка</th>
+                  <th>Назначение</th>
+                  <th>Состояние</th>
+                  <th>Последнее сканирование</th>
+                  <th className="ofs-table__actions">Действия</th>
+                </tr>
+              </thead>
+              <tbody>
+                {points.map((point) => (
+                  <PointRow
+                    key={point.id}
+                    office={office}
+                    point={point}
+                    canManage={canManage}
+                    onChanged={reload}
+                    onShow={() => setShown(point)}
+                    linkOf={linkOf}
+                    onIssued={(result) => {
+                      setLinks((was) => ({ ...was, [result.point.id]: result.sticker_link }));
+                      setShown(result.point);
+                      reload();
+                    }}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {points.length > 0 && (
+          <p className="ofs-qr__note">
+            Замените QR, если распечатанный код потерян или повреждён.
+          </p>
         )}
       </div>
 
-      {!located && (
-        <p className="ofs-warn" role="status">
-          У офиса ещё нет точки на карте. Печатный QR-код начнёт принимать отметки
-          только после того, как расположение и радиус будут сохранены во вкладке
-          «Геолокация».
-        </p>
-      )}
+      {/* Готовность: три условия, при которых отметка у двери вообще
+          состоится. Без любого из них код на стене бесполезен. */}
+      <aside className="ofs-ready" aria-label="Готовность офиса">
+        <h3 className="ofs-ready__title">Готовность</h3>
+        <ul className="ofs-ready__list">
+          <ReadyItem done={located} title="Геолокация настроена" />
+          <ReadyItem done={entry} title="Точка для входа" />
+          <ReadyItem done={leave} title="Точка для выхода" />
+        </ul>
+        {onGeo && (
+          <button type="button" className="ofs-ready__link" onClick={onGeo}>
+            Открыть геолокацию
+            <AppIcon name="next" size={16} />
+          </button>
+        )}
+      </aside>
 
-      {adding && (
-        <NewPoint
-          officeId={office.id}
-          onCancel={() => setAdding(false)}
-          onCreated={(result) => {
-            setAdding(false);
-            setIssued({ point: result.point, link: result.sticker_link });
+      {shown && (
+        <QrDialog
+          office={office}
+          point={shown}
+          linkOf={linkOf}
+          canManage={canManage}
+          onClose={() => setShown(null)}
+          onIssued={(result) => {
+            setLinks((was) => ({ ...was, [result.point.id]: result.sticker_link }));
+            setShown(result.point);
             reload();
           }}
         />
       )}
+    </div>
+  );
+}
 
-      {issued && (
-        <IssuedCode office={office} issued={issued} onClose={() => setIssued(null)} />
-      )}
+function ReadyItem({ done, title }: { done: boolean; title: string }) {
+  return (
+    <li className={done ? 'ofs-ready__item ofs-ready__item--on' : 'ofs-ready__item'}>
+      <AppIcon name={done ? 'check' : 'alert'} size={20} />
+      {title}
+    </li>
+  );
+}
 
-      {list.state === 'loading' && <p className="ofs-empty">Загружаем QR-точки…</p>}
-      {list.state === 'denied' && <p className="ofs-empty">Нет доступа к QR-точкам.</p>}
-      {list.state === 'error' && <p className="ofs-empty ofs-empty--bad">Не удалось загрузить QR-точки.</p>}
-      {list.state === 'ready' && points.length === 0 && !adding && (
-        <p className="ofs-empty">
-          Точек пока нет. {canManage ? 'Добавьте первую — например, «Главный вход».' : ''}
-        </p>
-      )}
+// --- строка точки --------------------------------------------------------------
 
-      {points.length > 0 && (
-        <ul className="ofs-points">
-          {points.map((point) => (
-            <PointCard
-              key={point.id}
-              point={point}
-              canManage={canManage}
-              onChanged={reload}
-              onIssued={(result) => {
-                setIssued({ point: result.point, link: result.sticker_link });
-                reload();
-              }}
-            />
-          ))}
-        </ul>
+function PointRow({ office, point, canManage, onChanged, onShow, onIssued, linkOf }: {
+  office: api.OfficeFull;
+  point: api.QrPoint;
+  canManage: boolean;
+  onChanged: () => void;
+  onShow: () => void;
+  onIssued: (issued: api.IssuedQrPoint) => void;
+  linkOf: (point: api.QrPoint) => Promise<string | null>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [confirm, setConfirm] = useState<'reissue' | 'off' | 'delete' | null>(null);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+
+  /** Код в руки: и «печать», и «скачать» идут одной дорогой. */
+  async function withImage(use: (image: string, link: string) => void) {
+    setBusy(true);
+    setFailed(null);
+    try {
+      const link = await linkOf(point);
+      if (!link) {
+        setFailed('Ссылку кода собрать не удалось: на сервере не задано имя бота Telegram.');
+        return;
+      }
+      use(await QRCode.toDataURL(link, { width: 720, margin: 2, errorCorrectionLevel: 'M' }), link);
+    } catch (error) {
+      setFailed(messageFor(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function act(run: () => Promise<unknown>) {
+    setBusy(true);
+    setFailed(null);
+    try {
+      await run();
+      setConfirm(null);
+      onChanged();
+    } catch (error) {
+      setFailed(messageFor(error));
+      setConfirm(null);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <tr className={point.is_active ? undefined : 'ofs-row--off'}>
+        <td>
+          {renaming === null ? (
+            <b className="ofs-row__name" title={point.name}>{point.name}</b>
+          ) : (
+            <span className="ofs-row__rename">
+              <input className="ofs-field__input" value={renaming} autoFocus maxLength={255}
+                     aria-label="Название точки"
+                     onChange={(event) => setRenaming(event.target.value)} />
+              <button type="button" className="ofs-btn ofs-btn--blue"
+                      disabled={busy || !renaming.trim()}
+                      onClick={() => void act(async () => {
+                        await api.updateQrPoint(point.id, { name: renaming.trim() });
+                        setRenaming(null);
+                      })}>
+                Сохранить
+              </button>
+              <button type="button" className="ofs-btn" onClick={() => setRenaming(null)}>Отмена</button>
+            </span>
+          )}
+          {point.description && <i className="ofs-row__desc">{point.description}</i>}
+        </td>
+        <td>{MODE_TITLE[point.direction_mode] ?? point.direction_mode}</td>
+        <td>
+          <span className={point.is_active ? 'ofs-live ofs-live--ok' : 'ofs-live ofs-live--off'}>
+            <b aria-hidden="true" />
+            {point.is_active ? 'Работает' : 'Выключена'}
+          </span>
+        </td>
+        <td>{whenScanned(point.last_scan_at ?? null)}</td>
+        <td className="ofs-table__actions">
+          {canManage && (
+            <div className="ofs-row__tools">
+              <button type="button" className="ofs-btn" disabled={busy}
+                      onClick={() => void withImage((image) => download(office, point, image))}>
+                <AppIcon name="doc" size={16} />
+                Печать QR
+              </button>
+              <button type="button" className="ofs-btn" disabled={busy}
+                      onClick={() => setConfirm('reissue')}>
+                <AppIcon name="refresh" size={16} />
+                Заменить
+              </button>
+              <RowMenu disabled={busy}>
+                {(close) => (
+                  <>
+                    <button type="button" role="menuitem"
+                            onClick={() => { close(); onShow(); }}>
+                      Посмотреть QR
+                    </button>
+                    <button type="button" role="menuitem"
+                            onClick={() => { close(); setRenaming(point.name); }}>
+                      Переименовать точку
+                    </button>
+                    <button type="button" role="menuitem"
+                            onClick={() => { close(); void withImage((image) => download(office, point, image)); }}>
+                      Скачать QR в PNG
+                    </button>
+                    {point.is_active ? (
+                      <button type="button" role="menuitem"
+                              onClick={() => { close(); setConfirm('off'); }}>
+                        Отключить точку
+                      </button>
+                    ) : (
+                      <button type="button" role="menuitem"
+                              onClick={() => { close(); void act(() => api.setQrPointActive(point.id, true)); }}>
+                        Включить точку
+                      </button>
+                    )}
+                    <button type="button" role="menuitem" className="ofs-more__danger"
+                            onClick={() => { close(); setConfirm('delete'); }}>
+                      Удалить точку
+                    </button>
+                  </>
+                )}
+              </RowMenu>
+            </div>
+          )}
+        </td>
+      </tr>
+
+      {(confirm || failed) && (
+        <tr className="ofs-row__aside">
+          <td colSpan={5}>
+            {confirm === 'reissue' && (
+              <div className="ofs-confirm" role="alertdialog" aria-label="Заменить QR">
+                <span>Прежний код перестанет работать сразу — наклейку у двери придётся заменить. Продолжить?</span>
+                <button type="button" className="ofs-btn ofs-btn--blue" disabled={busy}
+                        onClick={() => void act(async () => onIssued(await api.reissueQrPoint(point.id)))}>
+                  Заменить QR
+                </button>
+                <button type="button" className="ofs-btn" onClick={() => setConfirm(null)}>Отмена</button>
+              </div>
+            )}
+            {confirm === 'off' && (
+              <div className="ofs-confirm" role="alertdialog" aria-label="Отключить точку">
+                <span>По этому коду перестанут отмечаться. Отключить?</span>
+                <button type="button" className="ofs-btn ofs-btn--danger" disabled={busy}
+                        onClick={() => void act(() => api.setQrPointActive(point.id, false))}>
+                  Отключить
+                </button>
+                <button type="button" className="ofs-btn" onClick={() => setConfirm(null)}>Отмена</button>
+              </div>
+            )}
+            {confirm === 'delete' && (
+              <div className="ofs-confirm" role="alertdialog" aria-label="Удалить точку">
+                <span>Точка исчезнет совсем. Удалить?</span>
+                <button type="button" className="ofs-btn ofs-btn--danger" disabled={busy}
+                        onClick={() => void act(() => api.deleteQrPoint(point.id))}>
+                  Удалить
+                </button>
+                <button type="button" className="ofs-btn" onClick={() => setConfirm(null)}>Отмена</button>
+              </div>
+            )}
+            {failed && <p className="ofs-alert" role="alert">{failed}</p>}
+          </td>
+        </tr>
       )}
+    </>
+  );
+}
+
+// --- меню «•••» -----------------------------------------------------------------
+
+/**
+ * Меню строки таблицы.
+ *
+ * Список лежит в `<body>`, а не рядом с кнопкой. У обёртки таблицы
+ * включена прокрутка по горизонтали, а прокрутка обрезает всё, что
+ * вылезает за край: меню было видно наполовину, и нижние пункты
+ * доставались только скроллом таблицы. Из `<body>` его не обрежет никто.
+ *
+ * Место считается по кнопке при каждом открытии и пересчитывается,
+ * пока страница едет под пальцем, — иначе меню отстаёт от своей строки.
+ * Если снизу не хватает высоты, список раскрывается вверх.
+ */
+function RowMenu({ disabled, children }: {
+  disabled: boolean;
+  children: (close: () => void) => ReactNode;
+}) {
+  const anchor = useRef<HTMLButtonElement>(null);
+  const box = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [at, setAt] = useState<{ top: number; left: number } | null>(null);
+
+  const place = useCallback(() => {
+    const button = anchor.current;
+    if (!button) return;
+    const rect = button.getBoundingClientRect();
+    const height = box.current?.offsetHeight ?? 0;
+    const below = rect.bottom + 6;
+    // Вверх — только когда снизу действительно некуда: раскрытие вниз
+    // привычнее, и дёргать список без нужды не стоит.
+    const up = height > 0 && below + height > window.innerHeight - 8;
+    setAt({ top: up ? Math.max(8, rect.top - 6 - height) : below, left: rect.right });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    place();
+    // Второй заход — уже по настоящей высоте списка: до первой отрисовки
+    // её неоткуда взять.
+    const again = requestAnimationFrame(place);
+    window.addEventListener('scroll', place, true);
+    window.addEventListener('resize', place);
+    return () => {
+      cancelAnimationFrame(again);
+      window.removeEventListener('scroll', place, true);
+      window.removeEventListener('resize', place);
+    };
+  }, [open, place]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(false); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open]);
+
+  const close = () => setOpen(false);
+
+  return (
+    <>
+      <button type="button" className="ofs-btn ofs-btn--dots" disabled={disabled} ref={anchor}
+              aria-label="Ещё действия" aria-expanded={open} aria-haspopup="menu"
+              onClick={() => setOpen((was) => !was)}>
+        •••
+      </button>
+      {open && at && createPortal(
+        <>
+          <button type="button" className="ofs-more__shade" aria-label="Закрыть меню" onClick={close} />
+          <div className="ofs-more__menu" role="menu" ref={box}
+               style={{ top: `${at.top}px`, left: `${at.left}px` }}>
+            {children(close)}
+          </div>
+        </>,
+        document.body,
+      )}
+    </>
+  );
+}
+
+// --- окно с кодом ---------------------------------------------------------------
+
+/**
+ * Окно с QR. Картинка собирается здесь же, из ссылки.
+ *
+ * Если у точки нет сохранённого кода — она выпущена до того, как коды
+ * стали храниться, — окно объясняет это и предлагает замену: вернуть
+ * прежний код нельзя, и молчать об этом хуже, чем сказать.
+ */
+function QrDialog({ office, point, canManage, linkOf, onClose, onIssued }: {
+  office: api.OfficeFull;
+  point: api.QrPoint;
+  canManage: boolean;
+  linkOf: (point: api.QrPoint) => Promise<string | null>;
+  onClose: () => void;
+  onIssued: (issued: api.IssuedQrPoint) => void;
+}) {
+  const [image, setImage] = useState<string | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    setImage(null);
+    setFailed(null);
+    linkOf(point)
+      .then(async (link) => {
+        if (!alive) return;
+        if (!link) {
+          setFailed('Ссылку кода собрать не удалось: на сервере не задано имя бота Telegram.');
+          return;
+        }
+        const url = await QRCode.toDataURL(link, { width: 720, margin: 2, errorCorrectionLevel: 'M' });
+        if (alive) setImage(url);
+      })
+      .catch((error) => { if (alive) setFailed(messageFor(error)); });
+    return () => { alive = false; };
+  }, [point, linkOf]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  async function replace() {
+    setBusy(true);
+    setFailed(null);
+    try {
+      onIssued(await api.reissueQrPoint(point.id));
+    } catch (error) {
+      setFailed(messageFor(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="ofs-modal" role="dialog" aria-modal="true" aria-label={`QR-код: ${point.name}`}
+         onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <div className="ofs-modal__box">
+        <header className="ofs-modal__head">
+          <div>
+            <h2 className="ofs-modal__title">{point.name}</h2>
+            <p className="ofs-modal__sub">
+              {office.name} · {MODE_TITLE[point.direction_mode] ?? point.direction_mode}
+            </p>
+          </div>
+          <button type="button" className="of-btn--icon" aria-label="Закрыть" onClick={onClose}>
+            <AppIcon name="close" size={20} />
+          </button>
+        </header>
+
+        <div className="ofs-modal__qr">
+          {image ? (
+            <img src={image} alt={`QR-код точки «${point.name}»`} />
+          ) : failed ? (
+            <p className="ofs-modal__none">{failed}</p>
+          ) : (
+            <p className="ofs-modal__none">Готовим код…</p>
+          )}
+        </div>
+
+        <div className="ofs-modal__tools">
+          {image ? (
+            <a className="ofs-btn ofs-btn--blue" href={image} download={fileName(office, point)}>
+              <AppIcon name="download" size={16} />
+              Скачать QR в PNG
+            </a>
+          ) : failed && canManage ? (
+            <button type="button" className="ofs-btn ofs-btn--blue" disabled={busy}
+                    onClick={() => void replace()}>
+              {busy ? 'Заменяем…' : 'Заменить QR'}
+            </button>
+          ) : null}
+        </div>
+      </div>
     </div>
   );
 }
@@ -152,9 +585,7 @@ function NewPoint({ officeId, onCancel, onCreated }: {
         // Пустое имя не отправляем: сервер назовёт точку по её типу.
         ...(name.trim() ? { name: name.trim() } : {}),
         direction_mode: mode,
-        // Печатная точка: лист с кодом висит на стене, секрет выдаётся
-        // один раз. Без этого сервер считает точку экранной и отказывает
-        // — «для поворотной точки нужен период смены кода».
+        // Печатная точка: лист с кодом висит на стене.
         qr_mode: 'STATIC',
         ...(description.trim() ? { description: description.trim() } : {}),
       });
@@ -167,7 +598,7 @@ function NewPoint({ officeId, onCancel, onCreated }: {
   }
 
   return (
-    <div className="ofs-card ofs-new" aria-label="Новая QR-точка">
+    <div className="ofs-new" aria-label="Новая QR-точка">
       <h3 className="ofs-card__title">Новая QR-точка</h3>
       <div className="ofs-new__grid">
         <label className="ofs-field">
@@ -175,13 +606,10 @@ function NewPoint({ officeId, onCancel, onCreated }: {
           <input className="ofs-field__input" value={name} maxLength={255}
                  placeholder={DEFAULT_NAME[mode]} aria-label="Название точки"
                  onChange={(event) => setName(event.target.value)} />
-          <span className="ofs-field__hint">
-            Можно не заполнять — точка будет называться «{DEFAULT_NAME[mode]}»
-          </span>
         </label>
         <div className="ofs-field">
-          <span className="ofs-field__label">Тип</span>
-          <div className="ofs-modes" role="radiogroup" aria-label="Тип точки">
+          <span className="ofs-field__label">Назначение</span>
+          <div className="ofs-modes" role="radiogroup" aria-label="Назначение точки">
             {MODES.map((item) => (
               <button key={item.value} type="button" role="radio" aria-checked={mode === item.value}
                       className={mode === item.value ? 'ofs-mode ofs-mode--on' : 'ofs-mode'}
@@ -207,7 +635,7 @@ function NewPoint({ officeId, onCancel, onCreated }: {
       {failed && <p className="ofs-alert" role="alert">{failed}</p>}
       <div className="ofs-actions">
         <button type="button" className="ofs-btn ofs-btn--blue" disabled={sending} onClick={() => void create()}>
-          {sending ? 'Создаём…' : 'Создать и получить QR'}
+          {sending ? 'Создаём…' : 'Создать и показать QR'}
         </button>
         <button type="button" className="ofs-btn" disabled={sending} onClick={onCancel}>Отмена</button>
       </div>
@@ -215,296 +643,7 @@ function NewPoint({ officeId, onCancel, onCreated }: {
   );
 }
 
-// --- выпущенный код ------------------------------------------------------------
-
-function IssuedCode({ office, issued, onClose }: {
-  office: api.OfficeFull;
-  issued: Issued;
-  onClose: () => void;
-}) {
-  const [image, setImage] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-  const { point, link } = issued;
-
-  useEffect(() => {
-    if (!link) return;
-    let alive = true;
-    QRCode.toDataURL(link, { width: 720, margin: 2, errorCorrectionLevel: 'M' })
-      .then((url) => { if (alive) setImage(url); })
-      .catch(() => { if (alive) setImage(null); });
-    return () => { alive = false; };
-  }, [link]);
-
-  const fileName = `qr-${slug(office.name)}-${slug(point.name)}.png`;
-
-  async function copy() {
-    if (!link) return;
-    try {
-      await navigator.clipboard.writeText(link);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2000);
-    } catch {
-      setCopied(false);
-    }
-  }
-
-  function print() {
-    if (!image) return;
-    const sheet = window.open('', '_blank', 'width=720,height=900');
-    if (!sheet) return;
-    const title = escapeHtml(`${office.name} — ${point.name}`);
-    sheet.document.write(`<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>${title}</title>
-      <style>
-        body{font-family:'Segoe UI',system-ui,sans-serif;margin:0;display:flex;justify-content:center}
-        .sheet{width:170mm;padding:18mm 0;text-align:center;color:#13295a}
-        h1{font-size:26pt;margin:0 0 4mm} h2{font-size:18pt;margin:0 0 8mm;font-weight:600}
-        img{width:120mm;height:120mm} p{font-size:13pt;margin:6mm 0 0;color:#34507f}
-        .mode{display:inline-block;margin-top:4mm;padding:2mm 6mm;border:1px solid #13295a;border-radius:20mm;font-size:13pt}
-      </style></head><body><div class="sheet">
-      <h1>${escapeHtml(point.name)}</h1><h2>${escapeHtml(office.name)}</h2>
-      <img src="${image}" alt="QR-код">
-      <div class="mode">${escapeHtml(MODE_TITLE[point.direction_mode] ?? point.direction_mode)}</div>
-      <p>Отсканируйте камерой телефона или в боте HUMOTECH кнопкой «📷 Отметиться».<br>Отметка работает только рядом с офисом.</p>
-      </div><script>window.onload=function(){window.focus();window.print();}</script></body></html>`);
-    sheet.document.close();
-  }
-
-  return (
-    <div className="ofs-card ofs-issued" role="region" aria-label="Выпущенный QR-код">
-      <div className="ofs-issued__qr">
-        {link && image ? (
-          <img src={image} alt={`QR-код точки «${point.name}»`} />
-        ) : (
-          <span className="ofs-issued__none">{link ? 'Готовим код…' : 'Нет ссылки'}</span>
-        )}
-      </div>
-      <div className="ofs-issued__text">
-        <h3 className="ofs-card__title">
-          QR-код готов: {point.name}
-          <span className="ofs-chip">{MODE_TITLE[point.direction_mode] ?? point.direction_mode}</span>
-        </h3>
-        {link ? (
-          <p className="ofs-warn">
-            Сохраните или распечатайте код сейчас. Повторно он не показывается —
-            если потеряете, перевыпустите: прежний перестанет действовать.
-          </p>
-        ) : (
-          <p className="ofs-alert">
-            Точка создана, но ссылку для кода собрать не удалось: на сервере не задано
-            имя бота Telegram. Сообщите администратору и перевыпустите код после настройки.
-          </p>
-        )}
-        <div className="ofs-actions ofs-actions--wrap">
-          <a className={image ? 'ofs-btn ofs-btn--blue' : 'ofs-btn ofs-btn--blue ofs-btn--off'}
-             href={image ?? undefined} download={fileName} aria-disabled={image ? undefined : true}>
-            <AppIcon name="download" size={16} />
-            Скачать PNG
-          </a>
-          <button type="button" className="ofs-btn" disabled={!image} onClick={print}>
-            <AppIcon name="doc" size={16} />
-            Распечатать
-          </button>
-          <button type="button" className="ofs-btn" disabled={!link} onClick={() => void copy()}>
-            <AppIcon name="list" size={16} />
-            {copied ? 'Ссылка скопирована' : 'Скопировать ссылку'}
-          </button>
-          <button type="button" className="ofs-btn ofs-btn--ghost" onClick={onClose}>Готово</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// --- карточка точки ------------------------------------------------------------
-
-function PointCard({ point, canManage, onChanged, onIssued }: {
-  point: api.QrPoint;
-  canManage: boolean;
-  onChanged: () => void;
-  onIssued: (issued: api.IssuedQrPoint) => void;
-}) {
-  const [busy, setBusy] = useState<'reissue' | 'toggle' | 'rename' | 'delete' | null>(null);
-  const [confirm, setConfirm] = useState<'reissue' | 'off' | 'delete' | null>(null);
-  const [renaming, setRenaming] = useState<string | null>(null);
-  const [failed, setFailed] = useState<string | null>(null);
-  const printable = point.qr_mode === 'STATIC';
-
-  async function rename() {
-    const name = (renaming ?? '').trim();
-    if (!name) return;
-    setBusy('rename');
-    setFailed(null);
-    try {
-      await api.updateQrPoint(point.id, { name });
-      setRenaming(null);
-      onChanged();
-    } catch (error) {
-      setFailed(messageFor(error));
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function remove() {
-    setBusy('delete');
-    setFailed(null);
-    try {
-      await api.deleteQrPoint(point.id);
-      setConfirm(null);
-      onChanged();
-    } catch (error) {
-      // Отказ сервера показывается его словами: он объясняет, что по
-      // точке уже отмечались и её надо выключить, а не удалять.
-      setFailed(messageFor(error));
-      setConfirm(null);
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function reissue() {
-    setBusy('reissue');
-    setFailed(null);
-    try {
-      onIssued(await api.reissueQrPoint(point.id));
-      setConfirm(null);
-    } catch (error) {
-      setFailed(messageFor(error));
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function toggle(active: boolean) {
-    setBusy('toggle');
-    setFailed(null);
-    try {
-      await api.setQrPointActive(point.id, active);
-      setConfirm(null);
-      onChanged();
-    } catch (error) {
-      setFailed(messageFor(error));
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  return (
-    <li className={point.is_active ? 'ofs-point' : 'ofs-point ofs-point--off'}>
-      <div className="ofs-point__main">
-        <div className="ofs-point__title">
-          {renaming === null ? (
-            <b title={point.name}>{point.name}</b>
-          ) : (
-            <span className="ofs-point__rename">
-              <input className="ofs-field__input" value={renaming} autoFocus
-                     aria-label="Название точки" maxLength={255}
-                     onChange={(event) => setRenaming(event.target.value)} />
-              <button type="button" className="ofs-btn ofs-btn--blue"
-                      disabled={busy !== null || !renaming.trim()}
-                      onClick={() => void rename()}>
-                {busy === 'rename' ? 'Сохраняем…' : 'Сохранить'}
-              </button>
-              <button type="button" className="ofs-btn"
-                      onClick={() => setRenaming(null)}>Отмена</button>
-            </span>
-          )}
-          <span className="ofs-chip">{MODE_TITLE[point.direction_mode] ?? point.direction_mode}</span>
-          <span className={point.is_active ? 'ofs-state ofs-state--ok' : 'ofs-state ofs-state--off'}>
-            <i aria-hidden="true" />
-            {point.is_active ? 'Активна' : 'Выключена'}
-          </span>
-        </div>
-        {point.description && <p className="ofs-point__desc" title={point.description}>{point.description}</p>}
-        <p className="ofs-point__meta">
-          {point.created_at && <span>Создана {shortDate(point.created_at)}</span>}
-          {point.created_by_name && <span>{point.created_by_name}</span>}
-          <span>Сканирований сегодня: <b>{point.scans_today ?? '—'}</b></span>
-          {point.rotated_at && <span>Код перевыпущен {shortDate(point.rotated_at)}</span>}
-          {!printable && <span>Код на экране меняется сам</span>}
-        </p>
-        {/* Секрет показывается один раз — в базе только его хеш. Без этой
-            строки человек, закрывший окно создания, ищет кнопку «показать
-            код» и не находит её: она называется «Перевыпустить». */}
-        {printable && (
-          <p className="ofs-point__hint">
-            Сам код показывается один раз, при выпуске: в системе хранится
-            только его отпечаток. Потеряли картинку — перевыпустите, но
-            учтите: распечатанный лист со старым кодом перестанет работать.
-          </p>
-        )}
-        {failed && <p className="ofs-alert" role="alert">{failed}</p>}
-      </div>
-
-      {canManage && (
-        <div className="ofs-point__actions">
-          {confirm === 'reissue' ? (
-            <div className="ofs-confirm" role="alertdialog" aria-label="Перевыпустить QR">
-              <span>Старый код сразу перестанет работать. Перевыпустить?</span>
-              <button type="button" className="ofs-btn ofs-btn--blue" disabled={busy !== null} onClick={() => void reissue()}>
-                {busy === 'reissue' ? 'Выпускаем…' : 'Перевыпустить'}
-              </button>
-              <button type="button" className="ofs-btn" onClick={() => setConfirm(null)}>Отмена</button>
-            </div>
-          ) : confirm === 'off' ? (
-            <div className="ofs-confirm" role="alertdialog" aria-label="Отключить точку">
-              <span>По этому коду перестанут отмечаться. Отключить?</span>
-              <button type="button" className="ofs-btn ofs-btn--danger" disabled={busy !== null} onClick={() => void toggle(false)}>
-                {busy === 'toggle' ? 'Отключаем…' : 'Отключить'}
-              </button>
-              <button type="button" className="ofs-btn" onClick={() => setConfirm(null)}>Отмена</button>
-            </div>
-          ) : confirm === 'delete' ? (
-            <div className="ofs-confirm" role="alertdialog" aria-label="Удалить точку">
-              <span>Точка исчезнет совсем. Удалить?</span>
-              <button type="button" className="ofs-btn ofs-btn--danger"
-                      disabled={busy !== null} onClick={() => void remove()}>
-                {busy === 'delete' ? 'Удаляем…' : 'Удалить'}
-              </button>
-              <button type="button" className="ofs-btn" onClick={() => setConfirm(null)}>Отмена</button>
-            </div>
-          ) : (
-            <>
-              <button type="button" className="ofs-btn" disabled={busy !== null}
-                      onClick={() => setRenaming(point.name)}>
-                <AppIcon name="pencil" size={16} />
-                Переименовать
-              </button>
-              {printable && (
-                <button type="button" className="ofs-btn" disabled={busy !== null} onClick={() => setConfirm('reissue')}>
-                  <AppIcon name="refresh" size={16} />
-                  Перевыпустить QR
-                </button>
-              )}
-              {point.is_active ? (
-                <button type="button" className="ofs-btn" disabled={busy !== null} onClick={() => setConfirm('off')}>
-                  Отключить
-                </button>
-              ) : (
-                <button type="button" className="ofs-btn" disabled={busy !== null} onClick={() => void toggle(true)}>
-                  {busy === 'toggle' ? 'Включаем…' : 'Включить'}
-                </button>
-              )}
-              {/* Удаление стоит последним и только у точки без отметок:
-                  сервер откажет и объяснит, если по ней уже ходили. */}
-              <button type="button" className="ofs-btn ofs-btn--quiet"
-                      disabled={busy !== null} onClick={() => setConfirm('delete')}>
-                <AppIcon name="cross" size={16} />
-                Удалить
-              </button>
-            </>
-          )}
-        </div>
-      )}
-    </li>
-  );
-}
-
-function shortDate(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso.slice(0, 10);
-  return date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
-}
+// --- мелочи ---------------------------------------------------------------------
 
 /** Как назовётся точка, которую не назвали. Тот же выбор на сервере. */
 const DEFAULT_NAME: Record<'ENTRY' | 'EXIT' | 'BOTH', string> = {
@@ -513,15 +652,35 @@ const DEFAULT_NAME: Record<'ENTRY' | 'EXIT' | 'BOTH', string> = {
   BOTH: 'Вход и выход',
 };
 
+/** «Сегодня, 09:14», «Вчера, 18:07» или дата. `null` — ни разу. */
+function whenScanned(iso: string | null): string {
+  if (!iso) return 'Ни разу';
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return '—';
+  const time = at.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  const today = new Date();
+  const sameDay = (a: Date, b: Date) => a.toDateString() === b.toDateString();
+  if (sameDay(at, today)) return `Сегодня, ${time}`;
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  if (sameDay(at, yesterday)) return `Вчера, ${time}`;
+  return `${at.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' })}, ${time}`;
+}
+
+function fileName(office: api.OfficeFull, point: api.QrPoint): string {
+  return `qr-${slug(office.name)}-${slug(point.name)}.png`;
+}
+
+function download(office: api.OfficeFull, point: api.QrPoint, image: string) {
+  const link = document.createElement('a');
+  link.href = image;
+  link.download = fileName(office, point);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
 function slug(value: string): string {
   const cleaned = value.toLowerCase().replace(/[^a-z0-9а-яё]+/gi, '-').replace(/^-+|-+$/g, '');
   return cleaned || 'office';
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
 }

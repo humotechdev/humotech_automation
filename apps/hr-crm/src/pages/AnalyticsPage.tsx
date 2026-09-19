@@ -58,6 +58,8 @@ export function AnalyticsPage() {
   const start = params.get('from') ?? shift(end, -((preset ?? 30) - 1));
   const region = params.get('region_id') ?? '';
   const office = params.get('office_id') ?? '';
+  const department = params.get('department_id') ?? '';
+  const employee = params.get('employee_id') ?? '';
   const compare = params.get('compare') === '1';
   const weekday = params.get('weekday') ?? '';
   const picked = params.get('day') ?? '';
@@ -68,14 +70,16 @@ export function AnalyticsPage() {
       date_to: end,
       ...(region ? { region_id: region } : {}),
       ...(office ? { office_id: office } : {}),
+      ...(department ? { department_id: department } : {}),
+      ...(employee ? { employee_id: employee } : {}),
       ...(weekday ? { weekday } : {}),
     }),
-    [start, end, region, office, weekday],
+    [start, end, region, office, department, employee, weekday],
   );
 
   const [overview, reload, status] = useBlock(
     (signal) => api.analyticsOverview(query, signal),
-    `overview|${start}|${end}|${region}|${office}|${weekday}`,
+    `overview|${start}|${end}|${region}|${office}|${department}|${employee}|${weekday}`,
   );
 
   // Движение сотрудников. Отдельным запросом, а не полем обзора:
@@ -95,9 +99,14 @@ export function AnalyticsPage() {
 
   const [directory] = useBlock(
     (signal) =>
-      Promise.all([api.regions(signal), api.offices(signal)]).then(([r, o]) => ({
+      Promise.all([
+        api.regions(signal),
+        api.offices(signal),
+        api.departmentsPage({ limit: '200', status: 'ACTIVE' }, signal),
+      ]).then(([r, o, d]) => ({
         regions: r.items.filter((one) => one.status === 'ACTIVE'),
         offices: o.items.filter((one) => one.status === 'ACTIVE'),
+        departments: d.items,
       })),
     'analytics-directory',
   );
@@ -133,6 +142,11 @@ export function AnalyticsPage() {
     }
   }
 
+  // `?? []`: ответ без блока — не повод обрушить страницу. Так бывает
+  // у старого сервера и у прокси, подменившего тело.
+  const chosenPerson = overview.state === 'ready'
+    ? (overview.data.employees ?? []).find((one) => one.id === employee) ?? null
+    : null;
   const lengthDays = Math.round((Date.parse(`${end}T12:00:00Z`) - Date.parse(`${start}T12:00:00Z`)) / 86_400_000) + 1;
   const periodTitle = preset ? `последние ${preset} дней` : `${lengthDays} ${daysWord(lengthDays)}`;
 
@@ -160,6 +174,18 @@ export function AnalyticsPage() {
                   onChange={(value) => patch({ region_id: value || null, office_id: null })} />
           <Select label="Офис" empty="Все офисы" value={office} options={offices}
                   onChange={(value) => patch({ office_id: value || null })} />
+          <Select label="Отдел" empty="Все отделы" value={department}
+                  options={directory.state === 'ready' ? directory.data.departments : []}
+                  onChange={(value) => patch({ department_id: value || null, day: null })} />
+          {/* Сотрудник выбирается из рейтинга ниже: отдельный список на
+              тысячу человек в строке фильтров бесполезен, а нажатие по
+              строке — естественный способ сказать «покажи его». */}
+          {employee && (
+            <button type="button" className="an-chip an-chip--clear"
+                    onClick={() => patch({ employee_id: null, day: null })}>
+              {chosenPerson?.name ?? 'Выбранный сотрудник'} ✕
+            </button>
+          )}
 
           <label className="an-toggle">
             <input type="checkbox" role="switch" checked={compare}
@@ -201,6 +227,15 @@ export function AnalyticsPage() {
                     onPick={(day) => patch({ day })} onRetry={reload} />
           <DayPanel day={chosen} loading={!data && overview.state === 'loading'}
                     link={chosen ? attendanceLink(chosen.day, region, office) : ''} />
+        </div>
+
+        <div className="an-row an-row--compare">
+          <Regions block={overview} current={region}
+                   onPick={(id) => patch({ region_id: id === region ? null : id, office_id: null, day: null })}
+                   onRetry={reload} />
+          <People block={overview} current={employee}
+                  onPick={(id) => patch({ employee_id: id === employee ? null : id, day: null })}
+                  onRetry={reload} />
         </div>
 
         <Movement block={movement} onRetry={reloadMovement} />
@@ -1003,5 +1038,157 @@ function MovementRow({ title, row }: { title: string; row: api.MovementSpan }) {
       <td>{row.left}</td>
       <td>{row.difference > 0 ? `+${row.difference}` : row.difference}</td>
     </tr>
+  );
+}
+
+/**
+ * Сравнение регионов — та же явка уровнем выше.
+ *
+ * Столбцы, а не круги: доли целого здесь нет, есть несколько величин,
+ * которые сравнивают между собой, и длина столбца читается точнее, чем
+ * угол сектора.
+ *
+ * Нажатие по региону сужает всю страницу: KPI, график и рейтинг
+ * начинают относиться к нему, а не к компании.
+ */
+function Regions({ block, current, onPick, onRetry }: {
+  block: Block<api.Overview>;
+  current: string;
+  onPick: (id: string) => void;
+  onRetry: () => void;
+}) {
+  if (block.state !== 'ready') {
+    return (
+      <section className="an-card" aria-label="Регионы">
+        <h2 className="an-card__title">Регионы</h2>
+        {block.state === 'loading'
+          ? <p className="empty" role="status">Считаем…</p>
+          : (
+            <p className="empty empty--bad">
+              Не удалось посчитать.{' '}
+              <button type="button" className="link" onClick={onRetry}>Повторить</button>
+            </p>
+          )}
+      </section>
+    );
+  }
+
+  const rows = block.data.regions ?? [];
+  if (rows.length === 0) {
+    return (
+      <section className="an-card" aria-label="Регионы">
+        <h2 className="an-card__title">Регионы</h2>
+        <p className="empty">За этот период сравнивать нечего.</p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="an-card" aria-label="Регионы">
+      <h2 className="an-card__title">Регионы</h2>
+      <ul className="an-bars">
+        {rows.map((row) => {
+          const percent = row.attendance.percent;
+          return (
+            <li key={row.id}>
+              <button
+                type="button"
+                className={row.id === current ? 'an-bar an-bar--on' : 'an-bar'}
+                aria-pressed={row.id === current}
+                onClick={() => onPick(row.id)}
+              >
+                <span className="an-bar__name">{row.name}</span>
+                <span className="an-bar__track" aria-hidden="true">
+                  <i style={{ width: `${Math.max(percent ?? 0, 2)}%` }} />
+                </span>
+                <span className="an-bar__value">
+                  {percent === null ? '—' : `${Math.round(percent)}%`}
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+/**
+ * Рейтинг сотрудников: худшая явка сверху.
+ *
+ * Страницу открывают, чтобы найти проблему, а не полюбоваться
+ * отличниками, — поэтому порядок именно такой. Нажатие по строке
+ * сужает страницу до этого человека: так «почему у него 60 %»
+ * отвечается на том же экране, где вопрос и возник.
+ */
+function People({ block, current, onPick, onRetry }: {
+  block: Block<api.Overview>;
+  current: string;
+  onPick: (id: string) => void;
+  onRetry: () => void;
+}) {
+  if (block.state !== 'ready') {
+    return (
+      <section className="an-card" aria-label="Сотрудники">
+        <h2 className="an-card__title">Сотрудники</h2>
+        {block.state === 'loading'
+          ? <p className="empty" role="status">Считаем…</p>
+          : (
+            <p className="empty empty--bad">
+              Не удалось посчитать.{' '}
+              <button type="button" className="link" onClick={onRetry}>Повторить</button>
+            </p>
+          )}
+      </section>
+    );
+  }
+
+  const rows = block.data.employees ?? [];
+  if (rows.length === 0) {
+    return (
+      <section className="an-card" aria-label="Сотрудники">
+        <h2 className="an-card__title">Сотрудники</h2>
+        <p className="empty">В этом периоде никого не ждали — сравнивать нечего.</p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="an-card" aria-label="Сотрудники">
+      <div className="an-card__head">
+        <h2 className="an-card__title">Сотрудники</h2>
+        <span className="an-card__note">Худшая явка сверху</span>
+      </div>
+      <table className="an-people">
+        <thead>
+          <tr>
+            <th scope="col">Сотрудник</th>
+            <th scope="col">Явка</th>
+            <th scope="col">Опоздания</th>
+            <th scope="col">Пропуски</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.id} className={row.id === current ? 'an-people__on' : undefined}>
+              <th scope="row">
+                <button type="button" className="link" onClick={() => onPick(row.id)}>
+                  {row.name}
+                </button>
+              </th>
+              <td>
+                {row.attendance.percent === null
+                  ? '—'
+                  : `${Math.round(row.attendance.percent)}%`}
+              </td>
+              <td>
+                {row.late_days === 0 ? '—' : `${row.late_days} дн · ${row.late_minutes} мин`}
+              </td>
+              <td>{row.missed_days === 0 ? '—' : row.missed_days}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
   );
 }

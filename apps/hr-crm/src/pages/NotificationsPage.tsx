@@ -554,7 +554,7 @@ function Card({
           </p>
         )}
         <p className="view__foot-link">
-          <Link to={`/employees?employee=${row.employee_id}`}>Карточка сотрудника</Link>
+          <Link to={`/employees/${row.employee_id}`}>Карточка сотрудника</Link>
           <AppIcon name="arrow" size={16} />
         </p>
       </footer>

@@ -29,7 +29,7 @@ import { AppSelectField } from './AppSelect';
 import { initials } from './AppShell';
 import { messageFor } from '../api/errors';
 import { formatTime, longDate, today, useBlock, type Block } from '../features/dashboard/data';
-import { needsSetup, toneOf, type OfficeStats } from '../pages/OfficesPage';
+import { needsSetup, type OfficeStats } from '../pages/OfficesPage';
 
 const TABS = ['Обзор', 'Сотрудники', 'QR и геозона'] as const;
 
@@ -38,8 +38,6 @@ export const DIRECTION: Record<string, string> = {
   EXIT: 'Только выход',
   BOTH: 'Вход и выход',
 };
-
-const STATE_TITLE = { ok: 'Активен', warn: 'Требует внимания', off: 'Неактивен' } as const;
 
 type Props = {
   row: OfficeStats;
@@ -51,7 +49,7 @@ type Props = {
 export function OfficeCard({ row, canManage, updated = null, onClose }: Props) {
   const [tab, setTab] = useState<(typeof TABS)[number]>('Обзор');
   const office = row.office;
-  const tone = toneOf(row);
+  const active = office.status === 'ACTIVE';
 
   return (
     <aside className="ofc" aria-label="Карточка офиса">
@@ -60,12 +58,17 @@ export function OfficeCard({ row, canManage, updated = null, onClose }: Props) {
           <AppIcon name="building" size={18} />
         </span>
         <div className="ofc-head__text">
-          <p className="ofc-head__name" title={office.name}>{office.name}</p>
-          <p className="ofc-head__meta">
-            <span className={`ofc-state ofc-state--${tone}`}>
-              <i aria-hidden="true" />
-              {STATE_TITLE[tone]}
+          {/* Название и состояние — в одной строке. Состояний у офиса
+              два: включён он или выключен. «Требует внимания» — это про
+              настройку, и ему место в «Контроле доступа», а не рядом с
+              названием, где его читали как третий статус. */}
+          <p className="ofc-head__name" title={office.name}>
+            {office.name}
+            <span className={`ofc-state ofc-state--${active ? 'ok' : 'off'}`}>
+              {active ? 'Активен' : 'Неактивен'}
             </span>
+          </p>
+          <p className="ofc-head__meta">
             <span className="ofc-head__id">{office.region_name ?? ''}</span>
           </p>
         </div>
@@ -101,6 +104,7 @@ function Overview({ row, canManage, updated }: {
   const office = row.office;
   const count = (key: string) => row.counts[key] ?? 0;
   const inOffice = count('IN_OFFICE');
+  // Ушедшие входят в «по графику»: день у них уже случился.
   const left = count('LEFT');
   const missing = count('NOT_COME');
   const staff = Object.values(row.counts).reduce((sum, value) => sum + value, 0);
@@ -121,30 +125,20 @@ function Overview({ row, canManage, updated }: {
       </ul>
 
       <p className="ofc-line">
-        Уже ушли: <b>{left}</b>
-        <i aria-hidden="true">·</i>
         Опоздали: <b>{row.late ?? '—'}</b>
         <i aria-hidden="true">·</i>
         В отпуске: <b>{count('VACATION')}</b>
-        {count('SICK_LEAVE') > 0 && (
-          <>
-            <i aria-hidden="true">·</i>
-            На больничном: <b>{count('SICK_LEAVE')}</b>
-          </>
-        )}
+        <i aria-hidden="true">·</i>
+        На больничном: <b>{count('SICK_LEAVE')}</b>
       </p>
 
       <section className="ofc-block" aria-label="Офис">
         <h3 className="ofc-block__title">Офис</h3>
+        {/* Пояс в стране один, и строка про него ничего не решала.
+            Адрес виден в настройке офиса, где его и меняют. */}
         <dl className="ofc-facts">
           <div><dt>Регион</dt><dd>{office.region_name ?? '—'}</dd></div>
-          <div><dt>Часовой пояс</dt><dd>{office.timezone}</dd></div>
-          <div className="ofc-facts__wide">
-            <dt>Адрес</dt>
-            <dd title={office.address ?? undefined}>
-              {office.address || <span className="ofc-muted">Не указан</span>}
-            </dd>
-          </div>
+          <div><dt>Название</dt><dd title={office.name}>{office.name}</dd></div>
         </dl>
       </section>
 
@@ -257,7 +251,7 @@ export function OfficeForm({ office, onCancel, onDone }: {
 
   return (
     <div className="ofs-form">
-      <Field label="Название" value={form.name} onChange={set('name')} errors={fields['name']} />
+      <Field label="Название офиса" value={form.name} onChange={set('name')} errors={fields['name']} />
 
       <label className="ofs-field">
         <span className="ofs-field__label">Регион</span>
@@ -279,7 +273,7 @@ export function OfficeForm({ office, onCancel, onDone }: {
       <div className="ofs-actions">
         <button type="button" className="ofs-btn ofs-btn--blue" disabled={sending}
                 onClick={() => void save()}>
-          {sending ? 'Сохраняем…' : 'Сохранить'}
+          {sending ? 'Сохраняем…' : 'Сохранить изменения'}
         </button>
         {onCancel && (
           <button type="button" className="ofs-btn" disabled={sending} onClick={onCancel}>
@@ -350,7 +344,7 @@ export function Staff({ officeId }: { officeId: string }) {
                     <b title={person.full_name}>{person.full_name}</b>
                     <small>{person.current_assignment?.position_name ?? '—'}</small>
                   </span>
-                  <Link className="ofc-link" to={`/employees?employee=${person.id}`}>Открыть</Link>
+                  <Link className="ofc-link" to={`/employees/${person.id}`}>Открыть</Link>
                 </li>
               ))}
             </ul>

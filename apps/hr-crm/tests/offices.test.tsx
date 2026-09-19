@@ -166,6 +166,72 @@ describe('карта сети', () => {
   });
 });
 
+describe('выбор области на карте', () => {
+  /** Три офиса Бухарской области: с координатами, без них и чужой. */
+  const BUKHARA = {
+    ...OFFICE, id: 'o-b1', name: 'Бухара центр',
+    region_id: 'r-b', region_name: 'Бухарская область',
+    latitude: '39.7614', longitude: '64.4317', geofence_radius_m: 150,
+  };
+  const BUKHARA_NO_POINT = {
+    ...OFFICE, id: 'o-b2', name: 'Бухара склад',
+    region_id: 'r-b', region_name: 'Бухарская область',
+    latitude: null, longitude: null, geofence_radius_m: null,
+  };
+  const TASHKENT = {
+    ...OFFICE, id: 'o-t1', name: 'Ташкент офис',
+    region_id: 'r-t', region_name: 'город Ташкент',
+    latitude: '41.3111', longitude: '69.2406', geofence_radius_m: 100,
+  };
+
+  function manyOffices(handler: (path: string, method: string) => Response | null = () => null) {
+    return fakeNetwork((path, call) => {
+      const own = handler(path, call.method);
+      if (own) return own;
+      if (path.includes('/auth/')) {
+        return json(200, { ...USER, permissions: ['offices.read', 'offices.manage'] });
+      }
+      if (path.includes('/geo/')) return json(200, GEO);
+      if (path.includes('/qr-points/')) return json(200, { items: [] });
+      if (path.includes('/attendance/presence')) {
+        return json(200, {
+          date: '2026-09-06', timezone: 'Asia/Tashkent',
+          counts: { IN_OFFICE: 1 }, total: 1, truncated: false, items: [],
+        });
+      }
+      if (path.includes('/employees/counts')) return json(200, { total: 3, ACTIVE: 3 });
+      if (path.includes('/offices/')) {
+        return json(200, {
+          items: [BUKHARA, BUKHARA_NO_POINT, TASHKENT],
+          next_cursor: null, has_more: false,
+        });
+      }
+      return crm(path) ?? json(200, { items: [], next_cursor: null, has_more: false });
+    });
+  }
+
+  test('под областью видны все её офисы, включая те, что без точки на карте', async () => {
+    // Офис получает регион при создании, а точку на карте — позже.
+    // Считать принадлежность только по координатам значит терять из
+    // выборки всё, что ещё не отметили на карте.
+    manyOffices();
+    renderApp('/offices?area=UZ-BU');
+
+    expect(await screen.findByText('Бухара центр')).toBeTruthy();
+    expect(screen.getByText('Бухара склад')).toBeTruthy();
+    // Чужой офис в выборку не попадает.
+    expect(screen.queryByText('Ташкент офис')).toBeNull();
+  });
+
+  test('без выбранной области видны все офисы', async () => {
+    manyOffices();
+    renderApp('/offices');
+
+    expect(await screen.findByText('Бухара центр')).toBeTruthy();
+    expect(screen.getByText('Ташкент офис')).toBeTruthy();
+  });
+});
+
 describe('список', () => {
   test('кнопка «Требует настройки» не выглядит применённой до нажатия', async () => {
     network();

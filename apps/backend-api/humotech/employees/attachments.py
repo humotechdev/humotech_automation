@@ -21,6 +21,7 @@ from humotech.core.errors import NotFound, ValidationFailed
 from humotech.core.rbac import Actor
 from humotech.core.service import BaseService
 from humotech.employees.models import Employee, EmployeeDocument
+from humotech.employees.selectors import require_visible_employee
 from humotech.files.models import File
 from humotech.files.storage import open_stored, store
 
@@ -88,6 +89,126 @@ class EmployeeAttachmentService(BaseService):
                 details={"field": "file_id", "missing": missing},
             )
         return found
+
+    # --------------------------------------------------------------- документы
+
+    def attach_document(
+        self,
+        actor: Actor,
+        employee_id: uuid.UUID,
+        *,
+        kind: str,
+        file_id: uuid.UUID,
+        title: str | None = None,
+    ) -> EmployeeDocument:
+        """Приложить бумагу уже заведённому сотруднику.
+
+        Строка чек-листа ЗАПОЛНЯЕТСЯ, а не дублируется: на сотрудника
+        приходится одна бумага каждого вида — это правило базы
+        (`uq_employee_documents_kind`), и вторая вставка порвала бы
+        запрос на IntegrityError. «Прочее» из правила исключено, и
+        каждый такой файл получает собственную строку.
+
+        Замена файла не удаляет прежний из хранилища: на него может
+        ссылаться журнал, а история кадровых бумаг важнее места на диске.
+        """
+        self.access.require(actor, "employees.manage")
+        employee = require_visible_employee(self.access, actor, employee_id)
+        stored = self.take(actor, [file_id])[file_id]
+        name = (title or "").strip() or stored.original_name or "Документ"
+
+        row = None
+        if kind != "OTHER":
+            row = EmployeeDocument.objects.filter(
+                employee_id=employee.id,
+                organization_id=actor.organization_id,
+                kind=kind,
+            ).first()
+
+        before = None
+        if row is None:
+            row = EmployeeDocument.objects.create(
+                organization_id=actor.organization_id,
+                employee_id=employee.id,
+                kind=kind,
+                title=name,
+                status="UPLOADED",
+                file=stored,
+            )
+        else:
+            before = {"title": row.title, "status": row.status,
+                      "file_id": str(row.file_id) if row.file_id else None}
+            row.title = name
+            row.status = "UPLOADED"
+            row.file = stored
+            row.save(update_fields=["title", "status", "file", "updated_at"])
+
+        self.audit.record(
+            actor, action="employee.document.attach",
+            entity_type="employee_documents", entity_id=row.id,
+            before=before,
+            after={"title": row.title, "status": row.status,
+                   "file_id": str(row.file_id)},
+        )
+        return row
+
+    def detach_document(
+        self, actor: Actor, employee_id: uuid.UUID, document_id: uuid.UUID
+    ) -> None:
+        """Снять файл с бумаги.
+
+        Строка чек-листа остаётся и возвращается в исходное состояние:
+        «паспорта нет» — это факт, который кадровику нужно видеть, а не
+        отсутствие строки. Свободная бумага («прочее») исчезает целиком:
+        её никто не требовал, и пустая строка была бы мусором.
+        """
+        self.access.require(actor, "employees.manage")
+        employee = require_visible_employee(self.access, actor, employee_id)
+        row = EmployeeDocument.objects.filter(
+            id=document_id,
+            employee_id=employee.id,
+            organization_id=actor.organization_id,
+        ).first()
+        if row is None:
+            raise NotFound("Документ не найден")
+
+        before = {"title": row.title, "status": row.status,
+                  "file_id": str(row.file_id) if row.file_id else None}
+        if row.kind == "OTHER":
+            row.delete()
+            after = None
+        else:
+            from humotech.employees.onboarding import REQUIRED_DOCUMENTS
+
+            planned = {kind: (title, status)
+                       for kind, title, status in REQUIRED_DOCUMENTS}
+            title, status = planned.get(row.kind, (row.title, "MISSING"))
+            row.title = title
+            row.status = status
+            row.file = None
+            row.save(update_fields=["title", "status", "file", "updated_at"])
+            after = {"title": row.title, "status": row.status, "file_id": None}
+
+        self.audit.record(
+            actor, action="employee.document.detach",
+            entity_type="employee_documents", entity_id=document_id,
+            before=before, after=after,
+        )
+
+    def set_photo(self, actor: Actor, employee_id: uuid.UUID, file_id: uuid.UUID):
+        """Заменить фотографию в карточке."""
+        self.access.require(actor, "employees.manage")
+        employee = require_visible_employee(self.access, actor, employee_id)
+        stored = self.take(actor, [file_id])[file_id]
+        before = {"photo_id": str(employee.photo_id) if employee.photo_id else None}
+        employee.photo = stored
+        employee.save(update_fields=["photo", "updated_at"])
+        self.audit.record(
+            actor, action="employee.photo.set", entity_type="employees",
+            entity_id=employee.id, before=before,
+            after={"photo_id": str(employee.photo_id)},
+        )
+        return stored
 
     # ------------------------------------------------------------------ выдача
 

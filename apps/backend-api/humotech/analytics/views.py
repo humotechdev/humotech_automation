@@ -256,6 +256,12 @@ class OverviewResponseSerializer(serializers.Serializer):
     days = serializers.ListField(child=serializers.DictField())
     previous_days = serializers.ListField(child=serializers.DictField())
     offices = serializers.ListField(child=serializers.DictField())
+    # Та же явка уровнем выше: регионы собираются из своих офисов, а не
+    # считаются отдельно — два подсчёта одного числа однажды разойдутся.
+    regions = serializers.ListField(child=serializers.DictField())
+    # Рейтинг людей: худшая явка сверху. Страницу открывают, чтобы найти
+    # проблему, а не полюбоваться отличниками.
+    employees = serializers.ListField(child=serializers.DictField())
     arrivals = serializers.DictField()
     weekdays = serializers.DictField()
 
@@ -355,6 +361,8 @@ class AnalyticsOverviewView(APIView):
         + [
             OpenApiParameter("region_id", str),
             OpenApiParameter("office_id", str),
+            OpenApiParameter("department_id", str),
+            OpenApiParameter("employee_id", str),
             OpenApiParameter(
                 "weekday", int,
                 description="Детализация по дню недели: 1 — понедельник … 7",
@@ -379,6 +387,8 @@ class AnalyticsOverviewView(APIView):
             last=last,
             region_id=_uuid_param(request, "region_id"),
             office_id=_uuid_param(request, "office_id"),
+            department_id=_uuid_param(request, "department_id"),
+            employee_id=_uuid_param(request, "employee_id"),
             weekday=weekday,
         )
         return Response(body)

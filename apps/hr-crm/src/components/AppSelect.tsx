@@ -2,7 +2,13 @@ import { Children, isValidElement, useEffect, useId, useLayoutEffect, useMemo, u
 import { createPortal } from 'react-dom';
 import { AppIcon } from './AppIcon';
 
-export type AppSelectOption = { value: string; label: string; disabled?: boolean };
+export type AppSelectOption = {
+  value: string;
+  label: string;
+  disabled?: boolean;
+  /** Вторая строка пункта: регион у офиса, офис у отдела. */
+  note?: string;
+};
 type SelectProps = {
   label: string;
   value: string;
@@ -21,7 +27,8 @@ export function AppSelect({ label, value, options, onChange, empty = 'Выбер
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
-  const [place, setPlace] = useState({ top: 0, left: 0, width: minWidth, maxHeight: 280 });
+  const [place, setPlace] = useState(
+    { top: 0, bottom: 0, up: false, left: 0, width: minWidth, maxHeight: 280 });
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
@@ -44,10 +51,20 @@ export function AppSelect({ label, value, options, onChange, empty = 'Выбер
       const roomBelow = window.innerHeight - rect.bottom - 8;
       const roomAbove = rect.top - 8;
       const maxHeight = Math.max(120, Math.min(320, Math.max(roomBelow, roomAbove)));
-      const top = roomBelow >= Math.min(280, maxHeight) || roomBelow >= roomAbove
-        ? rect.bottom + 6
-        : Math.max(8, rect.top - Math.min(280, maxHeight) - 6);
-      setPlace({ top, left, width, maxHeight });
+      /*
+       * Раскрытие вверх привязывается НИЗОМ к кнопке, а не верхом к
+       * вычисленной высоте. Прежде отсчитывали `rect.top - 280`, то
+       * есть максимально возможную высоту: список из трёх строк
+       * оказывался на двести пикселей выше своей кнопки, посреди
+       * чужих полей, и выглядел появившимся наугад.
+       */
+      const up = roomBelow < Math.min(280, maxHeight) && roomBelow < roomAbove;
+      setPlace({
+        up,
+        top: rect.bottom + 6,
+        bottom: Math.max(8, window.innerHeight - rect.top + 6),
+        left, width, maxHeight,
+      });
     };
     position();
     window.addEventListener('resize', position);
@@ -139,7 +156,10 @@ export function AppSelect({ label, value, options, onChange, empty = 'Выбер
         <span className="app-select__value">{selected?.label || empty}</span><AppIcon name="chevron" size={16} />
       </button>
       {open && createPortal(
-        <div ref={menu} id={id} className="app-select__menu" role="listbox" aria-label={label} style={{ top: place.top, left: place.left, width: place.width, maxHeight: place.maxHeight }}
+        <div ref={menu} id={id} className="app-select__menu" role="listbox" aria-label={label}
+          style={place.up
+            ? { bottom: place.bottom, left: place.left, width: place.width, maxHeight: place.maxHeight }
+            : { top: place.top, left: place.left, width: place.width, maxHeight: place.maxHeight }}
           onKeyDown={(event) => {
             if (event.key === 'ArrowDown') { event.preventDefault(); move(1); }
             if (event.key === 'ArrowUp') { event.preventDefault(); move(-1); }
@@ -187,12 +207,24 @@ export function AppSelectField({ label, value, onChange, children, className = '
     {...(disabled ? { disabled: true } : {})} {...(searchable !== undefined ? { searchable } : {})} className={className} />;
 }
 
-export function AppMultiSelect({ label, value, options, onChange, empty = 'Все', disabled, className = '' }: {
+/**
+ * Список с несколькими отметками.
+ *
+ * `title` — короткое имя отбора для кнопки: выбранные названия целиком
+ * в неё не помещаются, и «Офисы · 2» читается там, где «Головной офис,
+ * Самарканд» обрывается на полуслове.
+ *
+ * `heading` включает шапку меню и подвал с числом выбранных и кнопкой
+ * «Готово». Без него меню остаётся прежним — как на других страницах.
+ */
+export function AppMultiSelect({ label, value, options, onChange, empty = 'Все', disabled, className = '', title, heading, findLabel }: {
   label: string; value: string[]; options: AppSelectOption[]; onChange: (value: string[]) => void; empty?: string; disabled?: boolean; className?: string;
+  title?: string; heading?: string; findLabel?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const [place, setPlace] = useState({ top: 0, left: 0, width: 260, maxHeight: 280 });
+  const [place, setPlace] = useState(
+    { top: 0, bottom: 0, up: false, left: 0, width: 260, maxHeight: 280 });
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const id = useId();
@@ -206,7 +238,15 @@ export function AppMultiSelect({ label, value, options, onChange, empty = 'Вс�
       const below = window.innerHeight - rect.bottom - 8;
       const above = rect.top - 8;
       const maxHeight = Math.max(120, Math.min(320, Math.max(below, above)));
-      setPlace({ top: below >= above ? rect.bottom + 6 : Math.max(8, rect.top - maxHeight - 6), left: Math.max(12, Math.min(rect.left, window.innerWidth - width - 12)), width, maxHeight });
+      // Вверх — низом к кнопке: иначе список висит выше её на всю
+      // отведённую высоту, даже если в нём две строки.
+      setPlace({
+        up: below < above,
+        top: rect.bottom + 6,
+        bottom: Math.max(8, window.innerHeight - rect.top + 6),
+        left: Math.max(12, Math.min(rect.left, window.innerWidth - width - 12)),
+        width, maxHeight,
+      });
     };
     position();
     window.addEventListener('resize', position);
@@ -220,15 +260,27 @@ export function AppMultiSelect({ label, value, options, onChange, empty = 'Вс�
     document.addEventListener('mousedown', outside); document.addEventListener('keydown', escape);
     return () => { document.removeEventListener('mousedown', outside); document.removeEventListener('keydown', escape); };
   }, [open, id]);
-  const text = value.length ? options.filter((option) => value.includes(option.value)).map((option) => option.label).join(', ') : empty;
+  const text = !value.length ? empty
+    : title ? `${title} · ${value.length}`
+      : options.filter((option) => value.includes(option.value)).map((option) => option.label).join(', ');
   return <div className={`app-select app-multi ${className}`} ref={root}>
     <button ref={trigger} type="button" className={`app-select__trigger${open ? ' app-select__trigger--open' : ''}`} aria-label={`${label}: ${text}`} aria-haspopup="listbox" aria-expanded={open} aria-controls={open ? id : undefined} disabled={disabled} onClick={() => setOpen((was) => !was)}>
       <span className="app-select__value">{text}</span><AppIcon name="chevron" size={16} />
     </button>
-    {open && createPortal(<div className="app-select__menu app-multi__menu" id={id} role="listbox" aria-label={label} aria-multiselectable="true" style={{ top: place.top, left: place.left, width: place.width, maxHeight: place.maxHeight }}>
-      <label className="app-select__search"><AppIcon name="search" size={16} /><input autoFocus value={query} aria-label={`Поиск: ${label}`} onChange={(event) => setQuery(event.target.value)} /></label>
-      <label className="app-multi__option"><input type="checkbox" checked={!value.length} onChange={() => onChange([])} />{empty}</label>
-      <div className="app-select__options" style={{ maxHeight: place.maxHeight - 92 }}>{filtered.map((option) => <label className="app-multi__option" key={option.value}><input type="checkbox" checked={value.includes(option.value)} onChange={() => onChange(value.includes(option.value) ? value.filter((one) => one !== option.value) : [...value, option.value])} />{option.label}</label>)}{!filtered.length && <p className="app-select__empty">Ничего не найдено</p>}</div>
+    {open && createPortal(<div className="app-select__menu app-multi__menu" id={id} role="listbox" aria-label={label} aria-multiselectable="true"
+      style={place.up
+        ? { bottom: place.bottom, left: place.left, width: place.width, maxHeight: place.maxHeight }
+        : { top: place.top, left: place.left, width: place.width, maxHeight: place.maxHeight }}>
+      {heading && <p className="app-multi__heading">{heading}</p>}
+      <label className="app-select__search"><AppIcon name="search" size={16} /><input autoFocus value={query} placeholder={findLabel} aria-label={`Поиск: ${label}`} onChange={(event) => setQuery(event.target.value)} /></label>
+      {!heading && <label className="app-multi__option"><input type="checkbox" checked={!value.length} onChange={() => onChange([])} />{empty}</label>}
+      <div className="app-select__options" style={{ maxHeight: place.maxHeight - (heading ? 148 : 92) }}>{filtered.map((option) => <label className="app-multi__option" key={option.value}><input type="checkbox" checked={value.includes(option.value)} onChange={() => onChange(value.includes(option.value) ? value.filter((one) => one !== option.value) : [...value, option.value])} /><span className="app-multi__text">{option.label}{option.note && <small>{option.note}</small>}</span></label>)}{!filtered.length && <p className="app-select__empty">Ничего не найдено</p>}</div>
+      {heading && (
+        <div className="app-multi__foot">
+          <span>{value.length ? `Выбрано: ${value.length}` : 'Ничего не выбрано'}</span>
+          <button type="button" className="app-multi__done" onClick={() => setOpen(false)}>Готово</button>
+        </div>
+      )}
     </div>, document.body)}
   </div>;
 }

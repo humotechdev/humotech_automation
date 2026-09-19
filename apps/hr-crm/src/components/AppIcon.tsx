@@ -25,7 +25,7 @@ import type { ComponentType, SVGProps } from 'react';
 import {
   Archive, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, Bell, Book,
   Building, Calendar, ChatBubble, CheckCircle, CircleSpark, Clock,
-  ClockRotateRight, Database, Download, EditPencil, Eye, EyeClosed, Globe,
+  ClockRotateRight, Database, Download, EditPencil, Eye, EyeClosed, Filter, Globe,
   Group, Home, Key, Lock, LogOut, MailOut, MapPin, NavArrowDown, NavArrowRight,
   Page, Plus,
   Refresh, ReportColumns, Reports, Search, SendDiagonal, Settings, ShieldCheck,
@@ -37,7 +37,7 @@ export type AppIconName =
   | 'report' | 'book' | 'bell' | 'admin' | 'settings'
   | 'search' | 'refresh' | 'calendar' | 'arrow' | 'logout' | 'chevron'
   | 'inbox' | 'alert' | 'database' | 'globe' | 'send' | 'building'
-  | 'download' | 'check' | 'cross' | 'lock' | 'late' | 'sheet'
+  | 'download' | 'check' | 'cross' | 'lock' | 'late' | 'sheet' | 'filter'
   | 'plus' | 'pencil' | 'archive' | 'half' | 'key' | 'list' | 'grid'
   | 'user' | 'eye' | 'eye-off'
   | 'close' | 'back' | 'next' | 'trend-up' | 'trend-down';
@@ -78,6 +78,8 @@ const GLYPHS: Record<AppIconName, Glyph> = {
   // Iconoir нет, а обычные часы не отличили бы «опоздал» от «время».
   late: ClockRotateRight,
   sheet: Table,
+  // Отбор: воронка. Нужен там, где отбор ничего не нашёл.
+  filter: Filter,
   // Переключатель вида списка: строки против плиток.
   list: List,
   grid: ViewGrid,

@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
@@ -43,6 +44,13 @@ from humotech.employees.selectors import require_visible_employee
 from humotech.offices.models import Office
 from humotech.positions.models import Position
 from humotech.schedules.models import EmployeeScheduleAssignment
+
+#: Фильтр по справочнику: одно значение или несколько.
+#:
+#: Кадровик смотрит «два офиса и три отдела», а не по одному, поэтому
+#: списки. Одиночное значение осталось допустимым: прежние ссылки на
+#: список с одним офисом продолжают работать.
+Ids = uuid.UUID | str | Sequence[uuid.UUID | str] | None
 from humotech.telegram.models import TelegramAccount
 
 CARD_FIELDS = (
@@ -56,9 +64,15 @@ ASSIGNMENT_FIELDS = (
     "employment_type", "work_mode", "valid_from", "valid_to",
 )
 
+#: Поля карточки, которые правятся её же правкой.
+#:
+#: Пол и семейное положение здесь по той же причине, что и дата
+#: рождения: это анкетные данные человека, а не его назначение. Им
+#: незачем период действия — женитьба не создаёт новый период работы.
 CONTACT_FIELDS = ("first_name", "last_name", "middle_name", "phone",
                   "corporate_email", "personal_email", "birth_date",
-                  "preferred_language", "employee_number")
+                  "preferred_language", "employee_number",
+                  "gender", "marital_status")
 
 # Статусы, при которых сотрудник считается работающим.
 WORKING_STATUSES = ("ACTIVE", "PROBATION")
@@ -146,9 +160,10 @@ class EmployeeService(BaseService):
         self,
         actor: Actor,
         *,
-        office_id: uuid.UUID | None = None,
-        region_id: uuid.UUID | None = None,
-        department_id: uuid.UUID | None = None,
+        office_id: Ids = None,
+        region_id: Ids = None,
+        department_id: Ids = None,
+        position_id: Ids = None,
         at: date | None = None,
     ) -> dict:
         """Новички, именинники и люди без графика.
@@ -169,6 +184,7 @@ class EmployeeService(BaseService):
             office_id=office_id,
             region_id=region_id,
             department_id=department_id,
+            position_id=position_id,
             at=at,
         )
 
@@ -235,9 +251,10 @@ class EmployeeService(BaseService):
         actor: Actor,
         *,
         search: str | None = None,
-        office_id: uuid.UUID | None = None,
-        region_id: uuid.UUID | None = None,
-        department_id: uuid.UUID | None = None,
+        office_id: Ids = None,
+        region_id: Ids = None,
+        department_id: Ids = None,
+        position_id: Ids = None,
         at: date | None = None,
     ) -> dict[str, int]:
         """Сколько сотрудников в каждом состоянии — по ТЕКУЩИМ фильтрам.
@@ -254,11 +271,21 @@ class EmployeeService(BaseService):
             office_id=office_id,
             region_id=region_id,
             department_id=department_id,
+            position_id=position_id,
             at=at or date.today(),
         )
         rows = queryset.values("employment_status").annotate(n=Count("id"))
         by_status = {row["employment_status"]: row["n"] for row in rows}
         return {"total": sum(by_status.values()), **by_status}
+
+    @staticmethod
+    def _ids(value: Ids) -> list | None:
+        """Одно значение или несколько — всегда список. Пусто — `None`."""
+        if value is None:
+            return None
+        many = list(value) if isinstance(value, (list, tuple, set)) else [value]
+        kept = [one for one in many if one]
+        return kept or None
 
     def _visible(
         self,
@@ -267,9 +294,10 @@ class EmployeeService(BaseService):
         at: date,
         search: str | None = None,
         status: str | None = None,
-        office_id: uuid.UUID | None = None,
-        region_id: uuid.UUID | None = None,
-        department_id: uuid.UUID | None = None,
+        office_id: Ids = None,
+        region_id: Ids = None,
+        department_id: Ids = None,
+        position_id: Ids = None,
     ):
         """Набор сотрудников под фильтрами и областью видимости.
 
@@ -296,10 +324,17 @@ class EmployeeService(BaseService):
             )
 
         condition = self._office_scope_condition(
-            actor, office_id=office_id, region_id=region_id
+            actor,
+            office_id=self._ids(office_id),
+            region_id=self._ids(region_id),
         )
-        if department_id:
-            clause = Q(department_id=department_id)
+        departments = self._ids(department_id)
+        if departments:
+            clause = Q(department_id__in=departments)
+            condition = clause if condition is None else (condition & clause)
+        positions = self._ids(position_id)
+        if positions:
+            clause = Q(position_id__in=positions)
             condition = clause if condition is None else (condition & clause)
 
         if condition is not None:
@@ -319,9 +354,10 @@ class EmployeeService(BaseService):
         *,
         search: str | None = None,
         status: str | None = None,
-        office_id: uuid.UUID | None = None,
-        region_id: uuid.UUID | None = None,
-        department_id: uuid.UUID | None = None,
+        office_id: Ids = None,
+        region_id: Ids = None,
+        department_id: Ids = None,
+        position_id: Ids = None,
         at: date | None = None,
         limit: int | None = None,
         cursor: str | None = None,
@@ -349,6 +385,7 @@ class EmployeeService(BaseService):
             office_id=office_id,
             region_id=region_id,
             department_id=department_id,
+            position_id=position_id,
             at=at,
         )
         if offset:
@@ -704,6 +741,12 @@ class EmployeeService(BaseService):
             )
         if "birth_date" in changes:
             employee.birth_date = changes["birth_date"]
+        # Пустая строка значит «не указано»: в базе на этих полях стоит
+        # проверка допустимых значений, и «» её не пройдёт.
+        if "gender" in changes:
+            employee.gender = changes["gender"] or None
+        if "marital_status" in changes:
+            employee.marital_status = changes["marital_status"] or None
         if changes.get("preferred_language"):
             employee.preferred_language = changes["preferred_language"]
         if changes.get("employee_number") is not None:
@@ -927,31 +970,45 @@ class EmployeeService(BaseService):
     # ------------------------------------------------------ внутренние правила
 
     def _office_scope_condition(
-        self, actor: Actor, *, office_id: uuid.UUID | None,
-        region_id: uuid.UUID | None,
+        self, actor: Actor, *, office_id: list | None,
+        region_id: list | None,
     ) -> Q | None:
         """Условие на офис назначения: пересечение области видимости и фильтров.
 
         Возвращает None, только если ограничивать нечем: у пользователя доступ
         ко всей организации и фильтры не заданы.
+
+        Выбранные офисы и регионы СКЛАДЫВАЮТСЯ, а не пересекаются. Выбрав
+        «Головной офис» и «Самаркандскую область», кадровик просит показать
+        и тех, и других; пересечение вернуло бы пусто и читалось бы как
+        поломка. Область видимости при этом остаётся пересечением: она
+        ограничивает, а не расширяет.
         """
         condition: Q | None = None
         visible = self.access.visible_office_ids(actor)
         if visible is not None:
             # пустое множество тоже условие: «не видит ни одного офиса»
             condition = Q(office_id__in=visible)
-        if office_id is not None:
-            self.access.require_office(actor, office_id)
-            clause = Q(office_id=office_id)
-            condition = clause if condition is None else condition & clause
-        if region_id is not None:
-            self.access.require_region(actor, region_id)
+
+        picked: Q | None = None
+        if office_id:
+            # Доступ проверяется у КАЖДОГО: список не повод пропустить
+            # офис, к которому пользователя не допускали.
+            for one in office_id:
+                self.access.require_office(actor, one)
+            picked = Q(office_id__in=list(office_id))
+        if region_id:
+            for one in region_id:
+                self.access.require_region(actor, one)
             clause = Q(
                 office_id__in=Office.objects.filter(
-                    region_id=region_id
+                    region_id__in=list(region_id)
                 ).values_list("id", flat=True)
             )
-            condition = clause if condition is None else condition & clause
+            picked = clause if picked is None else picked | clause
+
+        if picked is not None:
+            condition = picked if condition is None else condition & picked
         return condition
 
     def _require_visible_employee(

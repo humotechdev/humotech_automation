@@ -305,6 +305,11 @@ class EmployeeUpdateSerializer(serializers.Serializer):
     birth_date = serializers.DateField(required=False, allow_null=True)
     preferred_language = serializers.CharField(max_length=10, required=False)
     employee_number = serializers.CharField(max_length=100, required=False)
+    # Анкетные поля: правятся вместе с остальными данными человека.
+    gender = serializers.CharField(max_length=20, required=False,
+                                   allow_null=True, allow_blank=True)
+    marital_status = serializers.CharField(max_length=20, required=False,
+                                           allow_null=True, allow_blank=True)
 
 
 class AssignmentChangeSerializer(serializers.Serializer):
@@ -440,6 +445,19 @@ class AttachedFileSerializer(serializers.Serializer):
     name = serializers.CharField(source="original_filename")
     mime_type = serializers.CharField()
     size_bytes = serializers.IntegerField()
+
+
+class DocumentAttachSerializer(serializers.Serializer):
+    """Бумага, приложенная уже заведённому сотруднику."""
+
+    kind = serializers.CharField(max_length=30)
+    file_id = serializers.UUIDField()
+    title = serializers.CharField(max_length=255, required=False,
+                                  allow_null=True, allow_blank=True)
+
+
+class PhotoSetSerializer(serializers.Serializer):
+    file_id = serializers.UUIDField()
 
 
 class EmployeeDocumentSerializer(serializers.Serializer):

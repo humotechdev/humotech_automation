@@ -133,7 +133,7 @@ export function EmployeePage() {
             tools={tab === 'attendance' && rights.attendance ? (
               <AttendanceTools id={id} canExport={rights.export} />
             ) : rights.manage ? (
-              <Link className="ep-edit" to="/employees">Редактировать</Link>
+              <Link className="ep-edit" to={`/employees/${id}/edit`}>Редактировать</Link>
             ) : null}
           />
 

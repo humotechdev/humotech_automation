@@ -89,6 +89,11 @@ class OverviewService(AnalyticsService):
         last: date,
         region_id: uuid.UUID | None = None,
         office_id: uuid.UUID | None = None,
+        # Отдел и сотрудник сужают состав, а не пересчитывают правила:
+        # явка одного человека считается тем же способом, что и явка
+        # компании, — иначе цифра на его карточке разошлась бы с общей.
+        department_id: uuid.UUID | None = None,
+        employee_id: uuid.UUID | None = None,
         weekday: int | None = None,
         now: datetime | None = None,
     ) -> dict:
@@ -112,8 +117,11 @@ class OverviewService(AnalyticsService):
         previous_last = first - timedelta(days=1)
         previous_first = previous_last - timedelta(days=length - 1)
 
-        current = self._collect(actor, offices, first, last, weekday, moment)
-        previous = self._collect(actor, offices, previous_first, previous_last, weekday, moment)
+        narrow = {"department_id": department_id, "employee_id": employee_id}
+        current = self._collect(actor, offices, first, last, weekday, moment, **narrow)
+        previous = self._collect(
+            actor, offices, previous_first, previous_last, weekday, moment, **narrow
+        )
 
         attendance = _ratio(current["attended"], current["expected"])
         previous_attendance = _ratio(previous["attended"], previous["expected"])
@@ -154,6 +162,14 @@ class OverviewService(AnalyticsService):
                 for one in previous["days"]
             ],
             "offices": self._ranking(offices, current, previous),
+            # Регионы — та же явка, собранная на уровень выше. Отдельным
+            # запросом её не считают: складывать офисы дважды по-разному
+            # значит однажды получить два разных числа про одно и то же.
+            "regions": self._regions(offices, current, previous),
+            # Рейтинг людей: по явке и по опозданиям. Нужен, чтобы
+            # увидеть не «средняя по компании 92 %», а кто именно эти
+            # восемь процентов.
+            "employees": self._people(current),
             "arrivals": self._arrivals(current),
             "weekdays": self._weekdays(current),
         }
@@ -168,6 +184,8 @@ class OverviewService(AnalyticsService):
         last: date,
         weekday: int | None,
         moment: datetime,
+        department_id: uuid.UUID | None = None,
+        employee_id: uuid.UUID | None = None,
     ) -> dict:
         state = _empty_state(offices)
         if not offices:
@@ -175,13 +193,16 @@ class OverviewService(AnalyticsService):
             return state
 
         zones = {office.id: office_zone(office) for office in offices}
-        roster = dict(
-            EmployeeAssignment.objects.filter(
-                roster_assignment_filter(last),
-                office_id__in=list(zones),
-                employee__organization_id=actor.organization_id,
-            ).values_list("employee_id", "office_id")
+        people = EmployeeAssignment.objects.filter(
+            roster_assignment_filter(last),
+            office_id__in=list(zones),
+            employee__organization_id=actor.organization_id,
         )
+        if department_id is not None:
+            people = people.filter(department_id=department_id)
+        if employee_id is not None:
+            people = people.filter(employee_id=employee_id)
+        roster = dict(people.values_list("employee_id", "office_id"))
         employee_ids = list(roster)
 
         # Границы периода — самые широкие по всем поясам выборки; день
@@ -255,6 +276,8 @@ class OverviewService(AnalyticsService):
                 counts["expected"] += 1
                 state["expected"] += 1
                 state["office_expected"][office_id] += 1
+                state["person_expected"][employee_id] += 1
+                state["person_office"][employee_id] = office_id
                 week = state["weekdays"].setdefault(day.isoweekday(), _week_counts())
                 week["expected"] += 1
 
@@ -266,6 +289,7 @@ class OverviewService(AnalyticsService):
                 counts["attended"] += 1
                 state["attended"] += 1
                 state["office_attended"][office_id] += 1
+                state["person_attended"][employee_id] += 1
                 week["attended"] += 1
                 state["arrivals"] += 1
                 week["arrivals"] += 1
@@ -282,6 +306,11 @@ class OverviewService(AnalyticsService):
                 if delta > grace:
                     counts["late"] += 1
                     state["late"] += 1
+                    state["person_late"][employee_id] += 1
+                    # Минуты сверх допуска, а не вся разница: организация,
+                    # разрешившая приходить на четверть часа позже,
+                    # считает опозданием именно их.
+                    state["person_late_minutes"][employee_id] += delta - grace
                     column["late"] += 1
                 else:
                     counts["on_time"] += 1
@@ -330,6 +359,100 @@ class OverviewService(AnalyticsService):
         for position, row in enumerate(rows, start=1):
             row["position"] = position
         return rows
+
+    @staticmethod
+    def _regions(offices: list[Office], current: dict, previous: dict) -> list[dict]:
+        """Явка по регионам — суммой их офисов.
+
+        Регион без офисов в выборке не показывается вовсе: строка с
+        прочерками не сообщает ничего, кроме того, что фильтр сузил
+        выборку, — а это и так видно по фильтру.
+        """
+        now: dict = {}
+        before: dict = {}
+        names: dict = {}
+        for office in offices:
+            region = getattr(office, "region", None)
+            key = str(region.id) if region else "—"
+            names[key] = region.name if region else "Без региона"
+            a, e = now.setdefault(key, [0, 0])
+            a += current["office_attended"][office.id]
+            e += current["office_expected"][office.id]
+            now[key] = [a, e]
+            pa, pe = before.setdefault(key, [0, 0])
+            pa += previous["office_attended"][office.id]
+            pe += previous["office_expected"][office.id]
+            before[key] = [pa, pe]
+
+        rows = []
+        for key, (attended, expected) in now.items():
+            was_attended, was_expected = before.get(key, [0, 0])
+            was = _ratio(was_attended, was_expected)
+            ratio = _ratio(attended, expected)
+            rows.append({
+                "id": key,
+                "name": names[key],
+                "attendance": ratio,
+                "previous_attendance": was,
+                "difference_points": _points(ratio, was),
+            })
+        rows.sort(key=lambda row: (
+            row["attendance"]["percent"] is None,
+            -(row["attendance"]["percent"] or 0),
+            row["name"],
+        ))
+        for position, row in enumerate(rows, start=1):
+            row["position"] = position
+        return rows
+
+    @staticmethod
+    def _people(state: dict) -> list[dict]:
+        """Сотрудники: явка и опоздания.
+
+        Только те, кого в периоде хоть раз ждали: человек без рабочих
+        дней не «худший по явке», его просто не с чем сравнить.
+
+        Список ограничен: рейтинг на тысячу строк никто не читает, а
+        весит он столько же, сколько вся остальная страница.
+        """
+        from humotech.employees.models import Employee
+
+        ids = [one for one, count in state["person_expected"].items() if count]
+        if not ids:
+            return []
+
+        names = dict(
+            Employee.objects.filter(id__in=ids).values_list("id", "last_name")
+        )
+        firsts = dict(
+            Employee.objects.filter(id__in=ids).values_list("id", "first_name")
+        )
+
+        rows = []
+        for employee_id in ids:
+            expected = state["person_expected"][employee_id]
+            attended = state["person_attended"][employee_id]
+            late = state["person_late"][employee_id]
+            rows.append({
+                "id": str(employee_id),
+                "name": " ".join(
+                    one for one in
+                    [names.get(employee_id), firsts.get(employee_id)] if one
+                ),
+                "attendance": _ratio(attended, expected),
+                "late_days": late,
+                "late_minutes": state["person_late_minutes"][employee_id],
+                "missed_days": expected - attended,
+            })
+
+        # Худшая явка сверху: страницу открывают, чтобы найти проблему,
+        # а не полюбоваться отличниками.
+        rows.sort(key=lambda row: (
+            row["attendance"]["percent"] if row["attendance"]["percent"] is not None else 101,
+            -row["late_days"],
+            row["name"],
+        ))
+        return rows[:PEOPLE_LIMIT]
 
     @staticmethod
     def _arrivals(state: dict) -> dict:
@@ -387,6 +510,11 @@ class OverviewService(AnalyticsService):
 # --- вспомогательное -----------------------------------------------------------
 
 
+#: Сколько человек показывает рейтинг. Больше никто не читает, а весит
+#: такой список столько же, сколько вся остальная страница.
+PEOPLE_LIMIT = 50
+
+
 def _empty_state(offices: list[Office]) -> dict:
     ids = [office.id for office in offices]
     return {
@@ -395,6 +523,14 @@ def _empty_state(offices: list[Office]) -> dict:
         "closed_seconds": 0, "closed_days": 0, "open_sessions": 0,
         "office_expected": dict.fromkeys(ids, 0),
         "office_attended": dict.fromkeys(ids, 0),
+        # По людям — для рейтинга сотрудников. Словари, а не заранее
+        # заполненные ключи: состав известен только после выборки.
+        "person_expected": Counter(),
+        "person_attended": Counter(),
+        "person_late": Counter(),
+        "person_late_minutes": Counter(),
+        "person_office": {},
+        "person_name": {},
         "weekdays": {},
         "starts": Counter(),
         "entries": [],

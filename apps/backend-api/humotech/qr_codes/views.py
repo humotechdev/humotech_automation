@@ -41,6 +41,7 @@ from humotech.qr_codes.serializers import (
     QrPointCreateSerializer,
     QrPointSerializer,
     QrPointUpdateSerializer,
+    StickerSerializer,
 )
 from humotech.qr_codes.services import QrDisplayService
 
@@ -302,6 +303,21 @@ class QrPointViewSet(ServiceViewSet):
         return self.item_response(
             self.service.set_active(self.actor, pk, active=False)
         )
+
+    @extend_schema(
+        summary="Ссылка наклейки",
+        description=(
+            "Код печатной точки — чтобы показать его на экране, скачать "
+            "или распечатать заново. Требует права на управление "
+            "точками; обращение попадает в журнал. У точек, выпущенных "
+            "до того, как коды стали храниться, кода нет: такой "
+            "заменяют новым."
+        ),
+        responses={200: StickerSerializer},
+    )
+    @action(detail=True, methods=["get"], url_path="sticker")
+    def sticker(self, request, pk=None):
+        return Response({"sticker_link": self.service.sticker(self.actor, pk)})
 
     @action(detail=True, methods=["post"], url_path="reissue-token")
     def reissue_token(self, request, pk=None):
