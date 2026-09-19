@@ -16,7 +16,7 @@ import {
 } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 
-import { BrandRow } from './Logo';
+import { BrandLockup } from './Logo';
 import { NotificationBell } from './NotificationBell';
 import { backdropImage } from '../features/shell/backdrop';
 import { AppIcon, ICON_SIZE, type AppIconName } from './AppIcon';
@@ -207,7 +207,7 @@ function ShellFrame({ children, meta, remember = false }: {
 
       <nav className={menu ? 'sb sb--open' : 'sb'} aria-label="Разделы">
         <div className="sb-brand">
-          <BrandRow />
+          <BrandLockup />
         </div>
 
         <div className="sb-scroll">

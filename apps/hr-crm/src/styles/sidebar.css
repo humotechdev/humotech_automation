@@ -9,14 +9,14 @@
  */
 
 .sb {
-  --sb-surface: #ffffff;
-  --sb-border: #e1e8f1;
-  --sb-soft: #edf1f6;
-  --sb-ink: #112b5c;
-  --sb-text: #243b63;
-  --sb-muted: #91a0b8;
-  --sb-icon: #8fa0b8;
-  --sb-active: #eef3f9;
+  --sb-surface: #08284f;
+  --sb-border: rgba(255, 255, 255, 0.11);
+  --sb-soft: rgba(255, 255, 255, 0.1);
+  --sb-ink: #ffffff;
+  --sb-text: rgba(245, 249, 255, 0.92);
+  --sb-muted: #91afd1;
+  --sb-icon: #bfd1e7;
+  --sb-active: rgba(255, 255, 255, 0.11);
 
   position: sticky;
   top: 0;
@@ -34,34 +34,28 @@
 
 /* --- знак ---------------------------------------------------------------- */
 
-/* Круглый фирменный знак и слово рядом. Знак — готовый файл проекта, тот
-   же, что у бота; слово набрано текстом, чтобы жить цветом темы, а не
-   пикселями картинки, белой на прозрачном. */
+/* Полная фирменная подпись — готовый ассет проекта, не набранный заново. */
 .sb-brand {
   display: flex;
   align-items: center;
-  gap: 10px;
   flex: none;
   height: 56px;
-  margin-bottom: 24px;
-  padding: 0 12px;
-  overflow: visible;
+  margin-bottom: 22px;
+  padding: 0 10px;
+  overflow: hidden;
 }
 
-.sb-brand__mark {
-  flex: none;
-  width: 40px;
-  height: 40px;
+.sb .brand__full {
+  display: block;
+  width: 174px;
+  height: auto;
+  max-height: 42px;
   object-fit: contain;
+  object-position: left center;
 }
 
-.sb-brand__name {
-  font-size: 22px;
-  line-height: 26px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  color: var(--sb-ink);
-  white-space: nowrap;
+.sb .brand__mark {
+  display: none;
 }
 
 /* --- список разделов ----------------------------------------------------- */
@@ -76,7 +70,7 @@
 }
 
 .sb-group {
-  margin: 0 0 8px;
+  margin: 0 0 9px;
   padding: 0 14px;
   font-size: 11px;
   line-height: 14px;
@@ -110,13 +104,13 @@
   align-items: center;
   gap: 12px;
   width: 100%;
-  height: 48px;
+  height: 46px;
   padding: 0 14px;
   border: 0;
-  border-radius: 10px;
+  border-radius: 9px;
   background: none;
   font: inherit;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 500;
   color: var(--sb-text);
   text-align: left;
@@ -141,7 +135,7 @@
 }
 
 .sb-item:hover:not(:disabled) {
-  background: #f7fafe;
+  background: rgba(255, 255, 255, 0.07);
 }
 
 .sb-item:disabled {
@@ -165,17 +159,17 @@
   min-width: 22px;
   padding: 1px 7px;
   border-radius: 999px;
-  background: #e8eef7;
+  background: rgba(255, 255, 255, 0.13);
   font-size: 11.5px;
   font-weight: 600;
-  color: #3d5680;
+  color: #e9f2ff;
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
 
 .sb-item--active .sb-badge {
-  background: var(--sb-ink);
-  color: #ffffff;
+  background: #ffffff;
+  color: #0b315f;
 }
 
 /* --- низ ----------------------------------------------------------------- */
@@ -185,14 +179,14 @@
   align-items: center;
   gap: 12px;
   flex: none;
-  height: 48px;
+  height: 46px;
   margin-top: auto;
   padding: 0 14px;
   border: 0;
-  border-radius: 10px;
+  border-radius: 9px;
   background: none;
   font: inherit;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 500;
   color: var(--sb-text);
   white-space: nowrap;
@@ -205,7 +199,7 @@
 }
 
 .sb-exit:hover {
-  background: #f7fafe;
+  background: rgba(255, 255, 255, 0.07);
 }
 
 /* --- узкий экран --------------------------------------------------------- */
