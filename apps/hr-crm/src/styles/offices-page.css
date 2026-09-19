@@ -13,23 +13,23 @@
  */
 
 .orp {
-  --page-bg: #f5f8fc;
+  --page-bg: #ffffff;
   --surface: #ffffff;
-  --text-primary: #112b5c;
-  --text-secondary: #6f82a3;
-  --text-muted: #91a0b8;
-  --border: #e1e8f1;
-  --border-soft: #edf1f6;
-  --blue: #146ef5;
-  --blue-dark: #0e4daa;
-  --blue-soft: #edf4ff;
+  --text-primary: #0d2859;
+  --text-secondary: #64779c;
+  --text-muted: #8e9fba;
+  --border: #e4e9f0;
+  --border-soft: #edf0f4;
+  --blue: #0969e8;
+  --blue-dark: #075bc8;
+  --blue-soft: #f3f7fd;
   --green: #16a56c;
 
   display: flex;
   flex-direction: column;
   width: 100%;
-  max-width: 1600px;
-  margin: 0 auto;
+  max-width: none;
+  margin: 0;
   min-width: 0;
   font-family: 'Inter', Arial, sans-serif;
   color: var(--text-primary);
@@ -41,8 +41,8 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 24px;
-  margin-bottom: 22px;
+  gap: 28px;
+  margin-bottom: 30px;
 }
 
 .orp-head__text {
@@ -51,16 +51,19 @@
 
 .orp-head__title {
   margin: 0;
-  font-size: 32px;
-  line-height: 1.15;
+  font-size: 38px;
+  line-height: 1.08;
   font-weight: 700;
+  letter-spacing: -0.025em;
   color: var(--text-primary);
 }
 
 .orp-head__sub {
-  margin: 8px 0 0;
+  max-width: 640px;
+  margin: 10px 0 0;
   font-size: 16px;
-  font-weight: 450;
+  line-height: 22px;
+  font-weight: 400;
   color: var(--text-secondary);
 }
 
@@ -69,7 +72,7 @@
   flex-wrap: wrap;
   align-items: baseline;
   gap: 8px;
-  margin: 10px 0 0;
+  margin: 14px 0 0;
   font-size: 14px;
   color: var(--text-secondary);
 }
@@ -95,11 +98,11 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  width: 300px;
-  height: 48px;
+  width: 304px;
+  height: 46px;
   padding: 0 14px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 9px;
   background: var(--surface);
   color: var(--text-muted);
 }
@@ -135,10 +138,10 @@
   justify-content: center;
   gap: 8px;
   flex: none;
-  height: 48px;
-  padding: 0 20px;
+  height: 46px;
+  padding: 0 19px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 9px;
   background: var(--surface);
   font: inherit;
   font-size: 15px;
@@ -170,17 +173,17 @@
 
 .orp-net {
   display: grid;
-  grid-template-columns: minmax(0, 1.8fr) minmax(348px, 0.82fr);
-  gap: 16px;
-  align-items: stretch;
-  margin-bottom: 16px;
+  grid-template-columns: minmax(0, 1.4fr) minmax(440px, 1fr);
+  gap: 18px;
+  align-items: start;
+  margin-bottom: 26px;
 }
 
 .orp-map,
 .orp-regions {
   min-width: 0;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: 10px;
   background: var(--surface);
   overflow: hidden;
 }
@@ -188,25 +191,26 @@
 .orp-map {
   display: flex;
   flex-direction: column;
-  height: 456px;
+  height: 396px;
   min-height: 0;
 }
 
 .orp-map__head {
   flex: none;
-  padding: 18px 22px 8px;
+  padding: 14px 16px 8px;
 }
 
 .orp-map__title {
   margin: 0;
-  font-size: 18px;
-  font-weight: 650;
+  font-size: 20px;
+  line-height: 24px;
+  font-weight: 700;
   color: var(--text-primary);
 }
 
 .orp-map__sub {
   margin: 4px 0 0;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--text-secondary);
 }
 
@@ -308,9 +312,9 @@
 .orp-regions {
   display: flex;
   flex-direction: column;
-  height: 456px;
+  height: 468px;
   min-height: 0;
-  padding: 18px 20px;
+  padding: 14px 18px;
 }
 
 .orp-regions__head {
@@ -319,8 +323,9 @@
 
 .orp-regions__title {
   margin: 0 0 10px;
-  font-size: 18px;
-  font-weight: 650;
+  font-size: 20px;
+  line-height: 24px;
+  font-weight: 700;
   color: var(--text-primary);
 }
 
@@ -330,7 +335,7 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  margin-top: 8px;
+  margin-top: 10px;
   padding-right: 4px;
   scrollbar-width: thin;
 }
@@ -356,8 +361,8 @@
   align-items: center;
   column-gap: 10px;
   width: 100%;
-  min-height: 58px;
-  padding: 8px 6px;
+  min-height: 54px;
+  padding: 7px 4px;
   border: 0;
   border-bottom: 1px solid var(--border-soft);
   background: none;
@@ -406,10 +411,10 @@
 /* --- офисы ---------------------------------------------------------------- */
 
 .orp-offices {
-  padding: 18px 20px 20px;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--surface);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .orp-offices__head {
@@ -417,7 +422,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 16px;
+  margin-bottom: 14px;
 }
 
 .orp-offices__title {
@@ -425,8 +430,9 @@
   align-items: baseline;
   gap: 8px;
   margin: 0;
-  font-size: 20px;
-  font-weight: 650;
+  font-size: 22px;
+  line-height: 28px;
+  font-weight: 700;
   color: var(--text-primary);
 }
 
@@ -479,10 +485,10 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
-  min-height: 216px;
-  padding: 18px;
+  min-height: 224px;
+  padding: 16px 20px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 10px;
   background: var(--surface);
   cursor: pointer;
   transition: border-color 0.14s ease;
@@ -524,9 +530,9 @@
 }
 
 .orp-card__name {
-  font-size: 19px;
+  font-size: 20px;
   line-height: 25px;
-  font-weight: 650;
+  font-weight: 700;
   color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -746,5 +752,15 @@
 /* Поля рабочей области — свои у этой страницы, без правки общей
    `.canvas`: другие разделы остаются как были. */
 .canvas:has(> .orp) {
-  padding: 22px 28px 32px;
+  padding: 28px 40px 36px;
+}
+
+/* На странице сети фон ровный: тонкие контуры карты и карточек не
+   смешиваются с декоративной фотографией рабочего пространства. */
+.shell:has(.orp) .shell__backdrop {
+  display: none;
+}
+
+.shell:has(.orp) .shell__wash {
+  background: #ffffff;
 }
