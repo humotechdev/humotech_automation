@@ -1,0 +1,745 @@
+/*
+ * «Офисы и регионы»: страница собрана заново.
+ *
+ * Обычный поток, Grid и Flexbox. Ни абсолютного позиционирования у
+ * основных блоков, ни фиксированных высот у текста, ни отрицательных
+ * полей: высоту каждой секции определяет её содержимое, и блоки не
+ * накладываются друг на друга.
+ *
+ * Префикс `orp-` — свой. Прежние правила страницы (`of-head`, `of-grid`,
+ * `of-map`, `of-strip`, `of-card`, `of-regions`) удалены из
+ * `offices.css` целиком: они лежали слоями, и каждая правка сводилась к
+ * угадыванию, какое из них победило.
+ */
+
+.orp {
+  --page-bg: #f5f8fc;
+  --surface: #ffffff;
+  --text-primary: #112b5c;
+  --text-secondary: #6f82a3;
+  --text-muted: #91a0b8;
+  --border: #e1e8f1;
+  --border-soft: #edf1f6;
+  --blue: #146ef5;
+  --blue-dark: #0e4daa;
+  --blue-soft: #edf4ff;
+  --green: #16a56c;
+
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 1600px;
+  margin: 0 auto;
+  min-width: 0;
+  font-family: 'Inter', Arial, sans-serif;
+  color: var(--text-primary);
+}
+
+/* --- шапка страницы ------------------------------------------------------- */
+
+.orp-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 28px;
+}
+
+.orp-head__text {
+  min-width: 0;
+}
+
+.orp-head__title {
+  margin: 0;
+  font-size: 34px;
+  line-height: 1.15;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.orp-head__sub {
+  margin: 8px 0 0;
+  font-size: 16px;
+  font-weight: 450;
+  color: var(--text-secondary);
+}
+
+.orp-head__facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin: 10px 0 0;
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.orp-head__facts b {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.orp-head__facts i {
+  font-style: normal;
+  color: var(--text-muted);
+}
+
+.orp-head__tools {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+}
+
+.orp-find {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 300px;
+  height: 48px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text-muted);
+}
+
+.orp-find:focus-within {
+  border-color: #b9d0ee;
+  box-shadow: 0 0 0 3px rgba(20, 110, 245, 0.08);
+}
+
+.orp-find input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 15px;
+  color: var(--text-primary);
+}
+
+.orp-find--wide {
+  width: 100%;
+  height: 42px;
+}
+
+.orp-find--wide input {
+  font-size: 14px;
+}
+
+.orp-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex: none;
+  height: 48px;
+  padding: 0 20px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-primary);
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.orp-btn:hover {
+  border-color: #cfdcec;
+  background: #f7fafe;
+}
+
+.orp-btn--blue {
+  border-color: var(--blue);
+  background: var(--blue);
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.orp-btn--blue:hover {
+  border-color: var(--blue-dark);
+  background: var(--blue-dark);
+}
+
+/* --- карта и регионы ------------------------------------------------------ */
+
+.orp-net {
+  display: grid;
+  grid-template-columns: minmax(0, 1.75fr) minmax(340px, 0.85fr);
+  gap: 16px;
+  align-items: stretch;
+  margin-bottom: 20px;
+}
+
+.orp-map,
+.orp-regions {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.orp-map {
+  display: flex;
+  flex-direction: column;
+  min-height: 520px;
+}
+
+.orp-map__head {
+  flex: none;
+  padding: 18px 20px 12px;
+}
+
+.orp-map__title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+.orp-map__sub {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* Карта занимает остаток карточки и не вылезает за её край. Подпись
+   области и легенда лежат внутри этой же коробки. */
+.orp-map__body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  padding: 0 12px 12px;
+}
+
+.orp-map__body > .map {
+  width: 100%;
+  height: 100%;
+}
+
+.orp-map__area {
+  position: absolute;
+  top: 6px;
+  left: 20px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.orp-map__area button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.orp-map__area button:hover {
+  color: var(--blue-dark);
+}
+
+.orp-map__legend {
+  position: absolute;
+  right: 20px;
+  bottom: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.orp-map__legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.orp-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #b3c0d2;
+}
+
+.orp-dot--on {
+  background: var(--blue);
+}
+
+.orp-map__note {
+  color: var(--text-muted);
+}
+
+.orp-note {
+  margin: 20px;
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.orp-note--bad {
+  color: #b42318;
+}
+
+/* --- регионы -------------------------------------------------------------- */
+
+.orp-regions {
+  display: flex;
+  flex-direction: column;
+  height: 520px;
+  min-height: 0;
+  padding: 20px;
+}
+
+.orp-regions__head {
+  flex: none;
+}
+
+.orp-regions__title {
+  margin: 0 0 12px;
+  font-size: 18px;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+/* Список прокручивается внутри карточки: тонкая полоса справа сразу
+   говорит, что регионов больше, чем видно. */
+.orp-regions__list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  margin-top: 12px;
+  padding-right: 4px;
+  scrollbar-width: thin;
+}
+
+.orp-regions__list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.orp-regions__list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #dbe3ee;
+}
+
+.orp-regions__list ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.orp-region {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) 16px;
+  align-items: center;
+  column-gap: 10px;
+  width: 100%;
+  min-height: 64px;
+  padding: 8px 6px;
+  border: 0;
+  border-bottom: 1px solid var(--border-soft);
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.orp-regions__list li:last-child .orp-region {
+  border-bottom: 0;
+}
+
+.orp-region:hover:not(:disabled) {
+  background: #f7fafe;
+}
+
+.orp-region:disabled {
+  cursor: default;
+}
+
+.orp-region > svg {
+  color: var(--text-muted);
+}
+
+.orp-region__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.orp-region__text b {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orp-region__text small {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* --- офисы ---------------------------------------------------------------- */
+
+.orp-offices {
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.orp-offices__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.orp-offices__title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+  font-size: 20px;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+.orp-offices__count {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.orp-offices__filters {
+  display: inline-flex;
+  gap: 6px;
+  flex: none;
+}
+
+.orp-chip {
+  height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.orp-chip:hover {
+  border-color: #cfdcec;
+  background: #f7fafe;
+}
+
+/* Выбранный отбор — светлая подложка, а не синяя заливка: это фильтр
+   списка, а не действие. */
+.orp-chip--on {
+  border-color: #cfdcec;
+  background: #eef3f9;
+  font-weight: 600;
+}
+
+.orp-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.orp-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 232px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  cursor: pointer;
+  transition: border-color 0.14s ease;
+}
+
+.orp-card:hover {
+  border-color: #cfdcec;
+}
+
+.orp-card--on {
+  border-color: #9fc2f0;
+  background: #fbfdff;
+}
+
+.orp-card__top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.orp-card__where {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.orp-card__region {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orp-card__name {
+  font-size: 19px;
+  line-height: 25px;
+  font-weight: 650;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Состояние — точка и слово, без подложки. */
+.orp-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  margin-top: 2px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.orp-live i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #b3c0d2;
+}
+
+.orp-live--on i {
+  background: var(--green);
+}
+
+.orp-card__staff {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 14px 0 0;
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.orp-card__staff > svg {
+  color: var(--text-muted);
+}
+
+.orp-card__staff b {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* Три равные доли: числа встают на одну линию, и карточки сравниваются
+   взглядом по строке, а не по отдельности. */
+.orp-card__now {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.orp-card__now > span {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 2px;
+  min-width: 0;
+}
+
+.orp-card__now b {
+  font-size: 20px;
+  line-height: 26px;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+.orp-card__now small {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.orp-card__foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  margin-top: auto;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.orp-card__fact {
+  font-size: 13px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.orp-card__fact b {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.orp-card__bar {
+  width: 1px;
+  height: 14px;
+  flex: none;
+  background: var(--border);
+}
+
+.orp-card__go {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  margin-left: auto;
+  border-radius: 8px;
+  color: var(--text-muted);
+}
+
+.orp-card__go:hover {
+  background: var(--blue-soft);
+  color: var(--blue-dark);
+}
+
+/* --- пусто ---------------------------------------------------------------- */
+
+.orp-blank {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 44px 20px 48px;
+  text-align: center;
+}
+
+.orp-blank > svg {
+  width: 40px;
+  height: 40px;
+  color: #a8b6ca;
+}
+
+.orp-blank__title {
+  margin: 14px 0 0;
+  font-size: 17px;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+.orp-blank__text {
+  margin: 6px 0 0;
+  max-width: 460px;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--text-secondary);
+}
+
+.orp-blank .orp-btn {
+  margin-top: 16px;
+}
+
+.orp-blank__hint {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.orp-blank__more {
+  margin-top: 14px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--blue);
+  cursor: pointer;
+}
+
+/* --- ширина экрана -------------------------------------------------------- */
+
+@media (max-width: 1440px) {
+  .orp-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1180px) {
+  .orp-net {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .orp-regions {
+    height: 420px;
+  }
+}
+
+@media (max-width: 760px) {
+  .orp-head,
+  .orp-offices__head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .orp-head__tools {
+    flex-wrap: wrap;
+  }
+
+  .orp-find {
+    width: 100%;
+  }
+
+  .orp-cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Поля рабочей области — свои у этой страницы, без правки общей
+   `.canvas`: другие разделы остаются как были. */
+.canvas:has(> .orp) {
+  padding: 28px 32px 40px;
+}

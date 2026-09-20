@@ -23,7 +23,7 @@
   flex-direction: column;
   gap: 12px;
   min-width: 0;
-  font-family: 'Segoe UI', 'Open Sans', system-ui, sans-serif;
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
   font-size: 13px;
   color: var(--ofs-text);
 }

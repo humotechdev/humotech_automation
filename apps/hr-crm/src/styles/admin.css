@@ -884,7 +884,7 @@
 
 .adm-top {
   margin-bottom: 22px;
-  font-family: 'Segoe UI', 'Open Sans', system-ui, sans-serif;
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
 }
 
 .adm-top__title {
@@ -938,7 +938,7 @@
 .adm-block__head {
   gap: 16px;
   padding: 18px 22px;
-  font-family: 'Segoe UI', 'Open Sans', system-ui, sans-serif;
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
 }
 
 .adm-block__icon {
@@ -1091,7 +1091,7 @@
   padding: 26px 28px 24px;
   border-radius: 14px;
   box-shadow: 0 24px 60px rgba(13, 32, 70, 0.3);
-  font-family: 'Segoe UI', 'Open Sans', system-ui, sans-serif;
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
   color: #22355c;
 }
 
