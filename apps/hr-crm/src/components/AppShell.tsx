@@ -16,7 +16,7 @@ import {
 } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 
-import { BrandRow } from './Logo';
+import { BrandLockup } from './Logo';
 import { NotificationBell } from './NotificationBell';
 import { backdropImage } from '../features/shell/backdrop';
 import { AppIcon, ICON_SIZE, type AppIconName } from './AppIcon';
@@ -110,8 +110,6 @@ function sameMeta(one: Meta, two: Meta): boolean {
 }
 
 /** Оболочка для маршрутов кабинета: страница подставляется в `<Outlet />`. */
-import '../styles/sidebar.css';
-
 export function ShellLayout() {
   const [meta, setMeta] = useState<Meta>({ breadcrumb: '', section: '' });
   const publish = useCallback((next: Meta) => {
@@ -205,20 +203,20 @@ function ShellFrame({ children, meta, remember = false }: {
       />
       <div className="shell__wash" aria-hidden="true" />
 
-      <nav className={menu ? 'sb sb--open' : 'sb'} aria-label="Разделы">
-        <div className="sb-brand">
-          <BrandRow />
+      <nav className={menu ? 'side side--open' : 'side'} aria-label="Разделы">
+        <div className="side__brand">
+          <BrandLockup />
         </div>
 
-        <div className="sb-scroll">
+        <div className="side__scroll">
           <Group title="Рабочее пространство" items={WORKSPACE} badges={counters}
                  active={section} remember={remember} />
-          <div className="sb-rule" />
+          <div className="side__rule" />
           <Group title="Управление" items={MANAGEMENT} badges={counters} active={section}
                  remember={remember} />
         </div>
 
-        <button type="button" className="sb-exit" onClick={() => void session.signOut()}>
+        <button type="button" className="side__exit" onClick={() => void session.signOut()}>
           <AppIcon name="logout" size={ICON_SIZE.nav} />
           Выйти
         </button>
@@ -227,7 +225,7 @@ function ShellFrame({ children, meta, remember = false }: {
       {menu && (
         <button
           type="button"
-          className="sb-scrim"
+          className="side__scrim"
           aria-label="Закрыть меню разделов"
           onClick={() => setMenu(false)}
         />
@@ -268,18 +266,18 @@ function Group({ title, items, badges, active, remember }: {
 }) {
   return (
     <>
-      <p className="sb-group">{title}</p>
-      <ul className="sb-list">
+      <p className="side__group">{title}</p>
+      <ul className="side__list">
         {items.map((item) => {
           const count = badges[item.key];
           const inside = (
             <>
               <AppIcon name={item.icon} size={ICON_SIZE.nav} />
-              <span className="sb-item__title">{item.title}</span>
+              <span>{item.title}</span>
               {/* Ноль не показывается: пустой кружок читается как
                   «ноль чего-то», а не «ничего не ждёт». */}
               {count !== undefined && count > 0 && (
-                <span className="sb-badge">{count > 99 ? '99+' : count}</span>
+                <span className="nav__badge">{count > 99 ? '99+' : count}</span>
               )}
             </>
           );
@@ -288,7 +286,7 @@ function Group({ title, items, badges, active, remember }: {
               {item.to ? (
                 <Link
                   to={remember ? placeOf(item.to) : item.to}
-                  className={item.key === active ? 'sb-item sb-item--active' : 'sb-item'}
+                  className={item.key === active ? 'nav nav--active' : 'nav'}
                   aria-current={item.key === active ? 'page' : undefined}
                 >
                   {inside}
@@ -296,7 +294,7 @@ function Group({ title, items, badges, active, remember }: {
               ) : (
                 <button
                   type="button"
-                  className="sb-item"
+                  className="nav"
                   aria-disabled
                   disabled
                   title="Раздел будет добавлен следующим этапом"
