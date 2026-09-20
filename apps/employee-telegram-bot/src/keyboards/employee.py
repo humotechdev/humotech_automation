@@ -46,6 +46,8 @@ from aiogram.types import (
     WebAppInfo,
 )
 
+from src.keyboards import onboarding as onboarding_kb
+
 #: Верхний ряд: две кнопки запуска Mini App.
 BTN_SCAN = "📷 Отметиться"
 BTN_OPEN = "👤 Кабинет"
@@ -63,6 +65,10 @@ BTN_SICK_LEAVE = "🤒 Больничный"
 BTN_VACATION = "🏖 Отпуск"
 BTN_MY_REQUESTS = "📄 Мои заявки"
 BTN_ASK_HR = "✍️ Написать в HR"
+#: Правила и обязательные документы. Подпись берётся из клавиатур
+#: ознакомления: по ней же фильтруется обработчик, и вторая копия строки
+#: разошлась бы с ним молча.
+BTN_RULES = onboarding_kb.BTN_RULES
 BTN_HELP = "❓ Помощь"
 #: Выход из ввода вопроса. В общем меню её нет: она нужна только там.
 BTN_CANCEL = "✖️ Отмена"
@@ -84,7 +90,7 @@ ALL_BUTTONS = (
     BTN_SCAN, BTN_OPEN,
     BTN_CABINET, BTN_WHERE_AM_I, BTN_TODAY, BTN_WEEK, BTN_MONTH,
     BTN_HISTORY, BTN_SICK_LEAVE, BTN_VACATION, BTN_MY_REQUESTS, BTN_ASK_HR,
-    BTN_HELP,
+    BTN_RULES, BTN_HELP,
 )
 
 #: Путь быстрой отметки. Домен не хранится нигде в коде — приходит из
@@ -150,7 +156,10 @@ def employee_menu(
             [KeyboardButton(text=BTN_SICK_LEAVE),
              KeyboardButton(text=BTN_VACATION)],
             [KeyboardButton(text=BTN_MY_REQUESTS), KeyboardButton(text=BTN_ASK_HR)],
-            [KeyboardButton(text=BTN_HELP)],
+            # «Правила и документы» остаются в меню и после ознакомления:
+            # человек имеет право перечитать то, с чем согласился, и
+            # увидеть новую редакцию, когда её выпустят.
+            [KeyboardButton(text=BTN_RULES), KeyboardButton(text=BTN_HELP)],
         ]
     )
     return ReplyKeyboardMarkup(
@@ -249,6 +258,7 @@ def help_only_menu() -> ReplyKeyboardMarkup:
 
 __all__ = [
     "ALL_BUTTONS",
+    "BTN_RULES",
     "KEYBOARD_SOURCE",
     "SCAN_PATH",
     "cabinet_button",

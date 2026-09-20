@@ -25,6 +25,7 @@ from src.api.errors import ApiError
 from src.api.selfservice import SelfServiceClient
 from src.config.settings import settings
 from src.keyboards import employee as kb
+from src.keyboards import onboarding as ob
 from src.utils.menu_button import drop_chat_override
 from src.messages import employee as text
 from src.middlewares.employee import REASON_UNAVAILABLE
@@ -45,6 +46,31 @@ DENIAL_TEXT = {
 }
 
 
+def onboarding_state(employee) -> dict:
+    """Блок ознакомления из ответа профиля.
+
+    Терпим к тому, что придёт не словарь: сюда попадает и `True` из
+    старого вызова, и профиль без этого блока — например, от backend,
+    который ещё не обновили. В обоих случаях правильный ответ —
+    «ознакомление ни при чём», а не падение на `.get`.
+    """
+    if not isinstance(employee, dict):
+        return {}
+    block = employee.get("onboarding")
+    return block if isinstance(block, dict) else {}
+
+
+def onboarding_done(employee) -> bool:
+    """Открыты ли человеку рабочие функции.
+
+    По умолчанию — да. Отсутствие блока означает, что сервер про
+    ознакомление ничего не сказал, и закрывать меню на этом основании
+    значило бы отобрать бота у всех при первом же рассогласовании
+    версий.
+    """
+    return bool(onboarding_state(employee).get("completed", True))
+
+
 def build_menu(
     employee, message: Message | None = None, *, launch_apps: bool | None = None
 ) -> ReplyKeyboardMarkup:
@@ -53,9 +79,16 @@ def build_menu(
     Тип чата важен: `web_app` у кнопки нижней клавиатуры Telegram
     разрешает только в личном чате, и в группе такая клавиатура — ошибка
     запроса целиком, то есть человек остался бы вообще без кнопок.
+
+    До завершения ознакомления набор другой — три пункта вместо
+    одиннадцати. Это не упрощение интерфейса, а честность: остальные
+    всё равно ответят отказом, и кнопка, ведущая в отказ, хуже её
+    отсутствия.
     """
     if not employee:
         return kb.help_only_menu()
+    if not onboarding_done(employee):
+        return ob.onboarding_menu()
     private = message is None or getattr(message.chat, "type", "private") == "private"
     if launch_apps is None:
         launch_apps = settings.keyboard_launch_buttons
@@ -110,7 +143,21 @@ async def _guard(message: Message, employee, denial) -> bool:
     неизвестно: правильный ответ — не менять то, что у него уже есть.
     """
     if employee is not None:
-        return True
+        if onboarding_done(employee):
+            return True
+        # Ознакомление не закончено. Сервер всё равно ответит отказом —
+        # объясняем причину сами и оставляем ровно те кнопки, которые
+        # сейчас работают.
+        from src.messages import onboarding as onboarding_text
+
+        blocked = onboarding_state(employee)
+        await message.answer(
+            onboarding_text.BLOCKED_DECLINED
+            if blocked.get("status") == "BLOCKED_BY_DECLINED_POLICY"
+            else onboarding_text.BLOCKED,
+            reply_markup=ob.onboarding_menu(),
+        )
+        return False
     if denial == REASON_UNAVAILABLE:
         logger.info(
             "menu skipped for %s: backend unavailable, keyboard left as is",
@@ -347,4 +394,4 @@ async def help_handler(message: Message, employee, denial) -> None:
     await message.answer(text.HELP, reply_markup=_menu(employee, message))
 
 
-__all__ = ["router"]
+__all__ = ["build_menu", "onboarding_done", "onboarding_state", "router"]

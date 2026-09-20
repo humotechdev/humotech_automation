@@ -20,6 +20,7 @@ from src.handlers.attendance.sticker import router as sticker_router
 from src.handlers.day_start import router as day_start_router
 from src.handlers.fallback import router as fallback_router
 from src.handlers.menu import router as menu_router
+from src.handlers.onboarding import router as onboarding_router
 from src.handlers.start import router as start_router
 
 
@@ -41,6 +42,11 @@ def build_root_router() -> Router:
     # Загрузка справки ждёт файл в своём состоянии. Раньше меню и
     # `fallback`: присланный документ иначе получил бы «не понял».
     root.include_router(absence_document_router)
+    # Ознакомление РАНЬШЕ меню: до его завершения рабочие разделы
+    # закрыты, и нижняя клавиатура у человека своя. Позже меню его
+    # кнопки не перехватывают — подписи не пересекаются, — но порядок
+    # проверяется здесь, а не памятью того, кто будет их править.
+    root.include_router(onboarding_router)
     root.include_router(menu_router)
     # После меню: кнопка меню, нажатая во время ввода вопроса, остаётся
     # кнопкой меню и не уходит в HR текстом. До `fallback`: он ловит

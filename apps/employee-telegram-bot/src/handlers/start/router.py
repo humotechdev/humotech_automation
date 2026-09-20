@@ -27,7 +27,9 @@ from src.api.errors import ApiError
 from src.api.selfservice import SelfServiceClient
 from src.handlers.attendance.sticker import begin as begin_sticker, sticker_payload
 from src.keyboards import employee as kb
+from src.keyboards import onboarding as ob
 from src.messages import link as text
+from src.messages import onboarding as onboarding_text
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +38,16 @@ router = Router(name="start")
 # Префикс полезной нагрузки `/start`. Telegram отдаёт в ней до 64 символов
 # из [A-Za-z0-9_-], чего хватает на «link_» плюс токен в 43 символа.
 LINK_PREFIX = "link_"
+
+# Ссылка на первичное ознакомление. Токен и приглашение те же самые:
+# разное у них только то, что человека ждёт после привязки. Второй
+# механизм ссылок означал бы две двери в один дом, и закрыть за собой
+# обе никто не вспомнит.
+ONBOARDING_PREFIX = "onboarding_"
+
+#: Оба префикса разом. Порядок значения не имеет — они не пересекаются.
+LINK_PREFIXES = (LINK_PREFIX, ONBOARDING_PREFIX)
+
 
 def parse_link_payload(payload: str | None) -> str | None:
     """Токен из полезной нагрузки `/start`, либо None.
@@ -46,9 +58,15 @@ def parse_link_payload(payload: str | None) -> str | None:
     if not payload:
         return None
     payload = payload.strip()
-    if not payload.startswith(LINK_PREFIX):
-        return None
-    return payload[len(LINK_PREFIX):] or None
+    for prefix in LINK_PREFIXES:
+        if payload.startswith(prefix):
+            return payload[len(prefix):] or None
+    return None
+
+
+def is_onboarding_link(payload: str | None) -> bool:
+    """Ведёт ли ссылка на ознакомление, а не на обычную привязку."""
+    return bool(payload) and payload.strip().startswith(ONBOARDING_PREFIX)
 
 
 @router.message(CommandStart(deep_link=True))
@@ -77,8 +95,9 @@ async def start_with_link(
 
     await state.clear()
     user = message.from_user
+    onboarding_link = is_onboarding_link(command.args)
     try:
-        await client.consume_link_token(
+        result = await client.consume_link_token(
             token=token,
             telegram_user_id=user.id,
             telegram_chat_id=message.chat.id,
@@ -94,6 +113,15 @@ async def start_with_link(
         # переход продолжает тот же сценарий. Принять условия сможет
         # только тот Telegram ID, который погасил ссылку.
         if reason == "pending":
+            # Ссылку уже открывали: привязка ждёт согласия. Продолжаем
+            # тот же сценарий — и именно тот, на который указывает
+            # префикс ссылки, а не какой-нибудь другой.
+            if onboarding_link:
+                await message.answer(
+                    onboarding_text.greeting(user.first_name),
+                    reply_markup=ob.welcome(),
+                )
+                return
             await message.answer(text.LINK_PENDING, reply_markup=kb.link_consent())
             return
         await message.answer(
@@ -102,6 +130,15 @@ async def start_with_link(
         )
         return
 
+    # Что показать после привязки, решает СЕРВЕР, а не префикс ссылки:
+    # человека могли позвать на ознакомление и обычной ссылкой, и
+    # наоборот. Префикс — подсказка для того случая, когда сервер уже
+    # ничего не отвечает (ссылка открыта повторно).
+    if result.get("onboarding_required") or onboarding_link:
+        await message.answer(
+            onboarding_text.greeting(user.first_name), reply_markup=ob.welcome()
+        )
+        return
     await message.answer(text.LINK_PENDING, reply_markup=kb.link_consent())
 
 
@@ -116,9 +153,18 @@ async def accept_link_terms(callback: CallbackQuery, client: SelfServiceClient) 
     if callback.message:
         await callback.message.edit_reply_markup(reply_markup=None)
         from src.handlers.menu.router import build_menu
-        # Сервер только что сделал привязку ACTIVE; полное меню можно
-        # показать сразу, не заставляя сотрудника ещё раз нажимать /start.
-        await callback.message.answer(text.LINK_CONNECTED, reply_markup=build_menu(True, callback.message))
+
+        # Профиль перечитывается, а не подставляется заглушкой: меню
+        # зависит от того, ждёт ли человека ознакомление, и собранное
+        # по `True` обещало бы рабочие разделы тому, кому они закрыты.
+        try:
+            profile = await client.profile(callback.from_user.id)
+        except ApiError:
+            profile = None
+        await callback.message.answer(
+            text.LINK_CONNECTED,
+            reply_markup=build_menu(profile, callback.message),
+        )
 
 
 @router.message(CommandStart(deep_link=False))
@@ -174,6 +220,9 @@ async def plain_or_recognize(
 
 __all__ = [
     "LINK_PREFIX",
+    "LINK_PREFIXES",
+    "ONBOARDING_PREFIX",
+    "is_onboarding_link",
     "parse_link_payload",
     "plain_or_recognize",
     "router",

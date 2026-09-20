@@ -29,7 +29,7 @@ import logging
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandStart
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from src.api.errors import ApiError, Conflict, Forbidden, NotFound, Unauthorized
@@ -146,6 +146,18 @@ def _declined(state: dict) -> dict | None:
 # --- нижняя клавиатура ------------------------------------------------------
 
 
+def mid_onboarding(message: Message, employee=None) -> bool:
+    """Фильтр: человек известен, но ознакомление не закончил.
+
+    Нужен, чтобы `/start` посреди ознакомления вёл туда, где человек
+    остановился, а не в объяснение, почему остальное закрыто. Условие
+    проверяется фильтром, а не внутри обработчика меню: иначе меню
+    пришлось бы учить работать с клиентом backend ради одной ветки.
+    """
+    return employee is not None and not finished(employee)
+
+
+@router.message(CommandStart(deep_link=False), mid_onboarding)
 @router.message(F.text == ob.BTN_CONTINUE)
 @router.message(Command("onboarding"))
 async def continue_onboarding(
@@ -481,4 +493,7 @@ def menu_for(employee, message: Message | None = None):
     return build_menu(employee, message)
 
 
-__all__ = ["enrolled", "finished", "menu_for", "router", "screen", "show"]
+__all__ = [
+    "enrolled", "finished", "menu_for", "mid_onboarding",
+    "router", "screen", "show",
+]
