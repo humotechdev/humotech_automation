@@ -156,8 +156,17 @@ class TelegramLinkService(BaseService):
     def _now(self) -> datetime:
         return timezone.now()
 
-    def _invitation_ttl(self) -> timedelta:
-        return timedelta(seconds=settings.TELEGRAM["INVITATION_TTL_SECONDS"])
+    def _invitation_ttl(self, seconds: int | None = None) -> timedelta:
+        """Срок ссылки. По умолчанию — общий, из настроек.
+
+        Параметр нужен ознакомлению: его ссылку отправляют до выхода
+        человека на работу, и суточный срок обычной привязки не пережил
+        бы выходные. Менять общее умолчание ради этого нельзя — оно
+        относится к другому сценарию.
+        """
+        return timedelta(
+            seconds=seconds or settings.TELEGRAM["INVITATION_TTL_SECONDS"]
+        )
 
     def _expire_stale(self, employee_id: uuid.UUID) -> None:
         """Переводит просроченные живые ссылки сотрудника в EXPIRED.
@@ -259,7 +268,7 @@ class TelegramLinkService(BaseService):
 
     def create_invitation(
         self, actor: Actor, employee_id: uuid.UUID, *, replace: bool = False,
-        expected_username: str | None = None,
+        expected_username: str | None = None, ttl_seconds: int | None = None,
     ) -> IssuedInvitation:
         """Выдать ссылку привязки.
 
@@ -329,7 +338,7 @@ class TelegramLinkService(BaseService):
                 employee=employee,
                 token_hash=hash_invitation_token(token),
                 status="ACTIVE",
-                expires_at=now + self._invitation_ttl(),
+                expires_at=now + self._invitation_ttl(ttl_seconds),
                 created_by_user_id=actor.user_id,
                 # Подсказка для узнавания: если кадровик указал имя в
                 # Telegram, человека можно узнать и без ссылки.

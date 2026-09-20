@@ -77,6 +77,10 @@ TYPE_QUESTION = "question"
 TYPE_DELIVERY = "delivery_error"
 TYPE_REPORT = "report_ready"
 TYPE_EMPLOYEE = "employee_added"
+#: Сотрудник отказался подтвердить обязательный документ. Кадровику об
+#: этом надо узнать сразу: человек остался без рабочих функций бота и
+#: ждёт разговора, а не очередного напоминания.
+TYPE_POLICY_DECLINED = "policy_declined"
 
 #: К какой вкладке фильтра относится вид события. Вкладки в сумме дают
 #: весь набор — иначе часть событий не видна ни на одной, кроме «Все».
@@ -87,6 +91,9 @@ GROUPS: dict[str, str] = {
     TYPE_DOCUMENT: "documents",
     TYPE_CORRECTION: "requests",
     TYPE_QUESTION: "questions",
+    # На вкладке «Документы» — вместе со справками: это тоже документ,
+    # с которым что-то не так, и разбирает их один и тот же человек.
+    TYPE_POLICY_DECLINED: "documents",
 }
 
 #: Виды событий одним набором — для схемы и проверок. Порядок тот же,
@@ -346,6 +353,7 @@ class FeedService(BaseService):
             TYPE_DOCUMENT: self._document_detail,
             TYPE_CORRECTION: self._correction_detail,
             TYPE_QUESTION: self._question_detail,
+            TYPE_POLICY_DECLINED: self._policy_decline_detail,
         }[kind]
         event, extra = builder(actor, entity_id)
         if event.type != kind:
@@ -441,6 +449,7 @@ class FeedService(BaseService):
             self._documents,
             self._corrections,
             self._questions,
+            self._policy_declines,
         ):
             rows += source(actor, since)
 
@@ -760,6 +769,77 @@ class FeedService(BaseService):
             action_url="/reports",
             action_title="Открыть отчёты",
         )
+
+    def _policy_declines(self, actor: Actor, since: datetime) -> list[Event]:
+        """Отказы подтвердить обязательный документ.
+
+        Это и есть «HR получает немедленное уведомление»: строка
+        появляется в ленте той же транзакцией, что и сам отказ, потому
+        что лента ничего не хранит — она читает те же данные.
+
+        Сотруднику при этом не отправляется ничего: он и так только что
+        нажал «Не согласен» и увидел ответ.
+        """
+        if not self.access.has(actor, "onboarding.read"):
+            return []
+        from humotech.onboarding.models import EmployeePolicyAcceptance
+
+        rows = self._scoped(
+            actor,
+            EmployeePolicyAcceptance.objects.select_related(
+                "employee", "version", "version__document"
+            ).filter(decision="DECLINED"),
+        ).filter(decided_at__gte=since)
+        return [
+            self._policy_decline_event(row)
+            for row in rows.order_by("-decided_at", "-id")
+        ]
+
+    def _policy_decline_event(self, row) -> Event:
+        document = row.version.document
+        return Event(
+            type=TYPE_POLICY_DECLINED,
+            entity_id=row.id,
+            created_at=row.decided_at,
+            title="Сотрудник не подтвердил документ",
+            short_text=f"{document.title} · версия {row.version.version}",
+            status=row.decision,
+            status_label="Не согласен",
+            # Человек остался без рабочих функций бота. Это не «посмотреть
+            # на досуге»: пока кадровик не поговорит с ним, он не может
+            # ни отметиться, ни подать заявку.
+            priority="CRITICAL",
+            requires_action=True,
+            related_entity_type="employee_policy_acceptances",
+            related_entity_id=row.id,
+            action_url=f"/onboarding?employee={row.employee_id}",
+            action_title="Открыть ознакомление сотрудника",
+            employee_id=row.employee_id,
+            employee_name=_full_name(row.employee),
+        )
+
+    def _policy_decline_detail(self, actor: Actor, entity_id: uuid.UUID):
+        """Карточка отказа. Доступ проверяется заново, от исходной строки."""
+        if not self.access.has(actor, "onboarding.read"):
+            raise NotFound("Событие не найдено")
+        from humotech.onboarding.models import EmployeePolicyAcceptance
+
+        row = self._scoped(
+            actor,
+            EmployeePolicyAcceptance.objects.select_related(
+                "employee", "version", "version__document"
+            ).filter(decision="DECLINED"),
+        ).filter(id=entity_id).first()
+        if row is None:
+            raise NotFound("Событие не найдено")
+        return self._policy_decline_event(row), {
+            "document": {
+                "title": row.version.document.title,
+                "code": row.version.document.code,
+                "version": row.version.version,
+                "declined_at": row.decided_at.isoformat(),
+            },
+        }
 
     def _new_employees(self, actor: Actor, since: datetime) -> list[Event]:
         """Заведённые карточки сотрудников."""

@@ -43,6 +43,8 @@ from humotech.selfservice.serializers import (
     ScanRequestSerializer,
 )
 from humotech.selfservice.throttling import EmployeeRateThrottle, ScanRateThrottle
+from humotech.onboarding.flow import OnboardingFlow
+from humotech.onboarding.permissions import OnboardingCompleted
 from humotech.telegram.auth import (
     BotEmployeeAuthentication,
     IsLinkedEmployee,
@@ -54,13 +56,20 @@ class EmployeeSelfView(APIView):
     """Общее основание для всех экранов сотрудника.
 
     Держит в одном месте то, что иначе пришлось бы повторять в каждом view
-    и однажды забыть: два способа входа, требование живой привязки
-    и ограничение частоты.
+    и однажды забыть: два способа входа, требование живой привязки,
+    ограничение частоты и гейт первичного ознакомления.
+
+    `onboarding_gate = False` открывает экран и до завершения
+    ознакомления. Таких экранов ровно два вида: профиль — он отвечает
+    на вопрос «кто я», и без него бот не смог бы даже завести разговор
+    об ознакомлении, — и сами шаги ознакомления.
     """
 
     authentication_classes = [MiniAppAuthentication, BotEmployeeAuthentication]
-    permission_classes = [IsLinkedEmployee]
+    permission_classes = [IsLinkedEmployee, OnboardingCompleted]
     throttle_classes = [EmployeeRateThrottle]
+    #: Закрыт ли экран до завершения ознакомления.
+    onboarding_gate = True
 
     @property
     def context(self):
@@ -74,7 +83,14 @@ class ProfileView(EmployeeSelfView):
     Отдаёт ровно то, что человек и так про себя знает. Ни идентификаторов
     чужих сотрудников, ни данных руководителя, ни оклада здесь нет: экран
     существует, чтобы человек убедился, что система видит его правильно.
+
+    Гейтом ознакомления НЕ закрыт. Бот спрашивает этот адрес на каждом
+    обновлении, чтобы понять, с кем разговаривает; закрыв профиль, мы
+    закрыли бы и разговор про само ознакомление. Вместо отказа профиль
+    несёт блок `onboarding` — по нему бот и решает, какое меню показать.
     """
+
+    onboarding_gate = False
 
     @extend_schema(
         operation_id="me_profile",
@@ -129,6 +145,11 @@ class ProfileView(EmployeeSelfView):
                     "status": context.account.status,
                     "username": context.account.telegram_username,
                 },
+                # Что человеку сейчас доступно. Бот собирает меню по
+                # этому блоку, а не по собственной памяти: кнопка,
+                # нарисованная по вчерашнему состоянию, обещала бы то,
+                # на что сервер ответит отказом.
+                "onboarding": _onboarding_block(employee),
             }
         )
 
@@ -369,6 +390,35 @@ def _report(context, params):
     if period == "month":
         return statistics.for_month(context)
     return statistics.for_period(context, params["date_from"], params["date_to"])
+
+
+def _onboarding_block(employee) -> dict:
+    """Состояние ознакомления в ответе профиля.
+
+    `enrolled=False` — человека в программу не звали: он работает как
+    прежде, и никаких кнопок про ознакомление ему показывать не надо.
+    """
+    progress = OnboardingFlow().state_or_none(employee.id)
+    if progress is None:
+        return {
+            "enrolled": False, "required": False, "completed": True,
+            "status": None, "stage": "DONE",
+            "sections_done": 0, "sections_total": 0,
+            "policies_done": 0, "policies_total": 0,
+        }
+    return {
+        "enrolled": True,
+        # «Требуется» и «не завершено» — одно и то же, но у клиента это
+        # разные вопросы: один про меню, другой про прогресс.
+        "required": not progress.completed,
+        "completed": progress.completed,
+        "status": progress.status,
+        "stage": progress.stage,
+        "sections_done": progress.sections_done,
+        "sections_total": progress.sections_total,
+        "policies_done": progress.policies_done,
+        "policies_total": progress.policies_total,
+    }
 
 
 def full_name(employee) -> str:

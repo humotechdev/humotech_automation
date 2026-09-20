@@ -34,6 +34,18 @@ from django.core import signing
 TOKEN_BYTES = 32
 TOKEN_PREFIX = "link_"
 
+# Второй префикс — для ссылки на первичное ознакомление. Токен и таблица
+# те же самые: приглашение одно, разное у них только то, что человека
+# ждёт после привязки. Заводить вторую таблицу ссылок значило бы сделать
+# две двери в один дом и закрывать за собой обе.
+#
+# «onboarding_» + 43 символа = 54: в шестидесяти четырёх, которые Telegram
+# отдаёт под полезную нагрузку `/start`, помещается.
+ONBOARDING_PREFIX = "onboarding_"
+
+#: Все префиксы, по которым бот узнаёт ссылку привязки.
+LINK_PREFIXES = (TOKEN_PREFIX, ONBOARDING_PREFIX)
+
 # Подпись Mini App живёт в своём пространстве имён: строка, подписанная
 # для одной цели, не должна приниматься в другой.
 MINI_APP_SALT = "humotech.telegram.mini-app"
@@ -54,19 +66,24 @@ def parse_start_payload(payload: str | None) -> str | None:
 
     Разбор нарочно строгий: посторонняя нагрузка не должна случайно
     оказаться «почти токеном» и уйти в базу на поиск.
+
+    Оба префикса ведут к одному и тому же токену: ссылка на ознакомление
+    отличается не содержимым, а тем, что бот покажет после привязки.
     """
     if not payload:
         return None
     payload = payload.strip()
-    if not payload.startswith(TOKEN_PREFIX):
-        return None
-    token = payload[len(TOKEN_PREFIX):]
-    return token or None
+    for prefix in LINK_PREFIXES:
+        if payload.startswith(prefix):
+            return payload[len(prefix):] or None
+    return None
 
 
-def build_invitation_link(bot_username: str, token: str) -> str:
+def build_invitation_link(
+    bot_username: str, token: str, *, prefix: str = TOKEN_PREFIX
+) -> str:
     """Ссылка, которую HR передаёт сотруднику."""
-    return f"https://t.me/{bot_username}?start={TOKEN_PREFIX}{token}"
+    return f"https://t.me/{bot_username}?start={prefix}{token}"
 
 
 @dataclass(frozen=True)

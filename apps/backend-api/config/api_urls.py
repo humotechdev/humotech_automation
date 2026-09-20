@@ -58,6 +58,18 @@ from humotech.notifications.feed_views import (
 )
 from humotech.notifications.views import NotificationViewSet
 from humotech.offices.views import OfficeViewSet
+from humotech.onboarding.views import (
+    EmployeeOnboardingActionView,
+    EmployeeOnboardingView,
+    OnboardingCountsView,
+    OnboardingExportView,
+    OnboardingProgressView,
+    OnboardingSectionViewSet,
+    PolicyDocumentViewSet,
+    PolicyVersionFileView,
+    PolicyVersionPublishView,
+    PolicyVersionView,
+)
 from humotech.organizations.views import (
     IntegrationsView,
     OrganizationSettingDetailView,
@@ -152,6 +164,15 @@ router.register(
 router.register(
     "surveys/campaigns", SurveyCampaignViewSet, basename="survey-campaign"
 )
+# Первичное ознакомление. Разделы и документы — разные справочники:
+# карточка рассказывает о компании, документ обязывает, и версионируются
+# они по-разному.
+router.register(
+    "onboarding/sections", OnboardingSectionViewSet, basename="onboarding-section"
+)
+router.register(
+    "onboarding/documents", PolicyDocumentViewSet, basename="policy-document"
+)
 
 urlpatterns = [
     path("auth/login", LoginView.as_view(), name="login"),
@@ -175,6 +196,48 @@ urlpatterns = [
         "employees/<uuid:employee_pk>/telegram/disconnect",
         EmployeeTelegramDisconnectView.as_view(),
         name="employee-telegram-disconnect",
+    ),
+    # Первичное ознакомление одного человека — там же, где всё остальное
+    # про него. Действие стоит в пути, а не в теле: каждое из них —
+    # отдельное решение с отдельной записью в журнале.
+    path(
+        "employees/<uuid:employee_pk>/onboarding",
+        EmployeeOnboardingView.as_view(),
+        name="employee-onboarding",
+    ),
+    path(
+        "employees/<uuid:employee_pk>/onboarding/<str:action>",
+        EmployeeOnboardingActionView.as_view(),
+        name="employee-onboarding-action",
+    ),
+    # Сводка по всем. `counts` и `export` стоят ВЫШЕ общего маршрута
+    # разделов: путь читается сверху вниз.
+    path(
+        "onboarding/progress",
+        OnboardingProgressView.as_view(),
+        name="onboarding-progress",
+    ),
+    path(
+        "onboarding/counts", OnboardingCountsView.as_view(),
+        name="onboarding-counts",
+    ),
+    path(
+        "onboarding/export", OnboardingExportView.as_view(),
+        name="onboarding-export",
+    ),
+    # Редакция документа. Публикация вынесена отдельным адресом: это не
+    # правка полей, а решение, закрывающее бота всем, кто её не принял.
+    path(
+        "onboarding/versions/<uuid:version_id>",
+        PolicyVersionView.as_view(), name="policy-version",
+    ),
+    path(
+        "onboarding/versions/<uuid:version_id>/publish",
+        PolicyVersionPublishView.as_view(), name="policy-version-publish",
+    ),
+    path(
+        "onboarding/versions/<uuid:version_id>/file",
+        PolicyVersionFileView.as_view(), name="policy-version-file",
     ),
     # Вход бота. Пользователя за ним нет: обращается сам бот, предъявляя
     # общий секрет, а право на операцию даёт токен приглашения.

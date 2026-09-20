@@ -213,6 +213,85 @@ class SelfServiceClient:
             json=body,
         )
 
+    # --- первичное ознакомление -------------------------------------------
+
+    async def onboarding(self, telegram_id: int) -> dict:
+        """Где человек остановился и что показать дальше.
+
+        Следующий шаг выбирает сервер. Бот не просит «покажи седьмую
+        карточку»: кнопка в Telegram живёт в чате вечно, её можно нажать
+        через месяц из старого сообщения, и порядок, держащийся на ней,
+        порядком быть перестаёт.
+        """
+        return await self._get("/me/onboarding", telegram_id)
+
+    async def onboarding_start(
+        self, telegram_id: int, *, message_id: int | None = None
+    ) -> dict:
+        return await self._request(
+            "POST", "/me/onboarding/start",
+            headers={EMPLOYEE_HEADER: str(telegram_id)},
+            json={"message_id": message_id},
+        )
+
+    async def onboarding_section(self, telegram_id: int, position: int) -> dict:
+        """Карточка по номеру — для «← Назад» и перечитывания из меню."""
+        return await self._get(
+            f"/me/onboarding/sections/{position}", telegram_id
+        )
+
+    async def onboarding_acknowledge(
+        self, telegram_id: int, section_id: str, *, message_id: int | None = None
+    ) -> dict:
+        """«Я ознакомился». Повтор безопасен: ключ в базе решает это молча."""
+        return await self._request(
+            "POST", "/me/onboarding/acknowledge",
+            headers={EMPLOYEE_HEADER: str(telegram_id)},
+            json={"section_id": section_id, "message_id": message_id},
+        )
+
+    async def onboarding_decision(
+        self, telegram_id: int, version_id: str, decision: str
+    ) -> dict:
+        return await self._request(
+            "POST", "/me/onboarding/decision",
+            headers={EMPLOYEE_HEADER: str(telegram_id)},
+            json={"version_id": version_id, "decision": decision},
+        )
+
+    async def policy_text(self, telegram_id: int, version_id: str) -> dict:
+        """Полный текст редакции — то, что открывает отдельная кнопка."""
+        return await self._get(f"/me/policies/{version_id}", telegram_id)
+
+    async def policy_file(
+        self, telegram_id: int, version_id: str
+    ) -> tuple[bytes, str, str]:
+        """Утверждённый PDF: содержимое, имя файла и тип.
+
+        Скачивается здесь, а не отдаётся ссылкой: файл лежит в приватном
+        хранилище, и адреса, который можно переслать, у него нет и быть
+        не должно.
+        """
+        session = await self._get_session()
+        headers = {
+            BOT_SECRET_HEADER: settings.backend_bot_secret,
+            EMPLOYEE_HEADER: str(telegram_id),
+        }
+        async with session.get(
+            f"{self._base_url}/me/policies/{version_id}/file", headers=headers
+        ) as response:
+            if response.status >= 400:
+                raise _error(response.status, await self._body(response))
+            name = "document.pdf"
+            disposition = response.headers.get("Content-Disposition", "")
+            if "filename=" in disposition:
+                name = disposition.split("filename=")[-1].strip('"; ')
+            return (
+                await response.read(),
+                name,
+                response.headers.get("Content-Type", "application/pdf"),
+            )
+
     # --- привязка ---------------------------------------------------------
 
     async def consume_link_token(

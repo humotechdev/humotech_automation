@@ -25,6 +25,15 @@ from humotech.selfservice.notifications import (
 from humotech.selfservice.ask import AskView, EscalateView
 from humotech.selfservice.questions import QuestionMessageView
 from humotech.selfservice.surveys import SurveyListView, SurveyView
+from humotech.onboarding.self_views import (
+    OnboardingAcknowledgeView,
+    OnboardingDecisionView,
+    OnboardingSectionView,
+    OnboardingStartView,
+    OnboardingStateView,
+    PolicyFileView,
+    PolicyTextView,
+)
 from humotech.selfservice.views import (
     HistoryView,
     ProfileView,
@@ -71,6 +80,26 @@ urlpatterns = [
     # Вопрос в HR. Сообщение ложится в обращение по правилам очереди.
     path("questions/messages", QuestionMessageView.as_view(),
          name="self-question-message"),
+    # Первичное ознакомление. Эти адреса — единственные, что открыты до
+    # его завершения: гейт закрывает рабочие функции, а не дорогу к их
+    # открытию.
+    path("onboarding", OnboardingStateView.as_view(), name="self-onboarding"),
+    path("onboarding/start", OnboardingStartView.as_view(),
+         name="self-onboarding-start"),
+    # Раздел по НОМЕРУ: так устроены кнопки «← Назад», и так короче
+    # полезная нагрузка кнопки в Telegram.
+    path("onboarding/sections/<int:position>", OnboardingSectionView.as_view(),
+         name="self-onboarding-section"),
+    path("onboarding/acknowledge", OnboardingAcknowledgeView.as_view(),
+         name="self-onboarding-acknowledge"),
+    path("onboarding/decision", OnboardingDecisionView.as_view(),
+         name="self-onboarding-decision"),
+    # Полный текст и файл — отдельными запросами: правовой текст длинный,
+    # и таскать его на каждое обновление экрана незачем.
+    path("policies/<uuid:version_id>", PolicyTextView.as_view(),
+         name="self-policy-text"),
+    path("policies/<uuid:version_id>/file", PolicyFileView.as_view(),
+         name="self-policy-file"),
     # Уведомления только читаются и отмечаются прочитанными: заводит их
     # система по событиям, а не сотрудник.
     path("notifications", NotificationListView.as_view(),

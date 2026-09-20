@@ -166,6 +166,28 @@ class ProfileTelegramSerializer(serializers.Serializer):
     username = serializers.CharField(allow_null=True)
 
 
+class ProfileOnboardingSerializer(serializers.Serializer):
+    """Состояние первичного ознакомления в ответе профиля.
+
+    `enrolled=False` означает «человека в программу не звали»: он
+    работает как прежде, и кнопок про ознакомление ему не показывают.
+    Для него `completed` намеренно `true` — клиенту важно не то, прошёл
+    ли он программу, а то, открыты ли ему рабочие функции.
+    """
+
+    enrolled = serializers.BooleanField()
+    required = serializers.BooleanField()
+    completed = serializers.BooleanField()
+    status = serializers.CharField(allow_null=True)
+    stage = serializers.CharField(
+        help_text="SECTIONS, POLICIES, BLOCKED или DONE — какой экран показать",
+    )
+    sections_done = serializers.IntegerField()
+    sections_total = serializers.IntegerField()
+    policies_done = serializers.IntegerField()
+    policies_total = serializers.IntegerField()
+
+
 class ProfileSerializer(serializers.Serializer):
     """Кто я и где я числюсь.
 
@@ -180,6 +202,7 @@ class ProfileSerializer(serializers.Serializer):
     department = NamedRefSerializer(allow_null=True)
     assignment = ProfileAssignmentSerializer()
     telegram = ProfileTelegramSerializer()
+    onboarding = ProfileOnboardingSerializer()
 
 
 # --- отметка -----------------------------------------------------------------

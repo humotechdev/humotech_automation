@@ -38,6 +38,19 @@ PERMISSIONS: tuple[tuple[str, str, str], ...] = (
      "Видеть состояние привязки и заявки, ожидающие подтверждения"),
     ("telegram.manage", "Управление привязками Telegram",
      "Выдавать ссылки, подтверждать, отклонять и отключать привязку"),
+    # первичное ознакомление
+    #
+    # Три права, а не одно, потому что это три разных решения.
+    # Посмотреть, кто на каком разделе, — безобидно. Разослать
+    # напоминания и переоткрыть ссылку — действие, доходящее до людей.
+    # А публикация редакции обязательного документа закрывает бота всем,
+    # кто её ещё не подтвердил: это решение юриста, а не дежурного HR.
+    ("onboarding.read", "Просмотр ознакомления",
+     "Видеть прогресс сотрудников, разделы и обязательные документы"),
+    ("onboarding.manage", "Управление ознакомлением",
+     "Править разделы, слать напоминания и повторные приглашения"),
+    ("policies.publish", "Публикация обязательных документов",
+     "Выпускать новые редакции: до их подтверждения бот закрыт"),
     # отметки
     ("attendance.read", "Просмотр отметок", "Видеть события и рабочие сессии"),
     ("attendance.correct", "Исправление отметок", "Рассматривать заявки на корректировку"),
@@ -119,6 +132,7 @@ _HR_FULL = (
     "departments.manage", "positions.manage",
     "employees.read", "employees.manage", "employees.archive", "employees.access",
     "telegram.read", "telegram.manage",
+    "onboarding.read", "onboarding.manage", "policies.publish",
     "attendance.read", "attendance.correct", "attendance.manual",
     "qr_points.read", "qr_points.manage",
     "schedules.read", "schedules.manage", "calendar.manage",
@@ -145,6 +159,7 @@ ROLE_PERMISSIONS: dict[str, tuple[str, ...]] = {
     "REGIONAL_HR": (
         "offices.read", "employees.read", "employees.manage", "employees.access",
         "telegram.read", "telegram.manage",
+        "onboarding.read", "onboarding.manage",
         "attendance.read", "attendance.correct",
         "qr_points.read",
         "schedules.read", "schedules.manage",
@@ -155,6 +170,7 @@ ROLE_PERMISSIONS: dict[str, tuple[str, ...]] = {
     ),
     "OFFICE_ADMIN": (
         "offices.read", "employees.read", "telegram.read",
+        "onboarding.read",
         "attendance.read", "attendance.correct", "attendance.manual",
         "qr_points.read", "qr_points.manage", "qr_display.start",
         "schedules.read", "absences.read",
@@ -181,6 +197,6 @@ ROLE_PERMISSIONS: dict[str, tuple[str, ...]] = {
     "VIEWER": (
         "employees.read", "offices.read", "attendance.read",
         "schedules.read", "absences.read", "knowledge.read",
-        "analytics.read", "surveys.read",
+        "analytics.read", "surveys.read", "onboarding.read",
     ),
 }

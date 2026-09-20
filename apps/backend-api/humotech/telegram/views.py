@@ -121,10 +121,18 @@ class BotLinkResultSerializer(serializers.Serializer):
 
     Сотрудник боту неизвестен и знать его боту незачем: он только
     сообщает человеку, что привязка ждёт подтверждения.
+
+    `onboarding_required` — единственное исключение, и это булево
+    значение, а не сведения о человеке. Без него бот не знал бы, что
+    показать сразу после перехода по ссылке: приветствие ознакомления
+    или обычные условия привязки.
     """
 
     status = serializers.CharField()
     employee_known = serializers.BooleanField()
+    onboarding_required = serializers.BooleanField(
+        help_text="Ждёт ли этого человека первичное ознакомление",
+    )
 
 
 class MiniAppEmployeeSerializer(serializers.Serializer):
@@ -249,6 +257,18 @@ class EmployeeTelegramDisconnectView(_EmployeeScopedView):
         return Response(AccountSerializer(account).data)
 
 
+def _onboarding_required(employee_id) -> bool:
+    """Ждёт ли человека первичное ознакомление.
+
+    Импорт локальный: `onboarding` пользуется приглашениями из этого
+    модуля, и импорт на уровне файла замкнул бы круг.
+    """
+    from humotech.onboarding import progress as onboarding_progress
+
+    state = onboarding_progress.gate(employee_id)
+    return state is not None and not state.completed
+
+
 class BotLinkView(APIView):
     """Погашение ссылки. Вызывает только бот, пользователя за запросом нет."""
 
@@ -281,7 +301,11 @@ class BotLinkView(APIView):
         # и знать его боту незачем — он только сообщает человеку,
         # что привязка ждёт подтверждения.
         return Response(
-            {"status": account.status, "employee_known": True},
+            {
+                "status": account.status,
+                "employee_known": True,
+                "onboarding_required": _onboarding_required(account.employee_id),
+            },
             status=status.HTTP_201_CREATED,
         )
 
@@ -292,7 +316,11 @@ class BotLinkAcceptView(BotLinkView):
     def post(self, request):
         payload = validated(BotLinkAcceptSerializer, request.data)
         account = TelegramLinkService().accept_terms(telegram_user_id=payload["telegram_user_id"])
-        return Response({"status": account.status, "employee_known": True})
+        return Response({
+            "status": account.status,
+            "employee_known": True,
+            "onboarding_required": _onboarding_required(account.employee_id),
+        })
 
 
 class BotRecognizeView(APIView):
