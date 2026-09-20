@@ -256,7 +256,10 @@ export function OfficesPage() {
         <header className="orp-head">
           <div className="orp-head__text">
             <h1 className="orp-head__title">Офисы и регионы</h1>
-            <p className="orp-head__sub">Сеть компании в реальном времени</p>
+            <p className="orp-head__sub">
+              Сеть компании. Управляйте офисами, распределением команды по регионам
+              и информацией о локациях.
+            </p>
             <p className="orp-head__facts">
               <span><b>{list.state === 'ready' ? rows.length : '—'}</b> {officesWord(rows.length)}</span>
               <i aria-hidden="true">·</i>

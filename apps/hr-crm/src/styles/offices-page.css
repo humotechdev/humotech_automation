@@ -41,7 +41,7 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 28px;
+  gap: 24px;
   margin-bottom: 30px;
 }
 
@@ -51,15 +51,16 @@
 
 .orp-head__title {
   margin: 0;
-  font-size: 38px;
-  line-height: 1.08;
-  font-weight: 700;
-  letter-spacing: -0.025em;
-  color: var(--text-primary);
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 40px;
+  line-height: 1.06;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  color: #071b43;
 }
 
 .orp-head__sub {
-  max-width: 640px;
+  max-width: 650px;
   margin: 10px 0 0;
   font-size: 16px;
   line-height: 22px;
@@ -68,7 +69,7 @@
 }
 
 .orp-head__facts {
-  display: flex;
+  display: none;
   flex-wrap: wrap;
   align-items: baseline;
   gap: 8px;
@@ -98,7 +99,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  width: 304px;
+  width: 154px;
   height: 46px;
   padding: 0 14px;
   border: 1px solid var(--border);
@@ -202,9 +203,10 @@
 
 .orp-map__title {
   margin: 0;
-  font-size: 20px;
-  line-height: 24px;
-  font-weight: 700;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 21px;
+  line-height: 25px;
+  font-weight: 600;
   color: var(--text-primary);
 }
 
@@ -323,9 +325,10 @@
 
 .orp-regions__title {
   margin: 0 0 10px;
-  font-size: 20px;
-  line-height: 24px;
-  font-weight: 700;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 21px;
+  line-height: 25px;
+  font-weight: 600;
   color: var(--text-primary);
 }
 
@@ -430,9 +433,10 @@
   align-items: baseline;
   gap: 8px;
   margin: 0;
+  font-family: Georgia, 'Times New Roman', serif;
   font-size: 22px;
-  line-height: 28px;
-  font-weight: 700;
+  line-height: 27px;
+  font-weight: 600;
   color: var(--text-primary);
 }
 
@@ -530,9 +534,10 @@
 }
 
 .orp-card__name {
+  font-family: Georgia, 'Times New Roman', serif;
   font-size: 20px;
   line-height: 25px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -752,7 +757,7 @@
 /* Поля рабочей области — свои у этой страницы, без правки общей
    `.canvas`: другие разделы остаются как были. */
 .canvas:has(> .orp) {
-  padding: 28px 40px 36px;
+  padding: 18px 40px 32px;
 }
 
 /* На странице сети фон ровный: тонкие контуры карты и карточек не
