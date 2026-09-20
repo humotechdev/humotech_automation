@@ -23,6 +23,88 @@
   color: var(--of-text);
 }
 
+/* --- шапка ------------------------------------------------------------------ */
+
+.of-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  height: 112px;
+  flex: none;
+  margin: -6px 5px 12px 7px;
+}
+
+.of-head__title {
+  margin: 0;
+  font-size: 33px;
+  line-height: 40px;
+  font-weight: 700;
+  color: var(--of-ink);
+}
+
+.of-head__sub {
+  margin: 0;
+  font-size: 16px;
+  line-height: 22px;
+  color: #4d5f7d;
+}
+
+.of-head__facts {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 14px 0 0;
+  font-size: 14px;
+  color: #3e4f6d;
+}
+
+.of-head__facts b {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--of-ink);
+}
+
+.of-head__facts i {
+  font-style: normal;
+  color: #8a99b1;
+}
+
+.of-head__side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 18px;
+  margin-top: 16px;
+}
+
+.of-head__tools {
+  display: flex;
+  gap: 12px;
+}
+
+.of-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 240px;
+  height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--of-field);
+  border-radius: 8px;
+  background: #ffffff;
+  color: #50627f;
+}
+
+.of-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+}
+
 .of-btn {
   display: inline-flex;
   align-items: center;
@@ -57,6 +139,15 @@
   color: #ffffff;
 }
 
+/* Ряд переключателя повторяет колонки сетки: правый край кнопок
+   совпадает с правым краем карты и не наползает на панель справа. */
+.of-switch {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 410px;
+  column-gap: 10px;
+  margin: 0 5px 10px 3px;
+}
+
 .of-views {
   display: flex;
   justify-self: end;
@@ -85,6 +176,17 @@
   font-weight: 600;
 }
 
+/* --- сетка ------------------------------------------------------------------ */
+
+.of-grid {
+  flex: 1 1 0;
+  min-height: 420px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 410px;
+  column-gap: 10px;
+  margin: 0 5px 0 3px;
+}
+
 .of-map,
 .of-side,
 .of-strip,
@@ -103,6 +205,19 @@
 
 .of-empty--bad {
   color: #b42318;
+}
+
+/* Число рядом с заголовком — просто число.
+
+   Плашка вокруг него читалась как кнопка или как состояние, хотя это
+   ни то, ни другое: количество офисов не нажимается и ни о чём не
+   предупреждает. Осталась цифра, потемнее заголовка, чтобы её было
+   видно, но она не спорила с ним за внимание. */
+.of-count {
+  margin-left: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #12305e;
 }
 
 .of-dot {
@@ -145,6 +260,15 @@
 .of-state--ok { background: #e3f6ec; color: #17844f; }
 .of-state--warn { background: #fff1de; color: #b8650a; }
 .of-state--off { background: #eef2f7; color: #52627a; }
+
+/* --- карта ------------------------------------------------------------------ */
+
+.of-map {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  background: #ffffff;
+}
 
 .map {
   position: absolute;
@@ -329,6 +453,74 @@
   height: 2px;
   border-radius: 2px;
   background: currentColor;
+}
+
+.of-area {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 10px 0 14px;
+  border: 1px solid #b9d4fb;
+  border-radius: 999px;
+  background: #eef5ff;
+  font: inherit;
+  font-size: 13px;
+  color: #1466d8;
+}
+
+/* Крестик — единственное, что снимает выбор области. Сам чип нажатий
+   не ловит: он подпись, и случайное нажатие по нему сбрасывало выбор
+   у человека, который просто читал, что выбрано. */
+.of-area__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+/* При наведении крестик просто темнеет. Подложка под ним выглядела
+   как вторая кнопка внутри чипа — при том что нажимать тут можно
+   ровно одно место. */
+.of-area__close:hover,
+.of-area__close:focus-visible { color: #0b3f8c; }
+
+.of-legend {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 0;
+  padding: 12px 16px;
+  border: 1px solid var(--of-line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.95);
+  list-style: none;
+  font-size: 12px;
+  color: #3e4f6d;
+}
+
+.of-legend li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+
+.of-legend__note {
+  color: var(--of-muted);
 }
 
 .of-popup {
@@ -546,16 +738,264 @@
   background: linear-gradient(90deg, #1f6fe0, #3d8cf2);
 }
 
+/* --- лента офисов ----------------------------------------------------------- */
+
+.of-strip {
+  flex: none;
+  min-width: 0;
+  margin: 14px 5px 24px 3px;
+  padding: 16px 18px 20px;
+}
+
+.of-strip__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 20px;
+  margin-bottom: 15px;
+}
+
+.of-strip__identity {
+  min-width: 190px;
+}
+
+.of-strip__identity h2 {
+  display: flex;
+  /* По базовой линии, а не по центру: рядом стоят 21 пиксель и 15,
+     и выравнивание по середине поднимало число над словом. */
+  align-items: baseline;
+  margin: 0;
+  font-size: 21px;
+  font-weight: 700;
+  color: var(--of-ink);
+}
+
+.of-strip__controls,
+.of-strip__filters {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.of-strip__controls {
+  justify-content: flex-end;
+  min-width: 0;
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+
+.of-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--of-line);
+  border-radius: 7px;
+  background: #ffffff;
+  font: inherit;
+  font-size: 13px;
+  color: #3e4f6d;
+  cursor: pointer;
+}
+
+.of-chip--on {
+  border-color: var(--of-blue);
+  background: var(--of-blue);
+  color: #ffffff;
+}
+
+.of-strip__navigation {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.of-strip__arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--of-line);
+  border-radius: 7px;
+  background: #ffffff;
+  color: #34507f;
+  cursor: pointer;
+}
+
+.of-strip__arrow:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
+.of-strip__range {
+  min-width: 72px;
+  margin-left: 4px;
+  font-size: 13px;
+  color: #4d5f7d;
+  text-align: right;
+}
+
+.of-strip__track {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: calc((100% - 36px) / 4);
+  grid-template-rows: 205px;
+  gap: 12px;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  scroll-behavior: smooth;
+  scroll-padding-inline: 2px;
+  overscroll-behavior-inline: contain;
+  padding: 2px 2px 4px;
+  scrollbar-width: thin;
+}
+
+/* Карточка офиса.
+
+   Тонкая рамка одного цвета и никакой цветной полосы слева: цвет на
+   краю читался как состояние, а состояний у офиса теперь два, и они
+   видны в списке. Внутри — четыре строки сверху вниз: регион,
+   название, сколько человек, и под чертой QR с геопозицией. */
+.of-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: none;
+  width: auto;
+  min-width: 245px;
+  box-sizing: border-box;
+  padding: 12px 14px 10px;
+  border: 1px solid #1f2933;
+  border-radius: 9px;
+  background: #ffffff;
+  font: inherit;
+  text-align: left;
+  scroll-snap-align: start;
+  cursor: pointer;
+}
+
+.of-card--on {
+  border-color: #1f6fe0;
+  box-shadow: 0 0 0 2px rgba(31, 111, 224, 0.15);
+}
+
+.of-card__region {
+  font-size: 12.5px;
+  color: var(--of-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.of-card__name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--of-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.of-card__staff {
+  font-size: 13.5px;
+  color: #34507f;
+}
+
+.of-card__staff b {
+  font-weight: 600;
+  color: var(--of-ink);
+}
+
+/* Сегодняшние числа: в офисе, в отпуске, на больничном.
+
+   В три колонки с подписями сверху, а не строкой через точку: строка
+   не влезала в карточку и переносилась по-разному у разных офисов,
+   отчего лента переставала читаться сверху вниз. */
+.of-card__now {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.of-card__now-one {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.of-card__now-title {
+  overflow: hidden;
+  font-size: 11.5px;
+  color: var(--of-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.of-card__now b {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--of-ink);
+}
+
+/* Нижняя строка: QR и геопозиция через вертикальную черту. Черта
+   сверху отделяет их от остального — это не свойства офиса, а
+   состояние его настройки. */
+.of-card__foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #1f2933;
+  font-size: 13px;
+  color: #34507f;
+}
+
+.of-card__foot > span {
+  display: inline-flex;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.of-card__foot > span + span {
+  padding-left: 10px;
+  border-left: 1px solid #1f2933;
+}
+
+.of-card__foot b {
+  font-weight: 600;
+  color: var(--of-ink);
+}
+
 @media (min-width: 1800px) {
+  .of-strip__track { grid-auto-columns: calc((100% - 48px) / 5); }
 }
 
 @media (max-width: 1399px) {
+  .of-strip__track { grid-auto-columns: calc((100% - 24px) / 3); }
 }
 
 @media (max-width: 1099px) {
+  .of-strip__head { flex-wrap: wrap; }
+  .of-strip__controls { justify-content: flex-start; }
+  .of-strip__track { grid-auto-columns: calc((100% - 12px) / 2); }
 }
 
 @media (max-width: 699px) {
+  .of-strip { margin-right: 3px; padding: 14px 12px 18px; }
+  .of-strip__head { gap: 12px; }
+  .of-strip__controls,
+  .of-strip__filters { flex-wrap: wrap; }
+  .of-chip { padding: 0 9px; font-size: 12px; }
+  .of-strip__track { grid-auto-columns: 100%; }
 }
 
 /* --- список и регионы ----------------------------------------------------------- */
@@ -652,11 +1092,54 @@
   cursor: pointer;
 }
 
+/* Карточка офиса занимает правую колонку целиком. */
+.of-grid > .side-panel {
+  min-height: 0;
+  overflow-y: auto;
+}
+
 @media (max-width: 1280px) {
+  .of-switch {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .of-grid {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 10px;
+  }
+
+  .of-map {
+    aspect-ratio: 960 / 560;
+    max-width: 100%;
+  }
 
   .of-views {
     margin-right: 0;
   }
+}
+
+/* --- карточка офиса справа ---------------------------------------------------
+ *
+ * Плотная карточка вместо стопки крупных плашек: обзор помещается в
+ * колонку целиком, без внутренней прокрутки. Шапка 56, вкладки 36,
+ * текст 12–13, заголовки блоков 13, отступы 10–14.
+ *
+ * Высоту колонки задаёт содержимое карточки, а не наоборот: если
+ * карточка выше карты, ряд растёт вместе с ней. Прокручиваются только
+ * длинные списки внутри вкладок — сотрудники и QR-точки.
+ */
+
+.of-grid:has(> .ofc) {
+  grid-template-columns: minmax(0, 1fr) clamp(440px, 26vw, 480px);
+}
+
+/* Карточка не выше своего ряда: иначе её низ с кнопками уходил под
+   ленту офисов. Если содержимое не помещается — прокручивается тело
+   карточки, а не страница под ней. */
+.of-grid > .ofc {
+  min-height: 0;
+  max-height: 100%;
+  overflow: hidden;
 }
 
 .ofc {
@@ -1127,6 +1610,9 @@
 
 /* Одна колонка на узком окне: карточка встаёт под карту во всю ширину. */
 @media (max-width: 1280px) {
+  .of-grid:has(> .ofc) {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 /* --- окно «Добавить офис» ---------------------------------------------------
@@ -1253,6 +1739,207 @@
 .of-btn--icon:focus-visible {
   background: transparent;
   transform: scale(1.18);
+}
+
+/* Таблица регионов справа от карты — по эталону.
+
+   Заголовок, шапка с подложкой, строки через одну и подпись внизу.
+   Ни поиска, ни кнопки «добавить»: завести регион можно из окна
+   «Добавить офис», а искать среди четырнадцати областей нечего. */
+.of-regions {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  /* Высота — по колонке, а не по числу регионов.
+
+     Областей четырнадцать, и если дать таблице расти, она вытягивает
+     ряд сетки, а лента офисов под ней уезжает вниз и наползает на
+     соседей. Блок остаётся той же высоты, что и карта рядом, а список
+     прокручивается внутри. */
+  min-height: 0;
+  max-height: 100%;
+  overflow: hidden;
+  padding: 16px 18px 12px;
+  border: 1px solid rgba(221, 229, 239, 0.9);
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 6px 24px rgba(30, 64, 120, 0.06);
+}
+
+.of-regions__title {
+  margin: 0 0 12px;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--of-ink);
+}
+
+.of-regions__wrap {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  max-height: min(340px, 38vh);
+  overflow: auto;
+}
+
+.of-regions__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  color: var(--of-ink);
+}
+
+/* Шапка остаётся на месте при прокрутке: иначе, доехав до Хорезмской
+   области, уже не помнишь, какое из двух чисел — офисы. */
+.of-regions__table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 10px 12px;
+  background: #eef4fb;
+  font-size: 13px;
+  font-weight: 500;
+  color: #4a5c78;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.of-regions__table thead th:first-child {
+  border-radius: 9px 0 0 9px;
+  text-align: left;
+}
+
+.of-regions__table thead th:last-child {
+  border-radius: 0 9px 9px 0;
+}
+
+.of-regions__table tbody td,
+.of-regions__table tbody th {
+  padding: 8px 12px;
+  font-weight: 400;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.of-regions__table tbody th {
+  max-width: 0;
+  width: 100%;
+  text-align: left;
+}
+
+/* Строки через одну: глазу легче вести число до названия, когда
+   регионов больше трёх. */
+.of-regions__table tbody tr:nth-child(even) {
+  background: #f4f8fd;
+  border-radius: 9px;
+}
+
+.of-regions__table tbody tr:nth-child(even) th:first-child { border-radius: 9px 0 0 9px; }
+.of-regions__table tbody tr:nth-child(even) td:last-child { border-radius: 0 9px 9px 0; }
+
+.of-regions__table button,
+.of-regions__plain {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+}
+
+/* Название в одну строку: перенос сбивал ритм строк, и таблица
+   переставала читаться как перечень. */
+.of-regions__table button > span,
+.of-regions__plain > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.of-regions__table button {
+  color: var(--of-blue);
+  cursor: pointer;
+}
+
+.of-regions__table button svg,
+.of-regions__plain svg {
+  flex: none;
+  color: #6f9ae0;
+}
+
+.of-regions__plain {
+  color: var(--of-ink);
+}
+
+.of-regions__foot {
+  flex: none;
+  margin: 10px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid rgba(221, 229, 239, 0.9);
+  font-size: 13.5px;
+  color: var(--of-muted);
+}
+
+/* Пусто — так и скажем, посередине.
+
+   Мелкая строчка в углу терялась там, где ничего больше нет: человек
+   видел пустую белую полосу и не понимал, идёт ли ещё загрузка.
+   Теперь надпись стоит по центру того места, где были бы карточки.
+
+   Значок без подложки: кружок вокруг него читался как кнопка, хотя
+   нажимать надо ниже. */
+.of-blank {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 205px;
+  margin: 0;
+  padding: 24px 16px;
+  text-align: center;
+}
+
+.of-blank > svg {
+  width: 42px;
+  height: 42px;
+  color: var(--of-blue);
+}
+
+.of-blank__title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--of-ink);
+}
+
+.of-blank__text {
+  max-width: 520px;
+  margin: -4px 0 4px;
+  font-size: 14px;
+  color: var(--of-muted);
+}
+
+.of-blank__hint {
+  margin: -2px 0 0;
+  font-size: 12.5px;
+  color: var(--of-muted);
+}
+
+/* Выход из пустоты. Не синяя заливка: это не главное действие
+   страницы, а возврат к тому, что и так было видно. */
+.of-blank__more {
+  height: 38px;
+  padding: 0 20px;
+  border: 1px solid var(--of-blue);
+  border-radius: 8px;
+  background: #ffffff;
+  font: inherit;
+  font-size: 14px;
+  color: var(--of-blue);
+  cursor: pointer;
 }
 
 /* --- панель выбранного региона ---------------------------------------------- */

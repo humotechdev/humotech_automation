@@ -22,7 +22,7 @@
   /* Общее правило раздвигало блоки страницы на 16 точек: отступы здесь
      заданы у каждого блока отдельно, по эталону. */
   gap: 0;
-  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  font-family: 'Segoe UI', 'Open Sans', system-ui, sans-serif;
   color: var(--att-text);
 }
 
