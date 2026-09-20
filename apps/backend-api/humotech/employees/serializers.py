@@ -189,6 +189,10 @@ class EmployeeCardSerializer(serializers.Serializer):
     birth_date = serializers.DateField(source="employee.birth_date",
                                        allow_null=True)
     hire_date = serializers.DateField(source="employee.hire_date")
+    probation_from = serializers.DateField(source="employee.probation_from",
+                                           allow_null=True)
+    probation_to = serializers.DateField(source="employee.probation_to",
+                                         allow_null=True)
     termination_date = serializers.DateField(source="employee.termination_date",
                                              allow_null=True)
     preferred_language = serializers.CharField(
@@ -310,6 +314,9 @@ class EmployeeUpdateSerializer(serializers.Serializer):
                                    allow_null=True, allow_blank=True)
     marital_status = serializers.CharField(max_length=20, required=False,
                                            allow_null=True, allow_blank=True)
+    # Срок стажировки: обе даты необязательны и по отдельности тоже.
+    probation_from = serializers.DateField(required=False, allow_null=True)
+    probation_to = serializers.DateField(required=False, allow_null=True)
 
 
 class AssignmentChangeSerializer(serializers.Serializer):
@@ -399,10 +406,13 @@ class EmployeeOnboardSerializer(serializers.Serializer):
                                             default="FULL_TIME")
     work_mode = serializers.CharField(max_length=30, required=False,
                                       default="ONSITE")
-    # Испытательный срок отражается статусом, а не отдельным полем: в базе
-    # есть PROBATION, и второе место для той же мысли разошлось бы с ним.
+    # Сам факт стажировки отражается статусом: в базе есть PROBATION, и
+    # второе место для той же мысли разошлось бы с ним. Даты — это срок,
+    # а не факт, и они живут отдельными полями.
     employment_status = serializers.CharField(max_length=30, required=False,
                                               default="ACTIVE")
+    probation_from = serializers.DateField(required=False, allow_null=True)
+    probation_to = serializers.DateField(required=False, allow_null=True)
     schedule_id = serializers.UUIDField()
     preferred_language = serializers.CharField(max_length=10, required=False,
                                                default="ru")

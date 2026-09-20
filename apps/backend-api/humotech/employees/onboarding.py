@@ -125,6 +125,8 @@ class EmployeeOnboardingService(BaseService):
         region_id: uuid.UUID | None = None,
         manager_employee_id: uuid.UUID | None = None,
         employment_status: str = "ACTIVE",
+        probation_from: date | None = None,
+        probation_to: date | None = None,
         telegram_username: str | None = None,
         telegram_user_id: int | None = None,
         preferred_language: str = "ru",
@@ -208,6 +210,15 @@ class EmployeeOnboardingService(BaseService):
                 "employment_type": employment_type,
                 "work_mode": work_mode,
                 "employment_status": employment_status,
+                # Срок стажировки имеет смысл только при ней самой:
+                # у принятого в штат эти даты пустые, даже если форма
+                # их прислала.
+                "probation_from": (
+                    probation_from if employment_status == "PROBATION" else None
+                ),
+                "probation_to": (
+                    probation_to if employment_status == "PROBATION" else None
+                ),
                 "phone": phone_value,
                 "corporate_email": email_value,
                 "birth_date": birth_date,

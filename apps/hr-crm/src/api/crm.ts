@@ -468,6 +468,9 @@ export type EmployeeEdit = {
   birth_date?: string | null;
   gender?: string | null;
   marital_status?: string | null;
+  /** Срок стажировки. Обе даты необязательны и по отдельности тоже. */
+  probation_from?: string | null;
+  probation_to?: string | null;
 };
 
 export const updateEmployee = (id: string, body: EmployeeEdit) =>
@@ -2582,6 +2585,9 @@ export type OnboardBody = {
   manager_employee_id?: string | null;
   employment_type: string;
   employment_status?: string;
+  /** Срок стажировки. Сервер запишет его только при самой стажировке. */
+  probation_from?: string | null;
+  probation_to?: string | null;
   schedule_id: string;
   gender?: string | null;
   marital_status?: string | null;
