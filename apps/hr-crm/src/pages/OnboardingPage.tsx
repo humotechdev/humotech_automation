@@ -15,9 +15,14 @@
  * обязывает.
  *
  * **Документы** — то, что обязывает. Редакция публикуется отдельным
- * действием и с этой секунды закрывает бота всем, кто её не подтвердил.
- * Поэтому публикация спрашивает подтверждение и называет последствие, а
- * не «уверены ли вы».
+ * действием и с этой секунды возвращает к подтверждению всех, кто её
+ * не принял. Поэтому публикация спрашивает подтверждение и называет
+ * последствие, а не «уверены ли вы».
+ *
+ * Доступа к боту ознакомление не закрывает ни в каком состоянии.
+ * Незавершённое — это работа кадровика: напомнить, дослать ссылку,
+ * поговорить с отказавшимся. Поэтому страница устроена как очередь, а
+ * не как список нарушителей.
  */
 
 import { useCallback, useMemo, useState } from 'react';
@@ -60,8 +65,20 @@ const STATE: Record<api.OnboardingStatus, string> = {
   INFO_COMPLETED: 'Ждёт согласия',
   POLICIES_IN_PROGRESS: 'Подтверждает документы',
   COMPLETED: 'Завершил',
+  UPDATE_REQUIRED: 'Требуется ознакомление',
   BLOCKED_BY_DECLINED_POLICY: 'Отказался',
 };
+
+/**
+ * Состояния, с которыми кадровик что-то делает сам.
+ *
+ * Отказ разбирают разговором, новую редакцию — напоминанием адресно.
+ * Остальное незавершённое бот доводит сам: раз в несколько дней он
+ * напоминает, и вмешиваться в это не нужно.
+ */
+const ATTENTION: api.OnboardingStatus[] = [
+  'BLOCKED_BY_DECLINED_POLICY', 'UPDATE_REQUIRED',
+];
 
 /**
  * Вкладки отбора. «Ожидает согласия» склеивает два состояния —
@@ -70,12 +87,18 @@ const STATE: Record<api.OnboardingStatus, string> = {
  */
 const FILTERS: Array<{ key: string; title: string; match: api.OnboardingStatus[] }> = [
   { key: 'all', title: 'Все', match: [] },
+  { key: 'attention', title: 'Требуют внимания', match: ATTENTION },
   { key: 'NOT_STARTED', title: 'Не начали', match: ['NOT_STARTED'] },
   { key: 'IN_PROGRESS', title: 'В процессе', match: ['IN_PROGRESS'] },
   {
     key: 'POLICIES',
     title: 'Ожидают согласия',
     match: ['INFO_COMPLETED', 'POLICIES_IN_PROGRESS'],
+  },
+  {
+    key: 'UPDATE_REQUIRED',
+    title: 'Нужна новая редакция',
+    match: ['UPDATE_REQUIRED'],
   },
   { key: 'COMPLETED', title: 'Завершили', match: ['COMPLETED'] },
   {
@@ -209,8 +232,8 @@ export function OnboardingPage() {
           <h1 className="head__title">Ознакомление</h1>
           <p className="head__sub">
             Новый сотрудник читает материалы компании и подтверждает
-            обязательные документы в Telegram. До этого рабочие функции бота
-            ему закрыты
+            обязательные документы в Telegram. Бот напоминает сам, пока
+            дело не доделано
           </p>
         </div>
         <div className="head__actions">
@@ -314,7 +337,9 @@ export function OnboardingPage() {
                             <span className={
                               row.status === 'BLOCKED_BY_DECLINED_POLICY'
                                 ? 'state state--bad'
-                                : row.completed ? 'state state--good' : 'state'
+                                : row.status === 'UPDATE_REQUIRED'
+                                  ? 'state state--warn'
+                                  : row.completed ? 'state state--good' : 'state'
                             }>
                               <i className="state__dot" />
                               {STATE[row.status] ?? row.status}
@@ -791,8 +816,8 @@ function DocumentList({ block, rows, zone, onRetry, onPick }: {
         <p className="ob-about">
           Эти документы сотрудник подтверждает отдельно от разделов.
           Публикация новой редакции возвращает к подтверждению всех, кто
-          её ещё не принял, — и до подтверждения закрывает им рабочие
-          функции бота.
+          её ещё не принял: они получают состояние «Требуется
+          ознакомление» и напоминание от бота.
         </p>
       </div>
 
@@ -992,9 +1017,11 @@ function DocumentPanel({ id, rows, zone, onClose, onChanged }: {
           title="Опубликовать редакцию"
           what={`Редакция ${publishing.version} документа «${document.title}» станет действующей.`}
           consequence={
-            'Все, кто её не подтвердил, потеряют рабочие функции бота, пока не '
-            + 'подтвердят. Перечитывать информационные разделы им не придётся — '
-            + 'только подтвердить этот документ.'
+            'Всем, кто её не подтвердил, ознакомление откроется заново со '
+            + 'состоянием «Требуется ознакомление», и бот начнёт напоминать. '
+            + 'Доступ к боту при этом сохраняется, а перечитывать '
+            + 'информационные разделы не придётся — только подтвердить этот '
+            + 'документ.'
           }
           confirmLabel="Опубликовать"
           busy={publish.busy}

@@ -250,6 +250,36 @@ services:
     stop_grace_period: 20s
     logging: *logging
 
+  # Напоминания о незавершённом ознакомлении. Отдельный процесс по той
+  # же причине, что и напоминания о начале дня.
+  #
+  # Час — не частота напоминаний, а частота ПРОВЕРКИ: само сообщение
+  # уходит человеку раз в несколько суток и только в рабочие часы его
+  # организации, поэтому проходу достаточно попадать в это окно.
+  onboarding-reminders:
+    build:
+      context: ../../apps/backend-api
+    image: humotech/backend:local
+    container_name: humotech_onboarding_reminders
+    command:
+      - python
+      - manage.py
+      - onboarding_reminders
+      - --loop=3600
+    env_file:
+      - ../../apps/backend-api/.env
+    environment: *backend_env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - humotech
+    restart: unless-stopped
+    stop_grace_period: 20s
+    logging: *logging
+
   # Имя `gateway` — адрес, на который смотрит агент ngrok
   # (`gateway:80` в его команде). Переименование сервиса ломает
   # туннель, поэтому имя менять нельзя без причины.

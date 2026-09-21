@@ -10,24 +10,23 @@
 запасом. Класть туда что-то ещё нельзя: данные живут в базе, а кнопка
 только называет запись.
 
-Нижняя клавиатура до завершения — три пункта, и это не упрощение
-интерфейса, а честность: остальные всё равно ответят отказом, и
-показывать их значило бы обещать то, чего нет.
+Своей нижней клавиатуры у ознакомления нет. Когда-то была — три
+пункта вместо одиннадцати, — но это имело смысл ровно до тех пор, пока
+незавершённое ознакомление закрывало рабочие разделы. Оно их больше не
+закрывает: человек отмечается и подаёт заявки с первого дня, и прятать
+от него меню не за чем. Остался один пункт, который добавляется к
+обычному меню, пока дело не доделано.
 """
 
 from __future__ import annotations
 
-from aiogram.types import (
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    KeyboardButton,
-    ReplyKeyboardMarkup,
-)
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-#: Нижняя клавиатура до завершения ознакомления.
+#: Пункт, который добавляется к обычному меню, пока ознакомление не
+#: завершено. Подпись постоянная: по ней фильтруется обработчик, а
+#: число пройденных разделов живёт в напоминании, где оно и уместно.
 BTN_CONTINUE = "▶️ Продолжить ознакомление"
 BTN_RULES = "📘 Правила и документы"
-BTN_HR = "☎️ Контакты HR"
 
 #: Коды нажатий. Короткие намеренно — см. пояснение выше.
 START = "ob:go"
@@ -41,28 +40,36 @@ AGREE = "oy:"    # + идентификатор редакции: согласе
 REFUSE = "on:"   # + идентификатор редакции: не согласен
 DOC = "od:"      # + идентификатор редакции: открыть карточку документа
 
-#: Все подписи нижней клавиатуры разом — по ним фильтруются хендлеры,
-#: и список должен быть один.
-ONBOARDING_BUTTONS = (BTN_CONTINUE, BTN_RULES, BTN_HR)
+#: Подписи, по которым фильтруются обработчики ознакомления.
+ONBOARDING_BUTTONS = (BTN_CONTINUE, BTN_RULES)
 
 
-def onboarding_menu() -> ReplyKeyboardMarkup:
-    """Меню, пока ознакомление не завершено.
+def nudge(state: dict) -> InlineKeyboardMarkup:
+    """Напоминание под меню: одна кнопка с числом пройденного.
 
-    Ровно три пункта из задания: продолжить, правила и документы,
-    контакты HR. Рабочие разделы сюда не попадают — сервер всё равно
-    ответит отказом, а кнопка, ведущая в отказ, хуже её отсутствия.
+    Текст у кнопки меняется, код нажатия — нет. Так и должно быть:
+    «3 из 10» это состояние, и зашивать его в `callback_data` значило
+    бы, что нажатая завтра кнопка сообщит серверу вчерашнее число.
+
+    Показывается ровно то, на чём человек стоит. «0 из 3 документов»
+    тому, кто ещё читает карточки, не говорит ничего — он до них не
+    дошёл.
     """
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=BTN_CONTINUE)],
-            [KeyboardButton(text=BTN_RULES)],
-            [KeyboardButton(text=BTN_HR)],
-        ],
-        resize_keyboard=True,
-        is_persistent=True,
-        one_time_keyboard=False,
-    )
+    if state.get("status") == "UPDATE_REQUIRED":
+        title = "Подтвердить новую редакцию документа"
+    elif not state.get("info_completed"):
+        title = (
+            f"Пройти ознакомление · {state.get('sections_done', 0)} "
+            f"из {state.get('sections_total', 0)}"
+        )
+    else:
+        title = (
+            f"Подтвердить документы · {state.get('policies_done', 0)} "
+            f"из {state.get('policies_total', 0)}"
+        )
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text=title, callback_data=START)
+    ]])
 
 
 def welcome() -> InlineKeyboardMarkup:
@@ -180,7 +187,6 @@ __all__ = [
     "AGREE",
     "BACK",
     "BTN_CONTINUE",
-    "BTN_HR",
     "BTN_RULES",
     "DOC",
     "DOCS",
@@ -196,7 +202,7 @@ __all__ = [
     "document_read",
     "documents_list",
     "finished",
-    "onboarding_menu",
+    "nudge",
     "to_documents",
     "welcome",
 ]

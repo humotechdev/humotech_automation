@@ -9,9 +9,14 @@
     а не перечитывать десять карточек;
   * сотрудник, которого в программу не звали, не закрыт вовсе.
 
-Остальное — порядок шагов, идемпотентность двойного нажатия и то, что
-гейт не трогает профиль: без профиля бот не узнаёт человека и не может
-даже завести с ним разговор про ознакомление.
+И третье, не менее важное: **ознакомление ничего не закрывает.**
+Проверка «пока не дочитал — нельзя» здесь стояла и была снята: она
+означала, что новичок в первый день не отметится на входе. Тесты
+доступа теперь проверяют обратное — что рабочие экраны открыты и
+непрошедшему, и отказавшемуся.
+
+Остальное — порядок шагов, идемпотентность двойного нажатия и
+напоминания, которыми дело доводится до конца вместо запертой двери.
 """
 
 from __future__ import annotations
@@ -259,10 +264,10 @@ def test_reminder_queues_a_message_when_telegram_is_linked(hr, employee, content
 # --- гейт -------------------------------------------------------------------
 
 
-def test_employee_outside_the_programme_is_not_blocked(
+def test_employee_outside_the_programme_works_as_before(
     api_client, employee, content, telegram_settings
 ):
-    """Появление раздела не закрывает бота тем, кто работает давно."""
+    """Появление раздела ничего не меняет тем, кто работает давно."""
     link_employee(employee)
 
     assert bot(api_client, "get", "/me/status").status_code == 200
@@ -271,22 +276,27 @@ def test_employee_outside_the_programme_is_not_blocked(
     assert profile["onboarding"]["completed"] is True
 
 
-def test_work_endpoints_are_closed_until_onboarding_is_done(
+def test_work_endpoints_stay_open_while_onboarding_is_unfinished(
     api_client, hr_actor_full, employee, content, telegram_settings
 ):
+    """Главная проверка раздела.
+
+    Новичок отмечается на входе в первое же утро — до того, как прочёл
+    хоть одну карточку. Ознакомление доводится напоминанием, а не
+    запертой дверью.
+    """
     OnboardingService().enrol(hr_actor_full, employee.id)
     link_employee(employee)
 
-    refused = bot(api_client, "get", "/me/status")
+    for path in ("/me/status", "/me/profile", "/me/absences",
+                 "/me/statistics?period=today"):
+        assert bot(api_client, "get", path).status_code == 200, path
 
-    assert refused.status_code == 403
-    assert refused.json()["error"]["details"]["reason"] == "onboarding_incomplete"
 
-
-def test_profile_stays_open_so_the_bot_can_recognise_the_person(
+def test_profile_carries_the_progress_for_the_reminder(
     api_client, hr_actor_full, employee, content, telegram_settings
 ):
-    """Профиль гейтом не закрыт — иначе бот не узнал бы, с кем говорит."""
+    """Из этого блока бот собирает «Пройти ознакомление: 3 из 10»."""
     OnboardingService().enrol(hr_actor_full, employee.id)
     link_employee(employee)
 
@@ -380,7 +390,7 @@ def test_documents_are_refused_before_the_cards_are_read(
     assert refused.json()["error"]["details"]["sections_done"] == 0
 
 
-def test_full_walk_opens_the_work_endpoints(
+def test_full_walk_ends_in_completed(
     api_client, hr_actor_full, employee, content, telegram_settings
 ):
     OnboardingService().enrol(hr_actor_full, employee.id)
@@ -396,12 +406,20 @@ def test_full_walk_opens_the_work_endpoints(
     assert state["status"] == "COMPLETED"
     assert state["policies_done"] == 3
 
+    # Доступ был открыт и до этого — проверка на то, что он не
+    # «включился» сейчас, а был всё время.
     assert bot(api_client, "get", "/me/status").status_code == 200
 
 
-def test_declining_a_document_blocks_and_records_the_decision(
+def test_declining_a_document_is_recorded_but_takes_nothing_away(
     api_client, hr_actor_full, employee, content, telegram_settings
 ):
+    """Отказ — повод для разговора с кадровиком, а не для блокировки.
+
+    Человек, нажавший «Не согласен», продолжает отмечаться и подавать
+    заявки; кадровик видит его среди требующих внимания и приходит
+    разбираться сам.
+    """
     OnboardingService().enrol(hr_actor_full, employee.id)
     link_employee(employee)
     state = walk_sections(api_client, employee)
@@ -417,9 +435,7 @@ def test_declining_a_document_blocks_and_records_the_decision(
         employee_id=employee.id, decision="DECLINED"
     ).count() == 1
 
-    closed = bot(api_client, "get", "/me/status")
-    assert closed.status_code == 403
-    assert closed.json()["error"]["details"]["reason"] == "onboarding_declined"
+    assert bot(api_client, "get", "/me/status").status_code == 200
 
 
 def test_changing_your_mind_updates_the_same_decision(
@@ -480,10 +496,13 @@ def test_new_version_reopens_only_the_document(
 ):
     """Главный тест раздела.
 
-    Выпуск новой редакции обязан закрыть бота тому, кто уже всё прошёл, —
-    и попросить подтвердить ТОЛЬКО новый текст. Если бы допуск читался
-    из колонки `status`, человек остался бы COMPLETED и ничего бы не
-    заметил.
+    Выпуск новой редакции обязан вернуть к подтверждению того, кто уже
+    всё прошёл, — и попросить подтвердить ТОЛЬКО новый текст. Если бы
+    состояние читалось из колонки `status`, человек остался бы
+    COMPLETED и ничего бы не заметил.
+
+    Доступа при этом он не теряет: обновившийся документ — повод
+    напомнить и показать кадровику, а не отобрать отметку присутствия.
     """
     OnboardingService().enrol(hr_actor_full, employee.id)
     link_employee(employee)
@@ -503,15 +522,22 @@ def test_new_version_reopens_only_the_document(
     published = hr.post(f"{API}/onboarding/versions/{made.json()['id']}/publish")
     assert published.status_code == 200, published.json()
 
-    # Бот закрыт снова, но карточки перечитывать не просят.
-    closed = bot(api_client, "get", "/me/status")
-    assert closed.status_code == 403
+    # Бот работает как работал, но состояние сменилось на «требуется».
+    assert bot(api_client, "get", "/me/status").status_code == 200
 
     state = bot(api_client, "get", "/me/onboarding").json()
+    assert state["status"] == "UPDATE_REQUIRED"
+    assert state["completed"] is False
+    # Карточки перечитывать не просят.
     assert state["sections_done"] == 10
     assert state["info_completed"] is True
     assert state["policies_done"] == 2
     assert state["policy"]["version"] == "2.0"
+
+    # Кадровик видит это отдельным состоянием, а не «в процессе»:
+    # человек своё сделал, и просят у него теперь другое.
+    row = hr.get(f"{API}/onboarding/progress").json()["items"][0]
+    assert row["status"] == "UPDATE_REQUIRED"
 
     # Прежнее согласие с версией 1.0 не стёрто: это состоявшийся факт.
     assert EmployeePolicyAcceptance.objects.filter(
@@ -585,6 +611,159 @@ def test_publishing_needs_its_own_permission(
     )
 
     assert response.status_code == 403
+
+
+# --- автоматические напоминания ---------------------------------------------
+
+
+@pytest.fixture()
+def quiet_hours(settings):
+    """Рабочие часы пошире, чтобы тест не зависел от времени прогона."""
+    settings.ONBOARDING = {**settings.ONBOARDING,
+                           "REMINDER_FROM_HOUR": 0, "REMINDER_TO_HOUR": 24}
+    return settings.ONBOARDING
+
+
+def test_reminder_goes_out_after_the_grace_period(
+    hr_actor_full, employee, content, quiet_hours
+):
+    """Ознакомление доводится напоминанием, раз уж оно ничего не закрывает."""
+    from humotech.notifications.models import Notification
+    from humotech.onboarding.reminders import run_once
+
+    OnboardingService().enrol(hr_actor_full, employee.id)
+    link_employee(employee)
+    _age(employee, hours=48)
+
+    assert run_once() == 1
+    row = Notification.objects.get(
+        employee_id=employee.id, notification_type="onboarding.reminder"
+    )
+    assert "10 коротких разделов" in row.body
+
+
+def test_fresh_invitation_is_not_hurried(
+    hr_actor_full, employee, content, quiet_hours
+):
+    """Ссылку могли выдать в конце дня — сутки на то, чтобы открыть."""
+    from humotech.onboarding.reminders import run_once
+
+    OnboardingService().enrol(hr_actor_full, employee.id)
+    link_employee(employee)
+
+    assert run_once() == 0
+
+
+def test_reminder_is_not_repeated_the_next_hour(
+    hr_actor_full, employee, content, quiet_hours
+):
+    from humotech.onboarding.reminders import run_once
+
+    OnboardingService().enrol(hr_actor_full, employee.id)
+    link_employee(employee)
+    _age(employee, hours=48)
+
+    assert run_once() == 1
+    assert run_once() == 0
+
+
+def test_nobody_is_reminded_without_a_chat(
+    hr_actor_full, employee, content, quiet_hours
+):
+    """Бот не может написать первым — это правило Telegram."""
+    from humotech.onboarding.reminders import run_once
+
+    OnboardingService().enrol(hr_actor_full, employee.id)
+    _age(employee, hours=48)
+
+    assert run_once() == 0
+
+
+def test_the_one_who_refused_is_left_to_hr(
+    api_client, hr_actor_full, employee, content, quiet_hours, telegram_settings
+):
+    """Отказавшемуся третье уведомление не поможет — поможет разговор."""
+    from humotech.onboarding.reminders import run_once
+
+    OnboardingService().enrol(hr_actor_full, employee.id)
+    link_employee(employee)
+    state = walk_sections(api_client, employee)
+    bot(api_client, "post", "/me/onboarding/decision",
+        {"version_id": state["policy"]["version_id"], "decision": "DECLINED"})
+    _age(employee, hours=48)
+
+    assert run_once() == 0
+
+
+def test_no_reminders_at_night(hr_actor_full, employee, content, settings):
+    """«Дочитайте правила» в три ночи — причина отключить бота."""
+    from humotech.onboarding.reminders import run_once
+
+    settings.ONBOARDING = {**settings.ONBOARDING,
+                           "REMINDER_FROM_HOUR": 10, "REMINDER_TO_HOUR": 10}
+    OnboardingService().enrol(hr_actor_full, employee.id)
+    link_employee(employee)
+    _age(employee, hours=48)
+
+    assert run_once() == 0
+
+
+def test_reminder_names_what_is_actually_left(
+    api_client, hr_actor_full, employee, content, quiet_hours, telegram_settings
+):
+    """«Завершите ознакомление» тому, кому остался один документ,
+    говорит, что его труд не заметили."""
+    from humotech.notifications.models import Notification
+    from humotech.onboarding.reminders import run_once
+
+    OnboardingService().enrol(hr_actor_full, employee.id)
+    link_employee(employee)
+    walk_sections(api_client, employee)
+    _age(employee, hours=48)
+
+    run_once()
+    body = Notification.objects.get(
+        employee_id=employee.id, notification_type="onboarding.reminder"
+    ).body
+    assert "обязательные документы" in body
+
+
+def test_new_version_reminder_says_so(
+    api_client, hr, hr_actor_full, employee, content, quiet_hours,
+    telegram_settings,
+):
+    from humotech.notifications.models import Notification
+    from humotech.onboarding.reminders import run_once
+
+    OnboardingService().enrol(hr_actor_full, employee.id)
+    link_employee(employee)
+    accept_policies(api_client, walk_sections(api_client, employee))
+
+    document = PolicyDocument.objects.get(
+        organization_id=employee.organization_id, code="LABOUR_RULES"
+    )
+    made = hr.post(f"{API}/onboarding/documents/{document.id}/versions/",
+                   {"version": "2.0", "summary": "Новая", "agree_label": "Да"},
+                   format="json").json()
+    hr.post(f"{API}/onboarding/versions/{made['id']}/publish")
+    _age(employee, hours=48)
+
+    assert run_once() == 1
+    body = Notification.objects.get(
+        employee_id=employee.id, notification_type="onboarding.reminder"
+    ).body
+    assert "Обновился обязательный документ" in body
+
+
+def _age(employee, *, hours: int) -> None:
+    """Отодвинуть приглашение в прошлое: напоминание ждёт сутки."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    EmployeeOnboarding.objects.filter(employee_id=employee.id).update(
+        invited_at=timezone.now() - timedelta(hours=hours)
+    )
 
 
 # --- списки кадровика -------------------------------------------------------
@@ -695,7 +874,7 @@ def test_editing_a_card_raises_its_version_but_reopens_nothing(
 
     assert response.status_code == 200
     assert response.json()["version"] == 2
-    assert bot(api_client, "get", "/me/status").status_code == 200
+    assert bot(api_client, "get", "/me/onboarding").json()["completed"] is True
 
 
 def test_adding_a_section_does_not_kick_out_those_who_finished(
@@ -717,7 +896,6 @@ def test_adding_a_section_does_not_kick_out_those_who_finished(
     )
     assert made.status_code == 201, made.json()
 
-    assert bot(api_client, "get", "/me/status").status_code == 200
     state = bot(api_client, "get", "/me/onboarding").json()
     assert state["sections_total"] == 11
     assert state["completed"] is True
@@ -756,7 +934,7 @@ def test_status_column_is_a_shop_window_not_the_truth(
 ):
     """Колонка может устареть — пересчёт нет.
 
-    Тест намеренно портит витрину руками и проверяет, что допуск
+    Тест намеренно портит витрину руками и проверяет, что состояние
     считается заново. Именно на этом держится повторное подтверждение
     новых редакций.
     """
@@ -765,8 +943,8 @@ def test_status_column_is_a_shop_window_not_the_truth(
         status="COMPLETED"
     )
 
-    assert progress_module.is_blocked(employee.id) is True
-    assert progress_module.gate(employee.id).status == "NOT_STARTED"
+    assert progress_module.is_unfinished(employee.id) is True
+    assert progress_module.of_employee(employee.id).status == "NOT_STARTED"
 
 
 def test_document_without_a_published_version_requires_nothing(

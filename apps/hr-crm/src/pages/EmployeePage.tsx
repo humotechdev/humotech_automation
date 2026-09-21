@@ -660,6 +660,7 @@ const ONBOARDING_STATE: Record<string, string> = {
   INFO_COMPLETED: 'Ждёт согласия',
   POLICIES_IN_PROGRESS: 'Подтверждает документы',
   COMPLETED: 'Завершил',
+  UPDATE_REQUIRED: 'Требуется ознакомление',
   BLOCKED_BY_DECLINED_POLICY: 'Отказался',
 };
 

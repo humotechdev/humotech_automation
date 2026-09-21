@@ -17,13 +17,17 @@ from types import SimpleNamespace
 import pytest
 
 from src.api.errors import Conflict, Forbidden
-from src.handlers.menu.router import build_menu, _guard, onboarding_done
+from src.handlers.menu.router import (
+    build_menu,
+    _guard,
+    onboarding_done,
+    remind_about_onboarding,
+)
 from src.handlers.onboarding.router import (
     acknowledge,
     begin,
     continue_onboarding,
     decide,
-    mid_onboarding,
     open_full_text,
     rules_and_documents,
     _split,
@@ -244,6 +248,7 @@ def profile(**onboarding) -> dict:
     block = {
         "enrolled": True, "required": True, "completed": False,
         "status": "IN_PROGRESS", "stage": "SECTIONS",
+        "info_completed": False,
         "sections_done": 0, "sections_total": 10,
         "policies_done": 0, "policies_total": 3,
     }
@@ -299,17 +304,23 @@ def test_begin_accepts_the_terms_when_the_link_is_still_pending():
     правилами берётся дальше, отдельно по каждому документу.
     """
     refused = Forbidden(403, "forbidden", "закрыто", {"reason": "pending_confirmation"})
-    client = FakeClient(onboarding_start=[refused, state()])
+    # Профиль перечитывается уже после согласия: там человек ACTIVE и
+    # ознакомление только начато.
+    client = FakeClient(onboarding_start=[refused, state()], profile=profile())
     callback = FakeCallback(ob.START)
 
     asyncio.run(begin(callback, client))
 
     assert client.accepted_terms == 1
-    # Кнопка с приветствия снята, нижнее меню установлено, показана карточка.
+    # Кнопка с приветствия снята, меню установлено, показана карточка.
     assert callback.message.markup_edits == [None]
     hint, menu = callback.message.answers[0]
     assert hint == text.MENU_INSTALLED
-    assert [b.text for row in menu.keyboard for b in row] == list(ob.ONBOARDING_BUTTONS)
+    # Меню ПОЛНОЕ: отметки и заявки человек получает сразу, а карточки
+    # читает, когда дойдут руки.
+    labels = [b.text for row in menu.keyboard for b in row]
+    assert kb.BTN_WHERE_AM_I in labels
+    assert ob.BTN_CONTINUE in labels
     card, markup = callback.message.answers[1]
     assert "Ознакомление · 1 из 10" in card
     assert markup.inline_keyboard[0][0].callback_data.startswith(ob.ACK)
@@ -446,8 +457,11 @@ def test_refusal_drops_the_buttons_and_says_hr_was_told():
 
     assert callback.message.markup_edits == [None]
     body, markup = callback.message.answers[-1]
-    assert "HR получил уведомление" in body
-    assert [b.text for row in markup.keyboard for b in row] == list(ob.ONBOARDING_BUTTONS)
+    assert "свяжется с вами" in body
+    # Про доступ в этом сообщении не говорится: отказ по документу его
+    # не отнимает, и нижняя клавиатура остаётся прежней.
+    assert "недоступ" not in body and "закрыт" not in body
+    assert markup is None
 
 
 def test_stale_version_button_is_explained():
@@ -508,14 +522,24 @@ def test_documents_section_lists_what_is_done_and_what_is_left():
 
 # --- меню -------------------------------------------------------------------
 
-def test_menu_is_three_buttons_until_onboarding_is_done():
-    markup = build_menu(profile())
-    assert [b.text for row in markup.keyboard for b in row] == list(
-        ob.ONBOARDING_BUTTONS
-    )
+def test_menu_is_full_even_before_onboarding_is_done():
+    """Отметка присутствия нужна в первое же утро.
+
+    Ознакомление доступа не закрывает: меню полное, а незаконченное
+    дело напоминает о себе одним лишним пунктом сверху.
+    """
+    labels = [
+        b.text for row in build_menu(profile(), launch_apps=False).keyboard
+        for b in row
+    ]
+
+    assert labels[0] == ob.BTN_CONTINUE
+    assert kb.BTN_WHERE_AM_I in labels
+    assert kb.BTN_SICK_LEAVE in labels
+    assert kb.BTN_ASK_HR in labels
 
 
-def test_menu_is_full_once_onboarding_is_done():
+def test_menu_drops_the_reminder_once_onboarding_is_done():
     markup = build_menu(profile(completed=True), launch_apps=False)
     labels = [b.text for row in markup.keyboard for b in row]
     assert ob.BTN_CONTINUE not in labels
@@ -534,60 +558,76 @@ def test_profile_without_the_block_keeps_the_old_behaviour():
     assert kb.BTN_WHERE_AM_I in labels
 
 
-def test_work_button_explains_why_it_is_closed():
+def test_work_buttons_are_not_blocked_by_unfinished_onboarding():
+    """Главная проверка: незавершённое ознакомление ничего не закрывает."""
     message = FakeMessage()
 
     allowed = asyncio.run(_guard(message, profile(), None))
 
-    assert allowed is False
-    body, markup = message.answers[-1]
-    assert "Продолжить ознакомление" in body
-    assert [b.text for row in markup.keyboard for b in row] == list(
-        ob.ONBOARDING_BUTTONS
+    assert allowed is True
+    # Ни одного сообщения: человек нажал рабочую кнопку и должен
+    # получить ответ по существу, а не лекцию.
+    assert message.answers == []
+
+
+def test_refusal_does_not_block_either():
+    message = FakeMessage()
+
+    allowed = asyncio.run(
+        _guard(message, profile(status="BLOCKED_BY_DECLINED_POLICY"), None)
     )
 
+    assert allowed is True
+    assert message.answers == []
 
-def test_refusal_gets_its_own_explanation():
+
+def test_reminder_block_shows_how_much_is_left():
     message = FakeMessage()
 
-    asyncio.run(_guard(message, profile(status="BLOCKED_BY_DECLINED_POLICY"), None))
-
-    assert "не подтвердили обязательный документ" in message.answers[-1][0]
-
-
-def test_start_during_onboarding_is_routed_to_the_cards():
-    """`/start` посреди ознакомления ведёт к карточке, а не к отказу.
-
-    Проверяется НАСТОЯЩАЯ дорога: `/start` без полезной нагрузки
-    перехватывает роутер `start`, который включён первым, и фильтр в
-    роутере ознакомления до него не доехал бы. Тест зовёт тот самый
-    обработчик, в который Telegram приводит человека.
-    """
-    assert mid_onboarding(profile()) is True
-    assert mid_onboarding(profile(completed=True)) is False
-    assert mid_onboarding(None) is False
-
-    client = FakeClient(onboarding=state(
-        sections_done=2, section={**SECTION, "position": 3},
+    asyncio.run(remind_about_onboarding(
+        message, profile(sections_done=3, sections_total=10)
     ))
-    message = FakeMessage()
-
-    asyncio.run(plain_or_recognize(message, profile(), None, client))
 
     body, markup = message.answers[-1]
-    assert "Ознакомление · 3 из 10" in body
-    assert markup.inline_keyboard[0][-1].callback_data.startswith(ob.ACK)
+    assert "3 из 10" in body
+    assert markup.inline_keyboard[0][0].text == "Пройти ознакомление · 3 из 10"
+    assert markup.inline_keyboard[0][0].callback_data == ob.START
 
 
-def test_start_after_onboarding_goes_to_the_usual_menu():
-    """Закончившего `/start` возвращает в обычное меню, как и раньше."""
+def test_reminder_block_names_a_new_document_version():
     message = FakeMessage()
 
-    asyncio.run(plain_or_recognize(message, profile(completed=True), None,
-                                   FakeClient()))
+    asyncio.run(remind_about_onboarding(message, profile(
+        status="UPDATE_REQUIRED", info_completed=True,
+        sections_done=10, policies_done=2,
+    )))
 
-    labels = [b.text for row in message.answers[-1][1].keyboard for b in row]
+    assert "Обновился обязательный документ" in message.answers[-1][0]
+
+
+def test_reminder_block_is_silent_for_those_who_finished():
+    message = FakeMessage()
+
+    asyncio.run(remind_about_onboarding(message, profile(completed=True)))
+
+    assert message.answers == []
+
+
+def test_start_goes_to_the_usual_menu_even_mid_onboarding():
+    """`/start` даёт бота, а не седьмую карточку.
+
+    Человек набрал команду, чтобы получить меню; напомнит о
+    незаконченном блок под ним.
+    """
+    message = FakeMessage()
+
+    asyncio.run(plain_or_recognize(message, profile(), None, FakeClient()))
+
+    labels = [b.text for row in message.answers[0][1].keyboard for b in row]
     assert kb.BTN_WHERE_AM_I in labels
+    assert ob.BTN_CONTINUE in labels
+    # Следом — напоминание с кнопкой.
+    assert message.answers[-1][1].inline_keyboard[0][0].callback_data == ob.START
 
 
 # --- мелочи -----------------------------------------------------------------

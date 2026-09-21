@@ -206,7 +206,6 @@ export function ready<T>(data: T, refreshing = false): Section<T> {
     refreshing,
     error: null,
     kind: null,
-    reason: null,
     reload: () => {},
   };
 }
@@ -218,7 +217,6 @@ export function pending<T>(): Section<T> {
     refreshing: false,
     error: null,
     kind: null,
-    reason: null,
     reload: () => {},
   };
 }
@@ -233,7 +231,6 @@ export function failed<T>(
     refreshing: false,
     error: message,
     kind: 'server',
-    reason: null,
     reload,
   };
 }

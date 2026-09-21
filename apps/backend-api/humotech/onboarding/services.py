@@ -269,10 +269,14 @@ class OnboardingService(BaseService):
                 ),
             ).select_related("employee")
         )
+        # Все состояния перечислены явно, включая нулевые: пустая вкладка
+        # должна показывать «0», а не исчезать. Отсутствие числа читается
+        # как «неизвестно», и это другое утверждение.
         tally = {
             "all": len(rows), "NOT_STARTED": 0, "IN_PROGRESS": 0,
             "INFO_COMPLETED": 0, "POLICIES_IN_PROGRESS": 0,
-            "COMPLETED": 0, "BLOCKED_BY_DECLINED_POLICY": 0,
+            "COMPLETED": 0, "UPDATE_REQUIRED": 0,
+            "BLOCKED_BY_DECLINED_POLICY": 0,
         }
         for one in self._decorate(actor, rows):
             tally[one.progress.status] = tally.get(one.progress.status, 0) + 1

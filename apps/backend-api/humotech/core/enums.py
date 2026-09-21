@@ -132,10 +132,22 @@ TELEGRAM_INVITATION_OPEN_STATUSES = ("ACTIVE", "PENDING_CONFIRMATION")
 #   INFO_COMPLETED             — все карточки прочитаны, документы не начаты;
 #   POLICIES_IN_PROGRESS       — часть обязательных документов подтверждена;
 #   COMPLETED                  — карточки прочитаны, все документы приняты;
+#   UPDATE_REQUIRED            — программу прошёл, но вышла новая редакция
+#                                обязательного документа и ждёт согласия;
 #   BLOCKED_BY_DECLINED_POLICY — человек отказался подтвердить документ.
+#
+# Ни один из статусов НЕ закрывает доступ. «BLOCKED» в последнем имени
+# относится к программе, а не к боту: отказавшийся продолжает
+# отмечаться и подавать заявки, а кадровик видит его в списке
+# требующих внимания и идёт разговаривать.
+#
+# UPDATE_REQUIRED отделён от POLICIES_IN_PROGRESS намеренно: «ещё не
+# дошёл до документов» и «прошёл всё, но текст поменялся» — разные
+# истории, и кадровик делает в них разное.
 ONBOARDING_STATUSES = (
     "NOT_STARTED", "IN_PROGRESS", "INFO_COMPLETED",
-    "POLICIES_IN_PROGRESS", "COMPLETED", "BLOCKED_BY_DECLINED_POLICY",
+    "POLICIES_IN_PROGRESS", "COMPLETED", "UPDATE_REQUIRED",
+    "BLOCKED_BY_DECLINED_POLICY",
 )
 
 # Жизненный цикл РЕДАКЦИИ обязательного документа. Версия неизменяема

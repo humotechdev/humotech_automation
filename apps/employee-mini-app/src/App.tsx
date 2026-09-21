@@ -457,24 +457,6 @@ function Cabinet({ onSignOut }: { onSignOut: () => void }) {
     profile.kind !== 'network' &&
     (profile.kind !== 'server' || profile.data === null);
 
-  /*
-   * Незавершённое ознакомление — не поломка и не потеря доступа.
-   * Кабинет закрыт до тех пор, пока человек не дочитает материалы в
-   * чате с ботом, и здесь ему нужно ровно это сказать. Прежний экран
-   * назывался «Не получилось» и предлагал «Выйти» — обе подсказки вели
-   * не туда: повторный вход ничего не меняет.
-   */
-  if (fatal && (profile.reason ?? '').startsWith('onboarding_')) {
-    return (
-      <Standalone title="Ознакомление">
-        <ErrorState
-          message={profile.error ?? undefined}
-          onRetry={() => profile.reload()}
-        />
-      </Standalone>
-    );
-  }
-
   if (fatal) {
     return (
       <Standalone title="Не получилось">

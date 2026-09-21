@@ -619,6 +619,155 @@
   color: #b42318;
 }
 
+/* --- пустое место ------------------------------------------------------------
+ *
+ * Карточка во всю ширину списка: пустота здесь не «нет данных», а
+ * состояние, в котором человеку надо что-то сделать, — и место под
+ * объяснение и кнопку нужно настоящее.
+ */
+
+.emp-blank {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 56px 24px;
+  border: 1px solid var(--border-soft, #deebf4);
+  border-radius: 16px;
+  background: var(--surface-1, #fff);
+  text-align: center;
+}
+
+/* Первый сотрудник: слева приглашение, справа — из чего состоит приём.
+   На узком экране столбцы становятся строками: три шага полезнее
+   сжатой до неузнаваемости колонки. */
+.emp-blank--first {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 1px minmax(0, 360px);
+  align-items: center;
+  gap: 32px;
+  text-align: left;
+  padding: 44px 32px;
+}
+
+.emp-blank--first::before {
+  content: '';
+  grid-column: 2;
+  align-self: stretch;
+  background: var(--border-soft, #deebf4);
+}
+
+.emp-blank--first .emp-blank__main {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+}
+
+/* Размер значка задан системой (16/18/20), поэтому «крупно» здесь —
+   это крупный круг вокруг него, а не растянутый рисунок. */
+.emp-blank__icon {
+  display: grid;
+  place-items: center;
+  width: 68px;
+  height: 68px;
+  border-radius: 50%;
+  background: var(--blue-100, #e6f2ff);
+  color: var(--blue-700, #0668d2);
+}
+
+.emp-blank__title {
+  margin: 6px 0 0;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-heading, #08265c);
+}
+
+.emp-blank__text {
+  max-width: 44ch;
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-muted, #5577a6);
+}
+
+.emp-blank__add {
+  margin-top: 8px;
+}
+
+/* «Сбросить фильтры» — не главное действие на экране: человек пришёл
+   за списком, а не за кнопкой. Поэтому обводка, а не заливка. */
+.emp-blank__more {
+  margin-top: 8px;
+  padding: 9px 18px;
+  border: 1px solid var(--action-bg, #0878ef);
+  border-radius: 10px;
+  background: none;
+  color: var(--action-text, #0878ef);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.emp-blank__more:hover {
+  background: var(--selection-bg, #f2f8ff);
+}
+
+.emp-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.emp-steps__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.emp-steps__no {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--blue-100, #e6f2ff);
+  color: var(--blue-700, #0668d2);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.emp-steps__body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-muted, #5577a6);
+}
+
+.emp-steps__body b {
+  font-size: 14px;
+  color: var(--text-heading, #08265c);
+}
+
+@media (max-width: 900px) {
+  .emp-blank--first {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+  }
+
+  /* Вертикальная черта между колонками в одну колонку не ложится. */
+  .emp-blank--first::before {
+    display: none;
+  }
+}
+
 /* --- пагинация -------------------------------------------------------------- */
 
 .emp-pager {

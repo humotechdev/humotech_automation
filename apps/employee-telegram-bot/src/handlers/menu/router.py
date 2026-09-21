@@ -61,12 +61,15 @@ def onboarding_state(employee) -> dict:
 
 
 def onboarding_done(employee) -> bool:
-    """Открыты ли человеку рабочие функции.
+    """Закончил ли человек ознакомление.
 
-    По умолчанию — да. Отсутствие блока означает, что сервер про
-    ознакомление ничего не сказал, и закрывать меню на этом основании
-    значило бы отобрать бота у всех при первом же рассогласовании
-    версий.
+    Доступа это не касается: рабочие разделы открыты в любом случае.
+    От ответа зависит одно — показывать ли пункт «Продолжить
+    ознакомление» и напоминание под меню.
+
+    По умолчанию — «закончил». Отсутствие блока означает, что сервер
+    про ознакомление ничего не сказал, и приставать к человеку на этом
+    основании не за что.
     """
     return bool(onboarding_state(employee).get("completed", True))
 
@@ -80,20 +83,19 @@ def build_menu(
     разрешает только в личном чате, и в группе такая клавиатура — ошибка
     запроса целиком, то есть человек остался бы вообще без кнопок.
 
-    До завершения ознакомления набор другой — три пункта вместо
-    одиннадцати. Это не упрощение интерфейса, а честность: остальные
-    всё равно ответят отказом, и кнопка, ведущая в отказ, хуже её
-    отсутствия.
+    Набор ПОЛНЫЙ с первого дня. Пока ознакомление не завершено, сверху
+    добавляется «Продолжить ознакомление» — но остальное не прячется:
+    отметка присутствия нужна человеку в первое же утро, а ознакомление
+    лечится напоминанием, а не запертой дверью.
     """
     if not employee:
         return kb.help_only_menu()
-    if not onboarding_done(employee):
-        return ob.onboarding_menu()
     private = message is None or getattr(message.chat, "type", "private") == "private"
     if launch_apps is None:
         launch_apps = settings.keyboard_launch_buttons
     markup = kb.employee_menu(
-        settings.mini_app_url, private=private, launch_apps=launch_apps
+        settings.mini_app_url, private=private, launch_apps=launch_apps,
+        onboarding=not onboarding_done(employee),
     )
     describe(markup, who=message)
     return markup
@@ -130,8 +132,32 @@ def describe(markup: ReplyKeyboardMarkup, *, who: Message | None = None) -> None
     )
 
 
+async def remind_about_onboarding(message: Message, employee) -> None:
+    """Ненавязчивый блок под меню: сколько пройдено и кнопка продолжить.
+
+    Отдельным сообщением, а не строкой в меню: нижняя клавиатура и
+    inline-кнопка на одном сообщении Telegram не уживаются, а кнопка
+    нужна — без неё человеку пришлось бы искать, куда нажимать.
+
+    Молчит у тех, кого в программу не звали, и у тех, кто закончил:
+    напоминание о сделанном — это шум.
+    """
+    if onboarding_done(employee):
+        return
+    from src.messages import onboarding as onboarding_text
+
+    state = onboarding_state(employee)
+    await message.answer(
+        onboarding_text.nudge(state), reply_markup=ob.nudge(state)
+    )
+
+
 async def _guard(message: Message, employee, denial) -> bool:
     """Есть ли доступ. Если нет — объясняет и возвращает False.
+
+    Незавершённое ознакомление доступом НЕ считается: человек
+    отмечается и подаёт заявки с первого дня. Проверка «пока не
+    дочитал — нельзя» здесь стояла и была снята намеренно.
 
     Неудача backend отделена от отказа в доступе намеренно: сказать
     «нет доступа» из-за упавшего сервера значит отправить человека
@@ -143,21 +169,10 @@ async def _guard(message: Message, employee, denial) -> bool:
     неизвестно: правильный ответ — не менять то, что у него уже есть.
     """
     if employee is not None:
-        if onboarding_done(employee):
-            return True
-        # Ознакомление не закончено. Сервер всё равно ответит отказом —
-        # объясняем причину сами и оставляем ровно те кнопки, которые
-        # сейчас работают.
-        from src.messages import onboarding as onboarding_text
-
-        blocked = onboarding_state(employee)
-        await message.answer(
-            onboarding_text.BLOCKED_DECLINED
-            if blocked.get("status") == "BLOCKED_BY_DECLINED_POLICY"
-            else onboarding_text.BLOCKED,
-            reply_markup=ob.onboarding_menu(),
-        )
-        return False
+        # Незавершённое ознакомление рабочим разделам не мешает: оно
+        # напоминает о себе кнопкой в меню и отдельным сообщением, а не
+        # отказом на входе.
+        return True
     if denial == REASON_UNAVAILABLE:
         logger.info(
             "menu skipped for %s: backend unavailable, keyboard left as is",
@@ -191,6 +206,7 @@ async def start(message: Message, employee, denial) -> None:
         f"{text.greet(employee)}\n\n{text.CABINET_HINT}",
         reply_markup=_menu(employee, message),
     )
+    await remind_about_onboarding(message, employee)
 
 
 @router.message(F.text == kb.BTN_OPEN)
@@ -242,6 +258,7 @@ async def menu(
         getattr(sent, "message_id", None),
         plain,
     )
+    await remind_about_onboarding(message, employee)
 
 
 @router.message(F.text == kb.BTN_SCAN)
@@ -394,4 +411,7 @@ async def help_handler(message: Message, employee, denial) -> None:
     await message.answer(text.HELP, reply_markup=_menu(employee, message))
 
 
-__all__ = ["build_menu", "onboarding_done", "onboarding_state", "router"]
+__all__ = [
+    "build_menu", "onboarding_done", "onboarding_state",
+    "remind_about_onboarding", "router",
+]

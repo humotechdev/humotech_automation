@@ -122,6 +122,7 @@ def employee_menu(
     *,
     private: bool = True,
     launch_apps: bool = True,
+    onboarding: bool = False,
 ) -> ReplyKeyboardMarkup:
     """Меню сотрудника с рабочей привязкой. Единственный сборщик на бота.
 
@@ -141,8 +142,15 @@ def employee_menu(
     кнопками. Нужно там, где клиент не показал клавиатуру с `web_app`:
     подписи и обработчики остаются прежними, путь становится на одно
     нажатие длиннее, но кнопки есть.
+
+    `onboarding=True` добавляет сверху «Продолжить ознакомление». Набор
+    при этом остаётся полным: ознакомление доступа не закрывает, и
+    прятать рабочие разделы у того, кто не дочитал, значило бы наказать
+    его за то, что лечится напоминанием.
     """
     rows = []
+    if onboarding:
+        rows.append([KeyboardButton(text=onboarding_kb.BTN_CONTINUE)])
     if mini_app_url:
         rows.append(
             _launch_row(mini_app_url, private=private, launch_apps=launch_apps)

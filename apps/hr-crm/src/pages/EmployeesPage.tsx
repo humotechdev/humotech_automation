@@ -278,6 +278,15 @@ export function EmployeesPage() {
   const pages = Math.max(1, Math.ceil(total / Number(limit)));
   const items = list.state === 'ready' ? list.data.items : [];
   const anything = Boolean(search || chips.length);
+  /**
+   * В компании нет никого: список пуст, и отбор ни при чём.
+   *
+   * Отличается от «ничего не нашлось» тем, что делать надо разное —
+   * там изменить запрос, здесь завести первого человека. Пока список
+   * грузится, значение `false`: показывать приглашение поверх ещё не
+   * пришедших данных значило бы соврать на секунду.
+   */
+  const firstTime = !anything && list.state === 'ready' && items.length === 0;
 
   return (
     <AppShell breadcrumb="Сотрудники" section="employees">
@@ -327,6 +336,13 @@ export function EmployeesPage() {
         )}
 
         <section className="emp-list" aria-label="Список сотрудников">
+          {/*
+            * В пустой компании отборов нет вовсе. Фильтровать здесь
+            * нечего, а пять пустых списков над приглашением завести
+            * первого человека только отодвигают его вниз и делают вид,
+            * что данные где-то есть.
+            */}
+          {!firstTime && (
           <div className="emp-filters">
             <label className="emp-search">
               <AppIcon name="search" size={18} />
@@ -354,6 +370,7 @@ export function EmployeesPage() {
                   find="Найти" value={employment} options={EMPLOYMENT}
                   onChange={(next) => setList('status', next)} />
           </div>
+          )}
 
           {anything && (
             <div className="emp-chips">
@@ -393,11 +410,8 @@ export function EmployeesPage() {
             <Rows block={list}>
               {(data) =>
                 data.items.length === 0 ? (
-                  <p className="emp-empty">
-                    {anything
-                      ? 'По этим условиям никого не нашлось.'
-                      : 'В доступной области нет сотрудников.'}
-                  </p>
+                  <Blank filtered={anything} onClear={clearAll}
+                         onAdd={() => navigate('/employees/new')} />
                 ) : (
                   <div className="emp-cards">
                     {data.items.map((person) => (
@@ -411,15 +425,20 @@ export function EmployeesPage() {
             </Rows>
           </div>
 
-          <footer className="emp-pager">
-            <p className="emp-pager__note">
-              {list.state === 'ready'
-                ? `Показано ${items.length} из ${plural(total, 'сотрудник')}`
-                : ''}
-            </p>
-            <Pages page={page} pages={pages}
-                   onGo={(next) => patch({ page: next === 1 ? null : String(next) }, true)} />
-          </footer>
+          {/* «Показано 0 из 0 сотрудников» под приглашением завести
+              первого — строка, которая ничего не сообщает и спорит с
+              тем, что написано выше. */}
+          {!firstTime && (
+            <footer className="emp-pager">
+              <p className="emp-pager__note">
+                {list.state === 'ready'
+                  ? `Показано ${items.length} из ${plural(total, 'сотрудник')}`
+                  : ''}
+              </p>
+              <Pages page={page} pages={pages}
+                     onGo={(next) => patch({ page: next === 1 ? null : String(next) }, true)} />
+            </footer>
+          )}
         </section>
       </div>
     </AppShell>
@@ -475,6 +494,90 @@ function groupsOf<T extends { group: string }>(rows: T[]): [string, T[]][] {
 }
 
 // --- список ----------------------------------------------------------------
+
+/**
+ * Пустое место со своей причиной.
+ *
+ * «Никого не нашлось» и «в компании пока никого нет» — разные
+ * сообщения, и делать в них надо разное: в первом случае изменить
+ * запрос, во втором — завести первого человека. Общая фраза на оба
+ * случая отправляет половину людей не туда.
+ *
+ * У пустой компании рядом с кнопкой стоят три шага приёма. Это не
+ * украшение: человек, открывший раздел впервые, не знает, что за
+ * карточкой последует назначение офиса и приглашение в Telegram, — а
+ * узнать это лучше до того, как он начнёт заполнять форму.
+ */
+function Blank({ filtered, onClear, onAdd }: {
+  filtered: boolean;
+  onClear: () => void;
+  onAdd: () => void;
+}) {
+  if (filtered) {
+    return (
+      <div className="emp-blank">
+        <span className="emp-blank__icon" aria-hidden="true">
+          <AppIcon name="search" size={20} />
+        </span>
+        <h2 className="emp-blank__title">По этим фильтрам сотрудников нет</h2>
+        <p className="emp-blank__text">
+          Попробуйте изменить условия поиска или сбросить фильтры.
+        </p>
+        <button type="button" className="emp-blank__more" onClick={onClear}>
+          Сбросить фильтры
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="emp-blank emp-blank--first">
+      <div className="emp-blank__main">
+        <span className="emp-blank__icon" aria-hidden="true">
+          <AppIcon name="users" size={20} />
+        </span>
+        <h2 className="emp-blank__title">В компании пока нет сотрудников</h2>
+        <p className="emp-blank__text">
+          Добавьте первого сотрудника — после этого здесь появятся
+          карточки, поиск и фильтры.
+        </p>
+        <button type="button" className="btn btn--primary emp-blank__add"
+                onClick={onAdd}>
+          <AppIcon name="plus" size={16} />
+          Добавить первого сотрудника
+        </button>
+      </div>
+      <ol className="emp-steps">
+        {HIRE_STEPS.map((step, index) => (
+          <li key={step.title} className="emp-steps__row">
+            <span className="emp-steps__no" aria-hidden="true">{index + 1}</span>
+            <span className="emp-steps__body">
+              <b>{step.title}</b>
+              <span>{step.about}</span>
+            </span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+/** Из чего состоит приём. Те же три шага, что и в самой форме. */
+const HIRE_STEPS = [
+  {
+    title: 'Заполните данные',
+    about: 'Укажите ФИО, контактную информацию и должность.',
+  },
+  {
+    title: 'Назначьте офис и график',
+    about: 'Выберите офис, отдел и тип занятости.',
+  },
+  {
+    title: 'Отправьте приглашение в Telegram',
+    about: 'Сотрудник получит приглашение и сможет войти в систему.',
+  },
+];
+
 
 function PersonCard({ person, today, plan, onOpen }: {
   person: api.EmployeeRow;
@@ -711,6 +814,7 @@ function telegramShort(state: string | null | undefined): string {
  */
 function onboardingShort(plan: api.OnboardingRow): string {
   if (plan.status === 'BLOCKED_BY_DECLINED_POLICY') return 'Отказ от документа';
+  if (plan.status === 'UPDATE_REQUIRED') return 'Нужна новая редакция';
   if (plan.completed) return 'Ознакомлен';
   if (plan.sections_done < plan.sections_total) {
     return `Разделы ${plan.sections_done}/${plan.sections_total}`;

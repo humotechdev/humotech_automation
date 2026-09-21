@@ -3038,6 +3038,9 @@ export type OnboardingStatus =
   | 'INFO_COMPLETED'
   | 'POLICIES_IN_PROGRESS'
   | 'COMPLETED'
+  /** Программу прошёл, но вышла новая редакция документа. */
+  | 'UPDATE_REQUIRED'
+  /** Отказался подтвердить документ. Доступа это не лишает. */
   | 'BLOCKED_BY_DECLINED_POLICY';
 
 export type OnboardingRow = {

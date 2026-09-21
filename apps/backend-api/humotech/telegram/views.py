@@ -265,7 +265,7 @@ def _onboarding_required(employee_id) -> bool:
     """
     from humotech.onboarding import progress as onboarding_progress
 
-    state = onboarding_progress.gate(employee_id)
+    state = onboarding_progress.of_employee(employee_id)
     return state is not None and not state.completed
 
 

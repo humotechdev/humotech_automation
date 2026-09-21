@@ -55,10 +55,11 @@ def enrolled(employee) -> bool:
 
 
 def finished(employee) -> bool:
-    """Открыты ли человеку рабочие функции.
+    """Закончил ли человек ознакомление.
 
-    Для тех, кого в программу не звали, сервер отвечает `completed=true`:
-    им важно не то, прошли ли они программу, а то, открыт ли бот.
+    Доступа это не касается: рабочие разделы открыты в любом случае.
+    Для тех, кого в программу не звали, сервер отвечает `completed=true` —
+    напоминать им не о чем.
     """
     return bool((employee or {}).get("onboarding", {}).get("completed", True))
 
@@ -146,18 +147,6 @@ def _declined(state: dict) -> dict | None:
 # --- нижняя клавиатура ------------------------------------------------------
 
 
-def mid_onboarding(employee) -> bool:
-    """Человек известен, но ознакомление не закончил.
-
-    Зовётся из разбора `/start` — не фильтром роутера. Фильтр здесь
-    стоять не может: `/start` без полезной нагрузки перехватывает
-    роутер `start`, который включён первым, и до этого роутера
-    обновление просто не доходит. Такой фильтр выглядел бы рабочим и
-    молчал.
-    """
-    return employee is not None and not finished(employee)
-
-
 @router.message(F.text == ob.BTN_CONTINUE)
 @router.message(Command("onboarding"))
 async def continue_onboarding(
@@ -208,11 +197,6 @@ async def rules_and_documents(
     await message.answer("<b>Правила и документы</b>", reply_markup=rows)
 
 
-@router.message(F.text == ob.BTN_HR)
-async def hr_contacts(message: Message, employee, denial) -> None:
-    await message.answer(text.HR_CONTACTS, reply_markup=menu_for(employee, message))
-
-
 # --- шаги -------------------------------------------------------------------
 
 
@@ -242,12 +226,17 @@ async def begin(callback: CallbackQuery, client: SelfServiceClient) -> None:
     # Приветствие остаётся в чате как приветствие, но кнопка с него
     # снимается: нажатая второй раз, она ничего бы не изменила.
     await _drop_keyboard(callback)
-    # Единственное «лишнее» сообщение за всё ознакомление. Нужно оно
-    # ради нижней клавиатуры: повесить её на карточку нельзя — там
-    # inline-кнопки, а два вида клавиатур на одном сообщении Telegram
-    # не отдаёт. Зато дальше карточки сменяют друг друга на месте.
+
+    # Меню ставится ЗДЕСЬ, а не после ознакомления: человек получает
+    # отметки и заявки сразу, а карточки читает, когда дойдут руки.
+    # Профиль перечитывается — до этого нажатия привязка ждала
+    # согласия, и в `employee` лежало бы вчерашнее состояние.
+    try:
+        profile = await client.profile(callback.from_user.id)
+    except ApiError:
+        profile = None
     await callback.message.answer(
-        text.MENU_INSTALLED, reply_markup=ob.onboarding_menu()
+        text.MENU_INSTALLED, reply_markup=menu_for(profile, callback.message)
     )
     body, markup = screen(state)
     await callback.message.answer(body, reply_markup=markup)
@@ -426,10 +415,10 @@ async def decide(callback: CallbackQuery, client: SelfServiceClient) -> None:
     if not agreed:
         # Кнопки снимаются: под отказом они предлагали бы передумать
         # молча, а человеку сейчас нужен разговор с кадровиком.
+        # Нижнюю клавиатуру не трогаем — она и так полная, и отказ по
+        # документу ничего в ней не меняет.
         await _drop_keyboard(callback)
-        await callback.message.answer(
-            text.DECLINED, reply_markup=ob.onboarding_menu()
-        )
+        await callback.message.answer(text.DECLINED)
         return
 
     if state["completed"]:
@@ -456,6 +445,7 @@ async def open_menu(
     await callback.message.answer(
         base_text.CABINET_HINT, reply_markup=menu_for(fresh, callback.message)
     )
+
 
 
 async def _drop_keyboard(callback: CallbackQuery) -> None:
@@ -493,7 +483,4 @@ def menu_for(employee, message: Message | None = None):
     return build_menu(employee, message)
 
 
-__all__ = [
-    "enrolled", "finished", "menu_for", "mid_onboarding",
-    "router", "screen", "show",
-]
+__all__ = ["enrolled", "finished", "menu_for", "router", "screen", "show"]
