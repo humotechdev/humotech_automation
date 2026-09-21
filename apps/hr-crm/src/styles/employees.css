@@ -686,6 +686,43 @@
   height: 44px;
 }
 
+/*
+ * Пустой отбор — не отдельная страница, а короткий ответ внутри
+ * списка: фильтры над ним остаются на месте, и вместе они читаются
+ * как одно целое — «вот условия, под них никого». Поэтому и значок
+ * здесь обычного размера: крупная иллюстрация превращала ответ в
+ * самостоятельный экран.
+ */
+.emp-blank--narrow {
+  min-height: 210px;
+  justify-content: center;
+  gap: 8px;
+  padding: 32px 24px;
+}
+
+.emp-blank__icon--small {
+  color: #5e7caa;
+}
+
+.emp-blank__icon--small svg {
+  width: 24px;
+  height: 24px;
+  stroke-width: 1.75;
+}
+
+.emp-blank__title--small {
+  font-size: 19px;
+  font-weight: 600;
+}
+
+.emp-blank--narrow .emp-blank__more {
+  display: inline-flex;
+  align-items: center;
+  height: 40px;
+  padding: 0 18px;
+  font-size: 14px;
+}
+
 .emp-blank__title {
   margin: 6px 0 0;
   font-size: 20px;
@@ -697,6 +734,8 @@
   max-width: 44ch;
   margin: 0;
   font-size: 14px;
+  /* Строка описания стоит вплотную к заголовку: вместе они одно
+     предложение, разбитое на две строки, а не два сообщения. */
   line-height: 1.5;
   color: var(--text-muted, #5577a6);
 }

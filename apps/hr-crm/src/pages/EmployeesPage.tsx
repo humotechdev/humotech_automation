@@ -425,10 +425,11 @@ export function EmployeesPage() {
             </Rows>
           </div>
 
-          {/* «Показано 0 из 0 сотрудников» под приглашением завести
-              первого — строка, которая ничего не сообщает и спорит с
-              тем, что написано выше. */}
-          {!firstTime && (
+          {/* Подвал прячется на любом пустом списке. «Показано 0 из 3
+              сотрудников» под словами «по фильтрам никого нет» — это
+              вторая, спорящая версия того же ответа, а страницы, по
+              которым нечего листать, не нужны вовсе. */}
+          {items.length > 0 && (
             <footer className="emp-pager">
               <p className="emp-pager__note">
                 {list.state === 'ready'
@@ -514,14 +515,21 @@ function Blank({ filtered, onClear, onAdd }: {
   onAdd: () => void;
 }) {
   if (filtered) {
+    /*
+     * Компактный блок, а не отдельная страница. Отборы и плашки
+     * остаются над ним: причина пустого ответа — в них, и человек
+     * должен видеть её, не прокручивая назад.
+     */
     return (
-      <div className="emp-blank">
-        <span className="emp-blank__icon" aria-hidden="true">
+      <div className="emp-blank emp-blank--narrow">
+        <span className="emp-blank__icon emp-blank__icon--small" aria-hidden="true">
           <AppIcon name="blank-search" size={20} />
         </span>
-        <h2 className="emp-blank__title">По этим фильтрам сотрудников нет</h2>
+        <h2 className="emp-blank__title emp-blank__title--small">
+          По выбранным фильтрам сотрудников нет
+        </h2>
         <p className="emp-blank__text">
-          Попробуйте изменить условия поиска или сбросить фильтры.
+          Измените условия поиска или сбросьте фильтры.
         </p>
         <button type="button" className="emp-blank__more" onClick={onClear}>
           Сбросить фильтры

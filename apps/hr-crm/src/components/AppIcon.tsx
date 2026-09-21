@@ -34,7 +34,7 @@ import type { ComponentType, SVGProps } from 'react';
  * видна сразу. Поэтому имена ниже отмечены как «крупные»: они стоят
  * по одному на экране, рядом с заголовком, и ни с чем не соседствуют.
  */
-import { SearchX, UsersRound } from 'lucide-react';
+import { FilterX, UsersRound } from 'lucide-react';
 import {
   Archive, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, Bell, Book,
   Building, Calendar, ChatBubble, CheckCircle, CircleSpark, Clock,
@@ -111,9 +111,9 @@ const GLYPHS: Record<AppIconName, Glyph> = {
   'filter-list': FilterList,
   // Пустые состояния. Из Lucide — см. пояснение у импорта.
   'blank-people': UsersRound,
-  // Лупа с крестиком: не «ищите», а «искали и не нашлось». Искать
-  // человек уже пробовал, менять надо условия.
-  'blank-search': SearchX,
+  // Воронка с крестиком: пусто не вообще, а под этот отбор. Лупа
+  // говорила бы про поиск, а причина — в фильтрах, и они видны выше.
+  'blank-search': FilterX,
   eye: Eye,
   'eye-off': EyeClosed,
   // Закрыть — голый крест. `cross` в круге означает отказ по существу
