@@ -28,6 +28,7 @@ import {
   ClockRotateRight, Database, Download, EditPencil, Eye, EyeClosed, Filter, Globe,
   Group, Home, Key, Lock, LogOut, MailOut, MapPin, NavArrowDown, NavArrowRight,
   Page, Plus,
+  FilterList, UserPlus,
   Refresh, ReportColumns, Reports, Search, SendDiagonal, Settings, ShieldCheck,
   List, Table, User, ViewGrid, WarningCircle, Xmark, XmarkCircle,
 } from 'iconoir-react';
@@ -39,7 +40,7 @@ export type AppIconName =
   | 'inbox' | 'alert' | 'database' | 'globe' | 'send' | 'building'
   | 'download' | 'check' | 'cross' | 'lock' | 'late' | 'sheet' | 'filter'
   | 'plus' | 'pencil' | 'archive' | 'half' | 'key' | 'list' | 'grid'
-  | 'user' | 'eye' | 'eye-off'
+  | 'user' | 'user-plus' | 'filter-list' | 'eye' | 'eye-off'
   | 'close' | 'back' | 'next' | 'trend-up' | 'trend-down';
 
 type Glyph = ComponentType<SVGProps<SVGSVGElement>>;
@@ -91,6 +92,13 @@ const GLYPHS: Record<AppIconName, Glyph> = {
   half: CircleSpark,
   key: Key,
   user: User,
+  // «Завести первого сотрудника»: значок называет само действие, а не
+  // предмет, которого нет. Пустому списку это подходит больше, чем
+  // группа людей, которой там как раз и нет.
+  'user-plus': UserPlus,
+  // Отбор, который ничего не дал: список с лупой. Одна лупа значила бы
+  // «ищите», а искать человек уже пробовал — менять нужно условия.
+  'filter-list': FilterList,
   eye: Eye,
   'eye-off': EyeClosed,
   // Закрыть — голый крест. `cross` в круге означает отказ по существу
