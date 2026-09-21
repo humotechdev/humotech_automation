@@ -12,7 +12,7 @@
  * «Создан» означало бы, что заказ длился месяц.
  */
 
-const MONTHS_SHORT = [
+export const MONTHS_SHORT = [
   'янв', 'фев', 'мар', 'апр', 'мая', 'июн',
   'июл', 'авг', 'сен', 'окт', 'ноя', 'дек',
 ];
@@ -68,10 +68,10 @@ export function sizeTitle(bytes: number | null): string | null {
   return `${(bytes / 1024 / 1024).toFixed(1).replace('.', ',')} МБ`;
 }
 
-function parts(day: string) {
+export function parts(day: string) {
   const [year, month, date] = day.split('-').map(Number);
   if (!year || !month || !date) return null;
   return { year, month: month - 1, day: date };
 }
 
-const pad = (value: number) => String(value).padStart(2, '0');
+export const pad = (value: number) => String(value).padStart(2, '0');

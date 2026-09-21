@@ -225,6 +225,48 @@ export function RequestCard({
   request: AbsenceRequest;
   onCancel: () => void;
 }) {
+  const [getting, setGetting] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
+
+  /**
+   * Показать заявление.
+   *
+   * Файл приходит с токеном в заголовке, а не по ссылке с токеном в
+   * адресе: такую ссылку человек перешлёт в чат, и она будет работать
+   * у всех, кто её открыл.
+   *
+   * Дальше его отдаёт браузер — `<a download>` с программным нажатием.
+   * Другого способа в вебвью Telegram нет: панели вложений у мини-
+   * приложения не существует, а `openLink` умеет только обычные адреса.
+   */
+  async function openApplication() {
+    if (getting) return;
+    setGetting(true);
+    setFailed(null);
+    const answer = await api.absenceApplication(request.id);
+    setGetting(false);
+
+    if (!answer.ok) {
+      setFailed(answer.message);
+      return;
+    }
+    if (typeof URL?.createObjectURL !== 'function') {
+      setFailed('Это приложение не умеет открывать файлы. Попросите бланк в отделе кадров.');
+      return;
+    }
+
+    const url = URL.createObjectURL(answer.value);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `zayavlenie-${request.id.slice(0, 8)}.pdf`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    // Адрес держит файл в памяти вкладки, пока его не отозвать. Секунда
+    // — с запасом на то, чтобы браузер успел начать сохранение.
+    setTimeout(() => URL.revokeObjectURL?.(url), 1000);
+  }
+
   return (
     <Card>
       <div className="section-header">
@@ -262,6 +304,14 @@ export function RequestCard({
           <p className="muted">Отдел кадров: {request.review_comment}</p>
         )}
       </div>
+
+      {/* Бланк для печати. Оформляют заявку в телефоне, а подписывают
+          бумагу: набирать её заново в Word после того, как всё уже
+          введено, — лишняя работа, в которой ещё и ошибаются. */}
+      <SecondaryButton onClick={() => void openApplication()} wide>
+        {getting ? 'Готовим заявление…' : 'Заявление для печати'}
+      </SecondaryButton>
+      {failed && <p className="field-error" role="alert">{failed}</p>}
 
       {request.can_cancel && (
         <SecondaryButton onClick={onCancel} wide>

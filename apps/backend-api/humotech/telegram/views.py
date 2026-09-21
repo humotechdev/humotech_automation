@@ -36,14 +36,21 @@ from humotech.telegram.auth import (
 from humotech.telegram.serializers import (
     AccountSerializer,
     BotConsumeSerializer,
+    BotLinkAcceptSerializer,
     InvitationCreateSerializer,
     InvitationSerializer,
     IssuedInvitationSerializer,
     LinkStatusSerializer,
     MiniAppAuthSerializer,
     MiniAppSessionSerializer,
+    BotRecognizeSerializer,
+    WelcomeSerializer,
 )
-from humotech.telegram.services import TelegramLinkService, TelegramMiniAppService
+from humotech.telegram.services import (
+    TelegramLinkService,
+    TelegramMiniAppService,
+    welcome_facts,
+)
 
 
 class TelegramInvitationViewSet(ServiceViewSet):
@@ -80,7 +87,10 @@ class TelegramInvitationViewSet(ServiceViewSet):
 
     def create(self, request):
         payload = validated(InvitationCreateSerializer, request.data)
-        issued = self.service.create_invitation(self.actor, payload["employee_id"])
+        issued = self.service.create_invitation(
+            self.actor, payload["employee_id"],
+            replace=payload.get("replace", False),
+        )
         # Единственный ответ, в котором есть открытый токен. Повторно
         # получить его нельзя: в базе только хеш.
         return Response(
@@ -141,6 +151,13 @@ class OutboxMessageSerializer(serializers.Serializer):
     text = serializers.CharField()
     type = serializers.CharField()
     attempts = serializers.IntegerField()
+    entity_id = serializers.CharField(
+        allow_null=True, required=False,
+        help_text=(
+            "На что ссылается уведомление. По нему бот прикладывает "
+            "кнопку — например, открывает нужный опрос в Mini App"
+        ),
+    )
 
 
 class OutboxBatchSerializer(serializers.Serializer):
@@ -269,6 +286,58 @@ class BotLinkView(APIView):
         )
 
 
+class BotLinkAcceptView(BotLinkView):
+    """Подтверждение условий сотрудником; HR в этом шаге не участвует."""
+    @extend_schema(request=BotLinkAcceptSerializer, responses={200: BotLinkResultSerializer}, tags=["Telegram"])
+    def post(self, request):
+        payload = validated(BotLinkAcceptSerializer, request.data)
+        account = TelegramLinkService().accept_terms(telegram_user_id=payload["telegram_user_id"])
+        return Response({"status": account.status, "employee_known": True})
+
+
+class BotRecognizeView(APIView):
+    """Узнавание сотрудника по его имени в Telegram при первом запуске.
+
+    Бот не может написать первым — это правило Telegram. Но когда
+    человек открывает бота сам, он приносит своё `@username`; если
+    кадровик указал его в карточке, ссылка не нужна вовсе.
+
+    Доступа это не даёт: получается та же привязка `PENDING`, что и по
+    ссылке, и подтверждает её всё тот же кадровик.
+    """
+
+    authentication_classes: list = []
+    permission_classes = [IsTelegramBot]
+    throttle_scope = "telegram_bot_link"
+    throttle_classes = [ScopedRateThrottle]
+
+    @extend_schema(
+        operation_id="telegram_bot_recognize",
+        summary="Узнать сотрудника по имени в Telegram",
+        description=(
+            "Вызывает только бот. Возвращает то, чем поздороваться: имя, "
+            "офис, график и руководителя. Привязка при этом создаётся "
+            "ожидающей подтверждения HR."
+        ),
+        request=BotRecognizeSerializer,
+        responses={201: WelcomeSerializer},
+        tags=["Telegram"],
+    )
+    def post(self, request):
+        payload = validated(BotRecognizeSerializer, request.data)
+        service = TelegramLinkService()
+        account = service.recognize(
+            telegram_username=payload.get("telegram_username") or None,
+            telegram_user_id=payload["telegram_user_id"],
+            telegram_chat_id=payload["telegram_chat_id"],
+            language_code=payload.get("language_code") or None,
+        )
+        return Response(
+            {"status": account.status, **welcome_facts(account.employee)},
+            status=status.HTTP_201_CREATED,
+        )
+
+
 class MiniAppAuthView(APIView):
     """Обмен `initData` Telegram на внутренний токен HUMOTECH."""
 
@@ -360,10 +429,20 @@ class BotOutboxView(APIView):
         from django.conf import settings
 
         from humotech.notifications.outbox import claim, reclaim_stale
+        from humotech.surveys.services import dispatch_due
 
         # Уборка перед выдачей: строки, зависшие в RUNNING после падения
         # отправщика, иначе не ушли бы никогда.
         reclaimed = reclaim_stale()
+
+        # Опросы, которым подошёл срок: запланированные и повторяющиеся.
+        # Здесь, а не в отдельном планировщике: бот и так спрашивает
+        # очередь каждые несколько секунд, а собственный планировщик ради
+        # двух дат в году был бы лишней движущейся частью, о падении
+        # которой узнали бы только по ненаступившему опросу. Запрос
+        # дешёвый: частичный индекс по `next_send_at`, и почти всегда он
+        # не находит ничего.
+        dispatch_due()
         batch = claim(limit=settings.NOTIFICATIONS["BATCH_SIZE"])
         return Response(
             {
@@ -374,6 +453,10 @@ class BotOutboxView(APIView):
                         "text": item.text,
                         "type": item.notification_type,
                         "attempts": item.attempts,
+                        # На что ссылается уведомление. Бот прикладывает
+                        # по нему кнопку: без этого он знает, что опрос
+                        # пришёл, но не знает какой.
+                        "entity_id": item.related_entity_id,
                     }
                     for item in batch
                 ],

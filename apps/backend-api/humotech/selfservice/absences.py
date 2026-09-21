@@ -15,6 +15,7 @@ from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import serializers, status
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
+from django.http import HttpResponse
 from rest_framework.response import Response
 
 from humotech.absences.services import MINUTES_PER_WORKING_DAY, AbsenceService
@@ -343,6 +344,31 @@ class AbsenceDocumentView(EmployeeSelfView):
             )
         view = AbsenceService().attach_document(self.context, request_id, document)
         return Response(request_json(view), status=status.HTTP_201_CREATED)
+
+
+@extend_schema(tags=["Личный кабинет"])
+class AbsenceApplicationView(EmployeeSelfView):
+    """Печатное заявление по заявке.
+
+    Отдаётся файлом, а не ссылкой на хранилище: бланк собирается из
+    самой заявки на каждое обращение. Сохранить его однажды значило бы
+    получить бумагу, которая молча разошлась с продлённой заявкой.
+    """
+
+    @extend_schema(
+        operation_id="me_absence_application",
+        summary="Заявление для печати",
+        responses={(200, "application/pdf"): OpenApiTypes.BINARY},
+    )
+    def get(self, request, request_id):
+        pdf = AbsenceService().application(self.context, request_id)
+        answer = HttpResponse(pdf, content_type="application/pdf")
+        # `inline`, а не `attachment`: человек сперва смотрит заявление
+        # на экране и печатает уже оттуда.
+        answer["Content-Disposition"] = (
+            f'inline; filename="application-{request_id}.pdf"'
+        )
+        return answer
 
 
 @extend_schema(tags=["Личный кабинет"])

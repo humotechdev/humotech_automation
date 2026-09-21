@@ -15,9 +15,13 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from humotech.core.api import ServiceViewSet, validated
+from humotech.core.clientip import client_ip
 from humotech.core.enums import EXPORT_JOB_STATUSES
-from humotech.reports.service import ExportJobService
-from humotech.reports.sheets import MAX_PERIOD_DAYS, EXPORT_KINDS, check_period
+from humotech.reports.builder import is_builder_order
+from humotech.reports.builder_views import ReportSpecSerializer, spec_from
+from humotech.reports.catalog import REPORT_KINDS
+from humotech.reports.service import JOB_KINDS, ExportJobService
+from humotech.reports.sheets import MAX_PERIOD_DAYS, check_period
 from humotech.reports.views import FORMATS
 
 
@@ -29,7 +33,7 @@ class ExportJobSerializer(serializers.Serializer):
     """
 
     id = serializers.UUIDField()
-    kind = serializers.ChoiceField(choices=EXPORT_KINDS)
+    kind = serializers.ChoiceField(choices=JOB_KINDS)
     fmt = serializers.ChoiceField(choices=FORMATS)
     status = serializers.ChoiceField(choices=EXPORT_JOB_STATUSES)
     filters = serializers.JSONField(allow_null=True)
@@ -46,8 +50,22 @@ class ExportJobSerializer(serializers.Serializer):
     )
     total_rows = serializers.IntegerField(
         allow_null=True,
-        help_text="Известно не всегда: CSV собирается потоком, и общее "
-                  "число строк заранее не считается",
+        help_text="Сколько строк в готовом файле. До готовности неизвестно",
+    )
+    progress_done = serializers.IntegerField(
+        help_text="Сколько шагов сборки сделано: «офис × день» или запись",
+    )
+    progress_total = serializers.IntegerField(
+        allow_null=True,
+        help_text="Сколько шагов всего. Известно с начала сборки заказа "
+                  "конструктора; у старых заказов пусто — процента нет",
+    )
+    title = serializers.SerializerMethodField(
+        help_text="Имя файла без расширения, если его задали при заказе",
+    )
+    display_status = serializers.SerializerMethodField(
+        help_text="Состояние для истории: SUCCEEDED с прошедшим сроком "
+                  "хранения показывается как EXPIRED",
     )
     file_name = serializers.CharField(allow_null=True)
     size_bytes = serializers.IntegerField(allow_null=True)
@@ -59,6 +77,18 @@ class ExportJobSerializer(serializers.Serializer):
     finished_at = serializers.DateTimeField(allow_null=True)
     created_at = serializers.DateTimeField()
     updated_at = serializers.DateTimeField()
+
+    def get_title(self, job) -> str | None:
+        filters = job.filters or {}
+        return filters.get("name") if is_builder_order(filters) else None
+
+    def get_display_status(self, job) -> str:
+        from django.utils import timezone
+
+        if (job.status == "SUCCEEDED" and job.expires_at is not None
+                and job.expires_at <= timezone.now()):
+            return "EXPIRED"
+        return job.status
 
     def get_requested_by(self, job) -> str | None:
         # Строка уже пришла со `select_related`: запроса на каждую
@@ -80,6 +110,9 @@ class ExportJobCountsSerializer(serializers.Serializer):
     SUCCEEDED = serializers.IntegerField()
     FAILED = serializers.IntegerField()
     CANCELLED = serializers.IntegerField()
+    EXPIRED = serializers.IntegerField(
+        help_text="Готовые, срок хранения которых прошёл. В SUCCEEDED не входят",
+    )
 
 
 class ExportJobPageSerializer(serializers.Serializer):
@@ -88,7 +121,7 @@ class ExportJobPageSerializer(serializers.Serializer):
     has_more = serializers.BooleanField()
 
 
-class ExportJobCreateSerializer(serializers.Serializer):
+class ExportJobCreateSerializer(ReportSpecSerializer):
     """Заказ выгрузки.
 
     Период проверяется здесь, а не в исполнителе. Иначе перепутанные
@@ -97,8 +130,18 @@ class ExportJobCreateSerializer(serializers.Serializer):
     с экрана и решил, что отчёт готовится.
     """
 
-    kind = serializers.ChoiceField(choices=EXPORT_KINDS)
+    kind = serializers.ChoiceField(choices=JOB_KINDS)
     fmt = serializers.ChoiceField(choices=FORMATS, default="csv")
+    client_request_id = serializers.UUIDField(
+        required=False, allow_null=True,
+        help_text="Ключ повтора: второй запрос с тем же ключом вернёт уже "
+                  "поставленное задание",
+    )
+    builder = serializers.BooleanField(
+        required=False, default=False,
+        help_text="true — заказ конструктора: поля, несколько офисов и "
+                  "отделов, листы Excel и имя файла",
+    )
     date = serializers.DateField(
         required=False, allow_null=True, help_text="Для отчёта attendance",
     )
@@ -112,6 +155,14 @@ class ExportJobCreateSerializer(serializers.Serializer):
     region_id = serializers.UUIDField(required=False, allow_null=True)
 
     def validate(self, attrs):
+        if attrs.get("builder") and attrs["kind"] not in REPORT_KINDS:
+            raise serializers.ValidationError(
+                {"kind": ["У этого отчёта нет конструктора"]}
+            )
+        if attrs.get("builder") and not (attrs.get("date_from") and attrs.get("date_to")):
+            raise serializers.ValidationError(
+                {"date_to": ["Укажите обе даты периода"]}
+            )
         first, last = attrs.get("date_from"), attrs.get("date_to")
         if first and last:
             # Тот же предел, что и у построителя: одна проверка на два
@@ -146,7 +197,7 @@ class ExportJobViewSet(ServiceViewSet):
                 description="Одно состояние или несколько через запятую: "
                             "вкладка «в работе» — это QUEUED,RUNNING",
             ),
-            OpenApiParameter("kind", str, enum=list(EXPORT_KINDS)),
+            OpenApiParameter("kind", str, enum=list(JOB_KINDS)),
             OpenApiParameter(
                 "mine_only", bool,
                 description="false — все выгрузки организации; требует "
@@ -184,7 +235,7 @@ class ExportJobViewSet(ServiceViewSet):
         parameters=[
             # `list` в теле класса — это уже метод выше, а не встроенная
             # функция: имя перекрыто, и `list(...)` здесь падает.
-            OpenApiParameter("kind", str, enum=[*EXPORT_KINDS]),
+            OpenApiParameter("kind", str, enum=[*JOB_KINDS]),
             OpenApiParameter("mine_only", bool),
         ],
         responses={200: ExportJobCountsSerializer},
@@ -224,10 +275,21 @@ class ExportJobViewSet(ServiceViewSet):
         payload = validated(ExportJobCreateSerializer, request.data)
         kind = payload.pop("kind")
         fmt = payload.pop("fmt")
-        return self.item_response(
-            self.service.create(self.actor, kind=kind, fmt=fmt, filters=payload),
-            created=True,
-        )
+        key = payload.pop("client_request_id", None)
+        if payload.pop("builder", False):
+            job = self.service.create(
+                self.actor, kind=kind, fmt=fmt, spec=spec_from(kind, payload),
+                client_request_id=key,
+            )
+        else:
+            # Старый заказ: только поля, которые понимает `sheets.py`.
+            filters = {name: payload.get(name) for name in
+                       ("date", "date_from", "date_to", "office_id", "region_id")}
+            job = self.service.create(
+                self.actor, kind=kind, fmt=fmt, filters=filters,
+                client_request_id=key,
+            )
+        return self.item_response(job, created=True)
 
     @extend_schema(
         summary="Отменить заказ",
@@ -254,10 +316,27 @@ class ExportJobViewSet(ServiceViewSet):
         return self.item_response(self.service.retry(self.actor, pk))
 
     @extend_schema(
+        summary="Убрать из моей истории",
+        description=(
+            "Запись остаётся в журнале, файл удаляется. Формируемый отчёт "
+            "убрать нельзя; стоящий в очереди отменяется."
+        ),
+        request=None,
+        responses={204: None},
+    )
+    @action(detail=True, methods=["post"])
+    def hide(self, request, pk=None):
+        self.service.hide(self.actor, pk)
+        return Response(status=204)
+
+    @extend_schema(
         summary="Скачать готовый файл",
         description=(
-            "Доступно только заказчику и только пока не истёк срок "
-            "хранения. Просроченный файл удаляется: выгрузка кадровых "
+            "Автору — с reports.export; чужой файл — с reports.export и "
+            "reports.download_any, если область видимости покрывает все "
+            "офисы отчёта. Остальным 404, без reports.export — 403. "
+            "Каждая попытка пишется в security-аудит. Доступно только пока "
+            "не истёк срок хранения. Просроченный файл удаляется: выгрузка кадровых "
             "данных, лежащая вечно, — это утечка, отложенная во времени."
         ),
         responses={
@@ -268,7 +347,11 @@ class ExportJobViewSet(ServiceViewSet):
     )
     @action(detail=True, methods=["get"])
     def download(self, request, pk=None):
-        stream, job = self.service.open_file(self.actor, pk)
+        stream, job = self.service.open_file(
+            self.actor, pk,
+            ip_address=client_ip(request),
+            user_agent=request.META.get("HTTP_USER_AGENT"),
+        )
         response = FileResponse(
             stream,
             as_attachment=True,

@@ -69,6 +69,22 @@ class SelfServiceClient:
     async def leave_balance(self, telegram_id: int) -> dict:
         return await self._get("/me/leave-balance", telegram_id)
 
+    async def ask_hr(
+        self, telegram_id: int, *, text: str, message_id: int | None = None
+    ) -> dict:
+        """Сообщение в отдел кадров.
+
+        В какое обращение оно ляжет — в открытое, переоткрытое или новое, —
+        решает backend. `message_id` защищает от дубля, если бот отправит
+        то же сообщение повторно после сбоя сети.
+        """
+        return await self._request(
+            "POST",
+            "/me/questions/messages",
+            headers={EMPLOYEE_HEADER: str(telegram_id)},
+            json={"text": text, "telegram_message_id": message_id},
+        )
+
     async def scan(
         self,
         *,
@@ -105,6 +121,98 @@ class SelfServiceClient:
             json=body,
         )
 
+    async def day_notice(
+        self,
+        *,
+        telegram_user_id: int,
+        kind: str,
+        comment: str | None = None,
+    ) -> dict:
+        """Ответ на напоминание: «Опаздываю» или «Не приду».
+
+        Ни отпуска, ни больничного это не оформляет — они проходят
+        согласование и живут своими заявками. Здесь только объяснение
+        пустой строки в табеле.
+        """
+        body: dict = {"kind": kind}
+        if comment:
+            body["comment"] = comment
+        return await self._request(
+            "POST",
+            "/me/attendance/notice",
+            headers={EMPLOYEE_HEADER: str(telegram_user_id)},
+            json=body,
+        )
+
+    async def upload_absence_document(
+        self,
+        *,
+        telegram_user_id: int,
+        request_id: str,
+        filename: str,
+        content: bytes,
+        content_type: str,
+    ) -> dict:
+        """Приложить справку к заявке файлом из чата.
+
+        Тот же адрес, что у Mini App: второй путь загрузки означал бы
+        вторую проверку типа и размера, которую однажды забудут
+        обновить. Проверяет файл сервер — бот только передаёт его.
+        """
+        form = aiohttp.FormData()
+        form.add_field(
+            "document", content, filename=filename, content_type=content_type
+        )
+        session = await self._get_session()
+        headers = {
+            BOT_SECRET_HEADER: settings.backend_bot_secret,
+            EMPLOYEE_HEADER: str(telegram_user_id),
+        }
+        async with session.post(
+            f"{self._base_url}/me/absences/{request_id}/document",
+            headers=headers,
+            data=form,
+        ) as response:
+            body = await self._body(response)
+            if response.status >= 400:
+                raise _error(response.status, body)
+            return body
+
+    async def ask(
+        self, telegram_id: int, *, text: str, client_request_id: str | None = None
+    ) -> dict:
+        """Спросить ассистента.
+
+        Обращение в CRM здесь НЕ создаётся: вопрос, на который ассистент
+        ответил, кадровику не нужен, а очередь, забитая тем, что
+        решилось само, перестаёт быть очередью.
+        """
+        body: dict = {"text": text}
+        if client_request_id:
+            body["client_request_id"] = client_request_id
+        return await self._request(
+            "POST", "/me/ask",
+            headers={EMPLOYEE_HEADER: str(telegram_id)},
+            json=body,
+        )
+
+    async def escalate(
+        self, telegram_id: int, *, text: str, message_id: int | None = None
+    ) -> dict:
+        """Передать вопрос HR — только по явному нажатию человека.
+
+        Уходит ИСХОДНЫЙ вопрос, а не ответ ассистента: кадровик должен
+        прочитать то, что написал сотрудник.
+        """
+        body: dict = {"text": text}
+        if message_id is not None:
+            body["telegram_message_id"] = message_id
+        return await self._request(
+            "POST", "/me/ask/escalate",
+            headers={EMPLOYEE_HEADER: str(telegram_id)},
+            json=body,
+        )
+
     # --- привязка ---------------------------------------------------------
 
     async def consume_link_token(
@@ -128,6 +236,41 @@ class SelfServiceClient:
             headers={},
             json={
                 "token": token,
+                "telegram_user_id": telegram_user_id,
+                "telegram_chat_id": telegram_chat_id,
+                "telegram_username": telegram_username,
+                "language_code": language_code,
+            },
+        )
+
+    async def accept_link_terms(self, *, telegram_user_id: int) -> dict:
+        return await self._request(
+            "POST", "/telegram/bot/link/accept", headers={},
+            json={"telegram_user_id": telegram_user_id},
+        )
+
+    async def recognize(
+        self,
+        *,
+        telegram_user_id: int,
+        telegram_chat_id: int,
+        telegram_username: str | None,
+        language_code: str | None = None,
+    ) -> dict:
+        """Спросить backend: не ждут ли этого человека.
+
+        Бот не может написать первым — это правило Telegram. Всё, что он
+        может, — узнать открывшего его человека по имени в Telegram,
+        которое кадровик указал в карточке.
+
+        Ответ — то, чем поздороваться: имя, офис, график, руководитель.
+        Доступа это не даёт: привязка ждёт подтверждения кадровика.
+        """
+        return await self._request(
+            "POST",
+            "/telegram/bot/recognize",
+            headers={},
+            json={
                 "telegram_user_id": telegram_user_id,
                 "telegram_chat_id": telegram_chat_id,
                 "telegram_username": telegram_username,

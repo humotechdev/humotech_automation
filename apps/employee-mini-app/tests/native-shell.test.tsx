@@ -130,6 +130,10 @@ function serveCabinet(scan?: unknown) {
       });
     }
     if (address.includes('/me/absences/options')) return json(options);
+    if (address.includes('/me/leave-balance')) return json({ balances: [] });
+    if (address.includes('/me/notifications')) {
+      return json({ unread: 0, items: [] });
+    }
     return json({ requests: [], total: 0 });
   };
   vi.stubGlobal('fetch', impl as unknown as typeof fetch);
@@ -138,7 +142,7 @@ function serveCabinet(scan?: unknown) {
 /** Открыть кабинет и дождаться главной. */
 async function openCabinet() {
   render(<App />);
-  await screen.findByText('Сейчас в офисе');
+  await screen.findByText('В офисе');
 }
 
 const tab = (name: string) =>
@@ -189,8 +193,8 @@ describe('полноэкранный режим', () => {
 
     expect(tg.app.requestFullscreen).not.toHaveBeenCalled();
 
-    fireEvent.click(tab('Статистика'));
-    await waitFor(() => expect(screen.queryByText('Сейчас в офисе')).toBeNull());
+    fireEvent.click(tab('Заявки'));
+    await waitFor(() => expect(screen.queryByText('В офисе')).toBeNull());
     expect(tg.app.requestFullscreen).not.toHaveBeenCalled();
   });
 
@@ -199,7 +203,7 @@ describe('полноэкранный режим', () => {
     serveCabinet();
     await openCabinet();
 
-    fireEvent.click(tab('Отметка'));
+    fireEvent.click(tab('Отметиться'));
     await screen.findByRole('heading', { name: 'Отметка' });
 
     expect(tg.app.isVersionAtLeast).toHaveBeenCalledWith('8.0');
@@ -216,7 +220,7 @@ describe('полноэкранный режим', () => {
     serveCabinet();
     await openCabinet();
 
-    fireEvent.click(tab('Отметка'));
+    fireEvent.click(tab('Отметиться'));
     await screen.findByRole('heading', { name: 'Отметка' });
 
     expect(tg.app.requestFullscreen).not.toHaveBeenCalled();
@@ -230,7 +234,7 @@ describe('полноэкранный режим', () => {
     serveCabinet();
     await openCabinet();
 
-    fireEvent.click(tab('Отметка'));
+    fireEvent.click(tab('Отметиться'));
     await screen.findByRole('heading', { name: 'Отметка' });
 
     await tg.emit('fullscreenFailed');
@@ -251,7 +255,7 @@ describe('полноэкранный режим', () => {
     serveCabinet();
     await openCabinet();
 
-    fireEvent.click(tab('Отметка'));
+    fireEvent.click(tab('Отметиться'));
     await screen.findByRole('heading', { name: 'Отметка' });
 
     tg.app.isFullscreen = true;
@@ -274,11 +278,11 @@ describe('уход с отметки', () => {
     serveCabinet();
     await openCabinet();
 
-    fireEvent.click(tab('Отметка'));
+    fireEvent.click(tab('Отметиться'));
     await screen.findByRole('heading', { name: 'Отметка' });
     tg.app.isFullscreen = true;
 
-    fireEvent.click(tab('История'));
+    fireEvent.click(tab('Отметки'));
     await waitFor(() =>
       expect(screen.queryByRole('heading', { name: 'Отметка' })).toBeNull(),
     );
@@ -310,7 +314,7 @@ describe('уход с отметки', () => {
     });
     await openCabinet();
 
-    fireEvent.click(tab('Отметка'));
+    fireEvent.click(tab('Отметиться'));
     await screen.findByRole('heading', { name: 'Отметка' });
     tg.app.isFullscreen = true;
 
@@ -328,10 +332,10 @@ describe('уход с отметки', () => {
 
     const before = tg.count('viewportChanged');
 
-    fireEvent.click(tab('Отметка'));
+    fireEvent.click(tab('Отметиться'));
     await screen.findByRole('heading', { name: 'Отметка' });
     fireEvent.click(tab('Главная'));
-    await screen.findByText('Сейчас в офисе');
+    await screen.findByText('В офисе');
 
     // Ни одна подписка не накопилась: сколько было до захода на экран,
     // столько и осталось.
@@ -375,47 +379,52 @@ describe('кнопка «назад» Telegram', () => {
     expect(tg.app.BackButton.hide).toHaveBeenCalled();
     expect(tg.app.BackButton.show).not.toHaveBeenCalled();
 
-    fireEvent.click(tab('Статистика'));
+    fireEvent.click(tab('Заявки'));
     await waitFor(() => expect(tg.app.BackButton.show).toHaveBeenCalled());
 
     // Нажатие возвращает на главную, а не закрывает кабинет.
     const handler = tg.app.BackButton.onClick.mock.calls.at(-1)?.[0] as () => void;
     await act(async () => handler());
-    await screen.findByText('Сейчас в офисе');
+    await screen.findByText('В офисе');
   });
 
-  it('профиль за аватаром тоже закрывается ею', async () => {
+  it('профиль тоже закрывается ею', async () => {
     const tg = fakeWebApp();
     serveCabinet();
     await openCabinet();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Профиль и помощь' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Открыть профиль' }));
     await screen.findByRole('heading', { name: 'Место работы' });
 
     const handler = tg.app.BackButton.onClick.mock.calls.at(-1)?.[0] as () => void;
     await act(async () => handler());
-    await screen.findByText('Сейчас в офисе');
+    await screen.findByText('В офисе');
   });
 });
 
 // --- второй шапки нет -------------------------------------------------------
 
 describe('никакой второй шапки', () => {
-  it('кабинет не рисует ни названия бота, ни крестика закрытия', async () => {
+  it('кабинет не повторяет кнопок родной панели', async () => {
     fakeWebApp();
     serveCabinet();
     const { container } = render(<App />);
-    await screen.findByText('Сейчас в офисе');
+    await screen.findByText('В офисе');
 
-    // Сверху уже стоит родная панель Telegram с названием и крестиком.
-    expect(container.textContent).not.toContain('HUMOTECH');
+    // Своя панель у кабинета есть — фирменная, со знаком и уведомлениями.
+    // Чего в ней нет, так это второго крестика и второй кнопки «назад»:
+    // и то и другое уже стоит сверху, в самом Telegram.
+    expect(container.querySelector('.topbar img')?.getAttribute('alt')).toBe(
+      'HUMOTECH',
+    );
     expect(
       screen.queryByRole('button', { name: /Закрыть приложение|Закрыть кабинет/ }),
     ).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Назад$/ })).toBeNull();
 
-    // Первое, что идёт после родной панели, — приветствие и имя.
-    const header = container.querySelector('.app-header');
-    expect(header?.textContent).toContain(profileStub.employee.full_name);
+    // Первое, что идёт после панели, — приветствие с именем сотрудника.
+    const hello = container.querySelector('.hello');
+    expect(hello?.textContent).toContain('Далер');
   });
 
   it('родная панель не прячется отступами и наложениями', () => {

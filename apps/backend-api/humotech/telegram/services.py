@@ -258,8 +258,20 @@ class TelegramLinkService(BaseService):
     # --------------------------------------------------------- выдача ссылки
 
     def create_invitation(
-        self, actor: Actor, employee_id: uuid.UUID
+        self, actor: Actor, employee_id: uuid.UUID, *, replace: bool = False,
+        expected_username: str | None = None,
     ) -> IssuedInvitation:
+        """Выдать ссылку привязки.
+
+        `replace` — это «отправить приглашение повторно»: действующая
+        ссылка отзывается и тут же выдаётся новая. Без него повтор
+        упирался бы в собственную ссылку, выданную минуту назад при
+        приёме сотрудника, и кнопка не срабатывала бы никогда.
+
+        Отзыв и выдача в одной транзакции: иначе между ними есть миг,
+        когда у человека нет действующей ссылки, и сбой в этот миг
+        оставил бы его без входа вовсе.
+        """
         self.access.require(actor, "telegram.manage")
         employee = require_visible_employee(self.access, actor, employee_id)
         self._require_employee_linkable(employee)
@@ -287,13 +299,30 @@ class TelegramLinkService(BaseService):
                     "сначала отключите её",
                     details={"status": account.status},
                 )
-            if TelegramLinkInvitation.objects.filter(
-                employee_id=employee_id, status__in=("ACTIVE", "PENDING_CONFIRMATION")
-            ).exists():
-                raise Conflict(
-                    "У сотрудника уже есть действующая ссылка: "
-                    "отзовите её, прежде чем выдавать новую"
-                )
+            live = TelegramLinkInvitation.objects.filter(
+                employee_id=employee_id,
+                status__in=("ACTIVE", "PENDING_CONFIRMATION"),
+            )
+            if live.exists():
+                if not replace:
+                    raise Conflict(
+                        "У сотрудника уже есть действующая ссылка: "
+                        "отзовите её, прежде чем выдавать новую"
+                    )
+                # Повторная отправка: прежняя ссылка перестаёт работать
+                # прямо сейчас. Две живые ссылки на одного человека — это
+                # две двери, и закрыть за собой обе никто не вспомнит.
+                for stale in live:
+                    stale.status = "REVOKED"
+                    stale.revoked_at = now
+                    stale.save(update_fields=["status", "revoked_at", "updated_at"])
+                    self.audit.record(
+                        actor,
+                        action="telegram.invitation.revoke",
+                        entity_type=ENTITY_INVITATION,
+                        entity_id=stale.id,
+                        after=snapshot(stale, INVITATION_AUDIT_FIELDS),
+                    )
 
             invitation = TelegramLinkInvitation.objects.create(
                 organization_id=actor.organization_id,
@@ -302,6 +331,11 @@ class TelegramLinkService(BaseService):
                 status="ACTIVE",
                 expires_at=now + self._invitation_ttl(),
                 created_by_user_id=actor.user_id,
+                # Подсказка для узнавания: если кадровик указал имя в
+                # Telegram, человека можно узнать и без ссылки.
+                expected_username=(
+                    (expected_username or "").strip().lstrip("@") or None
+                ),
             )
             self.audit.record(
                 actor,
@@ -584,64 +618,225 @@ class TelegramLinkService(BaseService):
                 invitation.save(update_fields=["status", "updated_at"])
                 raise TelegramLinkError("expired", "Срок действия ссылки истёк")
 
-            employee = Employee.objects.filter(id=invitation.employee_id).first()
-            if employee is None or employee.employment_status in (
-                BLOCKED_EMPLOYMENT_STATUSES
-            ) or employee.archived_at is not None:
-                raise TelegramLinkError(
-                    "employee_inactive", "Привязка недоступна: обратитесь в отдел кадров"
-                )
-
-            # Один Telegram — один сотрудник. Уникальный ключ в базе скажет
-            # то же самое, но сообщением «нарушено ограничение целостности»;
-            # здесь причина называется своими словами.
-            taken = (
-                TelegramAccount.objects.filter(telegram_user_id=telegram_user_id)
-                .exclude(employee_id=employee.id)
-                .first()
+            return self._bind(
+                invitation,
+                telegram_user_id=telegram_user_id,
+                telegram_chat_id=telegram_chat_id,
+                telegram_username=telegram_username,
+                language_code=language_code,
+                now=now,
             )
-            if taken is not None:
+
+    def recognize(
+        self,
+        *,
+        telegram_username: str | None,
+        telegram_user_id: int,
+        telegram_chat_id: int,
+        language_code: str | None = None,
+    ) -> TelegramAccount:
+        """Узнать человека по имени в Telegram при первом запуске бота.
+
+        Бот не может написать первым — это правило Telegram, а не наше
+        решение. Но когда человек открывает бота сам, он приносит с собой
+        своё `@username`; если кадровик указал его в карточке, узнать
+        сотрудника можно без всякой ссылки.
+
+        Погашается та же ссылка, что выдана при приёме: отдельной дороги
+        в обход подтверждения HR здесь нет. Привязка получается такой же
+        PENDING, и кадровик подтверждает её тем же действием.
+
+        Узнавание по имени слабее ссылки: `@username` в Telegram можно
+        сменить и занять чужой. Поэтому оно и не даёт доступа само по
+        себе — только доводит человека до того же окна подтверждения.
+        """
+        name = (telegram_username or "").strip().lstrip("@")
+        if not name:
+            raise TelegramLinkError(
+                "no_username",
+                "У вашего Telegram нет имени пользователя: попросите ссылку в HR",
+            )
+
+        now = self._now()
+        with transaction.atomic():
+            # Ищем среди ДЕЙСТВУЮЩИХ приглашений: узнавание не отдельная
+            # дорога, а способ погасить ту же ссылку, что выдана при приёме.
+            # Без живого приглашения человека никто не звал.
+            live = list(
+                TelegramLinkInvitation.objects.select_for_update()
+                .filter(
+                    expected_username__iexact=name,
+                    status="ACTIVE",
+                    expires_at__gt=now,
+                )
+                .order_by("-created_at")[:2]
+            )
+            if not live:
                 raise TelegramLinkError(
-                    "telegram_taken",
-                    "Этот Telegram уже привязан к другому сотруднику",
+                    "unknown", "Мы вас не нашли: попросите ссылку в отделе кадров"
+                )
+            if len(live) > 1:
+                # Одно имя у двух приглашений — ошибка данных, и гадать,
+                # кто из них пришёл, нельзя.
+                raise TelegramLinkError(
+                    "ambiguous",
+                    "Такое имя указано у нескольких сотрудников: обратитесь в HR",
                 )
 
-            account = self._account_of(employee.id)
-            before = snapshot(account, ACCOUNT_AUDIT_FIELDS) if account else None
+            invitation = live[0]
+
+            return self._bind(
+                invitation,
+                telegram_user_id=telegram_user_id,
+                telegram_chat_id=telegram_chat_id,
+                telegram_username=name,
+                language_code=language_code,
+                now=now,
+            )
+
+    def _bind(
+        self,
+        invitation: TelegramLinkInvitation,
+        *,
+        telegram_user_id: int,
+        telegram_chat_id: int,
+        telegram_username: str | None,
+        language_code: str | None,
+        now: datetime,
+    ) -> TelegramAccount:
+        """Общая часть привязки: по ссылке и по узнаванию она одна.
+
+        Две отдельные реализации разошлись бы на первой же правке, и одна
+        из дорог однажды перестала бы требовать подтверждения HR.
+        """
+        employee = Employee.objects.filter(id=invitation.employee_id).first()
+        if employee is None or employee.employment_status in (
+            BLOCKED_EMPLOYMENT_STATUSES
+        ) or employee.archived_at is not None:
+            raise TelegramLinkError(
+                "employee_inactive", "Привязка недоступна: обратитесь в отдел кадров"
+            )
+
+        # Один Telegram — один сотрудник. Уникальный ключ в базе скажет
+        # то же самое, но сообщением «нарушено ограничение целостности»;
+        # здесь причина называется своими словами.
+        taken = (
+            TelegramAccount.objects.filter(telegram_user_id=telegram_user_id)
+            .exclude(employee_id=employee.id)
+            .first()
+        )
+        if taken is not None:
+            raise TelegramLinkError(
+                "telegram_taken",
+                "Этот Telegram уже привязан к другому сотруднику",
+            )
+
+        account = self._account_of(employee.id)
+        before = snapshot(account, ACCOUNT_AUDIT_FIELDS) if account else None
+        if account is None:
+            account = TelegramAccount(
+                organization_id=invitation.organization_id, employee=employee
+            )
+        account.telegram_user_id = telegram_user_id
+        account.telegram_chat_id = telegram_chat_id
+        account.telegram_username = telegram_username
+        account.language_code = language_code or "ru"
+        account.status = "PENDING"
+        account.connected_at = now
+        account.revoked_at = None
+        account.save()
+
+        invitation.status = "PENDING_CONFIRMATION"
+        invitation.used_at = now
+        invitation.consumed_by_telegram_user_id = telegram_user_id
+        invitation.save(
+            update_fields=[
+                "status", "used_at", "consumed_by_telegram_user_id", "updated_at",
+            ]
+        )
+
+        # Действие совершил сотрудник, а не пользователь CRM: в журнале
+        # это видно по actor_employee_id.
+        self.audit.record_by_employee(
+            organization_id=invitation.organization_id,
+            employee_id=employee.id,
+            action="telegram.link.consume",
+            entity_type=ENTITY_ACCOUNT,
+            entity_id=account.id,
+            before=before,
+            after=snapshot(account, ACCOUNT_AUDIT_FIELDS),
+        )
+        return account
+
+    def accept_terms(self, *, telegram_user_id: int) -> TelegramAccount:
+        """Активировать привязку после согласия сотрудника в чате с ботом."""
+        now = self._now()
+        with transaction.atomic():
+            account = TelegramAccount.objects.select_for_update().filter(
+                telegram_user_id=telegram_user_id, status="PENDING"
+            ).first()
             if account is None:
-                account = TelegramAccount(
-                    organization_id=invitation.organization_id, employee=employee
-                )
-            account.telegram_user_id = telegram_user_id
-            account.telegram_chat_id = telegram_chat_id
-            account.telegram_username = telegram_username
-            account.language_code = language_code or "ru"
-            account.status = "PENDING"
+                raise TelegramLinkError("invalid", "Привязка не ожидает согласия")
+            invitation = TelegramLinkInvitation.objects.select_for_update().filter(
+                employee_id=account.employee_id,
+                status="PENDING_CONFIRMATION",
+                consumed_by_telegram_user_id=telegram_user_id,
+            ).first()
+            if invitation is None:
+                raise TelegramLinkError("invalid", "Приглашение не найдено")
+            account.status = "ACTIVE"
             account.connected_at = now
-            account.revoked_at = None
-            account.save()
-
-            invitation.status = "PENDING_CONFIRMATION"
-            invitation.used_at = now
-            invitation.consumed_by_telegram_user_id = telegram_user_id
-            invitation.save(
-                update_fields=[
-                    "status", "used_at", "consumed_by_telegram_user_id", "updated_at",
-                ]
-            )
-
-            # Действие совершил сотрудник, а не пользователь CRM: в журнале
-            # это видно по actor_employee_id.
+            account.save(update_fields=["status", "connected_at", "updated_at"])
+            invitation.status = "USED"
+            invitation.reviewed_at = now
+            invitation.save(update_fields=["status", "reviewed_at", "updated_at"])
+            Employee.objects.filter(pk=account.employee_id).update(telegram_connected=True)
             self.audit.record_by_employee(
-                organization_id=invitation.organization_id,
-                employee_id=employee.id,
-                action="telegram.link.consume",
-                entity_type=ENTITY_ACCOUNT,
-                entity_id=account.id,
-                before=before,
-                after=snapshot(account, ACCOUNT_AUDIT_FIELDS),
+                organization_id=account.organization_id, employee_id=account.employee_id,
+                action="telegram.link.accept_terms", entity_type=ENTITY_ACCOUNT,
+                entity_id=account.id, after=snapshot(account, ACCOUNT_AUDIT_FIELDS),
             )
         return account
+
+
+def welcome_facts(employee) -> dict:
+    """Чем бот здоровается с узнанным сотрудником.
+
+    Только то, что человек и так про себя знает: кто он, где работает и
+    по какому графику. Сообщать что-то сверх этого боту нечем и незачем.
+    """
+    from humotech.employees.models import EmployeeAssignment
+    from humotech.schedules.services import WorkScheduleService
+
+    parts = [employee.last_name, employee.first_name, employee.middle_name]
+    place = (
+        EmployeeAssignment.objects.filter(employee_id=employee.id, is_primary=True)
+        .select_related("office", "department", "position", "manager_employee")
+        .order_by("-valid_from")
+        .first()
+    )
+    assignment = WorkScheduleService().current_assignment(employee.id)
+    manager = place.manager_employee if place else None
+
+    return {
+        "full_name": " ".join(one for one in parts if one),
+        "employment_status": employee.employment_status,
+        "hire_date": employee.hire_date,
+        "office_name": place.office.name if place and place.office else None,
+        "department_name": (
+            place.department.name if place and place.department else None
+        ),
+        "position_name": place.position.name if place and place.position else None,
+        "schedule_name": (
+            assignment.schedule.name if assignment and assignment.schedule else None
+        ),
+        "manager_name": (
+            " ".join(
+                one for one in
+                [manager.last_name, manager.first_name] if one
+            ) if manager else None
+        ),
+    }
 
 
 @dataclass(frozen=True)

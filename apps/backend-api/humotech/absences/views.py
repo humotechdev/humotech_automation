@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from django.http import FileResponse, HttpResponse
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import serializers
@@ -23,6 +24,7 @@ from rest_framework.views import APIView
 
 from humotech.absences.services import AbsenceService
 from humotech.core.api import validated
+from humotech.core.errors import ValidationFailed
 from humotech.core.rbac import Actor
 
 
@@ -65,6 +67,13 @@ class HrAbsenceRequestSerializer(serializers.Serializer):
     comment = serializers.CharField(allow_null=True)
     review_comment = serializers.CharField(allow_null=True)
     submitted_at = serializers.DateTimeField(allow_null=True)
+    history = serializers.ListField(
+        child=serializers.DictField(),
+        help_text=(
+            "Шаги заявки по порядку: at, action, comment. Комментарий есть "
+            "только у решений кадровика"
+        ),
+    )
 
 
 class PendingAbsenceRequestsSerializer(serializers.Serializer):
@@ -133,10 +142,35 @@ def hr_request_json(request) -> dict:
         "requires_document": request.absence_type.requires_document,
         "comment": request.employee_comment,
         "review_comment": request.review_comment,
+        # Когда по заявке приняли решение. Отдельно от `submitted_at`:
+        # заявку подают и решают в разные дни, и «последние решения»
+        # строятся именно по второй дате.
+        "reviewed_at": (
+            request.reviewed_at.isoformat() if request.reviewed_at else None
+        ),
         "submitted_at": (
             request.submitted_at.isoformat() if request.submitted_at else None
         ),
+        # История — неизменяемые записи `AbsenceAction` по порядку. Комментарий
+        # отдаётся только у решений кадровика: у шагов сотрудника в нём
+        # бывает диагноз, а история видна всем, кто разбирает очередь.
+        "history": [
+            {
+                "at": action.created_at.isoformat(),
+                "action": action.action,
+                "comment": (
+                    action.comment
+                    if action.action in HR_DECISION_ACTIONS
+                    else None
+                ),
+            }
+            for action in sorted(request.actions.all(), key=lambda one: one.created_at)
+        ],
     }
+
+
+# Шаги, комментарий к которым пишет кадровик, а не сотрудник.
+HR_DECISION_ACTIONS = ("APPROVED", "REJECTED", "CANCELLED")
 
 
 @extend_schema(tags=["Отсутствия"])
@@ -208,4 +242,122 @@ class AbsenceDecisionView(APIView):
         return Response(hr_request_json(row))
 
 
-__all__ = ["AbsenceDecisionView", "PendingAbsenceRequestsView"]
+@extend_schema(tags=["Отсутствия"])
+class AbsenceDocumentDownloadView(APIView):
+    """Файл справки к заявке.
+
+    Отдаётся отсюда, а не веб-сервером: файл лежит в приватном хранилище,
+    и право на него спрашивается при каждом открытии. `inline` — PDF и
+    картинку браузер показывает сам, сохранить их можно из просмотрщика.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        operation_id="absence_request_document_download",
+        summary="Файл справки к заявке",
+        parameters=[
+            OpenApiParameter("request_id", OpenApiTypes.UUID, OpenApiParameter.PATH),
+            OpenApiParameter("document_id", OpenApiTypes.UUID, OpenApiParameter.PATH),
+        ],
+        responses={(200, "application/octet-stream"): OpenApiTypes.BINARY},
+    )
+    def get(self, request, request_id, document_id):
+        actor = Actor.from_user(request.user)
+        stream, record = AbsenceService().open_document(actor, request_id, document_id)
+        return FileResponse(
+            stream,
+            as_attachment=False,
+            filename=record.original_filename,
+            content_type=record.mime_type,
+        )
+
+
+class DocumentDecisionSerializer(serializers.Serializer):
+    """Решение по справке.
+
+    Причина обязательна при отказе и проверяется сервисом: отклонение
+    без объяснения — тупик, человек приносит ту же бумагу второй раз.
+    """
+
+    comment = serializers.CharField(required=False, allow_blank=True,
+                                    allow_null=True, max_length=1000)
+
+
+class AbsenceDocumentDecisionView(APIView):
+    """Принять справку или отклонить её с причиной.
+
+    Решение по бумаге не меняет решения по заявке: одобренный больничный
+    с отклонённой справкой — законное состояние, HR ждёт правильный
+    документ, а человек всё это время болеет.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        operation_id="absence_request_document_decision",
+        summary="Принять или отклонить справку",
+        parameters=[
+            OpenApiParameter("request_id", OpenApiTypes.UUID, OpenApiParameter.PATH),
+            OpenApiParameter("document_id", OpenApiTypes.UUID, OpenApiParameter.PATH),
+            OpenApiParameter("decision", OpenApiTypes.STR, OpenApiParameter.PATH,
+                             enum=["accept", "reject"]),
+        ],
+        request=DocumentDecisionSerializer,
+        responses={200: OpenApiTypes.OBJECT},
+    )
+    def post(self, request, request_id, document_id, decision):
+        if decision not in ("accept", "reject"):
+            raise ValidationFailed(
+                "Решение может быть только accept или reject",
+                details={"decision": decision},
+            )
+        payload = validated(DocumentDecisionSerializer, request.data)
+        actor = Actor.from_user(request.user)
+        document = AbsenceService().verify_document(
+            actor, request_id, document_id,
+            accept=decision == "accept",
+            comment=payload.get("comment"),
+        )
+        return Response({
+            "id": str(document.id),
+            "verification_status": document.verification_status,
+            "verification_comment": document.verification_comment,
+        })
+
+
+class AbsenceApplicationView(APIView):
+    """Печатное заявление по заявке — для кадровика.
+
+    Тот же бланк, что видит сотрудник. Нужен, когда человек принёс не ту
+    бумагу или не принёс вовсе: кадровик печатает сам и не заставляет
+    его искать телефон.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        operation_id="absence_request_application",
+        summary="Заявление по заявке для печати",
+        parameters=[
+            OpenApiParameter("request_id", OpenApiTypes.UUID, OpenApiParameter.PATH),
+        ],
+        responses={(200, "application/pdf"): OpenApiTypes.BINARY},
+    )
+    def get(self, request, request_id):
+        actor = Actor.from_user(request.user)
+        pdf = AbsenceService().hr_application(actor, request_id)
+        answer = HttpResponse(pdf, content_type="application/pdf")
+        answer["Content-Disposition"] = (
+            f'inline; filename="application-{request_id}.pdf"'
+        )
+        return answer
+
+
+__all__ = [
+    "AbsenceApplicationView",
+    "AbsenceDocumentDecisionView",
+    "AbsenceDecisionView",
+    "AbsenceDocumentDownloadView",
+    "PendingAbsenceRequestsView",
+]

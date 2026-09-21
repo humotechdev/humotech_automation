@@ -26,14 +26,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { DayChart } from '../src/screens/Stats';
 import { DayCard } from '../src/screens/History';
-import { Home, shiftProgress } from '../src/screens/Home';
+import { Home } from '../src/screens/Home';
 import { Profile } from '../src/screens/Profile';
 import { forgetToken, rememberToken } from '../src/auth';
 import { AbsenceForm, RequestCard } from '../src/screens/Requests';
 import { ScanResult } from '../src/screens/Scan';
-import { AppHeader, greeting, initials } from '../src/ui/AppHeader';
+import { greeting } from '../src/screens/Home';
 import { BottomNavigation } from '../src/ui/BottomNavigation';
-import { StatusCard } from '../src/ui/StatusCard';
+import { TopBar, initials } from '../src/ui/TopBar';
 import { EmptyState, ErrorState, LoadingScreen, OfflineBanner } from '../src/ui/states';
 import { ConfirmationDialog } from '../src/ui/overlays';
 import { FileUploadField } from '../src/ui/fields';
@@ -43,11 +43,12 @@ import {
   day,
   fakeFetch,
   options,
+  pending,
   profile,
+  ready,
   request,
   session,
   status,
-  summary,
 } from './fixtures';
 
 afterEach(() => {
@@ -61,42 +62,47 @@ const noop = () => undefined;
 // --- 1. нижняя навигация ----------------------------------------------------
 
 describe('нижняя навигация', () => {
-  it('переключает пять разделов', () => {
+  it('переключает четыре раздела', () => {
     const seen: string[] = [];
     const { rerender } = render(
       <BottomNavigation active="home" onChange={(tab) => seen.push(tab)} />,
     );
 
-    for (const label of ['Главная', 'Статистика', 'Отметка', 'История', 'Заявки']) {
+    for (const label of ['Главная', 'Отметки', 'Заявки', 'Профиль']) {
       fireEvent.click(screen.getByRole('button', { name: label }));
     }
-    expect(seen).toEqual(['home', 'stats', 'scan', 'history', 'requests']);
+    expect(seen).toEqual(['home', 'history', 'requests', 'profile']);
 
     // Активный раздел объявляется диктором, а не только красится.
-    rerender(<BottomNavigation active="stats" onChange={noop} />);
-    expect(screen.getByRole('button', { name: 'Статистика' })).toHaveProperty(
+    rerender(<BottomNavigation active="history" onChange={noop} />);
+    expect(screen.getByRole('button', { name: 'Отметки' })).toHaveProperty(
       'ariaCurrent',
       'page',
     );
   });
 
-  it('кнопка QR открывает отметку и приподнята', () => {
-    const seen: string[] = [];
-    render(<BottomNavigation active="home" onChange={(tab) => seen.push(tab)} />);
+  it('сканера среди вкладок нет: он открывается с карточки статуса', () => {
+    render(<BottomNavigation active="home" onChange={noop} />);
+    expect(screen.queryByRole('button', { name: 'Отметка' })).toBeNull();
+    expect(screen.getAllByRole('button')).toHaveLength(4);
+  });
 
-    const scan = screen.getByRole('button', { name: 'Отметка' });
-    fireEvent.click(scan);
-
-    expect(seen).toEqual(['scan']);
-    expect(scan.className).toContain('nav-item-scan');
+  it('активный раздел — синий текст и иконка, без цветной плашки', () => {
+    const { container } = render(
+      <BottomNavigation active="home" onChange={noop} />,
+    );
+    const active = container.querySelector('.nav-item-active');
+    // Отличается только классом пункта: отдельной подложки под иконкой
+    // в разметке нет вовсе.
+    expect(active?.querySelector('.nav-icon')?.className).toBe('nav-icon');
   });
 
   it('нажимается вся кнопка, а не только иконка', () => {
     // Подпись внутри кнопки, а не рядом: иначе половина площади
     // пункта не реагирует на касание.
     render(<BottomNavigation active="home" onChange={noop} />);
-    const item = screen.getByRole('button', { name: 'История' });
-    expect(within(item).getByText('История')).toBeTruthy();
+    const item = screen.getByRole('button', { name: 'Отметки' });
+    expect(within(item).getByText('Отметки')).toBeTruthy();
     expect(item.querySelector('svg')).toBeTruthy();
   });
 });
@@ -144,83 +150,8 @@ describe('безопасная зона', () => {
   });
 });
 
-// --- 4-5. главный экран и статусы -------------------------------------------
-
-describe('главный экран', () => {
-  it('в офисе: зелёная точка, длительность и время входа', () => {
-    render(
-      <StatusCard
-        status={status({
-          state: 'IN_OFFICE',
-          open_session: session({ is_open: true, ended_at: null, seconds: 13_320 }),
-        })}
-      />,
-    );
-
-    expect(screen.getByText('Сейчас в офисе')).toBeTruthy();
-    expect(screen.getByText('3 ч 42 мин')).toBeTruthy();
-    expect(screen.getByText('Вход')).toBeTruthy();
-  });
-
-  it('открытой сессии не назначается выдуманное время выхода', () => {
-    const { container } = render(
-      <StatusCard
-        status={status({
-          state: 'IN_OFFICE',
-          open_session: session({ is_open: true, ended_at: null, seconds: 13_320 }),
-        })}
-      />,
-    );
-
-    expect(screen.getByText(/По состоянию на сейчас/)).toBeTruthy();
-    // Слова «выход» на карточке открытой сессии быть не должно вовсе.
-    expect(container.textContent?.toLowerCase()).not.toContain('выход');
-  });
-
-  it.each([
-    ['OUTSIDE', 'Вне офиса'],
-    ['SICK_LEAVE', 'Больничный'],
-    ['VACATION', 'Отпуск'],
-    ['DAY_OFF', 'Сегодня выходной'],
-    ['WORKDAY_MISSED', 'Рабочий день без отметок'],
-  ])('состояние %s показано как «%s»', (state, text) => {
-    render(<StatusCard status={status({ state })} />);
-    expect(screen.getByText(text)).toBeTruthy();
-  });
-
-  it('плана и остатка нет: backend не отдаёт плановых минут', () => {
-    // Смена 09:00–18:00 — это девять часов, а норма короче на обед,
-    // которого в API нет. Показать «осталось 5 ч 18 мин» значило бы
-    // поставить выдуманный знаменатель под рабочее время.
-    const { container } = render(
-      <Home
-        profile={profile}
-        status={status({ seconds_today: 13_320 })}
-        today={summary()}
-        onScan={noop}
-        onHistory={noop}
-        onSickLeave={noop}
-        onVacation={noop}
-      />,
-    );
-
-    expect(container.textContent).not.toContain('Осталось');
-    expect(container.textContent).not.toContain('План');
-    expect(screen.getByText('Отработано')).toBeTruthy();
-  });
-
-  it('полоса смены говорит о времени суток, а не о человеке', () => {
-    const at = new Date('2026-09-04T08:30:00Z'); // 13:30 в Душанбе
-    const shift = shiftProgress(status(), at);
-    expect(shift).toEqual({ elapsed: 270, total: 540 });
-  });
-
-  it('без графика полосы нет вовсе', () => {
-    expect(
-      shiftProgress(status({ scheduled_start: null, scheduled_end: null })),
-    ).toBeNull();
-  });
-});
+// Главный экран проверяется отдельным файлом: `home.test.tsx`. Здесь
+// остались общие части интерфейса, которые он использует.
 
 // --- 6. статистика ----------------------------------------------------------
 
@@ -719,17 +650,20 @@ describe('только свои данные', () => {
   it('экраны рисуют то, что пришло, и ничего не подставляют', () => {
     const { container } = render(
       <Home
-        profile={{
-          ...profile,
-          employee: { ...profile.employee, full_name: 'Назарова Сабина' },
-          office: { ...profile.office, name: 'Филиал Худжанд' },
-        }}
-        status={status()}
-        today={null}
+        fullName="Назарова Сабина"
+        office="Филиал Худжанд"
+        today={ready({ status: status(), sessions: [] })}
+        week={pending()}
+        requests={pending()}
+        notes={pending()}
         onScan={noop}
         onHistory={noop}
-        onSickLeave={noop}
-        onVacation={noop}
+        onRequests={noop}
+        onNewRequest={noop}
+        onCorrection={noop}
+        onQuestion={noop}
+        onNote={noop}
+        onWeek={noop}
       />,
     );
 
@@ -745,7 +679,10 @@ describe('только свои данные', () => {
 
     expect(container.textContent).not.toContain(profile.employee.id);
     expect(container.textContent).not.toContain(profile.office.id);
-    expect(container.textContent).toContain('DEMO-001');
+    // Табельный номер — тоже внутренний идентификатор: человеку он
+    // ничего не объясняет, а в разговоре с кадрами хватает фамилии.
+    expect(container.textContent).not.toContain('DEMO-001');
+    expect(container.textContent).toContain(profile.office.name);
   });
 });
 
@@ -754,15 +691,18 @@ describe('только свои данные', () => {
 describe('доступность', () => {
   it('кнопка из одной иконки подписана', () => {
     render(
-      <AppHeader
+      <TopBar
         fullName="Рахимов Далер"
-        office="Головной офис"
-        position="Инженер"
-        timeZone={TZ}
+        unread={2}
+        onNotifications={noop}
         onProfile={noop}
       />,
     );
-    expect(screen.getByRole('button', { name: 'Профиль и помощь' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Открыть профиль' })).toBeTruthy();
+    // Счётчик не только цветная точка: диктор называет число.
+    expect(
+      screen.getByRole('button', { name: 'Уведомления, непрочитанных: 2' }),
+    ).toBeTruthy();
   });
 
   it('итог отметки объявляется словом, а не только значком', () => {
@@ -774,6 +714,8 @@ describe('доступность', () => {
           office_name: 'Головной офис',
           point_name: 'Главный вход',
           occurred_at: '2026-09-04T03:54:00Z',
+          distance_m: null,
+          radius_m: null,
           session: null,
         }}
         timeZone={TZ}

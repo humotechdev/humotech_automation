@@ -191,7 +191,26 @@ export interface Day {
   missed: boolean;
   absence_code: string | null;
   absence_name: string | null;
+  /**
+   * Норма дня в секундах: 0 у выходного, null — графика на этот день нет.
+   *
+   * Разные вещи, и путать их нельзя: ноль означает «работать не нужно»,
+   * null — «сколько нужно, неизвестно». Кольцо недели красится по этому
+   * числу, а не по «обычным восьми часам».
+   */
+  norm_seconds: number | null;
   sessions?: OpenSession[];
+}
+
+/** Уведомление, которое уже дошло до сотрудника. */
+export interface Note {
+  id: string;
+  notification_type: string;
+  title: string | null;
+  body: string;
+  sent_at: string | null;
+  read_at: string | null;
+  is_read: boolean;
 }
 
 export interface ScanResponse {
@@ -200,6 +219,10 @@ export interface ScanResponse {
   office_name: string | null;
   point_name: string | null;
   occurred_at: string | null;
+  /** Сколько метров до офиса вышло по координатам. `null` — не проверялось. */
+  distance_m: number | null;
+  /** Радиус офиса, с которым сравнивали. */
+  radius_m: number | null;
   session: {
     id: string;
     started_at: string;
@@ -252,6 +275,115 @@ export interface AbsenceOptions {
 
 // --- запросы ---------------------------------------------------------------
 
+/**
+ * Опрос сотрудника.
+ *
+ * Именной: ответ привязан к человеку, и HR видит, кто что ответил. Это
+ * решение, а не недосмотр — сотрудник должен понимать, что подписывается
+ * своим именем, и приложение говорит об этом прямо на первом экране.
+ */
+export interface SurveyQuestion {
+  id: string;
+  position: number;
+  text: string;
+  /** SINGLE — один вариант, MULTI — несколько, SCALE — 1..5, TEXT — свой ответ. */
+  kind: 'SINGLE' | 'MULTI' | 'SCALE' | 'TEXT';
+  is_required: boolean;
+  options: string[] | null;
+}
+
+export interface SurveyAnswer {
+  question_id: string;
+  text?: string | null;
+  number?: number | null;
+  options?: string[] | null;
+}
+
+export interface Survey {
+  id: string;
+  title: string;
+  description: string | null;
+  status: string;
+  questions: SurveyQuestion[];
+  /** Уже сохранённое: начатый опрос не начинается заново. */
+  answers: SurveyAnswer[];
+}
+
+export interface SurveyBrief {
+  id: string;
+  title: string;
+  status: string;
+  sent_at: string | null;
+  questions_total: number;
+}
+
+/**
+ * Координаты в том виде, в каком их принимает сервер.
+ *
+ * Округление здесь не косметика. Поле объявлено как `DecimalField` с
+ * шестью знаками после запятой, и лишние знаки оно не отбрасывает, а
+ * отвергает запрос целиком. Телефон же выдаёт широту с тринадцатью
+ * знаками не в виде исключения, а всегда — то есть без округления
+ * отметка ломалась бы ровно там, где мы её чиним, и выглядела бы так
+ * же: «не получилось».
+ *
+ * Шесть знаков — это примерно десять сантиметров на местности. Для
+ * проверки «человек в пределах ста метров от офиса» больше не нужно.
+ */
+export function placeOf(
+  position?: { latitude: number; longitude: number; accuracy: number } | null,
+): { latitude: number; longitude: number; accuracy_m: number } | Record<string, never> {
+  if (!position) return {};
+  const { latitude, longitude, accuracy } = position;
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return {};
+  return {
+    latitude: Number(latitude.toFixed(6)),
+    longitude: Number(longitude.toFixed(6)),
+    // Погрешность сервер сравнивает с радиусом офиса, поэтому её тоже
+    // надо уложить в объявленную точность — двух знаков хватает с
+    // запасом, метры здесь не делят на сотые всерьёз.
+    accuracy_m: Number(
+      (Number.isFinite(accuracy) && accuracy > 0 ? accuracy : 30).toFixed(2),
+    ),
+  };
+}
+
+/**
+ * Файл с сервера — как файл, а не как JSON.
+ *
+ * Отдельно от `call`, потому что тут всё другое: ответ не разбирается,
+ * ошибка приходит текстом, а результат живёт в памяти вкладки, пока
+ * адрес не отозван.
+ *
+ * Токен уходит заголовком, а не в адресе: ссылку с токеном человек
+ * перешлёт в чат, и она будет работать у всех, кто её открыл.
+ */
+export async function fetchFile(
+  path: string,
+  options: { fetchImpl?: typeof fetch; token?: string | null } = {},
+): Promise<Result<Blob>> {
+  const doFetch = options.fetchImpl ?? fetch;
+  const token = options.token !== undefined ? options.token : recallToken();
+  if (!token) return { ok: false, kind: 'auth', message: MESSAGES.auth };
+
+  let response: Response;
+  try {
+    response = await doFetch(`${API_URL}${path}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch {
+    return { ok: false, kind: 'network', message: MESSAGES.network };
+  }
+
+  if (response.status === 401) {
+    return { ok: false, kind: 'auth', message: MESSAGES.auth };
+  }
+  if (!response.ok) {
+    return { ok: false, kind: 'server', message: MESSAGES.server };
+  }
+  return { ok: true, value: await response.blob() };
+}
+
 export const api = {
   profile: () => call<Profile>('/me/profile'),
   status: () => call<Status>('/me/status'),
@@ -273,11 +405,23 @@ export const api = {
    * Отметка. Наружу уходит один код — ни офиса, ни направления,
    * ни времени: всё это решает сервер.
    */
-  scan: (token: string, clientEventId: string) =>
+  scan: (
+    token: string,
+    clientEventId: string,
+    position?: { latitude: number; longitude: number; accuracy: number } | null,
+  ) =>
     call<ScanResponse>('/me/attendance/scan', {
       method: 'POST',
-      body: { token, client_event_id: clientEventId },
+      body: { token, client_event_id: clientEventId, ...placeOf(position) },
     }),
+  /**
+   * Печатное заявление по заявке.
+   *
+   * Собирается на сервере из самой заявки: бланк, сохранённый однажды,
+   * молча разошёлся бы с продлением.
+   */
+  absenceApplication: (id: string) =>
+    fetchFile(`/me/absences/${id}/application`),
   absences: () =>
     call<{ requests: AbsenceRequest[]; total: number }>('/me/absences'),
   absenceOptions: () => call<AbsenceOptions>('/me/absences/options'),
@@ -285,6 +429,30 @@ export const api = {
     call<AbsenceRequest>('/me/absences', { method: 'POST', form }),
   cancelAbsence: (id: string) =>
     call<AbsenceRequest>(`/me/absences/${id}`, { method: 'DELETE' }),
+  /**
+   * Лента уведомлений. Отдельный запрос, а не часть профиля: она
+   * обновляется по своим поводам и не должна ронять весь экран, если
+   * упадёт.
+   */
+  notifications: (limit = 20) =>
+    call<{ unread: number; items: Note[] }>('/me/notifications', {
+      query: { limit },
+    }),
+  readNotification: (id: string) =>
+    call<Note>(`/me/notifications/${id}/read`, { method: 'POST' }),
+  /** Опросы, которые ещё предстоит пройти. */
+  surveys: () => call<{ items: SurveyBrief[] }>('/me/surveys'),
+  /**
+   * Открыть опрос. Не просто чтение: с этого начинается отсчёт «начал
+   * проходить», и HR видит разницу между «не открывал» и «бросил».
+   */
+  survey: (id: string) => call<Survey>(`/me/surveys/${id}`),
+  /** Ответы уходят целиком: опрос проходят за раз, а не по вопросу. */
+  submitSurvey: (id: string, answers: SurveyAnswer[]) =>
+    call<{ id: string; status: string; completed_at: string | null }>(
+      `/me/surveys/${id}`,
+      { method: 'POST', body: { answers } },
+    ),
   leaveBalance: () =>
     call<{
       balances: Array<{

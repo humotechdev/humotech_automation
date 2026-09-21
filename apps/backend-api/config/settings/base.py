@@ -174,6 +174,7 @@ HUMOTECH_APPS = [
     "humotech.notifications",
     "humotech.audit",
     "humotech.reports",
+    "humotech.surveys",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + HUMOTECH_APPS
@@ -508,6 +509,10 @@ SPECTACULAR_SETTINGS = {
     "ENUM_NAME_OVERRIDES": {
         "AttendanceEventType": "humotech.core.enums.ATTENDANCE_EVENT_TYPES",
         "ExportKind": "humotech.reports.sheets.EXPORT_KINDS",
+        # Очередь берёт и старые виды, и виды конструктора; каталог,
+        # предпросмотр и шаблоны — только виды конструктора.
+        "ExportJobKind": "humotech.reports.service.JOB_KINDS",
+        "ReportKind": "humotech.reports.catalog.REPORT_KINDS",
         # ACTIVE/INACTIVE/ARCHIVED — один и тот же набор у организации,
         # региона, отдела, должности и графика. Это не совпадение, а одно
         # состояние справочной записи, и в схеме оно должно быть одним
@@ -518,5 +523,20 @@ SPECTACULAR_SETTINGS = {
         # и в схеме он должен быть одним именованным перечислением.
         "KnowledgeSourceStatus": "humotech.core.enums.KNOWLEDGE_SOURCE_STATUSES",
         "KnowledgeSourceType": "humotech.core.enums.KNOWLEDGE_SOURCE_TYPES",
+        # Обращения: у строки очереди, карточки, истории, черновика и
+        # доставки своё поле `status` — и у каждого свой набор значений.
+        "QuestionStatus": "humotech.core.enums.QUESTION_STATUSES",
+        "QuestionPriority": "humotech.core.enums.QUESTION_PRIORITIES",
+        "QuestionCategory": "humotech.core.enums.QUESTION_CATEGORIES",
+        "QuestionDraftStatus": "humotech.core.enums.QUESTION_DRAFT_STATUSES",
+        "QuestionDeliveryStatus": "humotech.core.enums.QUESTION_DELIVERY_STATUSES",
+        "QuestionMessageKind": "humotech.core.enums.QUESTION_MESSAGE_KINDS",
+        "QuestionMessageSource": "humotech.core.enums.QUESTION_MESSAGE_SOURCES",
+        "QuestionEvent": "humotech.core.enums.QUESTION_EVENTS",
+        # Лента событий кадровика: у её `type` и `priority` свои наборы,
+        # не совпадающие ни с видом уведомления в очереди, ни с
+        # важностью обращения.
+        "FeedEventType": "humotech.notifications.feed.FEED_TYPES",
+        "FeedPriority": "humotech.notifications.feed.FEED_PRIORITIES",
     },
 }

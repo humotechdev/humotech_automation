@@ -1,0 +1,1778 @@
+/*
+ * Страница «Заявки» — размеры сняты с эталона 1672×941.
+ * Всё под префиксом `rq-`: правки не задевают другие страницы.
+ */
+
+.rq {
+  --rq-ink: #13295a;
+  --rq-text: #22355c;
+  --rq-muted: #6b7c98;
+  --rq-line: #e1e8f1;
+  --rq-field: #d9e2ec;
+  --rq-blue: #1f6fe0;
+  --rq-green: #1b9e5f;
+  --rq-orange: #e0850f;
+  --rq-red: #e0453f;
+
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  font-family: 'Segoe UI', 'Open Sans', system-ui, sans-serif;
+  color: var(--rq-text);
+}
+
+/* --- шапка ------------------------------------------------------------------ */
+
+.rq-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  height: 94px;
+  flex: none;
+  margin: -6px 15px 0 5px;
+}
+
+.rq-head__title {
+  margin: 0;
+  font-size: 33px;
+  line-height: 38px;
+  font-weight: 700;
+  color: var(--rq-ink);
+}
+
+.rq-head__sub {
+  margin: 1px 0 0;
+  font-size: 15.5px;
+  line-height: 22px;
+  color: #3e4f6d;
+}
+
+.rq-head__meta {
+  display: flex;
+  gap: 6px;
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--rq-muted);
+}
+
+.rq-head__meta i {
+  font-style: normal;
+}
+
+.rq-head__actions {
+  display: flex;
+  gap: 14px;
+  margin-top: 15px;
+}
+
+.rq-note {
+  margin: 0 0 6px 5px;
+  font-size: 13px;
+}
+
+/* --- кнопки ----------------------------------------------------------------- */
+
+.rq-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  height: 40px;
+  padding: 0 17px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.rq-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.rq-btn--light {
+  border-color: var(--rq-field);
+  background: #ffffff;
+  color: var(--rq-ink);
+  box-shadow: 0 1px 2px rgba(22, 48, 92, 0.04);
+}
+
+.rq-btn--blue-text {
+  color: #1466d8;
+}
+
+.rq-btn--reject {
+  border-color: #ef9a96;
+  background: #ffffff;
+  color: #d23b35;
+}
+
+.rq-btn--approve {
+  border-color: #17915a;
+  background: linear-gradient(180deg, #20a867 0%, #178f57 100%);
+  color: #ffffff;
+}
+
+/* --- сетка ------------------------------------------------------------------ */
+
+.rq-grid {
+  flex: 1 1 0;
+  min-height: 520px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  column-gap: 10px;
+  margin: 0 0 -2px -3px;
+}
+
+.rq-grid--open {
+  grid-template-columns: minmax(0, 917px) minmax(0, 1fr);
+}
+
+.rq-list,
+.rq-side {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(221, 229, 239, 0.9);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 6px 24px rgba(30, 64, 120, 0.06);
+}
+
+.rq-list {
+  padding: 0 8px 8px 9px;
+}
+
+/* --- вкладки ---------------------------------------------------------------- */
+
+.rq-tabs {
+  display: flex;
+  gap: 8px;
+  height: 52px;
+  flex: none;
+  margin: 0 0 0 6px;
+  border-bottom: 1px solid var(--rq-line);
+}
+
+.rq-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  color: #3e4f6d;
+  cursor: pointer;
+}
+
+.rq-tab--on {
+  color: #1466d8;
+  font-weight: 600;
+}
+
+.rq-tab--on::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--rq-blue);
+}
+
+.rq-tab__count {
+  min-width: 22px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #e8f0fb;
+  font-size: 12px;
+  font-weight: 600;
+  color: #34507f;
+  text-align: center;
+}
+
+.rq-tab--on .rq-tab__count {
+  background: #dce9fd;
+  color: #1466d8;
+}
+
+/* --- отбор ------------------------------------------------------------------ */
+
+.rq-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 259px) 128px 130px 222px 102px;
+  gap: 10px;
+  height: 40px;
+  flex: none;
+  margin: 15px 0 0 9px;
+}
+
+.rq-filters--extra {
+  grid-template-columns: 200px;
+  margin-top: 10px;
+}
+
+.rq-search,
+.rq-select,
+.rq-dates,
+.rq-more {
+  display: flex;
+  align-items: center;
+  height: 40px;
+  border: 1px solid var(--rq-field);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.rq-search {
+  gap: 10px;
+  padding: 0 12px;
+  color: #50627f;
+}
+
+.rq-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 13.5px;
+}
+
+.rq-select {
+  position: relative;
+}
+
+.rq-select select {
+  width: 100%;
+  height: 100%;
+  padding: 0 28px 0 12px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  appearance: none;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--rq-ink);
+  cursor: pointer;
+}
+
+.rq-select__arrow {
+  position: absolute;
+  top: 11px;
+  right: 10px;
+  color: #3b4d6c;
+  pointer-events: none;
+}
+
+.rq-dates {
+  gap: 6px;
+  padding: 0 12px;
+  color: #3b4d6c;
+  font-size: 13.5px;
+}
+
+.rq-dates input {
+  width: 78px;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  color: var(--rq-ink);
+}
+
+.rq-dates input::-webkit-calendar-picker-indicator {
+  display: none;
+}
+.app-date-range.rq-dates { height: auto; padding: 0; border: 0; background: transparent; }
+
+.rq-more {
+  justify-content: center;
+  gap: 8px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--rq-ink);
+  cursor: pointer;
+}
+
+.rq-more--on {
+  border-color: #3a86ea;
+  color: #1466d8;
+}
+
+.rq-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 13px 0 0 9px;
+  flex: none;
+}
+
+.rq-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  height: 28px;
+  padding: 0 10px 0 13px;
+  border: 1px solid #cfe0f6;
+  border-radius: 999px;
+  background: #eef5ff;
+  font: inherit;
+  font-size: 13px;
+  color: var(--rq-ink);
+  cursor: pointer;
+}
+
+.rq-reset {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 13.5px;
+  color: #1466d8;
+  cursor: pointer;
+}
+
+/* --- строки ----------------------------------------------------------------- */
+
+.rq-rows {
+  flex: 1;
+  min-height: 0;
+  margin-top: 16px;
+  overflow-y: auto;
+}
+
+.rq-empty {
+  margin: 20px 16px;
+  font-size: 13px;
+  color: var(--rq-muted);
+}
+
+.rq-empty--bad {
+  color: #b42318;
+}
+
+.rq-row {
+  position: relative;
+  display: grid;
+  /* Период — одной строкой, как в эталоне: ему ширина нужнее, чем типу,
+     у которого подпись и так в две строки. */
+  grid-template-columns: 52px minmax(0, 1.2fr) minmax(0, 0.9fr) minmax(0, 1.2fr) minmax(0, 0.85fr) 112px 132px 22px;
+  align-items: center;
+  /* 14, а не 10: при десяти подпись типа вставала вплотную к периоду. */
+  column-gap: 14px;
+  min-height: 80px;
+  padding: 0 12px 0 10px;
+  border-bottom: 1px solid #edf1f6;
+  cursor: pointer;
+}
+
+.rq-row:hover {
+  background: #f8fbff;
+}
+
+.rq-row--on {
+  border: 1px solid #b9d4fb;
+  border-radius: 6px;
+  background: #eef5ff;
+}
+
+.rq-row--on::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  left: -1px;
+  width: 3px;
+  border-radius: 6px 0 0 6px;
+  background: var(--rq-blue);
+}
+
+.rq-face {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  border-radius: 999px;
+  object-fit: cover;
+  background: #e6effa;
+  color: #1c4c93;
+  font-weight: 600;
+}
+
+.rq-row__face {
+  width: 48px;
+  height: 48px;
+  font-size: 16px;
+}
+
+.rq-row__who {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.rq-row__who b {
+  font-size: 14px;
+  line-height: 19px;
+  font-weight: 600;
+  color: var(--rq-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rq-row__who small {
+  font-size: 12.5px;
+  line-height: 18px;
+  color: var(--rq-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rq-row__kind,
+.rq-row__doc {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 17px;
+  color: var(--rq-ink);
+}
+
+.rq-row__kind > svg,
+.rq-row__doc > svg {
+  flex: none;
+  width: 24px;
+  height: 24px;
+}
+
+.rq-row__kind--blue > svg { color: #2f5fb8; }
+.rq-row__kind--red > svg { color: var(--rq-red); }
+
+.rq-row__doc {
+  font-size: 12.5px;
+}
+
+.rq-row__doc--plain > svg { color: #34507f; }
+.rq-row__doc--orange > svg { color: var(--rq-orange); }
+.rq-row__doc--red > svg { color: var(--rq-red); }
+.rq-row__doc--none { color: var(--rq-muted); padding-left: 4px; }
+
+.rq-row__period {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 19px;
+  color: var(--rq-ink);
+}
+
+.rq-row__period small {
+  font-size: 12px;
+  color: var(--rq-muted);
+}
+
+.rq-row__period > span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rq-row__when {
+  font-size: 12.5px;
+  color: #4d5f7d;
+  white-space: nowrap;
+}
+
+.rq-row__go {
+  color: #34507f;
+}
+
+/* --- плашки состояния ----------------------------------------------------------- */
+
+.rq-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  justify-self: start;
+  height: 28px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.rq-status--orange { background: #fff1de; color: #b8650a; }
+.rq-status--green { background: #e3f6ec; color: #17844f; }
+.rq-status--red { background: #fde8e7; color: #c2362f; }
+.rq-status--grey { background: #eef2f7; color: #52627a; }
+
+/* --- пагинация -------------------------------------------------------------- */
+
+.rq-pager {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: none;
+  padding-top: 8px;
+}
+
+.rq-pager__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--rq-field);
+  border-radius: 7px;
+  background: #ffffff;
+  font: inherit;
+  font-size: 13px;
+  color: var(--rq-ink);
+  cursor: pointer;
+}
+
+.rq-pager__btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* --- подробности ------------------------------------------------------------ */
+
+.rq-side {
+  padding: 0 15px 14px 16px;
+  overflow: hidden;
+}
+
+.rq-side__head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 54px;
+  flex: none;
+  border-bottom: 1px solid var(--rq-line);
+}
+
+.rq-side__head h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--rq-ink);
+  white-space: nowrap;
+}
+
+.rq-side__close {
+  display: flex;
+  margin-left: auto;
+  padding: 4px;
+  border: 0;
+  background: transparent;
+  color: #34507f;
+  cursor: pointer;
+}
+
+.rq-side__body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.rq-person {
+  display: flex;
+  gap: 14px;
+  padding: 12px 0 14px;
+}
+
+.rq-person__face {
+  width: 56px;
+  height: 56px;
+  font-size: 19px;
+}
+
+.rq-person p {
+  margin: 0;
+}
+
+.rq-person__name {
+  font-size: 16.5px;
+  line-height: 22px;
+  font-weight: 700;
+  color: var(--rq-ink);
+}
+
+.rq-person__number {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--rq-muted);
+}
+
+.rq-person__place {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 22px;
+  margin-top: 6px !important;
+  font-size: 12.5px;
+  color: #4d5f7d;
+}
+
+.rq-person__place span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rq-person__place svg {
+  color: #4d6d9c;
+}
+
+.rq-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 16px;
+  margin: 0;
+  padding: 14px 14px 12px;
+  border: 1px solid var(--rq-line);
+  border-radius: 8px;
+  flex: none;
+}
+
+.rq-fact {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.rq-fact > svg {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  margin-top: 4px;
+  color: #4d6d9c;
+}
+
+.rq-fact dt {
+  font-size: 12.5px;
+  color: var(--rq-muted);
+}
+
+.rq-fact dd {
+  margin: 0;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--rq-ink);
+}
+
+.rq-block {
+  margin-top: 14px;
+  flex: none;
+}
+
+.rq-block h3 {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--rq-ink);
+}
+
+.rq-block h3 svg {
+  color: #4d6d9c;
+}
+
+.rq-block__text {
+  margin: 4px 0 0 32px;
+  font-size: 13.5px;
+  line-height: 18px;
+  color: #3e4f6d;
+}
+
+.rq-block__text--warn {
+  color: var(--rq-orange);
+}
+
+.rq-closed {
+  margin: 16px 0 0;
+}
+
+.rq-doc {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 150px;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.rq-doc__card {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  column-gap: 12px;
+  padding: 12px 12px 10px 16px;
+  border-radius: 8px;
+  background: #f5f8fc;
+}
+
+.rq-doc__type {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  width: 30px;
+  height: 36px;
+  padding-bottom: 5px;
+  border-radius: 3px 10px 3px 3px;
+  background: #e5484d;
+  font-size: 9px;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.rq-doc__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.rq-doc__text b {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--rq-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rq-doc__text small {
+  font-size: 11.5px;
+  color: var(--rq-muted);
+}
+
+.rq-doc__state--orange { color: var(--rq-orange) !important; }
+.rq-doc__state--green { color: var(--rq-green) !important; }
+.rq-doc__state--red { color: var(--rq-red) !important; }
+
+.rq-doc__actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: center;
+  gap: 24px;
+  margin-top: 10px;
+}
+
+.rq-doc__actions a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1466d8;
+  text-decoration: none;
+}
+
+.rq-doc__preview {
+  width: 150px;
+  height: 180px;
+  margin-top: -40px;
+  border: 1px solid var(--rq-line);
+  border-radius: 6px;
+  object-fit: cover;
+  box-shadow: 0 4px 14px rgba(22, 48, 92, 0.08);
+}
+
+.rq-doc__preview--file {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: #fafbfd;
+  font-size: 12px;
+  font-weight: 700;
+  color: #7d8aa3;
+}
+
+.rq-history {
+  margin: 8px 0 0 32px;
+  padding: 0;
+  list-style: none;
+}
+
+.rq-history li {
+  position: relative;
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 14px;
+  min-height: 27px;
+  align-items: center;
+  padding-left: 22px;
+  font-size: 13px;
+  color: var(--rq-ink);
+}
+
+.rq-history li::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: var(--rq-blue);
+}
+
+.rq-history time {
+  color: #4d5f7d;
+}
+
+.rq-history__now::before {
+  width: 12px !important;
+  height: 12px !important;
+  left: 0 !important;
+  border: 3px solid var(--rq-blue);
+  background: #ffffff !important;
+  box-sizing: border-box;
+}
+
+.rq-alert {
+  margin: 12px 0 0;
+  font-size: 13px;
+  color: #c2362f;
+}
+
+.rq-done {
+  margin: 12px 0 0;
+  font-size: 13px;
+  color: var(--rq-green);
+}
+
+.rq-decide {
+  margin-top: auto;
+  padding-top: 14px;
+  flex: none;
+}
+
+.rq-comment {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 42px;
+  padding: 0 14px;
+  border: 1px solid var(--rq-field);
+  border-radius: 8px;
+  background: #ffffff;
+  color: #7d8aa3;
+}
+
+.rq-comment input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--rq-ink);
+}
+
+.rq-comment small {
+  font-size: 12.5px;
+}
+
+.rq-decide__buttons {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.rq-decide__buttons .rq-btn {
+  height: 40px;
+  padding: 0 10px;
+}
+
+/* The document action is currently disabled, but keep its full label legible
+   and reserve the top row for the two actual decisions. */
+.rq-decide__buttons .rq-btn:nth-child(2) {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+
+.rq-decide__buttons .rq-btn:nth-child(3) {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+@media (max-width: 1280px) {
+  .rq-grid--open {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 12px;
+  }
+
+  .rq-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    height: auto;
+  }
+}
+
+/* The details rail is deliberately narrow beside the request list. Stack
+   document metadata and its preview there so both remain readable. */
+@media (max-width: 1600px) {
+  .rq-doc {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rq-doc__preview {
+    width: 100%;
+    height: 104px;
+    margin-top: 0;
+    object-fit: contain;
+  }
+}
+
+/* --- «Заявки» на любой ширине ------------------------------------------------
+ *
+ * Здесь нет подгонки под конкретные экраны. Раньше было: сначала правило
+ * на 1280, потом на 1400, потом на 1600 — и каждый раз находился монитор,
+ * на котором страница ломалась заново. Причина в том, что ширина списка
+ * зависит не от окна, а от того, открыты ли подробности: при одном и том
+ * же экране список бывает и 1400, и 700.
+ *
+ * Поэтому строка заявки смотрит на СВОЙ контейнер (`@container`), а не на
+ * окно. Сколько места ей досталось — столько колонок она и показывает,
+ * независимо от размера монитора, масштаба системы и открытой панели.
+ *
+ * Остальное сделано текучим: ширины через `clamp` и `auto-fit`, а не
+ * ступеньками. Ступенька всегда оставляет диапазон, в котором плохо.
+ */
+
+/* Подробности открываются ШТОРКОЙ поверх страницы, а не второй колонкой.
+ *
+ * Колонка забирала у списка треть ширины, и от нажатия на строку
+ * страница перекладывалась целиком: колонки сужались, строки
+ * перестраивались, высота менялась. Шторка ничего этого не делает —
+ * список под ней остаётся ровно таким, каким был.
+ *
+ * Шапка не перекрывается: шторка начинается под ней. Прокрутка у
+ * шторки своя, страница под ней не двигается. */
+.rq-grid--open {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.rq-grid--open .rq-side {
+  position: fixed;
+  top: var(--topbar-height);
+  right: 0;
+  bottom: 0;
+  z-index: 46;
+  width: min(560px, 94vw);
+  border-radius: 0;
+  border-left: 1px solid var(--rq-line);
+  box-shadow: -18px 0 46px rgba(19, 62, 104, 0.18);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  /* Плотный фон: у панели в потоке он был полупрозрачным, и сквозь
+     шторку читались строки списка под ней. */
+  background: #fff;
+}
+
+/* Шапка шторки остаётся на виду при прокрутке её содержимого: закрыть
+   её нужно из любого места. */
+.rq-grid--open .rq-side__head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #fff;
+}
+
+/* Строка отбора укладывается сама. Не сетка из равных долей: у полей
+   разные потребности — паре дат нужно вдвое больше, чем выбору офиса,
+   а кнопке «Фильтры» хватает её подписи. Поэтому гибкая строка, где у
+   каждого поля своя основа и свой предел сжатия. */
+.rq-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  height: auto;
+}
+
+.rq-filters .rq-search {
+  flex: 1 1 220px;
+  min-width: 180px;
+}
+
+.rq-filters .app-select,
+.rq-filters .rq-select {
+  flex: 1 1 150px;
+  min-width: 132px;
+  max-width: 220px;
+}
+
+/* Пара дат — это два поля по 160 плюс разделитель: меньше 340 им не
+   бывает, и занижать основу нельзя, иначе строка не переносится, а
+   вылезает за край. */
+.rq-filters .rq-dates {
+  flex: 1 1 340px;
+  min-width: 340px;
+}
+
+/* Кнопке хватает ровно её подписи — не меньше: при 102 px, доставшихся
+   ей от прежней сетки, от «Фильтры» оставалось «ильтры». */
+.rq-filters .rq-more {
+  flex: 0 0 auto;
+  min-width: max-content;
+  padding: 0 14px;
+  white-space: nowrap;
+}
+
+.rq-filters--extra .app-select {
+  max-width: 260px;
+}
+
+/* Вкладки переносятся всегда: «Отмена» — такая же вкладка, как
+   остальные, и обрезать её нечем. */
+.rq-tabs {
+  height: auto;
+  min-height: 52px;
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+
+/* Список — точка отсчёта для строк внутри него. */
+.rq-list {
+  container-type: inline-size;
+  container-name: rq-list;
+}
+
+.rq-row > * {
+  min-width: 0;
+}
+
+/* --- колонки списка ----------------------------------------------------------
+ *
+ * Шапка колонок и строки живут на одной сетке: её описание лежит в
+ * переменной `--rq-cols` у области прокрутки, и оба набора берут его
+ * оттуда. Поэтому подпись «Статус» стоит ровно над статусами на любой
+ * ширине.
+ *
+ * Ширину меряем у самого списка (`@container`), а не у окна. Когда
+ * места мало, уходит сначала документ, потом дата подачи: ФИО, тип,
+ * период, статус и стрелка остаются всегда.
+ *
+ * Статус — фиксированные 140 px: «Отмена запрошена», самая длинная
+ * метка, занимает около 130 и не должна обрезаться. Стрелка — у
+ * правого края, в своей колонке.
+ */
+.rq-rows {
+  --rq-cols: 32px minmax(0, 1.35fr) minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 0.95fr) 92px 140px 18px;
+}
+
+.rq-row,
+.rq-cols {
+  grid-template-columns: var(--rq-cols);
+  column-gap: 12px;
+}
+
+.rq-row > *,
+.rq-cols > * {
+  min-width: 0;
+}
+
+@container rq-list (max-width: 880px) {
+  .rq-rows {
+    --rq-cols: 32px minmax(0, 1.35fr) minmax(0, 1fr) minmax(0, 1.15fr) 92px 140px 18px;
+  }
+
+  .rq-row > :nth-child(5),
+  .rq-cols > :nth-child(5) {
+    display: none;
+  }
+}
+
+@container rq-list (max-width: 700px) {
+  .rq-rows {
+    --rq-cols: 32px minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1.15fr) 140px 18px;
+  }
+
+  .rq-row > :nth-child(6),
+  .rq-cols > :nth-child(6) {
+    display: none;
+  }
+}
+
+/* Меньше 520 строка перестаёт быть строкой: значок и ФИО сверху,
+   остальное — под ними. Шапка колонок в таком виде ничего не
+   подписывает и прячется. */
+@container rq-list (max-width: 520px) {
+  .rq-rows {
+    --rq-cols: 32px minmax(0, 1fr) 18px;
+  }
+
+  .rq-cols {
+    display: none;
+  }
+
+  .rq-rows .rq-row {
+    height: auto;
+    row-gap: 4px;
+    padding: 8px 10px;
+  }
+
+  .rq-row > :nth-child(3),
+  .rq-row > :nth-child(4),
+  .rq-row > :nth-child(7) {
+    grid-column: 2;
+  }
+}
+
+/* Подробности: длинные значения переносятся и не выходят за край. */
+.rq-side,
+.rq-side * {
+  min-width: 0;
+}
+
+.rq-side__body {
+  overflow-wrap: break-word;
+}
+
+/* Номер заявки сокращается отточием, метка состояния рядом не
+   сжимается и не наезжает на него. */
+/* Шапка подробностей переносится: номер заявки длинный, а метка
+   состояния рядом с ним не сжимается. Лучше две строки, чем номер,
+   обрезанный до «Заявка …». */
+.rq-side__head {
+  gap: 8px 10px;
+  flex-wrap: wrap;
+  height: auto;
+  min-height: 54px;
+  padding: 8px 0;
+}
+
+.rq-side__head h2 {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rq-side__head > :not(h2) {
+  flex: none;
+}
+
+/* На узком экране шторка занимает почти всю ширину — читать заявку
+   в полосе 300 px нечем. */
+@media (max-width: 720px) {
+  .rq-grid--open .rq-side {
+    width: 100vw;
+  }
+}
+
+/* Затемнение под шторкой заявки. Ниже шапки: она остаётся доступной. */
+.rq-scrim {
+  position: fixed;
+  top: var(--topbar-height);
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 45;
+  border: 0;
+  padding: 0;
+  background: rgba(11, 40, 100, 0.22);
+  cursor: pointer;
+}
+
+/* --- «Заявки»: плотная рабочая страница ---------------------------------------
+ *
+ * Та же задача, что на «Обращениях», «Сотрудниках», «Посещаемости» и
+ * главной: при масштабе браузера 100 % страница вмещает столько же,
+ * сколько сейчас при 80 %. Уменьшены сами величины, а не картинка:
+ * `zoom` и `transform` оставили бы интерфейс крупным, просто
+ * нарисованным мельче.
+ *
+ * Страница ровно в высоту окна и целиком не прокручивается: шапка,
+ * вкладки и отбор стоят на месте, пагинация прибита к низу списка,
+ * прокручиваются только строки заявок.
+ */
+
+@media (min-width: 721px) and (min-height: 560px) {
+  .canvas:has(> .rq) {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: hidden;
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+
+  .rq {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .rq-grid {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .rq-list {
+    overflow: hidden;
+  }
+}
+
+.rq-grid {
+  margin: 0;
+}
+
+/* --- шапка ------------------------------------------------------------------ */
+
+/* Подзаголовок и счётчик — одной строкой под названием, а не двумя. */
+.rq-head {
+  align-items: center;
+  height: auto;
+  margin: 0 0 10px;
+}
+
+.rq-head > div:first-child {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 10px;
+  min-width: 0;
+}
+
+.rq-head__title {
+  flex: 1 0 100%;
+  font-size: 26px;
+  line-height: 32px;
+}
+
+.rq-head__sub {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 18px;
+}
+
+.rq-head__meta {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 18px;
+}
+
+.rq-head__meta::before {
+  content: '·';
+  margin-right: 4px;
+}
+
+.rq-head__actions {
+  gap: 8px;
+  margin-top: 0;
+}
+
+.rq-head__actions .rq-btn {
+  height: 34px;
+  padding: 0 12px;
+  gap: 7px;
+  font-size: 13px;
+}
+
+.rq-head__actions .rq-btn svg {
+  width: 17px;
+  height: 17px;
+}
+
+.rq-note {
+  margin: -4px 0 8px;
+  font-size: 12.5px;
+}
+
+/* --- список ------------------------------------------------------------------- */
+
+.rq-list {
+  padding: 8px 10px 8px;
+}
+
+/* Вкладки — одна низкая строка по ширине подписей. */
+.app-segmented.rq-tabs {
+  align-self: flex-start;
+  flex-wrap: wrap;
+  gap: 2px;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  min-height: 0;
+  margin: 0;
+  padding: 2px;
+  border: 1px solid #d7e5f4;
+  border-radius: 9px;
+}
+
+.rq-tabs .app-segmented__button {
+  min-height: 30px;
+  padding: 0 11px;
+  gap: 6px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.rq-tabs .app-segmented__count {
+  font-size: 11px;
+}
+
+/* Одна строка отбора: поиск забирает свободное место, списки и даты —
+   по своей ширине. На 1280 все четыре поля помещаются в строку; уже —
+   переносятся целиком, не обрезаясь. */
+.rq-filters {
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 0;
+}
+
+.rq-filters .rq-search {
+  flex: 1 1 200px;
+  min-width: 170px;
+  height: 34px;
+  gap: 7px;
+  padding: 0 10px;
+}
+
+.rq-search input {
+  font-size: 13px;
+}
+
+.rq-filters .app-select,
+.rq-filters .rq-select {
+  flex: 0 1 150px;
+  min-width: 128px;
+  max-width: 180px;
+}
+
+.rq-filters .app-select__trigger {
+  min-height: 34px;
+  padding: 0 10px;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.rq-filters .rq-dates {
+  flex: 0 0 auto;
+  min-width: 0;
+  gap: 6px;
+}
+
+.rq-filters .app-date-range .date__field {
+  min-width: 132px;
+  height: 34px;
+  padding: 0 8px;
+  gap: 6px;
+}
+
+.rq-filters .app-date-range .date__input {
+  width: 78px;
+  font-size: 13px;
+}
+
+.rq-filters .app-date-range .date__field > svg {
+  width: 16px;
+  height: 16px;
+}
+
+.rq-filters .app-date-range .date__toggle {
+  width: 22px;
+}
+
+.rq-filters .rq-chip {
+  height: 26px;
+  padding: 0 8px 0 11px;
+  gap: 6px;
+  font-size: 12.5px;
+}
+
+.rq-filters .rq-reset {
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+/* Прокручивается только тело списка. */
+.rq-rows {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 8px -10px 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+/* --- шапка колонок ------------------------------------------------------------ */
+
+.rq-cols {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: grid;
+  align-items: center;
+  height: 30px;
+  padding: 0 12px 0 20px;
+  border-bottom: 1px solid var(--rq-line);
+  background: #f5f8fc;
+  font-size: 12px;
+  font-weight: 600;
+  color: #5b6d8a;
+}
+
+.rq-cols > span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* --- строки ------------------------------------------------------------------- */
+
+/* Все строки одной высоты: каждая колонка — одна-две строки текста без
+   переноса, длинное сокращается многоточием. Выбранная строка
+   выделяется заливкой и тенью внутрь, а не рамкой: рамка добавляла
+   строке два пикселя, и список под ней вздрагивал. */
+.rq-rows .rq-row {
+  height: 52px;
+  min-height: 0;
+  padding: 0 12px 0 20px;
+  border: 0;
+  border-bottom: 1px solid #edf1f6;
+  border-radius: 0;
+}
+
+.rq-rows .rq-row--on {
+  background: #eef5ff;
+  box-shadow: inset 0 0 0 1px #b9d4fb;
+}
+
+.rq-rows .rq-row--on::before {
+  top: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: 0;
+}
+
+.rq-row:focus-visible {
+  outline: 2px solid #1f6fe0;
+  outline-offset: -2px;
+}
+
+.rq-row__face {
+  width: 32px;
+  height: 32px;
+  font-size: 12px;
+}
+
+/* Табельный номер и офис — в одну строку под фамилией. */
+.rq-row__who {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 6px;
+}
+
+.rq-row__who b {
+  grid-column: 1 / -1;
+  font-size: 13.5px;
+  line-height: 18px;
+}
+
+.rq-row__who small {
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.rq-row__who small + small::before {
+  content: '·';
+  margin-right: 6px;
+}
+
+.rq-row__kind,
+.rq-row__doc {
+  gap: 7px;
+  font-size: 12.5px;
+  line-height: 16px;
+}
+
+.rq-row__kind > svg,
+.rq-row__doc > svg {
+  width: 18px;
+  height: 18px;
+}
+
+.rq-row__kind > span,
+.rq-row__doc > span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.rq-row__period {
+  font-size: 12.5px;
+  line-height: 17px;
+}
+
+.rq-row__period > span,
+.rq-row__period small {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.rq-row__period small {
+  font-size: 11.5px;
+  line-height: 15px;
+}
+
+.rq-row__when {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+}
+
+.rq-rows .rq-status {
+  justify-self: start;
+  max-width: 100%;
+  height: 24px;
+  padding: 0 10px;
+  font-size: 12.5px;
+}
+
+.rq-row__go {
+  justify-self: end;
+  width: 18px;
+  height: 18px;
+}
+
+.rq-rows .rq-empty {
+  margin: 16px 20px;
+}
+
+/* --- пагинация ---------------------------------------------------------------- */
+
+.rq-pager {
+  align-items: center;
+  margin: 0 -10px;
+  padding: 6px 10px 0;
+  border-top: 1px solid var(--rq-line);
+}
+
+.rq-pager__btn {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 12.5px;
+}
+
+/* --- шторка заявки ------------------------------------------------------------
+ *
+ * Шапка с номером и крестиком — сверху, решение — снизу, а
+ * прокручивается только середина: сотрудник, факты, причина, документ
+ * и история. Одобрить или отклонить можно, не пролистывая документ.
+ */
+
+.rq-grid--open .rq-side {
+  display: flex;
+  flex-direction: column;
+  width: min(520px, 94vw);
+  padding: 0;
+  overflow: hidden;
+}
+
+.rq-grid--open .rq-side__head {
+  position: static;
+  flex: none;
+  min-height: 50px;
+  padding: 8px 14px 8px 18px;
+}
+
+.rq-side__head h2 {
+  font-size: 17px;
+  line-height: 22px;
+}
+
+.rq-side .rq-status {
+  height: 24px;
+  padding: 0 10px;
+  font-size: 12.5px;
+}
+
+.rq-side__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0 14px 12px 18px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.rq-side__foot {
+  flex: none;
+  padding: 10px 18px 14px;
+  border-top: 1px solid var(--rq-line);
+  background: #ffffff;
+}
+
+.rq-side__foot .rq-alert,
+.rq-side__foot .rq-done {
+  margin: 0 0 8px;
+}
+
+.rq-side__foot .rq-decide {
+  margin-top: 0;
+  padding-top: 0;
+}
+
+.rq-side__foot .rq-closed {
+  margin: 0;
+}
+
+.rq-person {
+  gap: 12px;
+  padding: 10px 0;
+}
+
+.rq-person__face {
+  width: 44px;
+  height: 44px;
+  font-size: 15px;
+}
+
+.rq-person__name {
+  font-size: 15px;
+  line-height: 20px;
+}
+
+.rq-person__number {
+  font-size: 12.5px;
+  line-height: 17px;
+}
+
+.rq-person__place {
+  gap: 2px 16px;
+  margin-top: 3px !important;
+  font-size: 12px;
+}
+
+.rq-facts {
+  gap: 10px 14px;
+  padding: 10px 12px;
+}
+
+.rq-fact {
+  gap: 10px;
+}
+
+.rq-fact > svg {
+  width: 20px;
+  height: 20px;
+  margin-top: 2px;
+}
+
+.rq-fact dt {
+  font-size: 12px;
+}
+
+.rq-fact dd {
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.rq-block {
+  margin-top: 12px;
+}
+
+.rq-block h3 {
+  gap: 8px;
+  font-size: 13.5px;
+}
+
+.rq-block h3 svg {
+  width: 18px;
+  height: 18px;
+}
+
+.rq-block__text {
+  margin-left: 26px;
+  font-size: 13px;
+}
+
+.rq-history {
+  margin: 6px 0 0 26px;
+}
+
+.rq-history li {
+  grid-template-columns: 118px minmax(0, 1fr);
+  gap: 10px;
+  min-height: 24px;
+  font-size: 12.5px;
+}
+
+.rq-comment {
+  height: 36px;
+  padding: 0 10px;
+  gap: 8px;
+}
+
+.rq-comment input {
+  font-size: 13px;
+}
+
+.rq-comment small {
+  font-size: 11.5px;
+}
+
+.rq-decide__buttons {
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.rq-decide__buttons .rq-btn {
+  height: 36px;
+  gap: 7px;
+  font-size: 13px;
+}
+
+.rq-decide__buttons .rq-btn svg {
+  width: 17px;
+  height: 17px;
+}
+
+/* Решение по справке.
+
+   Стоит под карточкой документа, а не рядом с решением по заявке: это
+   разные решения, и ставить их в один ряд значит предлагать принять
+   больничный нажатием, предназначенным для бумаги. */
+.rq-doc__decide {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.rq-doc__decideRow {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.rq-doc__decide textarea.input {
+  width: 100%;
+  resize: vertical;
+}

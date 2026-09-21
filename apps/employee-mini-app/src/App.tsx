@@ -17,9 +17,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   api,
+  type Note,
+  type OpenSession,
   type Profile as ProfileData,
-  type Status,
-  type Summary,
 } from './api';
 import {
   authenticate,
@@ -29,12 +29,14 @@ import {
   type AuthResult,
 } from './auth';
 import { History } from './screens/History';
-import { Home } from './screens/Home';
+import { Home, type TodayData, type WeekData } from './screens/Home';
 import { KeyboardScan, insideTelegram } from './screens/KeyboardScan';
+import { Notes } from './screens/Notes';
 import { Profile } from './screens/Profile';
 import { QuickScan } from './screens/QuickScan';
 import { Requests, type AbsenceKind } from './screens/Requests';
 import { Scan } from './screens/Scan';
+import { Survey } from './screens/Survey';
 import { Stats } from './screens/Stats';
 import {
   backButton,
@@ -43,9 +45,10 @@ import {
   prepare,
   watchViewport,
 } from './telegram';
-import { AppHeader } from './ui/AppHeader';
+import { useSection } from './sections';
 import { BottomNavigation, type Tab } from './ui/BottomNavigation';
-import { PageContainer, PrimaryButton, SecondaryButton } from './ui/primitives';
+import { TopBar } from './ui/TopBar';
+import { PageContainer, SecondaryButton } from './ui/primitives';
 import {
   ErrorState,
   LoadingScreen,
@@ -73,6 +76,24 @@ export function isQuickScanRoute(
   pathname: string = window.location.pathname,
 ): boolean {
   return pathname.replace(/\/+$/, '') === QUICK_SCAN_PATH;
+}
+
+/**
+ * Опрос открывается по своему адресу: `/survey/<получатель>`.
+ *
+ * На этот адрес смотрит кнопка «Пройти опрос» под сообщением бота.
+ * Идентификатор именно в адресе, а не «последний непройденный опрос»:
+ * человек может нажать кнопку через день, когда пришёл ещё один, и
+ * открыться должен тот, который он открыл.
+ */
+export const SURVEY_PATH = '/survey';
+
+export function surveyOf(
+  pathname: string = window.location.pathname,
+): string | null {
+  const parts = pathname.replace(/\/+$/, '').split('/').filter(Boolean);
+  if (parts.length !== 2 || `/${parts[0]}` !== SURVEY_PATH) return null;
+  return parts[1] ?? null;
 }
 
 /**
@@ -109,6 +130,10 @@ export default function App() {
   // при этом не меняется — переписывать историю браузера в вебвью
   // Telegram значило бы ломать его же кнопку «назад».
   const [quick, setQuick] = useState(isQuickScanRoute);
+  // Какой опрос открыть. Состоянием по той же причине, что и быстрая
+  // отметка: из опроса можно уйти в кабинет, а переписывать историю
+  // браузера в вебвью Telegram значит ломать его же «назад».
+  const [survey, setSurvey] = useState(surveyOf);
 
   const run = useCallback(async () => {
     setPhase({ kind: 'loading' });
@@ -159,6 +184,15 @@ export default function App() {
 
   switch (result.state) {
     case 'authenticated':
+      if (survey) {
+        return (
+          <Survey
+            recipientId={survey}
+            onDone={() => setSurvey(null)}
+            onExit={() => setSurvey(null)}
+          />
+        );
+      }
       return quick ? (
         <QuickScan onOpenCabinet={() => setQuick(false)} />
       ) : (
@@ -245,80 +279,119 @@ function ScanWayOut() {
 /**
  * Сам кабинет: данные, разделы и навигация.
  *
- * Профиль и статус грузятся один раз на весь кабинет, а не на каждом
- * экране: имя и офис не меняются между вкладками, и перезапрашивать их
- * при каждом переключении значило бы моргать содержимым на ровном месте.
+ * Данные грузятся четырьмя независимыми кусками, а не одним запросом:
+ * статус и сегодняшний журнал, неделя, заявки, уведомления. Упавшая
+ * неделя не гасит статус, а обновление одного куска не стирает
+ * остальные — человек открывает приложение, чтобы увидеть, отметился
+ * ли он, и мигающий целиком экран отвечает на это хуже, чем
+ * устаревшая на минуту карточка.
+ *
+ * Профиль — исключение: без имени и офиса показывать нечего вовсе,
+ * поэтому он один держит первый экран загрузки.
  */
 function Cabinet({ onSignOut }: { onSignOut: () => void }) {
   const [tab, setTab] = useState<Tab>('home');
-  const [profileOpen, setProfileOpen] = useState(false);
   const [wide, setWide] = useState(false);
   const [absenceForm, setAbsenceForm] = useState<AbsenceKind | null>(null);
-
-  const [profile, setProfile] = useState<ProfileData | null>(null);
-  const [status, setStatus] = useState<Status | null>(null);
-  const [today, setToday] = useState<Summary | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  /** Неудачное обновление уже открытого кабинета — полоской, не экраном. */
-  const [stale, setStale] = useState<string | null>(null);
   const [offline, setOffline] = useState(!navigatorOnline());
 
-  // Через ссылку, а не через зависимость: `refresh` должен остаться
-  // одним и тем же на всё время жизни кабинета — его вызывают из
-  // сканера и из обработчиков сети.
-  const loaded = useRef(false);
-  loaded.current = profile !== null;
+  const profile = useSection<ProfileData>(() => api.profile());
 
-  const refresh = useCallback(async () => {
-    const [me, now, stats] = await Promise.all([
-      api.profile(),
+  /*
+   * Статус и сегодняшние сессии — одна секция: карточка статуса и
+   * журнал дня отвечают на один вопрос и обязаны обновляться вместе.
+   * Разъехавшись, они показали бы «в офисе» без входа в списке.
+   */
+  const today = useSection<TodayData>(async () => {
+    const [now, log] = await Promise.all([
       api.status(),
-      api.statistics({ period: 'today' }),
+      api.history({ period: 'today' }),
     ]);
+    if (!now.ok) return now;
+    // Журнал дня — не обязателен: статус важнее, и без списка событий
+    // карточка «В офисе» всё равно должна появиться. Отсюда же защита
+    // от неполного ответа: белый экран из-за отсутствующего поля хуже,
+    // чем пустой список.
+    const day = log.ok ? log.value.days?.[0] : undefined;
+    return {
+      ok: true as const,
+      value: { status: now.value, sessions: day?.sessions ?? [] },
+    };
+  });
 
-    if (!me.ok) {
-      // Обрыв связи — не отказ в доступе. Уже загруженное остаётся
-      // на экране: смотреть вчерашние отметки без сети безопасно.
-      if (me.kind === 'network') {
-        setOffline(true);
-        return;
+  /*
+   * Неделя: нормы берутся из статистики (там все семь дней), сессии —
+   * из истории (там время каждой). История отдаёт только дни, о которых
+   * есть что сказать, поэтому склеиваются они по дате, а не по порядку.
+   */
+  const week = useSection<WeekData>(async () => {
+    const [stats, log] = await Promise.all([
+      api.statistics({ period: 'week' }),
+      api.history({ period: 'week', limit: 62 }),
+    ]);
+    if (!stats.ok) return stats;
+    const sessions: Record<string, OpenSession[]> = {};
+    if (log.ok) {
+      for (const day of log.value.days ?? []) {
+        if (day.sessions?.length) sessions[day.day] = day.sessions;
       }
-      // Сбой на стороне сервера в уже открытом кабинете — полоской,
-      // а не экраном: сразу после отметки `refresh` вызывает сам сканер,
-      // и упавший запрос стёр бы с экрана «Вход отмечен, 08:54». Человек
-      // решил бы, что отметка не прошла, и приложил бы пропуск второй
-      // раз — а сервер ответил бы, что код уже использован.
-      //
-      // Только 5xx, и это важно. 401 значит, что сеанс истёк, а 403 —
-      // что привязку Telegram отозвали. Оба показать полоской «данные
-      // могли устареть» значило бы запереть человека: «Ещё раз» будет
-      // отвечать тем же отказом бесконечно, а выйти и войти заново — тот
-      // самый выход — только на экране ошибки.
-      if (loaded.current && me.kind === 'server') {
-        setStale(me.message);
-        return;
-      }
-      setError(me.message);
-      return;
     }
+    return { ok: true as const, value: { days: stats.value.days, sessions } };
+  });
 
-    setOffline(false);
-    setError(null);
-    setStale(null);
-    setProfile(me.value);
-    if (now.ok) setStatus(now.value);
-    if (stats.ok) setToday(stats.value.summary);
+  const requests = useSection(async () => {
+    const answer = await api.absences();
+    return answer.ok
+      ? { ok: true as const, value: answer.value.requests }
+      : answer;
+  });
+
+  const notes = useSection(() => api.notifications(10));
+
+  /*
+   * Что обновить после удачной отметки: статус, сегодняшний журнал и
+   * неделя. Заявки и уведомления сканирование не меняет, и дёргать их
+   * значило бы заставлять экран моргать без повода.
+   *
+   * Ссылки на секции берутся из ref: сами объекты пересоздаются на
+   * каждой отрисовке, а обработчик должен остаться одним и тем же —
+   * его держит у себя экран сканера.
+   */
+  const parts = useRef({ profile, today, week, requests, notes });
+  parts.current = { profile, today, week, requests, notes };
+
+  const afterScan = useCallback(() => {
+    parts.current.today.reload();
+    parts.current.week.reload();
   }, []);
 
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
+  /**
+   * Отметка о прочтении уходит на сервер, а не гасится на месте:
+   * счётчик на колокольчике обязан погаснуть и на втором устройстве.
+   * Уже прочитанное второй раз не отправляем — запрос идемпотентен,
+   * но лишний.
+   */
+  const markRead = useCallback((note: Note) => {
+    if (note.is_read) return;
+    void api
+      .readNotification(note.id)
+      .then(() => parts.current.notes.reload());
+  }, []);
+
+  const reloadAll = useCallback(() => {
+    const all = parts.current;
+    all.profile.reload();
+    all.today.reload();
+    all.week.reload();
+    all.requests.reload();
+    all.notes.reload();
+  }, []);
 
   // Сеть вернулась — обновляем данные молча, без вопросов к человеку.
   useEffect(() => {
     const back = () => {
       setOffline(false);
-      void refresh();
+      reloadAll();
     };
     const gone = () => setOffline(true);
     window.addEventListener('online', back);
@@ -327,7 +400,7 @@ function Cabinet({ onSignOut }: { onSignOut: () => void }) {
       window.removeEventListener('online', back);
       window.removeEventListener('offline', gone);
     };
-  }, [refresh]);
+  }, [reloadAll]);
 
   /*
    * Полноэкранный режим просит только экран QR, но знать о нём должна и
@@ -349,21 +422,48 @@ function Cabinet({ onSignOut }: { onSignOut: () => void }) {
    * Родная кнопка «назад» Telegram: на главной её нет, на всех остальных
    * экранах есть и ведёт внутрь приложения, а не закрывает его.
    *
-   * Вкладки статистики, истории и заявок тоже считаются «не главной»
+   * Вкладки отметок, заявок и профиля тоже считаются «не главной»
    * намеренно. На Android эта кнопка совмещена с системной, и без
-   * обработчика нажатие на вкладке «Статистика» закрывало бы кабинет
+   * обработчика нажатие на вкладке «Заявки» закрывало бы кабинет
    * целиком — вместо ожидаемого возврата на главную.
    */
   useEffect(() => {
-    if (profileOpen) return backButton(() => setProfileOpen(false));
     if (tab !== 'home') return backButton(() => setTab('home'));
     return backButton(null);
-  }, [profileOpen, tab]);
+  }, [tab]);
 
-  if (error) {
+  /*
+   * Экран ошибки — только на том, без чего кабинета нет: на профиле.
+   *
+   * Разбор по виду отказа, а не по факту отказа, и различие здесь
+   * принципиальное.
+   *
+   * 401 и 403 ведут на экран ошибки ВСЕГДА, даже в уже открытом
+   * кабинете. Первое значит, что сеанс истёк, второе — что привязку
+   * Telegram отозвали; полоска «данные могли устареть» с кнопкой «Ещё
+   * раз» отвечала бы тем же отказом бесконечно, а выйти и войти заново
+   * можно только отсюда.
+   *
+   * 5xx в уже открытом кабинете — полоска. Сразу после отметки данные
+   * перечитывает сам сканер, и стереть с экрана «Вход отмечен, 08:54»
+   * из-за упавшего запроса значило бы заставить человека приложить
+   * пропуск второй раз — а сервер ответит, что код уже использован.
+   *
+   * Обрыв связи — не отказ в доступе: уже загруженное остаётся на
+   * экране под полоской «нет связи».
+   */
+  const fatal =
+    profile.error !== null &&
+    profile.kind !== 'network' &&
+    (profile.kind !== 'server' || profile.data === null);
+
+  if (fatal) {
     return (
       <Standalone title="Не получилось">
-        <ErrorState message={error} onRetry={() => void refresh()} />
+        <ErrorState
+          message={profile.error ?? undefined}
+          onRetry={() => profile.reload()}
+        />
         <SecondaryButton onClick={onSignOut} wide>
           Выйти
         </SecondaryButton>
@@ -371,7 +471,7 @@ function Cabinet({ onSignOut }: { onSignOut: () => void }) {
     );
   }
 
-  if (!profile || !status) {
+  if (!profile.data) {
     return (
       <Standalone title="Загружаем">
         <LoadingScreen cards={3} />
@@ -379,66 +479,93 @@ function Cabinet({ onSignOut }: { onSignOut: () => void }) {
     );
   }
 
+  const me = profile.data;
+  // Полоской показывается сбой сервера — чей угодно из двух главных
+  // запросов. Остальные секции показывают свой сбой внутри себя.
+  const stale =
+    (profile.kind === 'server' && profile.error) ||
+    (today.kind === 'server' && today.error) ||
+    null;
+
   return (
     <div className="app-shell">
-      {offline && <OfflineBanner onRetry={() => void refresh()} />}
+      <TopBar
+        fullName={me.employee.full_name}
+        unread={notes.data?.unread ?? 0}
+        onNotifications={() => setTab('notes')}
+        onProfile={() => setTab('profile')}
+      />
+
+      {offline && <OfflineBanner onRetry={reloadAll} />}
       {!offline && stale && (
-        <StaleBanner message={stale} onRetry={() => void refresh()} />
+        <StaleBanner message={stale} onRetry={reloadAll} />
       )}
 
       <div className="app-scroll">
-        <PageContainer>
-          {profileOpen ? (
+        {/* Разрядка 12 px — только на главной: остальные экраны свою
+            не меняют. */}
+        <PageContainer className={tab === 'home' ? 'page-home' : ''}>
+          {tab === 'home' && (
+            <Home
+              fullName={me.employee.full_name}
+              office={me.office.name}
+              today={today}
+              week={week}
+              requests={requests}
+              notes={notes}
+              onScan={() => setTab('scan')}
+              onHistory={() => setTab('history')}
+              onRequests={() => setTab('requests')}
+              onNewRequest={(kind) => {
+                setAbsenceForm(kind);
+                setTab('requests');
+              }}
+              onCorrection={() => setTab('history')}
+              onQuestion={() => setTab('profile')}
+              onNote={(note) => {
+                markRead(note);
+                setTab('notes');
+              }}
+              onWeek={() => setTab('stats')}
+            />
+          )}
+
+          {/* Пояс берётся из профиля, а не из статуса: сканер обязан
+              открываться и тогда, когда статус не загрузился. Ждать его
+              значило бы не дать отметиться из-за упавшего запроса,
+              который к отметке отношения не имеет. */}
+          {tab === 'notes' && (
+            <Notes
+              section={notes}
+              timeZone={me.office.timezone}
+              onRead={markRead}
+            />
+          )}
+
+          {tab === 'stats' && <Stats />}
+
+          {tab === 'scan' && (
+            <Scan
+              timeZone={me.office.timezone}
+              wide={wide}
+              onDone={afterScan}
+              onHome={() => setTab('home')}
+            />
+          )}
+
+          {tab === 'history' && <History />}
+
+          {tab === 'requests' && <Requests openForm={absenceForm} />}
+
+          {/* Профиль не ждёт статуса: без него он просто не покажет
+              строку «сегодня», а не останется пустым экраном. */}
+          {tab === 'profile' && (
             <Profile
-              profile={profile}
-              status={status}
+              profile={me}
+              status={today.data?.status ?? null}
               version={VERSION}
               onSignOut={onSignOut}
             />
-          ) : (
-            <>
-              {tab === 'home' && (
-                <>
-                  <AppHeader
-                    fullName={profile.employee.full_name}
-                    office={profile.office.name}
-                    position={profile.position?.name}
-                    timeZone={status.timezone}
-                    onProfile={() => setProfileOpen(true)}
-                  />
-                  <Home
-                    profile={profile}
-                    status={status}
-                    today={today}
-                    onScan={() => setTab('scan')}
-                    onHistory={() => setTab('history')}
-                    onSickLeave={() => {
-                      setAbsenceForm('SICK_LEAVE');
-                      setTab('requests');
-                    }}
-                    onVacation={() => {
-                      setAbsenceForm('ANNUAL_LEAVE');
-                      setTab('requests');
-                    }}
-                  />
-                </>
-              )}
-
-              {tab === 'stats' && <Stats />}
-
-              {tab === 'scan' && (
-                <Scan
-                  timeZone={status.timezone}
-                  wide={wide}
-                  onDone={() => void refresh()}
-                  onHome={() => setTab('home')}
-                />
-              )}
-
-              {tab === 'history' && <History />}
-
-              {tab === 'requests' && <Requests openForm={absenceForm} />}
-            </>
           )}
         </PageContainer>
       </div>
@@ -446,13 +573,7 @@ function Cabinet({ onSignOut }: { onSignOut: () => void }) {
       {/* В полноэкранном режиме панели нет вовсе: она стояла бы поверх
           окна сканера. Возврат на главную — внутренней кнопкой на самом
           экране и родной кнопкой «назад». */}
-      {wide ? null : profileOpen ? (
-        <div className="bottom-nav bottom-nav-single">
-          <PrimaryButton onClick={() => setProfileOpen(false)} wide>
-            Вернуться в кабинет
-          </PrimaryButton>
-        </div>
-      ) : (
+      {wide ? null : (
         <BottomNavigation
           active={tab}
           onChange={(next) => {

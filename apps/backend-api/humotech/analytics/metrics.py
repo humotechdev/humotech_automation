@@ -47,7 +47,10 @@ from humotech.core.rbac import Actor
 from humotech.core.service import BaseService
 from humotech.core.timeframes import days_in, local_date, office_zone, range_bounds
 from humotech.employees.models import Employee, EmployeeAssignment
-from humotech.employees.services import current_primary_assignment_filter
+from humotech.employees.services import (
+    current_primary_assignment_filter,
+    roster_assignment_filter,
+)
 from humotech.offices.models import Office
 from humotech.schedules.models import CalendarException, EmployeeScheduleAssignment
 
@@ -337,7 +340,9 @@ class AnalyticsService(BaseService):
             queryset = queryset.filter(visible)
         if region_id:
             queryset = queryset.filter(region_id=region_id)
-        return list(queryset.order_by("name"))
+        # Регион подтягивается сразу: обзор группирует офисы по регионам,
+        # и без этого получился бы запрос на каждый офис.
+        return list(queryset.select_related("region").order_by("name"))
 
     def _build(
         self,
@@ -406,7 +411,7 @@ class AnalyticsService(BaseService):
         only: uuid.UUID | None,
     ) -> set[uuid.UUID]:
         queryset = EmployeeAssignment.objects.filter(
-            current_primary_assignment_filter(at),
+            roster_assignment_filter(at),
             office_id__in=office_ids,
             employee__organization_id=actor.organization_id,
         )

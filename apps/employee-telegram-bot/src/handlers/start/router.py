@@ -18,13 +18,14 @@ from __future__ import annotations
 
 import logging
 
-from aiogram import Router
+from aiogram import F, Router
 from aiogram.filters import CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, Message
 
 from src.api.errors import ApiError
 from src.api.selfservice import SelfServiceClient
+from src.handlers.attendance.sticker import begin as begin_sticker, sticker_payload
 from src.keyboards import employee as kb
 from src.messages import link as text
 
@@ -59,14 +60,19 @@ async def start_with_link(
     employee,
     denial,
 ) -> None:
+    # Печатный QR-код офиса ведёт сюда же, через `/start qr_…`. Его
+    # разбирает отметка, а не привязка: у него свой разговор — геопозиция.
+    sticker = sticker_payload(command.args)
+    if sticker is not None:
+        await begin_sticker(message, sticker, state, employee, denial)
+        return
+
     token = parse_link_payload(command.args)
     if token is None:
         # Нагрузка есть, но не наша: ведём себя как при обычном /start.
         # Причину отказа передаём дальше — без неё человек без привязки
         # получил бы «доступ закрыт» вместо «попросите ссылку».
-        from src.handlers.menu.router import start as plain_start
-
-        await plain_start(message, employee, denial)
+        await plain_or_recognize(message, employee, denial, client)
         return
 
     await state.clear()
@@ -83,15 +89,93 @@ async def start_with_link(
         reason = (error.details or {}).get("reason") if error.details else None
         # Токена в журнале нет: он рабочий секрет, пока ссылка жива.
         logger.info("link attempt refused for %s: %s", user.id, reason or error.code)
+        # Ссылка могла быть открыта за минуту до обновления бота: тогда
+        # аккаунт уже PENDING, но человек ещё не видел условия. Повторный
+        # переход продолжает тот же сценарий. Принять условия сможет
+        # только тот Telegram ID, который погасил ссылку.
+        if reason == "pending":
+            await message.answer(text.LINK_PENDING, reply_markup=kb.link_consent())
+            return
         await message.answer(
             text.LINK_MESSAGES.get(reason, text.LINK_ERROR),
             reply_markup=kb.help_only_menu(),
         )
         return
 
-    # Успех — это ещё НЕ доступ: привязка ждёт подтверждения HR.
-    # Клавиатуру сотрудника здесь показывать нельзя.
-    await message.answer(text.LINK_PENDING, reply_markup=kb.help_only_menu())
+    await message.answer(text.LINK_PENDING, reply_markup=kb.link_consent())
 
 
-__all__ = ["LINK_PREFIX", "parse_link_payload", "router"]
+@router.callback_query(F.data == kb.LINK_ACCEPT)
+async def accept_link_terms(callback: CallbackQuery, client: SelfServiceClient) -> None:
+    try:
+        await client.accept_link_terms(telegram_user_id=callback.from_user.id)
+    except ApiError:
+        await callback.answer("Не получилось подтвердить условия. Попробуйте ещё раз.", show_alert=True)
+        return
+    await callback.answer("Условия приняты")
+    if callback.message:
+        await callback.message.edit_reply_markup(reply_markup=None)
+        from src.handlers.menu.router import build_menu
+        # Сервер только что сделал привязку ACTIVE; полное меню можно
+        # показать сразу, не заставляя сотрудника ещё раз нажимать /start.
+        await callback.message.answer(text.LINK_CONNECTED, reply_markup=build_menu(True, callback.message))
+
+
+@router.message(CommandStart(deep_link=False))
+async def start_plain(
+    message: Message, employee, denial, client: SelfServiceClient
+) -> None:
+    """Обычный /start — без ссылки.
+
+    Бот не может написать первым: правило Telegram. Но человек, открывший
+    бота сам, приносит своё имя в Telegram, и если кадровик указал его в
+    карточке — узнать пришедшего можно без всякой ссылки.
+    """
+    await plain_or_recognize(message, employee, denial, client)
+
+
+async def plain_or_recognize(
+    message: Message, employee, denial, client: SelfServiceClient
+) -> None:
+    """Привязанного ведём в меню, незнакомого — пробуем узнать.
+
+    Попытка узнавания делается ровно один раз и только для тех, у кого
+    привязки нет: у остальных она ничего не изменила бы, а лишний запрос
+    на каждый /start — это запрос на каждый /start.
+    """
+    from src.handlers.menu.router import start as plain_start
+
+    if employee is not None:
+        await plain_start(message, employee, denial)
+        return
+
+    user = message.from_user
+    try:
+        facts = await client.recognize(
+            telegram_user_id=user.id,
+            telegram_chat_id=message.chat.id,
+            telegram_username=user.username,
+            language_code=user.language_code,
+        )
+    except ApiError as error:
+        reason = (error.details or {}).get("reason") if error.details else None
+        logger.info("recognize refused for %s: %s", user.id, reason or error.code)
+        await message.answer(
+            text.RECOGNIZE_MESSAGES.get(reason)
+            or text.LINK_MESSAGES.get(reason, text.LINK_ERROR),
+            reply_markup=kb.help_only_menu(),
+        )
+        return
+
+    # Узнали. Доступа это не даёт — привязка ждёт кадровика, — но
+    # поздороваться по имени и рассказать условия можно уже сейчас.
+    await message.answer(text.welcome(facts), reply_markup=kb.help_only_menu())
+
+
+__all__ = [
+    "LINK_PREFIX",
+    "parse_link_payload",
+    "plain_or_recognize",
+    "router",
+    "start_plain",
+]

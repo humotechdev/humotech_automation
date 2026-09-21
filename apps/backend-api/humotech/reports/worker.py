@@ -36,7 +36,10 @@ from django.utils import timezone
 
 from humotech.core.errors import DomainError, PermissionDenied, ValidationFailed
 from humotech.core.rbac import Actor
-from humotech.reports import storage
+from humotech.reports import heartbeat, storage
+from humotech.reports.builder import (
+    Progress, ReportBuilderService, ReportSpec, is_builder_order,
+)
 from humotech.reports.export import to_csv, to_xlsx
 from humotech.reports.models import ExportJob
 from humotech.reports.service import retention_deadline
@@ -84,6 +87,8 @@ def claim_job(now: datetime | None = None) -> ExportJob | None:
 
 def process_job(job: ExportJob) -> bool:
     """Собрать файл и записать его. Возвращает True при успехе."""
+    if is_builder_order(job.filters):
+        return _process_builder_job(job)
     try:
         sheet = build_sheet(
             job.kind,
@@ -154,11 +159,71 @@ def run_once(now: datetime | None = None) -> bool:
         job = claim_job(now)
     if job is None:
         return False
+    logger.info(
+        "взята выгрузка %s: %s.%s, попытка %s", job.id, job.kind, job.fmt, job.attempts,
+    )
     process_job(job)
     return True
 
 
 # ------------------------------------------------------------------- внутри
+
+
+def _process_builder_job(job: ExportJob) -> bool:
+    """Заказ конструктора: прогресс по шагам, листы XLSX, имя от человека.
+
+    Знаменатель прогресса пишется до первой строки: страница показывает
+    процент только тогда, когда знает, из скольких.
+    """
+    def total(steps: int) -> None:
+        job.progress_total = steps
+        ExportJob.objects.filter(id=job.id).update(progress_total=steps, progress_done=0)
+
+    def sink(done: int, rows: int) -> None:
+        heartbeat.beat()
+        ExportJob.objects.filter(id=job.id).update(
+            progress_done=done, progress_rows=rows, locked_at=timezone.now(),
+        )
+
+    progress = Progress(sink)
+    try:
+        spec = ReportSpec.from_filters(job.kind, job.filters or {})
+        payload = ReportBuilderService().write(
+            Actor(user_id=job.requested_by_user_id, organization_id=job.organization_id),
+            spec,
+            fmt=job.fmt,
+            author=job.requested_by_user.email,
+            progress=progress,
+            total=total,
+        )
+        key = storage.storage_key_for(job.id, job.fmt)
+        if job.fmt == "csv":
+            size = storage.save_chunks(key, payload)
+        else:
+            size = storage.save_bytes(key, payload)
+    except PERMANENT as exc:
+        _fail(job, exc, permanent=True)
+        return False
+    except Exception as exc:  # noqa: BLE001 — воркер не должен падать
+        _fail(job, exc, permanent=False)
+        return False
+
+    finished = timezone.now()
+    job.status = "SUCCEEDED"
+    job.storage_key = key
+    job.file_name = spec.file_name(job.fmt)
+    job.size_bytes = size
+    job.progress_rows = progress.rows
+    job.total_rows = progress.rows
+    job.progress_done = job.progress_total or progress.done
+    job.finished_at = finished
+    job.locked_at = None
+    job.error_message = None
+    job.next_attempt_at = None
+    job.expires_at = retention_deadline(finished)
+    job.save()
+    logger.info("выгрузка %s готова: %s байт, %s строк", job.id, size, progress.rows)
+    return True
 
 
 def _counting(chunks, job: ExportJob):
@@ -172,6 +237,7 @@ def _counting(chunks, job: ExportJob):
     for chunk in chunks:
         written += 1
         if written % every == 0:
+            heartbeat.beat()
             ExportJob.objects.filter(id=job.id).update(progress_rows=written)
         yield chunk
     ExportJob.objects.filter(id=job.id).update(progress_rows=written)

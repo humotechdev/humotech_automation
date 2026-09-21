@@ -15,7 +15,8 @@
 import { useState } from 'react';
 
 import * as api from '../api/crm';
-import { Icon } from './nav-icons';
+import { AppIcon } from './AppIcon';
+import { AppSelectField } from './AppSelect';
 import {
   UNIT_TITLE, formatCount, formatPercent, formatPoints,
 } from '../features/analytics/metrics';
@@ -113,7 +114,7 @@ export function Compare({ from, to, prevFrom, prevTo, group, objects, chosen, on
               <div className="versus">
                 <Side report={data.left} />
                 <span className="versus__mid" aria-hidden="true">
-                  <Icon name="arrow" size={18} />
+                  <AppIcon name="arrow" size={18} />
                 </span>
                 <Side report={data.right} />
               </div>
@@ -193,15 +194,12 @@ function Picker({ label, value, objects, onChange }: {
   objects: { id: string; name: string }[]; onChange: (id: string) => void;
 }) {
   return (
-    <label className="pick">
-      <span className="visually-hidden">{label}</span>
-      <select value={value} onChange={(event) => onChange(event.target.value)}>
+    <AppSelectField className="toolbar-select" label={label} value={value} onChange={onChange}>
         <option value="">{label}</option>
         {objects.map((item) => (
           <option key={item.id} value={item.id}>{item.name}</option>
         ))}
-      </select>
-    </label>
+    </AppSelectField>
   );
 }
 

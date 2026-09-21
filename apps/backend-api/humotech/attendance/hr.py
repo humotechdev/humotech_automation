@@ -35,6 +35,7 @@ from datetime import date, datetime, time, timedelta
 from django.db.models import Q, QuerySet
 
 from humotech.absences.models import EmployeeAbsence
+from humotech.attendance.reminders import notices_of_day
 from humotech.attendance.models import (
     AttendanceCorrectionRequest,
     AttendanceEvent,
@@ -51,7 +52,10 @@ from humotech.core.rbac import Actor
 from humotech.core.service import BaseService
 from humotech.core.timeframes import day_bounds, office_zone, range_bounds
 from humotech.employees.models import Employee, EmployeeAssignment
-from humotech.employees.services import current_primary_assignment_filter
+from humotech.employees.services import (
+    WORKING_STATUSES,
+    current_primary_assignment_filter,
+)
 from humotech.offices.models import Office
 from humotech.schedules.models import CalendarException, EmployeeScheduleAssignment
 
@@ -78,10 +82,28 @@ PRESENCE_STATES = (
     "OTHER_ABSENCE",
     "IN_OFFICE",
     "LEFT",
+    # Человек сам сказал, что задерживается. Отдельно от «не пришёл»:
+    # предупредивший и пропавший — разные люди с точки зрения кадровика,
+    # и одна плашка на двоих стирает единственную разницу между ними.
+    "LATE",
     "NOT_COME",
     "DAY_OFF",
     "NO_SCHEDULE",
 )
+
+
+@dataclass(frozen=True)
+class Interval:
+    """Один отрезок присутствия: вошёл и вышел.
+
+    `ended_at is None` — сессия ещё открыта, человек в офисе сейчас.
+    Подставлять вместо неё текущее время нельзя: «сейчас» у сервера и
+    у браузера разное, и конец отрезка стал бы плавающим.
+    """
+
+    started_at: datetime
+    ended_at: datetime | None
+    seconds: int
 
 
 @dataclass(frozen=True)
@@ -107,12 +129,34 @@ class PresenceRow:
     # пришёл ровно вовремя, а это другое утверждение.
     late_minutes: int | None
     scheduled_start: time | None
+    # Конец смены по графику. Нужен шкале рабочего дня: без него её
+    # правый край пришлось бы выдумывать.
+    scheduled_end: time | None
 
     absence_code: str | None
     absence_name: str | None
+
     # Отметка есть, хотя человек числится отсутствующим. Не ошибка сама
     # по себе — повод посмотреть.
     conflicting_marks: bool
+
+    # Что человек сам сказал про этот день: `LATE`, `ABSENT` или ничего.
+    # Это не отметка и не заявка — объяснение пустой строки, и держать
+    # его рядом с фактами можно только отдельным полем.
+    notice_kind: str | None = None
+    notice_comment: str | None = None
+
+    # Отрезки присутствия за день, по одному на сессию, по возрастанию
+    # времени. Нужны шкале рабочего дня: из первого входа и последнего
+    # выхода обед не восстановить, а сплошная полоса между ними соврала
+    # бы про него. Отдельного запроса не стоят — сессии дня уже прочитаны.
+    intervals: tuple[Interval, ...] = ()
+
+    # Хотя бы одна отметка дня пришла из-за пределов геозоны офиса. Не
+    # нарушение само по себе: человек мог отметиться у соседнего входа
+    # или с неточной геолокацией. Повод посмотреть — и это ровно то,
+    # что показывает очередь «требует внимания».
+    outside_geofence: bool = False
 
 
 @dataclass(frozen=True)
@@ -154,8 +198,17 @@ class AttendanceHrService(BaseService):
         schedule_id: uuid.UUID | None = None,
         state: str | None = None,
         search: str | None = None,
+        department_ids: list[uuid.UUID] | None = None,
+        employee_id: uuid.UUID | None = None,
+        include_inactive: bool = False,
     ) -> PresenceReport:
         """Кто где на выбранный день.
+
+        `department_ids`, `employee_id` и `include_inactive` нужны
+        конструктору отчётов: там выбирают несколько отделов, одного
+        человека и просят включить уже не работающих. Неактивный попадает
+        в день, только если его назначение на этот день ещё действовало, —
+        после увольнения строк за ним не появляется.
 
         Постраничного вывода здесь нет намеренно: по этому ответу
         считаются карточки дашборда и строится выгрузка, а итог по первым
@@ -190,6 +243,9 @@ class AttendanceHrService(BaseService):
             position_id=position_id,
             schedule_id=schedule_id,
             search=search,
+            department_ids=department_ids,
+            employee_id=employee_id,
+            include_inactive=include_inactive,
         )
         if not rows:
             return PresenceReport(day=day, timezone=str(tz), rows=[])
@@ -204,6 +260,8 @@ class AttendanceHrService(BaseService):
             office_ids=[office.id for office in offices],
         )
 
+        notices = notices_of_day(employee_ids, day)
+
         result = [
             self._presence_row(
                 assignment=assignment,
@@ -213,6 +271,7 @@ class AttendanceHrService(BaseService):
                 absence=absences.get(employee_id),
                 schedule=scheduled.get(employee_id),
                 calendar=calendar,
+                notice=notices.get(employee_id),
             )
             for employee_id, assignment in rows.items()
         ]
@@ -341,6 +400,7 @@ class AttendanceHrService(BaseService):
                 absence=absence,
                 schedule=scheduled.get(employee_id),
                 calendar=calendar,
+                notice=notices_of_day([employee_id], day).get(employee_id),
             )
             open_session = row.open_session_id is not None
             rows.append(
@@ -357,6 +417,7 @@ class AttendanceHrService(BaseService):
                     "open_session_id": row.open_session_id,
                     "late_minutes": row.late_minutes,
                     "scheduled_start": row.scheduled_start,
+                    "scheduled_end": row.scheduled_end,
                     "absence_code": row.absence_code,
                     "absence_name": row.absence_name,
                     # Отметки в день подтверждённого отсутствия — не норма,
@@ -531,7 +592,11 @@ class AttendanceHrService(BaseService):
         ).select_related("employee", "attendance_session", "reviewed_by_user")
 
         if status:
-            queryset = queryset.filter(status=status)
+            # Несколько статусов через запятую, как в общей очереди заявок.
+            # Одно значение продолжает работать: строка без запятых даёт
+            # список из одного элемента.
+            codes = [code for code in status.split(",") if code]
+            queryset = queryset.filter(status__in=codes)
         if employee_id:
             queryset = queryset.filter(employee_id=employee_id)
 
@@ -827,6 +892,9 @@ class AttendanceHrService(BaseService):
         position_id: uuid.UUID | None,
         schedule_id: uuid.UUID | None,
         search: str | None,
+        department_ids: list[uuid.UUID] | None = None,
+        employee_id: uuid.UUID | None = None,
+        include_inactive: bool = False,
     ) -> dict[uuid.UUID, EmployeeAssignment]:
         if not offices:
             return {}
@@ -835,11 +903,23 @@ class AttendanceHrService(BaseService):
             current_primary_assignment_filter(at),
             office_id__in=[office.id for office in offices],
             employee__organization_id=actor.organization_id,
-            employee__employment_status="ACTIVE",
         ).select_related("employee", "office", "department", "position")
+        if not include_inactive:
+            # Работающий — это и стажёр тоже. Он ходит в тот же офис, в то
+            # же время и отмечается тем же кодом; отсутствие его в составе
+            # смены означало бы, что человек пришёл, а «сейчас в офисе»
+            # показывает ноль. Из состава выпадают уволенные и
+            # отстранённые, а не те, у кого не кончился испытательный срок.
+            assignments = assignments.filter(
+                employee__employment_status__in=WORKING_STATUSES
+            )
 
         if department_id:
             assignments = assignments.filter(department_id=department_id)
+        if department_ids:
+            assignments = assignments.filter(department_id__in=department_ids)
+        if employee_id:
+            assignments = assignments.filter(employee_id=employee_id)
         if position_id:
             assignments = assignments.filter(position_id=position_id)
         if search:
@@ -874,6 +954,10 @@ class AttendanceHrService(BaseService):
                 started_at__lt=end,
             )
             .exclude(status="INVALID")
+            # События входа и выхода нужны составу смены: по ним видно,
+            # была ли отметка внутри геозоны. Они берутся тем же запросом,
+            # а не отдельным обходом на каждую строку.
+            .select_related("entry_event", "exit_event")
             .order_by("started_at")
         )
         for row in rows:
@@ -916,8 +1000,8 @@ class AttendanceHrService(BaseService):
         *,
         organization_id: uuid.UUID,
         office_ids: list[uuid.UUID],
-    ) -> tuple[dict[uuid.UUID, tuple[time | None, bool, int]], dict]:
-        """Начало смены, признак рабочего дня и допустимое опоздание — по одному запросу на всех.
+    ) -> tuple[dict[uuid.UUID, tuple[time | None, time | None, bool, int]], dict]:
+        """Границы смены, признак рабочего дня и допустимое опоздание — по одному запросу на всех.
 
         Значение `(None, False)` означает «график есть, день нерабочий»;
         отсутствие ключа — «графика нет вовсе». Это разные вещи: во втором
@@ -948,7 +1032,7 @@ class AttendanceHrService(BaseService):
         for row in sorted(calendar, key=lambda r: r.office_id is not None):
             exceptions[row.office_id] = row.is_working_day
 
-        result: dict[uuid.UUID, tuple[time | None, bool, int]] = {}
+        result: dict[uuid.UUID, tuple[time | None, time | None, bool, int]] = {}
         for row in rows:
             if row.employee_id in result:
                 continue  # берём самое позднее действующее назначение
@@ -959,6 +1043,7 @@ class AttendanceHrService(BaseService):
             working = bool(match and match.is_working_day)
             result[row.employee_id] = (
                 match.start_time if match and working else None,
+                match.end_time if match and working else None,
                 working,
                 row.schedule.late_grace_minutes or 0,
             )
@@ -972,8 +1057,9 @@ class AttendanceHrService(BaseService):
         tz,
         sessions: list[AttendanceSession],
         absence: EmployeeAbsence | None,
-        schedule: tuple[time | None, bool, int] | None,
+        schedule: tuple[time | None, time | None, bool, int] | None,
         calendar: dict,
+        notice=None,
     ) -> PresenceRow:
         employee = assignment.employee
         first_entry = sessions[0].started_at if sessions else None
@@ -986,8 +1072,8 @@ class AttendanceHrService(BaseService):
                 last_exit = candidate.ended_at
         seconds = sum(s.duration_seconds or 0 for s in sessions)
 
-        scheduled_start, is_working, grace_minutes = (
-            schedule or (None, False, 0)
+        scheduled_start, scheduled_end, is_working, grace_minutes = (
+            schedule or (None, None, False, 0)
         )
         has_schedule = schedule is not None
         # Исключение календаря сильнее графика: в праздник не приходят даже
@@ -1006,6 +1092,7 @@ class AttendanceHrService(BaseService):
             open_session=open_session is not None,
             has_schedule=has_schedule,
             is_working=is_working,
+            notice_kind=notice.kind if notice else None,
         )
 
         late_minutes = None
@@ -1036,9 +1123,25 @@ class AttendanceHrService(BaseService):
             open_session_id=open_session.id if open_session else None,
             late_minutes=late_minutes,
             scheduled_start=scheduled_start,
+            scheduled_end=scheduled_end,
             absence_code=absence_code,
             absence_name=absence_name,
+            notice_kind=notice.kind if notice else None,
+            notice_comment=notice.comment if notice else None,
             conflicting_marks=bool(absence and sessions),
+            intervals=tuple(
+                Interval(
+                    started_at=one.started_at,
+                    ended_at=one.ended_at,
+                    seconds=one.duration_seconds or 0,
+                )
+                for one in sessions
+            ),
+            outside_geofence=any(
+                event is not None and event.inside_geofence is False
+                for one in sessions
+                for event in (one.entry_event, one.exit_event)
+            ),
         )
 
     def _apply_correction(self, request: AttendanceCorrectionRequest) -> dict:
@@ -1118,6 +1221,7 @@ def _state_of(
     open_session: bool,
     has_schedule: bool,
     is_working: bool,
+    notice_kind: str | None = None,
 ) -> tuple[str, str | None, str | None]:
     if absence is not None:
         code = absence.absence_type.code if absence.absence_type_id else None
@@ -1132,6 +1236,11 @@ def _state_of(
         return "IN_OFFICE", None, None
     if has_marks:
         return "LEFT", None, None
+    # Сказанное человеком слабее факта отметки и слабее оформленного
+    # отсутствия, но сильнее молчания: предупредивший о задержке — это
+    # не прогул, и называть его так значит наказывать за предупреждение.
+    if notice_kind == "LATE" and is_working:
+        return "LATE", None, None
     if not has_schedule:
         # Не «прогул»: сравнивать не с чем. Отдельное состояние, чтобы
         # ненастроенный график не превращался в обвинение человеку.

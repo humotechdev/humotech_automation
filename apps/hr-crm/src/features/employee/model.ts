@@ -51,8 +51,10 @@ export function dayState(row: DailyRow): string {
 export function duration(seconds: number | null | undefined): string {
   if (seconds === null || seconds === undefined) return '—';
   if (seconds <= 0) return '0 ч';
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.round((seconds % 3600) / 60);
+  // Сначала целые минуты, потом часы: округление остатка давало «8 ч 60 мин».
+  const total = Math.round(seconds / 60);
+  const hours = Math.floor(total / 60);
+  const minutes = total % 60;
   if (!hours) return `${minutes} мин`;
   if (!minutes) return `${hours} ч`;
   return `${hours} ч ${minutes} мин`;

@@ -10,7 +10,10 @@ from rest_framework.views import APIView
 
 from humotech.analytics.dashboard import DashboardService
 from humotech.analytics.metrics import AnalyticsService
+from humotech.analytics.overview import OverviewService
+from humotech.core.errors import ValidationFailed
 from humotech.attendance.views import _date_param, _uuid_param
+from humotech.analytics.movement import MovementService
 from humotech.core.rbac import Actor
 
 
@@ -241,6 +244,154 @@ class ComparisonView(APIView):
             right_last=_date_param(request, "right_last"),
         )
         return Response(result)
+
+
+class OverviewResponseSerializer(serializers.Serializer):
+    period = serializers.DictField()
+    previous_period = serializers.DictField()
+    weekday = serializers.IntegerField(allow_null=True)
+    generated_at = serializers.DateTimeField()
+    timezones = serializers.ListField(child=serializers.CharField())
+    summary = serializers.DictField()
+    days = serializers.ListField(child=serializers.DictField())
+    previous_days = serializers.ListField(child=serializers.DictField())
+    offices = serializers.ListField(child=serializers.DictField())
+    # Та же явка уровнем выше: регионы собираются из своих офисов, а не
+    # считаются отдельно — два подсчёта одного числа однажды разойдутся.
+    regions = serializers.ListField(child=serializers.DictField())
+    # Рейтинг людей: худшая явка сверху. Страницу открывают, чтобы найти
+    # проблему, а не полюбоваться отличниками.
+    employees = serializers.ListField(child=serializers.DictField())
+    arrivals = serializers.DictField()
+    weekdays = serializers.DictField()
+
+
+class MovementSpanSerializer(serializers.Serializer):
+    first = serializers.DateField()
+    last = serializers.DateField()
+    hired = serializers.IntegerField()
+    left = serializers.IntegerField()
+    difference = serializers.IntegerField()
+
+
+class MovementResponseSerializer(serializers.Serializer):
+    current = MovementSpanSerializer()
+    previous = MovementSpanSerializer()
+    month_before = MovementSpanSerializer()
+    year_before = MovementSpanSerializer()
+    headcount = serializers.IntegerField()
+
+
+class MovementView(APIView):
+    """Движение сотрудников: принято, уволено, разница.
+
+    Отдельно от посещаемости: там единица измерения — дни, здесь —
+    люди, и складывать их в одном ответе значит путать два разных
+    вопроса.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Движение сотрудников",
+        description=(
+            "Приём считается по дате выхода, увольнение — по дате "
+            "увольнения, а не по дате создания карточки: человека "
+            "оформляют заранее. Сравнение идёт с равным по длине "
+            "предыдущим периодом, а также с тем же периодом месяцем и "
+            "годом раньше."
+        ),
+        parameters=PERIOD_PARAMS
+        + [
+            OpenApiParameter("region_id", str),
+            OpenApiParameter("office_id", str),
+        ],
+        responses=MovementResponseSerializer,
+        tags=["Аналитика"],
+    )
+    def get(self, request):
+        actor = Actor.from_user(request.user)
+        first, last = _period(request)
+        report = MovementService().report(
+            actor,
+            first=first,
+            last=last,
+            office_id=_uuid_param(request, "office_id"),
+            region_id=_uuid_param(request, "region_id"),
+        )
+        return Response({
+            "current": _movement_json(report.current),
+            "previous": _movement_json(report.previous),
+            "month_before": _movement_json(report.month_before),
+            "year_before": _movement_json(report.year_before),
+            "headcount": report.headcount,
+        })
+
+
+def _movement_json(row) -> dict:
+    return {
+        "first": row.first.isoformat(),
+        "last": row.last.isoformat(),
+        "hired": row.hired,
+        "left": row.left,
+        "difference": row.difference,
+    }
+
+
+class AnalyticsOverviewView(APIView):
+    """Всё для страницы «Аналитика» одним ответом.
+
+    Сводка с предыдущим равным периодом, каждый день периода, рейтинг
+    офисов, ритм прихода и дни недели. Правила — те же, что у `/analytics`.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Обзор аналитики",
+        description=(
+            "Доли приходят с числителем и знаменателем; percent = null — "
+            "нулевой знаменатель, а не ноль процентов. Выходные, дни без "
+            "графика, оформленные отсутствия и будущие дни в неявку не "
+            "входят. Среднее время — только по закрытым посещениям. Сдвиг "
+            "прихода считается от начала личной смены сотрудника, сутки — в "
+            "поясе его офиса."
+        ),
+        parameters=PERIOD_PARAMS
+        + [
+            OpenApiParameter("region_id", str),
+            OpenApiParameter("office_id", str),
+            OpenApiParameter("department_id", str),
+            OpenApiParameter("employee_id", str),
+            OpenApiParameter(
+                "weekday", int,
+                description="Детализация по дню недели: 1 — понедельник … 7",
+            ),
+        ],
+        responses=OverviewResponseSerializer,
+        tags=["Аналитика"],
+    )
+    def get(self, request):
+        actor = Actor.from_user(request.user)
+        first, last = _period(request)
+        raw = request.query_params.get("weekday")
+        try:
+            weekday = int(raw) if raw else None
+        except ValueError:
+            raise ValidationFailed(
+                "День недели — число от 1 до 7", details={"weekday": raw}
+            ) from None
+        body = OverviewService().overview(
+            actor,
+            first=first,
+            last=last,
+            region_id=_uuid_param(request, "region_id"),
+            office_id=_uuid_param(request, "office_id"),
+            department_id=_uuid_param(request, "department_id"),
+            employee_id=_uuid_param(request, "employee_id"),
+            weekday=weekday,
+        )
+        return Response(body)
 
 
 def _period(request):

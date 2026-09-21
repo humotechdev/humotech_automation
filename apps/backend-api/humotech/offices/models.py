@@ -27,7 +27,10 @@ class Office(
     )
     code = models.CharField(max_length=50)
     name = models.CharField(max_length=255)
-    address = models.TextField()
+    #: Адрес. Пусто — офис завели, но ещё не настроили: адрес, точку на
+    #: карте и радиус задают в карточке офиса. Требовать адрес в момент
+    #: создания значит не дать завести офис тому, кто его ещё не знает.
+    address = models.TextField(null=True, blank=True)
     # Часовой пояс офиса обязателен: все TIMESTAMPTZ хранятся в UTC,
     # а «опоздал / ушёл раньше» считается в локальном времени офиса.
     timezone = models.CharField(max_length=100)

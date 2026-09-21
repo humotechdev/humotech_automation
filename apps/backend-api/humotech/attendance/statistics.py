@@ -102,6 +102,14 @@ class DayRecord:
     is_working_day: bool | None
     absence_code: str | None
     absence_name: str | None
+    # Норма дня в секундах. None — графика на этот день нет, 0 — выходной.
+    #
+    # Не «конец смены минус начало»: в эту разницу входит обед, которого
+    # в графике нет ни минутой. Норма берётся из `weekly_minutes` —
+    # договорного недельного времени — и делится на число рабочих дней
+    # графика, ровно как это уже делает `_daily_norm_minutes`
+    # в ассистенте. Одно правило на весь проект, а не два похожих.
+    norm_seconds: int | None
 
     @property
     def attended(self) -> bool:
@@ -200,7 +208,7 @@ def for_period(
     employee_id = context.employee.id
 
     sessions_by_day = _sessions_by_day(employee_id, first, last, tz, moment)
-    working = _working_days(context, first, last)
+    plans = _day_plans(context, first, last)
     absences = _absence_days(context, first, last, tz)
 
     days = tuple(
@@ -209,9 +217,10 @@ def for_period(
             sessions=tuple(sessions_by_day.get(day, ())),
             seconds=sum(s.seconds for s in sessions_by_day.get(day, ())),
             has_open_session=any(s.is_open for s in sessions_by_day.get(day, ())),
-            is_working_day=working.get(day),
+            is_working_day=plans[day].is_working if day in plans else None,
             absence_code=absences.get(day, (None, None))[0],
             absence_name=absences.get(day, (None, None))[1],
+            norm_seconds=plans[day].norm_seconds if day in plans else None,
         )
         for day in days_in(first, last)
     )
@@ -377,8 +386,18 @@ def _point_name(event) -> str | None:
     return event.qr_point.name
 
 
-def _working_days(context, first: date, last: date) -> dict[date, bool]:
-    """Какие дни периода рабочие — по графику, действовавшему В ТОТ день.
+@dataclass(frozen=True)
+class DayPlan:
+    """Что график говорит про один день: рабочий ли он и какова норма."""
+
+    is_working: bool
+    # 0 у выходного: график про этот день знает и отвечает «нисколько».
+    # Отсутствие дня в словаре — другое: графика нет вовсе.
+    norm_seconds: int
+
+
+def _day_plans(context, first: date, last: date) -> dict[date, DayPlan]:
+    """Какие дни периода рабочие и сколько в каждом нормы.
 
     График читается на каждый день отдельно, а не один раз «текущий»:
     в месяце, внутри которого график поменяли, одна выборка дала бы
@@ -399,22 +418,44 @@ def _working_days(context, first: date, last: date) -> dict[date, bool]:
 
     exceptions = _calendar_exceptions(context, first, last)
 
-    result: dict[date, bool] = {}
+    result: dict[date, DayPlan] = {}
     for day in days_in(first, last):
         schedule = _schedule_on(assignments, day)
         if schedule is None:
             continue
+        norm = _daily_norm_seconds(schedule)
         override = exceptions.get(day)
         if override is not None:
-            result[day] = override
+            # Перенос делает день рабочим или выходным, но своей нормы
+            # не приносит: в календарном исключении её просто нет. Значит,
+            # у рабочего дня по переносу норма та же, что у остальных.
+            result[day] = DayPlan(override, norm if override else 0)
             continue
         # `ScheduleDay.weekday` — ISO-8601: 1 = понедельник.
         # `date.weekday()` считает с нуля, отсюда `isoweekday()`.
         match = next(
             (d for d in schedule.days.all() if d.weekday == day.isoweekday()), None
         )
-        result[day] = bool(match and match.is_working_day)
+        working = bool(match and match.is_working_day)
+        result[day] = DayPlan(working, norm if working else 0)
     return result
+
+
+def _daily_norm_seconds(schedule) -> int:
+    """Норма одного рабочего дня графика.
+
+    Недельное договорное время, делённое на число рабочих дней недели.
+    Ни «восемь часов по умолчанию», ни разница между концом и началом
+    смены: в первом случае число взято с потолка, во втором в него
+    попадает обед, которого график не описывает.
+
+    Ноль, если рабочих дней в графике нет вовсе, — делить не на что,
+    а выдумывать знаменатель здесь нечем.
+    """
+    working = sum(1 for day in schedule.days.all() if day.is_working_day)
+    if not working or not schedule.weekly_minutes:
+        return 0
+    return int(schedule.weekly_minutes // working) * 60
 
 
 def _schedule_on(assignments, day: date):

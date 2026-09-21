@@ -44,6 +44,10 @@ API = "/api/v1"
 EXPORTER = ("reports.export", "employees.read", "attendance.read",
             "analytics.read", "schedules.read")
 
+#: Security-аудит скачивания.
+GRANTED = "security.export.download.granted"
+DENIED = "security.export.download.denied"
+
 
 @pytest.fixture(autouse=True)
 def exports_in_a_temporary_place(settings, tmp_path):
@@ -332,6 +336,149 @@ class TestDownload:
 
         assert response.status_code == 404
 
+    def test_an_anonymous_request_gets_nothing(self, exporter, employee):
+        from rest_framework.test import APIClient
+
+        job_id = order(exporter).json()["id"]
+        run_once()
+
+        response = APIClient().get(f"{API}/export-jobs/{job_id}/download/")
+
+        assert response.status_code in (401, 403)
+        assert not hasattr(response, "streaming_content")
+
+    def test_the_author_downloads_and_it_is_recorded(self, exporter, employee):
+        job_id = order(exporter).json()["id"]
+        run_once()
+
+        response = exporter.get(
+            f"{API}/export-jobs/{job_id}/download/", HTTP_USER_AGENT="pytest-agent",
+        )
+
+        assert response.status_code == 200
+        b"".join(response.streaming_content)
+        record = AuditLog.objects.get(action=GRANTED, entity_id=job_id)
+        assert record.actor_user_id == exporter.user.id
+        assert record.new_values["reason"] == "owner"
+        assert record.new_values["by_owner"] is True
+        assert record.user_agent == "pytest-agent"
+
+    def test_an_author_without_the_export_permission_gets_403(
+        self, api_client, make_user, organization
+    ):
+        author = make_user(organization, permissions=("employees.read",))
+        job = ExportJob.objects.create(
+            organization=organization, requested_by_user=author,
+            kind="employees", fmt="csv", status="SUCCEEDED",
+        )
+        api_client.force_authenticate(user=author)
+
+        response = api_client.get(f"{API}/export-jobs/{job.id}/download/")
+
+        assert response.status_code == 403
+        record = AuditLog.objects.get(action=DENIED, entity_id=job.id)
+        assert record.new_values["reason"] == "no_export_permission"
+
+    def test_a_global_hr_downloads_a_colleagues_report(
+        self, exporter, employee, api_client, make_user, organization
+    ):
+        job_id = order(exporter).json()["id"]
+        run_once()
+        hr = make_user(organization, permissions=EXPORTER + ("reports.download_any",))
+        api_client.force_authenticate(user=hr)
+
+        response = api_client.get(f"{API}/export-jobs/{job_id}/download/")
+
+        assert response.status_code == 200
+        b"".join(response.streaming_content)
+        record = AuditLog.objects.get(action=GRANTED, actor_user_id=hr.id)
+        assert record.new_values["reason"] == "download_any"
+        assert record.new_values["by_owner"] is False
+        assert record.new_values["owner_user_id"] == str(exporter.user.id)
+
+    def test_a_limited_hr_gets_only_reports_inside_their_offices(
+        self, exporter, employee, api_client, organization, office, other_office
+    ):
+        from django_tests.conftest import create_actor
+
+        whole = order(exporter).json()["id"]
+        inside = order(
+            exporter, builder=True, date_from="2026-09-01", date_to="2026-09-15",
+            office_ids=[str(office.id)],
+        ).json()["id"]
+        wider = order(
+            exporter, builder=True, date_from="2026-09-01", date_to="2026-09-15",
+            office_ids=[str(office.id), str(other_office.id)],
+        ).json()["id"]
+        while run_once():
+            pass
+        hr, _ = create_actor(
+            organization, permissions=EXPORTER + ("reports.download_any",), office=office,
+        )
+        api_client.force_authenticate(user=hr)
+
+        for job_id in (whole, wider):
+            response = api_client.get(f"{API}/export-jobs/{job_id}/download/")
+            assert response.status_code == 404
+            record = AuditLog.objects.get(action=DENIED, entity_id=job_id)
+            assert record.new_values["reason"] == "scope_not_covered"
+
+        response = api_client.get(f"{API}/export-jobs/{inside}/download/")
+        assert response.status_code == 200
+        b"".join(response.streaming_content)
+
+    def test_another_organization_gets_404_and_learns_nothing(
+        self, exporter, employee, api_client, make_user, organization
+    ):
+        job_id = order(exporter).json()["id"]
+        run_once()
+        foreign = Organization.objects.create(
+            code=f"ORG{uuid.uuid4().hex[:8]}", name="Чужая",
+            default_timezone="Asia/Dushanbe", status="ACTIVE",
+        )
+        stranger = make_user(foreign, permissions=EXPORTER + ("reports.download_any", "audit.read"))
+        api_client.force_authenticate(user=stranger)
+
+        response = api_client.get(f"{API}/export-jobs/{job_id}/download/")
+
+        assert response.status_code == 404
+        record = AuditLog.objects.get(action=DENIED, actor_user_id=stranger.id)
+        assert record.organization_id == foreign.id
+        assert record.new_values == {"result": "denied", "reason": "not_found"}
+        assert not AuditLog.objects.filter(
+            action=DENIED, organization_id=organization.id).exists()
+
+    def test_audit_read_alone_does_not_open_someone_elses_file(
+        self, exporter, employee, api_client, make_user, organization
+    ):
+        job_id = order(exporter).json()["id"]
+        run_once()
+
+        auditor = make_user(organization, permissions=EXPORTER + ("audit.read",))
+        api_client.force_authenticate(user=auditor)
+        response = api_client.get(f"{API}/export-jobs/{job_id}/download/")
+        assert response.status_code == 404
+        assert AuditLog.objects.get(
+            action=DENIED, actor_user_id=auditor.id).new_values["reason"] == "not_owner"
+
+        reader = make_user(organization, permissions=("audit.read",))
+        api_client.force_authenticate(user=reader)
+        response = api_client.get(f"{API}/export-jobs/{job_id}/download/")
+        assert response.status_code == 403
+        assert AuditLog.objects.get(
+            action=DENIED, actor_user_id=reader.id).new_values["reason"] == "no_export_permission"
+
+    def test_a_refused_colleague_does_not_learn_the_state(
+        self, exporter, api_client, make_user, organization
+    ):
+        """Незавершённое чужое задание — 404, а не 409: состояние не выдаётся."""
+        job_id = order(exporter).json()["id"]
+        api_client.force_authenticate(user=make_user(organization, permissions=EXPORTER))
+
+        response = api_client.get(f"{API}/export-jobs/{job_id}/download/")
+
+        assert response.status_code == 404
+
     def test_an_unfinished_job_has_nothing_to_download(self, exporter):
         job_id = order(exporter).json()["id"]
 
@@ -358,7 +505,7 @@ class TestDownload:
 
         assert AuditLog.objects.filter(
             entity_type="export_jobs", entity_id=job_id,
-            action="export.job.download",
+            action=GRANTED,
         ).exists()
 
     def test_the_path_on_disk_is_never_shown(self, exporter, employee):

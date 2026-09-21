@@ -24,7 +24,7 @@ import {
 import {
   historyNotKept, moment, shownLine,
 } from '../src/pages/NotificationsPage';
-import { USER, crm, fakeNetwork, json, renderApp } from './helpers';
+import { USER, crm, fakeNetwork, json, pick, renderApp } from './helpers';
 
 // --- чистые правила ---------------------------------------------------------
 
@@ -158,7 +158,7 @@ describe('связанный объект', () => {
     expect(relatedLink(row('employee_questions', 'q-1'))?.to)
       .toBe('/questions?id=q-1');
     expect(relatedLink(row('telegram_accounts', 't-1'))?.to)
-      .toBe('/employees?employee=e-1');
+      .toBe('/employees/e-1');
   });
 
   test('для неизвестного вида ссылки нет — «открыть» в никуда хуже', () => {
@@ -310,6 +310,15 @@ function network(
   });
 }
 
+/**
+ * Очередь отправки — вторая вкладка страницы.
+ *
+ * Первой открывается лента событий кадровика (её проверяет
+ * `notification-feed.test.tsx`), поэтому сюда приходят по адресу
+ * вкладки. Тот же адрес стоит в уведомлениях об ошибке доставки.
+ */
+const QUEUE = '/notifications?view=delivery';
+
 const opened = () => screen.findByText('Тестовое событие');
 
 describe('список', () => {
@@ -317,7 +326,7 @@ describe('список', () => {
     const calls = network(undefined, {
       counts: { ...COUNTS, total: 57, sent: 40, queued: 10, failed: 5, cancelled: 2 },
     });
-    renderApp('/notifications');
+    renderApp(QUEUE);
     await opened();
 
     const summary = screen.getByLabelText('Сводка по состояниям');
@@ -332,7 +341,7 @@ describe('список', () => {
 
   test('вкладка запрашивает ровно те состояния, что считает', async () => {
     const calls = network();
-    renderApp('/notifications');
+    renderApp(QUEUE);
     await opened();
 
     fireEvent.click(screen.getByRole('tab', { name: /Отправлено/ }));
@@ -350,7 +359,7 @@ describe('список', () => {
 
   test('поиск, область и период уходят на сервер', async () => {
     const calls = network();
-    renderApp('/notifications');
+    renderApp(QUEUE);
     await opened();
 
     fireEvent.change(screen.getByLabelText('Поиск сообщения или сотрудника'), {
@@ -361,14 +370,18 @@ describe('список', () => {
         .toBe(true),
     );
 
-    fireEvent.change(screen.getByLabelText('Регион'), { target: { value: 'reg-1' } });
+    await pick('Регион', 'Тестовый регион');
     await waitFor(() =>
       expect(calls.some((c) => c.url.includes('region_id=reg-1'))).toBe(true),
     );
 
-    fireEvent.change(screen.getByLabelText('Начало периода'), {
-      target: { value: '2026-09-01' },
-    });
+    // Поле создаёт `AppDateRangePicker`: метка собирается из его
+    // подписи, поэтому «Период уведомлений: начало». Значение вводится
+    // так, как его вводит человек — днём, месяцем и годом, — и
+    // применяется по уходу из поля.
+    const since = screen.getByLabelText('Период уведомлений: начало');
+    fireEvent.change(since, { target: { value: '01.09.2026' } });
+    fireEvent.blur(since);
     await waitFor(() =>
       expect(calls.some((c) => c.url.includes('date_from=2026-09-01'))).toBe(true),
     );
@@ -376,27 +389,30 @@ describe('список', () => {
 
   test('смена региона сбрасывает несовместимый офис', async () => {
     const calls = network();
-    renderApp('/notifications');
+    renderApp(QUEUE);
     await opened();
 
-    const offices = screen.getByLabelText('Офис') as HTMLSelectElement;
-    await waitFor(() => expect(offices.options.length).toBeGreaterThan(2));
-    fireEvent.change(offices, { target: { value: 'off-2' } });
+    // Офис выбирается своим меню, а не `<select>`: у него портал и
+    // поиск, и обращаться к `options` тут не к чему.
+    await pick('Офис', 'Второй офис');
     await waitFor(() =>
       expect(calls.some((c) => c.url.includes('office_id=off-2'))).toBe(true),
     );
 
-    fireEvent.change(screen.getByLabelText('Регион'), { target: { value: 'reg-1' } });
+    await pick('Регион', 'Тестовый регион');
 
-    // Офис снят вместе со сменой региона: показанное совпадает с отправляемым.
-    await waitFor(() => expect(offices.value).toBe(''));
-    const last = calls[calls.length - 1]?.url ?? '';
-    expect(last.includes('office_id=off-2')).toBe(false);
+    // Офис снят вместе со сменой региона: показанное совпадает с
+    // отправляемым. Проверяется по запросу, а не по значению поля:
+    // меню рисует выбранное само и `value` у него нет.
+    await waitFor(() => {
+      const last = calls[calls.length - 1]?.url ?? '';
+      expect(last.includes('office_id=off-2')).toBe(false);
+    });
   });
 
   test('офис в строке — тот, что вернул сервер', async () => {
     network();
-    renderApp('/notifications');
+    renderApp(QUEUE);
     await opened();
 
     // Исторический офис считает сервер; интерфейс его не подменяет.
@@ -409,23 +425,27 @@ describe('список', () => {
         ? json(500, { error: { code: 'server_error', message: 'x' } })
         : null,
     );
-    renderApp('/notifications');
+    renderApp(QUEUE);
 
     expect(await screen.findByText(/это ошибка запроса, а не пустая история/i))
       .toBeTruthy();
   });
 
-  test('без права страница объясняет отказ и не ходит за списком', async () => {
+  test('очередь открыта администратору без лишних вопросов', async () => {
+    // Прав в интерфейсе больше нет: администратор один, и ему открыто
+    // всё. Отказ исполняет сервер — прятать страницу в браузере значит
+    // проверять доступ там, где его легче всего обойти.
     const calls = network(undefined, { permissions: ['employees.read'] });
-    renderApp('/notifications');
+    renderApp(QUEUE);
 
-    expect(await screen.findByText(/Нет права на просмотр уведомлений/)).toBeTruthy();
-    expect(calls.some((c) => clean(c.url).endsWith('/notifications/'))).toBe(false);
+    await opened();
+    expect(screen.queryByText(/Нет права на просмотр очереди отправки/)).toBeNull();
+    expect(calls.some((c) => clean(c.url).includes('/notifications/'))).toBe(true);
   });
 
   test('под списком честное количество', async () => {
     network();
-    renderApp('/notifications');
+    renderApp(QUEUE);
     await opened();
 
     // На странице две строки, а в наборе четыре — подпись говорит правду.
@@ -437,7 +457,7 @@ describe('список', () => {
 describe('карточка', () => {
   test('показывает содержимое, историю попыток и связанный объект', async () => {
     network();
-    renderApp('/notifications');
+    renderApp(QUEUE);
     await opened();
     fireEvent.click(screen.getByText('Тестовое событие'));
 
@@ -455,7 +475,7 @@ describe('карточка', () => {
 
   test('ни chat_id, ни сырого кода ошибки в карточке нет', async () => {
     network();
-    renderApp('/notifications');
+    renderApp(QUEUE);
     await opened();
     fireEvent.click(screen.getByText('Тестовое событие'));
 
@@ -467,7 +487,7 @@ describe('карточка', () => {
 
   test('у отправленного оба действия выключены и объяснены', async () => {
     const calls = network();
-    renderApp('/notifications');
+    renderApp(QUEUE);
     await opened();
     fireEvent.click(screen.getByText('Тестовое отправленное'));
 
@@ -495,7 +515,7 @@ describe('карточка', () => {
       }
       return null;
     });
-    renderApp('/notifications');
+    renderApp(QUEUE);
     await opened();
     fireEvent.click(screen.getByText('Тестовое событие'));
     const card = await screen.findByLabelText('Выбранное уведомление');
@@ -514,7 +534,7 @@ describe('карточка', () => {
         ? new Promise<Response>(() => {})
         : null,
     );
-    renderApp('/notifications');
+    renderApp(QUEUE);
     await opened();
     fireEvent.click(screen.getByText('Тестовое событие'));
     const card = await screen.findByLabelText('Выбранное уведомление');
@@ -545,7 +565,7 @@ describe('карточка', () => {
       }
       return null;
     });
-    renderApp('/notifications');
+    renderApp(QUEUE);
     await opened();
     fireEvent.click(screen.getByText('Тестовое событие'));
     const card = await screen.findByLabelText('Выбранное уведомление');
@@ -568,7 +588,7 @@ describe('карточка', () => {
         ? json(200, { items: [], kept: false })
         : null,
     );
-    renderApp('/notifications');
+    renderApp(QUEUE);
     await opened();
     fireEvent.click(screen.getByText('Тестовое событие'));
 
@@ -587,7 +607,7 @@ describe('карточка', () => {
       }
       return null;
     });
-    renderApp('/notifications');
+    renderApp(QUEUE);
     await opened();
 
     fireEvent.click(screen.getByText('Тестовое событие'));

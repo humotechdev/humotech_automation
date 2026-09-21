@@ -41,6 +41,7 @@ from humotech.qr_codes.serializers import (
     QrPointCreateSerializer,
     QrPointSerializer,
     QrPointUpdateSerializer,
+    StickerSerializer,
 )
 from humotech.qr_codes.services import QrDisplayService
 
@@ -278,6 +279,19 @@ class QrPointViewSet(ServiceViewSet):
         payload = validated(QrPointUpdateSerializer, request.data)
         return self.item_response(self.service.update(self.actor, pk, **payload))
 
+    @extend_schema(
+        summary="Удалить точку отметки",
+        description=(
+            "Только ту, по которой никто не отмечался. Точка, попавшая "
+            "хоть в одну отметку, — часть истории: её выключают, а не "
+            "стирают."
+        ),
+        responses={204: None},
+    )
+    def destroy(self, request, pk=None):
+        self.service.delete(self.actor, pk)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
     @action(detail=True, methods=["post"])
     def activate(self, request, pk=None):
         return self.item_response(
@@ -289,6 +303,21 @@ class QrPointViewSet(ServiceViewSet):
         return self.item_response(
             self.service.set_active(self.actor, pk, active=False)
         )
+
+    @extend_schema(
+        summary="Ссылка наклейки",
+        description=(
+            "Код печатной точки — чтобы показать его на экране, скачать "
+            "или распечатать заново. Требует права на управление "
+            "точками; обращение попадает в журнал. У точек, выпущенных "
+            "до того, как коды стали храниться, кода нет: такой "
+            "заменяют новым."
+        ),
+        responses={200: StickerSerializer},
+    )
+    @action(detail=True, methods=["get"], url_path="sticker")
+    def sticker(self, request, pk=None):
+        return Response({"sticker_link": self.service.sticker(self.actor, pk)})
 
     @action(detail=True, methods=["post"], url_path="reissue-token")
     def reissue_token(self, request, pk=None):

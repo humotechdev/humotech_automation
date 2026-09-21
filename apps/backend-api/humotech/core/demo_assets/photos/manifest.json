@@ -1,0 +1,227 @@
+{
+  "note": "Демонстрационные портреты. Взяты по лицензии Pexels; ни один снимок не изображает сотрудника HUMOTECH.",
+  "size": 256,
+  "quality": 82,
+  "photos": [
+    {
+      "file": "male-young-5906433.jpg",
+      "pexels_id": 5906433,
+      "source_url": "https://www.pexels.com/photo/a-man-in-a-suit-jacket-5906433/",
+      "photographer": "Luis Becerra  Fotógrafo",
+      "downloaded_at": "2026-09-14T12:15:21+00:00",
+      "gender": "MALE",
+      "age_band": "young",
+      "employee_number": "DEMO-S-03"
+    },
+    {
+      "file": "male-young-12311549.jpg",
+      "pexels_id": 12311549,
+      "source_url": "https://www.pexels.com/photo/man-wearing-black-suit-on-white-background-12311549/",
+      "photographer": "Joseph Eulo",
+      "downloaded_at": "2026-09-14T12:15:23+00:00",
+      "gender": "MALE",
+      "age_band": "young",
+      "employee_number": "DEMO-S-07"
+    },
+    {
+      "file": "male-young-19098114.jpg",
+      "pexels_id": 19098114,
+      "source_url": "https://www.pexels.com/photo/portrait-of-a-young-man-in-a-suit-19098114/",
+      "photographer": "Nana Qwacy Listowell",
+      "downloaded_at": "2026-09-14T12:15:24+00:00",
+      "gender": "MALE",
+      "age_band": "young",
+      "employee_number": "DEMO-S-12"
+    },
+    {
+      "file": "male-middle-17049771.jpg",
+      "pexels_id": 17049771,
+      "source_url": "https://www.pexels.com/photo/portrait-of-a-businessman-in-a-suit-17049771/",
+      "photographer": "Tran Nhu Tuan",
+      "downloaded_at": "2026-09-14T12:15:27+00:00",
+      "gender": "MALE",
+      "age_band": "middle",
+      "employee_number": null
+    },
+    {
+      "file": "male-middle-31880922.jpg",
+      "pexels_id": 31880922,
+      "source_url": "https://www.pexels.com/photo/professional-portrait-of-a-businessman-in-suit-31880922/",
+      "photographer": "Wasin Pirom",
+      "downloaded_at": "2026-09-14T12:15:28+00:00",
+      "gender": "MALE",
+      "age_band": "middle",
+      "employee_number": null
+    },
+    {
+      "file": "male-middle-37148282.jpg",
+      "pexels_id": 37148282,
+      "source_url": "https://www.pexels.com/photo/professional-business-portrait-in-blue-suit-37148282/",
+      "photographer": "Vincent Santamaria",
+      "downloaded_at": "2026-09-14T12:15:28+00:00",
+      "gender": "MALE",
+      "age_band": "middle",
+      "employee_number": null
+    },
+    {
+      "file": "male-middle-14589344.jpg",
+      "pexels_id": 14589344,
+      "source_url": "https://www.pexels.com/photo/portrait-of-a-man-in-a-black-suit-14589344/",
+      "photographer": "Amir Saeid Dehghan",
+      "downloaded_at": "2026-09-14T12:15:29+00:00",
+      "gender": "MALE",
+      "age_band": "middle",
+      "employee_number": null
+    },
+    {
+      "file": "male-middle-37148297.jpg",
+      "pexels_id": 37148297,
+      "source_url": "https://www.pexels.com/photo/confident-businessman-in-blue-suit-portrait-37148297/",
+      "photographer": "Vincent Santamaria",
+      "downloaded_at": "2026-09-14T12:15:32+00:00",
+      "gender": "MALE",
+      "age_band": "middle",
+      "employee_number": null
+    },
+    {
+      "file": "male-senior-17050135.jpg",
+      "pexels_id": 17050135,
+      "source_url": "https://www.pexels.com/photo/smiling-elegant-elderly-man-17050135/",
+      "photographer": "Tran Nhu Tuan",
+      "downloaded_at": "2026-09-14T12:15:34+00:00",
+      "gender": "MALE",
+      "age_band": "senior",
+      "employee_number": null
+    },
+    {
+      "file": "male-senior-7366286.jpg",
+      "pexels_id": 7366286,
+      "source_url": "https://www.pexels.com/photo/portrait-of-an-elderly-man-in-a-suit-7366286/",
+      "photographer": "afshin aliabadi",
+      "downloaded_at": "2026-09-14T12:15:34+00:00",
+      "gender": "MALE",
+      "age_band": "senior",
+      "employee_number": null
+    },
+    {
+      "file": "male-senior-7366257.jpg",
+      "pexels_id": 7366257,
+      "source_url": "https://www.pexels.com/photo/a-man-in-black-suit-with-mustache-on-his-face-7366257/",
+      "photographer": "afshin aliabadi",
+      "downloaded_at": "2026-09-14T12:15:35+00:00",
+      "gender": "MALE",
+      "age_band": "senior",
+      "employee_number": null
+    },
+    {
+      "file": "male-senior-16322150.jpg",
+      "pexels_id": 16322150,
+      "source_url": "https://www.pexels.com/photo/man-in-a-gray-suit-and-red-tie-16322150/",
+      "photographer": "Gustt Rabelo",
+      "downloaded_at": "2026-09-14T12:15:37+00:00",
+      "gender": "MALE",
+      "age_band": "senior",
+      "employee_number": null
+    },
+    {
+      "file": "female-young-29995646.jpg",
+      "pexels_id": 29995646,
+      "source_url": "https://www.pexels.com/photo/professional-portrait-of-a-businesswoman-29995646/",
+      "photographer": "Tran Nhu Tuan",
+      "downloaded_at": "2026-09-14T12:15:39+00:00",
+      "gender": "FEMALE",
+      "age_band": "young",
+      "employee_number": "DEMO-S-02"
+    },
+    {
+      "file": "female-young-30468664.jpg",
+      "pexels_id": 30468664,
+      "source_url": "https://www.pexels.com/photo/professional-woman-in-white-blazer-portrait-30468664/",
+      "photographer": "Augusto Carneiro Junior",
+      "downloaded_at": "2026-09-14T12:15:41+00:00",
+      "gender": "FEMALE",
+      "age_band": "young",
+      "employee_number": "DEMO-S-04"
+    },
+    {
+      "file": "female-young-6572210.jpg",
+      "pexels_id": 6572210,
+      "source_url": "https://www.pexels.com/photo/a-woman-in-beige-blazer-looking-with-a-serious-face-6572210/",
+      "photographer": "Michael Wysmierski",
+      "downloaded_at": "2026-09-14T12:15:42+00:00",
+      "gender": "FEMALE",
+      "age_band": "young",
+      "employee_number": "DEMO-S-06"
+    },
+    {
+      "file": "female-young-19601394.jpg",
+      "pexels_id": 19601394,
+      "source_url": "https://www.pexels.com/photo/portrait-of-a-young-brunette-wearing-a-white-shirt-19601394/",
+      "photographer": "Tran Nhu Tuan",
+      "downloaded_at": "2026-09-14T12:15:43+00:00",
+      "gender": "FEMALE",
+      "age_band": "young",
+      "employee_number": "DEMO-S-08"
+    },
+    {
+      "file": "female-young-29995889.jpg",
+      "pexels_id": 29995889,
+      "source_url": "https://www.pexels.com/photo/professional-woman-in-black-suit-portrait-29995889/",
+      "photographer": "Tran Nhu Tuan",
+      "downloaded_at": "2026-09-14T12:15:44+00:00",
+      "gender": "FEMALE",
+      "age_band": "young",
+      "employee_number": "DEMO-S-10"
+    },
+    {
+      "file": "female-young-29852895.jpg",
+      "pexels_id": 29852895,
+      "source_url": "https://www.pexels.com/photo/professional-corporate-headshot-of-smiling-woman-29852895/",
+      "photographer": "Ifeyinka Adeyemo",
+      "downloaded_at": "2026-09-14T12:15:45+00:00",
+      "gender": "FEMALE",
+      "age_band": "young",
+      "employee_number": "DEMO-S-13"
+    },
+    {
+      "file": "female-young-17050920.jpg",
+      "pexels_id": 17050920,
+      "source_url": "https://www.pexels.com/photo/portrait-of-elegant-blonde-17050920/",
+      "photographer": "Tran Nhu Tuan",
+      "downloaded_at": "2026-09-14T12:15:45+00:00",
+      "gender": "FEMALE",
+      "age_band": "young",
+      "employee_number": "DEMO-S-16"
+    },
+    {
+      "file": "female-young-17050919.jpg",
+      "pexels_id": 17050919,
+      "source_url": "https://www.pexels.com/photo/smiling-elegant-businesswoman-17050919/",
+      "photographer": "Tran Nhu Tuan",
+      "downloaded_at": "2026-09-14T12:15:45+00:00",
+      "gender": "FEMALE",
+      "age_band": "young",
+      "employee_number": null
+    },
+    {
+      "file": "female-middle-34381970.jpg",
+      "pexels_id": 34381970,
+      "source_url": "https://www.pexels.com/photo/professional-portrait-of-smiling-businesswoman-34381970/",
+      "photographer": "Zoe Galarza",
+      "downloaded_at": "2026-09-14T12:15:49+00:00",
+      "gender": "FEMALE",
+      "age_band": "middle",
+      "employee_number": null
+    },
+    {
+      "file": "female-senior-8790862.jpg",
+      "pexels_id": 8790862,
+      "source_url": "https://www.pexels.com/photo/portrait-of-beautiful-elderly-woman-in-glasses-8790862/",
+      "photographer": "ANTONI SHKRABA production",
+      "downloaded_at": "2026-09-14T12:15:54+00:00",
+      "gender": "FEMALE",
+      "age_band": "senior",
+      "employee_number": null
+    }
+  ]
+}

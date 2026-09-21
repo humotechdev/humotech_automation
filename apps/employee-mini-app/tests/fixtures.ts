@@ -10,11 +10,13 @@ import type {
   AbsenceOptions,
   AbsenceRequest,
   Day,
+  Note,
   OpenSession,
   Profile,
   Status,
   Summary,
 } from '../src/api';
+import type { Section } from '../src/sections';
 
 export const TZ = 'Asia/Dushanbe';
 
@@ -97,6 +99,8 @@ export function day(over: Partial<Day> = {}): Day {
     missed: false,
     absence_code: null,
     absence_name: null,
+    // Норма дня: восемь часов у обычного рабочего дня пятидневки.
+    norm_seconds: 28_800,
     ...over,
   };
 }
@@ -174,4 +178,59 @@ export function fakeFetch(routes: Record<string, unknown>) {
   };
 
   return { impl: impl as unknown as typeof fetch, calls };
+}
+
+export function note(over: Partial<Note> = {}): Note {
+  return {
+    id: 'n1',
+    notification_type: 'office.announcement',
+    title: 'Объявление',
+    body: 'Обновлён график работы офиса',
+    sent_at: '2026-09-04T05:00:00Z',
+    read_at: null,
+    is_read: false,
+    ...over,
+  };
+}
+
+// --- секции ----------------------------------------------------------------
+//
+// Три состояния, в которых карточка бывает: данные пришли, первая
+// загрузка идёт, запрос упал. Четвёртое — обновление поверх показанного —
+// это `ready` с `refreshing: true`, и оно задаётся вторым аргументом.
+
+export function ready<T>(data: T, refreshing = false): Section<T> {
+  return {
+    data,
+    loading: false,
+    refreshing,
+    error: null,
+    kind: null,
+    reload: () => {},
+  };
+}
+
+export function pending<T>(): Section<T> {
+  return {
+    data: null,
+    loading: true,
+    refreshing: false,
+    error: null,
+    kind: null,
+    reload: () => {},
+  };
+}
+
+export function failed<T>(
+  message = 'Сервер временно недоступен',
+  reload: () => void = () => {},
+): Section<T> {
+  return {
+    data: null,
+    loading: false,
+    refreshing: false,
+    error: message,
+    kind: 'server',
+    reload,
+  };
 }

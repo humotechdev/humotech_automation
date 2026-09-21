@@ -1,0 +1,292 @@
+/*
+ * Опросы: редактор вопросов, именные ответы и сводка.
+ * Префикс классов — `sv-`.
+ *
+ * Цвета берутся из общих ролей `crm.css`. Отдельной палитры здесь нет:
+ * второй набор значений однажды разойдётся с первым.
+ */
+
+/* --- редактор вопросов ------------------------------------------------------ */
+
+.sv-questions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sv-questions__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.sv-questions__count {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.sv-question {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+}
+
+.sv-question__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sv-question__no {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--brand-soft, #eff4ff);
+  color: var(--brand, #2563eb);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.sv-question__order {
+  display: flex;
+  gap: 2px;
+}
+
+/* Вторая стрелка — та же иконка, развёрнутая: отдельной в наборе нет. */
+.sv-question__order button:nth-child(1) svg {
+  transform: rotate(-90deg);
+}
+
+.sv-question__order button:nth-child(2) svg {
+  transform: rotate(90deg);
+}
+
+.sv-question__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.sv-question__req {
+  font-size: 13px;
+}
+
+.sv-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0 0 0 10px;
+  border-left: 2px solid var(--border-default);
+  list-style: none;
+}
+
+.sv-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sv-option .input {
+  flex: 1;
+}
+
+/* --- именные ответы --------------------------------------------------------- */
+
+.sv-answers {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+}
+
+.sv-filled {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+}
+
+.sv-filled__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sv-filled__name {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.sv-filled__where {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.sv-filled__when {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: right;
+}
+
+.sv-filled__answers {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-default);
+}
+
+.sv-filled__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.sv-filled__row dt {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.sv-filled__row dd {
+  margin: 0;
+  font-size: 14px;
+  /* Свободный ответ переносится, а не растягивает строку в одну линию. */
+  overflow-wrap: anywhere;
+}
+
+/* --- сводка ------------------------------------------------------------------ */
+
+.sv-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 12px;
+}
+
+.sv-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+}
+
+.sv-stat__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sv-stat__title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.sv-stat__count,
+.sv-stat__avg {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.sv-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sv-bar {
+  display: grid;
+  grid-template-columns: minmax(80px, 1fr) minmax(90px, 2fr) auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.sv-bar__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sv-bar__track {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--border-default);
+  overflow: hidden;
+}
+
+.sv-bar__fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--brand, #2563eb);
+}
+
+.sv-bar__value {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.sv-texts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sv-texts li {
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: var(--brand-soft, #eff4ff);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .sv-filled__row {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+
+  .sv-filled__when {
+    text-align: left;
+  }
+
+  .sv-bar {
+    grid-template-columns: 1fr auto;
+  }
+
+  .sv-bar__track {
+    grid-column: 1 / -1;
+  }
+}

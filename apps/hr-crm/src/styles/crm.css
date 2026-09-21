@@ -6,15 +6,273 @@
  * приложения.
  */
 
-:root {
-  --surface: #ffffff;
-  --canvas: #f8f8f8;
-  --ink-1: #151515;
-  --ink-2: #686868;
-  --edge: #e7e7e7;
-  --soft: #f1f1f1;
-  --side-width: 244px;
+/*
+ * Roboto Condensed — локальными файлами, без обращения в сеть.
+ *
+ * Узкий шрифт выбран не ради вкуса: у широкого другая длина строки, и
+ * подписи таблиц, осей и карточек встали бы иначе, чем в макете. Файлы
+ * разложены по наборам знаков, поэтому латиница не тянет за собой
+ * кириллицу и наоборот.
+ *
+ * `font-display: swap` — текст виден сразу системным шрифтом и
+ * подменяется, когда файл дойдёт. Пустая страница на время загрузки
+ * шрифта хуже, чем короткая подмена начертания.
+ */
+@font-face {
+  font-family: 'Roboto Condensed';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/roboto-condensed-cyrillic-400.woff2') format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
 }
+@font-face {
+  font-family: 'Roboto Condensed';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/roboto-condensed-latin-400.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+2013-2014,
+    U+2018-201A, U+201C-201E, U+2020-2022, U+2026, U+2030, U+2039-203A, U+2122;
+}
+@font-face {
+  font-family: 'Roboto Condensed';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/fonts/roboto-condensed-cyrillic-500.woff2') format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: 'Roboto Condensed';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/fonts/roboto-condensed-latin-500.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+2013-2014,
+    U+2018-201A, U+201C-201E, U+2020-2022, U+2026, U+2030, U+2039-203A, U+2122;
+}
+@font-face {
+  font-family: 'Roboto Condensed';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('/fonts/roboto-condensed-cyrillic-600.woff2') format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: 'Roboto Condensed';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('/fonts/roboto-condensed-latin-600.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+2013-2014,
+    U+2018-201A, U+201C-201E, U+2020-2022, U+2026, U+2030, U+2039-203A, U+2122;
+}
+@font-face {
+  font-family: 'Roboto Condensed';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/roboto-condensed-cyrillic-700.woff2') format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: 'Roboto Condensed';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/roboto-condensed-latin-700.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+2013-2014,
+    U+2018-201A, U+201C-201E, U+2020-2022, U+2026, U+2030, U+2039-203A, U+2122;
+}
+
+:root {
+  /*
+   * Единственный источник цвета во всей CRM.
+   *
+   * Два слоя. Сверху ПАЛИТРА — значения проекта. Ниже РОЛИ — что этим
+   * цветом красят. Роли разведены даже там, где значение совпадает:
+   * «фон рабочей области» и «фон выключенной кнопки» — два разных
+   * решения, и менять их порознь придётся.
+   *
+   * Разметка обращается к ролям, а не к палитре. Поэтому сменить
+   * фирменный синий — это одна строка здесь, а не обход четырёх тысяч
+   * строк ниже.
+   */
+
+  /* --- палитра: чернила ---------------------------------------------- */
+  --ink-strong: #08265c;
+  --ink-primary: #0a2b63;
+  --ink-secondary: #5577a6;
+  --ink-tertiary: #7993b7;
+
+  /* --- палитра: действие --------------------------------------------- */
+  --blue-600: #0878ef;
+  --blue-700: #0668d2;
+  --blue-800: #0557b2;
+  --blue-100: #e6f2ff;
+  --blue-050: #f2f8ff;
+  --blue-deep: #123d79;
+  --white: #ffffff;
+
+  /* --- палитра: состояния ---------------------------------------------
+     У каждого состояния пара: цвет знака и подложка под него. Цвет
+     нигде не остаётся единственным различием — рядом всегда слово.
+     Больничный намеренно не красный: болезнь не нарушение. Отсутствие
+     отметки намеренно не красное: пока это вопрос, а не прогул. */
+  --green-600: #009b75;
+  --green-050: #dff6ee;
+  --amber-600: #d57200;
+  --amber-050: #fff0dc;
+  --purple-600: #7236d5;
+  --purple-050: #efe5ff;
+  --steel-600: #6686ae;
+  --steel-050: #e8f0f9;
+  --red-600: #e3484f;
+  --red-050: #ffe8ea;
+  --success-600: #009b75;
+  --success-050: #dff6ee;
+
+  /* --- роли: поверхности -----------------------------------------------
+     Стекло только у верхнеуровневых панелей. Вложенные элементы берут
+     сплошной белый: прозрачное поверх прозрачного темнеет и тянет за
+     собой второй слой размытия. */
+  --background: rgba(239, 248, 255, 0.79);
+  --surface-1: rgba(255, 255, 255, 0.93);
+  --surface-2: rgba(233, 244, 254, 0.92);
+  --surface-glass: rgba(255, 255, 255, 0.93);
+  --surface-glass-dense: rgba(255, 255, 255, 0.96);
+  /* Вложенный блок внутри панели: плотнее её, чтобы строки читались. */
+  --surface-inset: rgba(255, 255, 255, 0.9);
+  --surface-field: rgba(255, 255, 255, 0.82);
+  --panel-blur: 16px;
+
+  /* --- роли: текст -------------------------------------------------- */
+  --text-heading: var(--ink-strong);
+  --text-body: var(--ink-primary);
+  --text-muted: var(--ink-secondary);
+  --text-faint: var(--ink-tertiary);
+  --text-on-action: var(--white);
+
+  /* --- роли: границы ------------------------------------------------ */
+  --border-default: #cfdeec;
+  --border-soft: #deebf4;
+  --border-strong: #bdd2e6;
+
+  /* --- роли: основное действие -------------------------------------- */
+  --action-bg: var(--blue-600);
+  --action-bg-hover: var(--blue-700);
+  --action-bg-pressed: var(--blue-800);
+  --action-text: var(--blue-600);
+
+  /* --- роли: выбор и наведение --------------------------------------
+     Наведение мягче выбора намеренно: если они совпадут, курсор
+     начнёт выглядеть как выбранный пункт. */
+  --selection-bg: var(--blue-050);
+  --selection-text: var(--blue-700);
+  --hover-bg: rgba(226, 239, 252, 0.7);
+
+  /* --- роли: фокус --------------------------------------------------- */
+  --focus-ring: #2c8cff;
+  --focus-ring-soft: rgba(44, 140, 255, 0.18);
+  --focus-ring-danger: rgba(214, 73, 81, 0.18);
+
+  /* --- роли: недоступность ------------------------------------------- */
+  --disabled-bg: rgba(232, 240, 249, 0.8);
+  --disabled-text: #93aac6;
+  --disabled-border: var(--border-default);
+
+  /* --- роли: график ---------------------------------------------------
+     Сравнительная серия светлее основной и пунктиром: две сплошные
+     синие линии на одном поле различались бы только оттенком, а это
+     не различие. */
+  --chart-main: #1a6ef5;
+  --chart-compare: #a9c8f5;
+  --chart-grid: rgba(126, 166, 224, 0.22);
+  --chart-tick: #3b6fd4;
+
+  /* --- роли: боковое меню ---------------------------------------------
+     Меню — единственный тёмный блок. Его собственные роли, потому что
+     на глубоком синем «наведение» и «выбрано» строятся не так, как на
+     белом: там подложка темнеет, здесь светлеет. */
+  --sidebar-top: #185486;
+  --sidebar-middle: #174d7b;
+  --sidebar-bottom: #0f426d;
+  --sidebar-text: #f4f8fc;
+  --sidebar-muted: #a8cae5;
+  --sidebar-separator: rgba(188, 218, 239, 0.25);
+  --sidebar-hover: rgba(89, 163, 218, 0.2);
+  --sidebar-active: rgba(89, 163, 218, 0.42);
+  --sidebar-active-border: #f2fbff;
+
+  /* --- роли: поверх глубокого синего (подсказки, брендовый блок) ------ */
+  --text-on-deep: var(--white);
+  --text-on-deep-muted: var(--sidebar-muted);
+  --border-on-deep: rgba(205, 231, 249, 0.28);
+  --overlay-on-deep: rgba(255, 255, 255, 0.06);
+
+  /* Контур мелких элементов управления: кольцо переключателя, точка
+     состояния. Значение совпадает со второстепенным текстом, роль —
+     нет, и меняться они будут порознь. */
+  --border-control: var(--ink-tertiary);
+
+  /* --- роли: перекрытия -----------------------------------------------
+     Затемнение и тени отделены от текста и границ намеренно: они живут
+     поверх любого фона, и меняться будут отдельно. */
+  --scrim: rgba(11, 40, 100, 0.24);
+  --shadow-panel: 0 4px 14px rgba(27, 72, 112, 0.08);
+  --shadow-soft: rgba(19, 62, 104, 0.12);
+  --shadow-lift: rgba(19, 62, 104, 0.08);
+
+  /* --- роли: статусы -------------------------------------------------- */
+  --status-success: var(--success-600);
+  --status-success-bg: var(--success-050);
+  --status-present: var(--green-600);
+  --status-present-bg: var(--green-050);
+  --status-warning: var(--amber-600);
+  --status-warning-bg: var(--amber-050);
+  --status-danger: var(--red-600);
+  --status-danger-bg: var(--red-050);
+  --status-vacation: var(--purple-600);
+  --status-vacation-bg: var(--purple-050);
+  --status-sick: var(--steel-600);
+  --status-sick-bg: var(--steel-050);
+  --status-none: var(--ink-secondary);
+  --status-none-bg: rgba(233, 240, 248, 0.9);
+
+  /* --- размеры каркаса -------------------------------------------------
+     Числа канонического экрана 1672×941: меню 212, верхняя панель 50,
+     поля рабочей области сверху 17, по бокам 20, промежуток между
+     колонками 16. Радиус панели 10: большой радиус на плотном экране
+     съедает угол таблицы. */
+  --side-width: 212px;
+  --topbar-height: 50px;
+  --panel-radius-lg: 12px;
+  --layout-gap: 16px;
+  --panel-radius: 10px;
+
+  /*
+   * Прежние имена оставлены псевдонимами. Их знают четыре тысячи строк
+   * ниже, и переписывать разом значило бы одной правкой тронуть каждый
+   * экран. Псевдоним даёт тот же результат без риска.
+   */
+  --surface: var(--surface-1);
+  --canvas: var(--background);
+  --ink-1: var(--text-body);
+  --ink-2: var(--text-muted);
+  --edge: var(--border-default);
+  --side-bg: var(--sidebar-top);
+  --side-text: var(--sidebar-text);
+  --side-muted: var(--sidebar-muted);
+  --side-hover: var(--sidebar-hover);
+  --side-active: var(--sidebar-active);
+  --side-marker: var(--sidebar-active-border);
+  --side-rule: var(--sidebar-separator);
+  --status-warning-soft: var(--amber-050);
+}
+
+
 
 html,
 body,
@@ -37,6 +295,75 @@ body,
  */
 html {
   overflow-x: clip;
+  /*
+   * Место под вертикальную полосу зарезервировано всегда.
+   *
+   * Сам документ не прокручивается — каркас ровно в высоту окна, а
+   * прокручивается `.work`. Но полоса появляется и исчезает вместе с
+   * содержимым этой области, и без запаса страница дёргается на
+   * ширину полосы при каждом обновлении списка: фильтр применили —
+   * строк стало меньше — полоса пропала — всё уехало вправо.
+   *
+   * `scrollbar-gutter` держит дорожку на месте, `overflow-y: scroll`
+   * повторяет то же самое для браузеров постарше. Полоса у нас своя,
+   * шесть пикселей, поэтому пустая дорожка не бросается в глаза.
+   */
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+}
+
+/*
+ * Полосы прокрутки.
+ *
+ * Системные полосы Windows — семнадцать пикселей серой дорожки с двумя
+ * кнопками-стрелками. Рядом со стеклянными панелями они выглядят
+ * деталью из другой системы, а главное — забирают ширину у содержимого.
+ *
+ * Полоса остаётся видимой. Прятать её совсем — распространённая ошибка:
+ * человек перестаёт понимать, что область вообще прокручивается, и ищет
+ * продолжение списка глазами, а не колесом.
+ *
+ * Два набора свойств разведены по браузерам, а не заданы оба сразу.
+ * Chrome с 121-й версии предпочитает стандартное `scrollbar-width`
+ * своим же `::-webkit-`, а его `thin` — это тринадцать пикселей, не
+ * шесть. Поэтому стандартные свойства включаются только там, где
+ * `::-webkit-scrollbar` не понимают, то есть в Firefox.
+ */
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(34, 104, 166, 0.28) transparent;
+  }
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(34, 104, 166, 0.28);
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(20, 81, 140, 0.55);
+}
+
+*::-webkit-scrollbar-thumb:active {
+  background: rgba(13, 67, 124, 0.72);
+}
+
+/* Кнопки со стрелками сверху и снизу дорожки: их нет больше нигде в
+   интерфейсе, и промахнуться по ним легче, чем попасть. */
+*::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 #root {
@@ -46,65 +373,170 @@ html {
 /* --- каркас --------------------------------------------------------------- */
 
 .shell {
+  position: relative;
   display: grid;
   grid-template-columns: var(--side-width) 1fr;
   min-height: 100dvh;
-  background: var(--canvas);
-  color: var(--ink-1);
-  font-size: 14px;
+  height: 100dvh;
+  color: var(--text-body);
+  font-family: 'Roboto Condensed', 'Arial Narrow', 'Segoe UI', Roboto, sans-serif;
+  font-size: 15px;
+  line-height: 1.35;
+  -webkit-font-smoothing: antialiased;
 }
 
+/*
+ * Фотография офиса под рабочей областью.
+ *
+ * Снимок подставляет разметка — файл берётся из `src/assets`, и если
+ * его там нет, слой остаётся светлой заливкой. Своего размытия здесь
+ * нет: файл уже снят с мягким фокусом, а `filter: blur` на слое во весь
+ * экран заставлял бы браузер перерисовывать его при каждой прокрутке.
+ *
+ * Слой начинается ПОСЛЕ меню: за синей панелью фотография всё равно не
+ * видна, а рисовать её туда — лишняя работа для браузера.
+ */
+.shell__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-color: var(--background);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+}
+
+/* Светлое голубоватое наложение поверх снимка: фотография должна давать
+   свет и глубину, а не контуры мебели под таблицей. Оно же работает
+   самостоятельным фоном, пока файла нет. */
+.shell__wash {
+  position: fixed;
+  inset: 0 0 0 var(--side-width);
+  /* Осветление только справа от меню: под синей панелью оно лишь
+     размывало бы её собственный цвет. */
+  z-index: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(
+      rgba(235, 246, 255, 0.62),
+      rgba(239, 248, 255, 0.68)
+    );
+}
+
+/* Содержимое — над подложкой. */
+.side,
+.work {
+  position: relative;
+  z-index: 1;
+}
+
+/* Размытия может не быть: тогда поверхности просто становятся плотными
+   и белыми. Читаемость не должна зависеть от поддержки эффекта. */
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  .topbar,
+  .panel,
+  .metric {
+    -webkit-backdrop-filter: blur(var(--panel-blur)) saturate(1.1);
+    backdrop-filter: blur(var(--panel-blur)) saturate(1.1);
+  }
+}
+
+/* Прокручивается только рабочая область. Каркас ровно в высоту окна, и
+   когда прокручивался весь документ, меню уезжало вверх вместе с ним,
+   оставляя под собой пустую фотографию. */
 .work {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  height: 100dvh;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
+/* Поля рабочей области из эталона 1672×941: панели начинаются на
+   x=232 и y=135, между ними и краем экрана 19 по бокам. Прежние 25/26
+   сдвигали содержимое вправо и вниз на шесть и двенадцать точек. */
 .canvas {
-  flex: 1;
-  padding: 22px 26px 26px;
+  /* Растёт по содержимому, но не меньше остатка окна: короткая
+     страница заполняет экран, длинная — прокручивается внутри `.work`. */
+  flex: 1 0 auto;
+  /* Колонка, а не блок: страница отдаёт остаток высоты сетке, и низ
+     панели встаёт ровно на нижнее поле без прокрутки. */
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 17px 19px 20px;
   min-width: 0;
 }
 
+
+
 /* --- боковая панель ------------------------------------------------------- */
 
+/*
+ * Синий доходит до самого верхнего края: ни белой полосы под знаком,
+ * ни отдельной карточки вокруг него.
+ *
+ * Не одна заливка, а три слоя: тёплое пятно сверху слева, вертикальный
+ * переход от тёмного к светлому и обратно, тонкая световая грань
+ * справа. Одна плоская заливка превращает меню в синий прямоугольник,
+ * приклеенный к странице, — глубины у него нет.
+ */
 .side {
   display: flex;
   flex-direction: column;
-  background: var(--surface);
-  border-right: 1px solid var(--edge);
-  padding: 18px 14px 14px;
+  width: var(--side-width);
+  min-width: var(--side-width);
+  color: var(--sidebar-text);
+  background:
+    radial-gradient(
+      circle at 18% 12%,
+      rgba(87, 168, 224, 0.22),
+      transparent 34%
+    ),
+    linear-gradient(
+      180deg,
+      rgba(18, 63, 112, 0.93) 0%,
+      rgba(23, 79, 127, 0.9) 50%,
+      rgba(13, 58, 102, 0.94) 100%
+    );
+  -webkit-backdrop-filter: blur(18px) saturate(120%);
+  backdrop-filter: blur(18px) saturate(120%);
+  box-shadow: inset -1px 0 rgba(255, 255, 255, 0.1);
+  padding: 0 12px 14px;
   position: sticky;
   top: 0;
   height: 100dvh;
   overflow: hidden;
 }
 
+/* Зона знака — около 88 px по высоте, знак прижат влево. */
 .side__brand {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 0 6px 18px;
+  height: 76px;
+  flex: none;
+  /* Блок знака уже сдвинут полем меню на 12 точек. Своих полей 8 слева
+     и 4 справа — знаку остаётся 176 из 212: почти вся ширина, как в
+     эталоне, и правый край не срезается. */
+  padding: 18px 4px 8px 8px;
 }
 
-.side__brand-text {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
+/* Пропорции знака — из исходного файла: ширина считается от высоты по
+   тому же отношению, поэтому надпись не сжимается и не растягивается. */
+.side__brand img {
+  width: 100%;
+  max-width: 180px;
+  height: 50px;
+  object-fit: contain;
+  object-position: left center;
+  display: block;
 }
 
-.side__name {
-  font-size: 17px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  line-height: 1;
-}
-
-.side__tagline {
-  font-size: 8.5px;
-  letter-spacing: 0.18em;
-  color: var(--ink-2);
-  line-height: 1;
+.side__brand .brand__mark {
+  display: none;
 }
 
 /* Содержимое панели должно оставаться доступным на низком экране. */
@@ -116,51 +548,88 @@ html {
 }
 
 .side__group {
-  margin: 10px 8px 8px;
-  font-size: 10.5px;
-  letter-spacing: 0.11em;
+  margin: 8px 12px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: var(--ink-2);
+  color: var(--sidebar-muted);
 }
 
 .side__list {
   list-style: none;
-  margin: 0 0 8px;
+  margin: 0 0 6px;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1.5px;
+}
+
+/* Размер значков задаёт `AppIcon`, а не эта таблица: раньше половина
+   иконок приходила одного размера из разметки и переопределялась другим
+   отсюда, и поменять размер в одном месте было нельзя. */
+.side__list svg {
+  flex: none;
 }
 
 .nav {
   width: 100%;
+  min-height: 42px;
   text-decoration: none;
   display: flex;
   align-items: center;
-  gap: 11px;
-  padding: 9px 12px;
+  gap: 12px;
+  padding: 0 12px 0 14px;
   border: 0;
   border-radius: 9px;
   background: none;
-  color: var(--ink-1);
-  font-size: 13.5px;
+  color: var(--sidebar-text);
+  font-size: 14.5px;
   text-align: left;
   cursor: pointer;
 }
 
+/* На тёмном подложка светлеет, а не темнеет: наведение мягче выбора той
+   же мерой, что и на белых экранах, только в другую сторону. */
 .nav:hover:not(:disabled) {
-  background: var(--soft);
+  background: var(--sidebar-hover);
 }
 
 .nav:disabled {
-  color: #9a9a9a;
+  color: var(--side-muted);
+  opacity: 0.65;
   cursor: not-allowed;
 }
 
+/* Выбранный пункт — более светлая синяя поверхность. Без полосы сбоку:
+   на подложке такого тона она читается как обрезанный край, а не как
+   отметка. Насыщенность держит подложка, а не жирность — полужирный
+   текст на синем расплывается.
+ *
+ * Подложка рисуется отдельным слоем и НЕ занимает места в потоке.
+ * Раньше выбранный пункт был на шесть пикселей выше остальных
+ * (`min-height: 48px` против 42), и каждое нажатие двигало весь список:
+ * новый пункт подрастал, прежний ужимался, а всё, что ниже, съезжало.
+ * Слой сохраняет прежний вид — те же 48 пикселей подложки, — но высота
+ * самой строки остаётся общей, и меню при переходах стоит неподвижно. */
 .nav--active,
 .nav--active:hover {
-  background: var(--ink-1);
+  position: relative;
+  border-radius: 9px;
+  background: none;
   color: #ffffff;
+  font-weight: 550;
+}
+
+.nav--active::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  /* По три пикселя вверх и вниз — те же 48 из прежнего правила. */
+  inset: -3px 0;
+  border-radius: 9px;
+  background: var(--sidebar-active);
+  box-shadow: 0 4px 16px rgba(5, 35, 67, 0.1);
 }
 
 .nav__badge {
@@ -168,31 +637,35 @@ html {
   min-width: 22px;
   padding: 1px 7px;
   border-radius: 999px;
-  background: var(--soft);
+  background: var(--side-active);
+  color: var(--side-text);
   font-size: 11.5px;
   font-weight: 600;
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
 
+/* В выбранном пункте подложка значка уже занята самим пунктом — значок
+   становится плотнее, иначе он сливается с ней и пропадает. */
 .nav--active .nav__badge {
-  background: rgba(255, 255, 255, 0.16);
-  color: #ffffff;
+  background: var(--side-marker);
+  color: var(--side-bg);
 }
 
 .side__rule {
   height: 1px;
-  margin: 12px 8px;
-  background: var(--edge);
+  margin: 14px 12px;
+  background: var(--sidebar-separator);
 }
 
 .side__user {
   display: flex;
   align-items: center;
-  gap: 11px;
-  padding: 14px 8px 10px;
-  border-top: 1px solid var(--edge);
+  gap: 12px;
+  padding: 14px 12px 10px;
+  border-top: 1px solid var(--sidebar-separator);
   margin-top: 10px;
+  flex: none;
 }
 
 .side__who {
@@ -203,30 +676,90 @@ html {
 }
 
 .side__role {
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 600;
 }
 
 .side__scope {
-  font-size: 11.5px;
-  color: var(--ink-2);
+  font-size: 13px;
+  color: var(--sidebar-muted);
 }
 
 .side__exit {
   display: flex;
   align-items: center;
-  gap: 11px;
-  padding: 9px 12px;
+  gap: 14px;
+  min-height: 46px;
+  padding: 0 12px;
   border: 0;
   border-radius: 9px;
   background: none;
-  color: var(--ink-1);
-  font-size: 13.5px;
+  color: var(--sidebar-text);
+  font-size: 15.5px;
   cursor: pointer;
+  flex: none;
+}
+
+.side__exit svg {
+  flex: none;
 }
 
 .side__exit:hover {
-  background: var(--soft);
+  background: var(--sidebar-hover);
+}
+
+/* На обычном desktop-экране меню — неподвижная опора интерфейса, а не
+   отдельная прокручиваемая колонка. Компактный ритм ниже оставляет весь
+   список разделов, профиль и выход в одном кадре на 1366×768. На ещё
+   более низких окнах `.side__scroll` сохраняет честный скролл, поэтому
+   пункты не становятся недоступными. */
+@media (min-width: 1101px) and (max-height: 800px) {
+  .side {
+    padding-bottom: 8px;
+  }
+
+  .side__brand {
+    height: 70px;
+    padding-block: 12px 10px;
+  }
+
+  .side__brand img {
+    height: 40px;
+  }
+
+  .side__group {
+    margin-block: 4px 5px;
+    font-size: 10.5px;
+  }
+
+  .side__list {
+    gap: 0;
+    margin-bottom: 4px;
+  }
+
+  .nav,
+  .nav--active,
+  .side__exit {
+    min-height: 40px;
+    font-size: 14px;
+  }
+
+  .side__rule {
+    margin-block: 8px;
+  }
+
+  .side__user {
+    padding-block: 8px 6px;
+    margin-top: 5px;
+  }
+
+  .side__role {
+    font-size: 13px;
+  }
+
+  .side__scope {
+    font-size: 11px;
+  }
 }
 
 .avatar {
@@ -237,7 +770,8 @@ html {
   width: 34px;
   height: 34px;
   border-radius: 999px;
-  background: var(--soft);
+  background: var(--selection-bg);
+  color: var(--selection-text);
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -249,30 +783,59 @@ html {
   font-size: 11px;
 }
 
+.topbar .avatar {
+  width: 36px;
+  height: 36px;
+  background: rgba(197, 223, 250, 0.85);
+  color: #1a4fb0;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.side .avatar {
+  width: 38px;
+  height: 38px;
+  background: var(--sidebar-active);
+  color: var(--sidebar-text);
+  font-size: 13px;
+}
+
 /* --- верхняя панель ------------------------------------------------------- */
 
+/* Верхняя панель пропускает свет фотографии: плотное белое полотно
+   отрезало бы её ровной линией по всей ширине. */
 .topbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  height: 52px;
-  padding: 0 24px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--edge);
+  height: var(--topbar-height);
+  flex: none;
+  padding: 0 26px;
+  background: rgba(255, 255, 255, 0.42);
+  border-bottom: 1px solid rgba(214, 230, 245, 0.55);
+  -webkit-backdrop-filter: blur(22px) saturate(135%);
+  backdrop-filter: blur(22px) saturate(135%);
 }
 
 .crumbs {
   margin: 0;
   display: flex;
-  gap: 7px;
-  font-size: 13px;
-  color: var(--ink-2);
+  gap: 8px;
+  font-size: 14px;
+  color: #5778a8;
+}
+
+.crumbs__sep {
+  color: #7894bd;
 }
 
 .crumbs__here {
-  color: var(--ink-1);
-  font-weight: 600;
+  color: #0d2c68;
+  font-weight: 680;
 }
 
 .topbar__tools {
@@ -281,49 +844,203 @@ html {
   gap: 10px;
 }
 
+/* Поиск в шапке — постоянного размера. Он не главный элемент страницы:
+   на широком экране растянутое поле в половину панели выглядело как
+   основное действие, а на узком — сжималось до пары букв. */
 .find {
   display: flex;
   align-items: center;
-  gap: 8px;
-  height: 34px;
-  padding: 0 12px;
-  border: 1px solid var(--edge);
-  border-radius: 9px;
-  color: var(--ink-2);
+  gap: 9px;
+  flex: 0 0 auto;
+  width: 280px;
+  max-width: 100%;
+  height: 39px;
+  padding: 0 13px;
+  border: 1px solid rgba(214, 230, 245, 0.9);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.62);
+  color: var(--ink-secondary);
+}
+
+.find svg {
+  flex: none;
+  color: #1a4fb0;
+}
+
+.find:focus-within {
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 3px var(--focus-ring-soft);
 }
 
 .find input {
   border: 0;
   outline: none;
   background: none;
-  font-size: 13px;
-  width: 180px;
-  color: var(--ink-1);
+  font-size: 14px;
+  width: 196px;
+  color: var(--ink-primary);
 }
+
+.find input::placeholder {
+  color: var(--ink-tertiary);
+}
+
+/* Глобальный поиск живёт поверх рабочей области, а не расширяет topbar:
+   результаты не двигают уведомления и не прыгают при подгрузке. */
+.global-search {
+  position: relative;
+  z-index: 20;
+}
+
+.global-search__panel {
+  position: fixed;
+  z-index: 1200;
+  max-height: min(620px, calc(100vh - 90px));
+  overflow-x: hidden;
+  overflow-y: auto;
+  border: 1px solid rgba(204, 222, 242, .95);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, .97);
+  box-shadow: 0 18px 46px rgba(29, 67, 119, .18), 0 2px 8px rgba(29, 67, 119, .08);
+}
+
+.global-search__heading,
+.global-search__footer {
+  display: flex;
+  align-items: center;
+}
+
+.global-search__heading {
+  justify-content: space-between;
+  padding: 14px 16px 10px;
+  color: #12356e;
+  font-size: 13px;
+}
+
+.global-search__heading span {
+  color: #7890af;
+  font-size: 12px;
+}
+
+.global-search__row {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto 16px;
+  align-items: center;
+  width: 100%;
+  min-height: 62px;
+  gap: 10px;
+  padding: 8px 15px;
+  border: 0;
+  border-left: 3px solid transparent;
+  background: transparent;
+  color: #12356e;
+  text-align: left;
+  cursor: pointer;
+}
+
+.global-search__row:hover,
+.global-search__row--active {
+  border-left-color: #2979e6;
+  background: #edf6ff;
+}
+
+.global-search__row > svg { color: #87a0be; }
+
+.global-search__avatar {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #cfe7ff, #93c4f4);
+  color: #1556a4;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.global-search__avatar img { width: 100%; height: 100%; object-fit: cover; }
+
+.global-search__identity { min-width: 0; }
+.global-search__identity strong,
+.global-search__identity small,
+.global-search__place small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.global-search__identity strong { font-size: 13px; font-weight: 720; }
+.global-search__identity small,
+.global-search__place small { margin-top: 3px; color: #7187a4; font-size: 11px; }
+
+.global-search__place { min-width: 62px; text-align: right; }
+.global-search__place em {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 2px 6px;
+  border-radius: 99px;
+  background: #fce8e7;
+  color: #a34c48;
+  font-size: 10px;
+  font-style: normal;
+}
+
+.global-search__message { margin: 0; padding: 24px 16px; color: #6c84a2; font-size: 13px; }
+.global-search__message button { padding: 0; border: 0; background: none; color: #1768d2; font: inherit; cursor: pointer; }
+
+.global-search__footer {
+  gap: 6px;
+  min-height: 38px;
+  padding: 7px 13px;
+  border-top: 1px solid #e6eff9;
+  color: #7890ad;
+  font-size: 10px;
+}
+.global-search__footer > span:first-child { margin-right: auto; }
+.global-search__footer kbd { padding: 2px 4px; border: 1px solid #d5e2f0; border-radius: 4px; background: #f8fbfe; color: #55769e; font: 10px inherit; }
+
+.global-search__skeleton { padding: 4px 15px 12px; }
+.global-search__skeleton i { display: block; height: 52px; margin-top: 7px; border-radius: 8px; background: linear-gradient(90deg, #f0f5fa, #fafcff, #f0f5fa); background-size: 200% 100%; animation: global-search-shimmer 1.1s infinite; }
+@keyframes global-search-shimmer { to { background-position: -200% 0; } }
 
 .tool {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  width: 34px;
-  height: 34px;
+  width: 38px;
+  height: 38px;
   border: 1px solid transparent;
   border-radius: 9px;
   background: none;
-  color: var(--ink-1);
+  color: #1a4fb0;
   cursor: pointer;
+}
+
+/* Колокольчик. Точка сама по себе ничего не утверждала: она горела
+   всегда. Вместо неё — настоящее число непрочитанного (`.nf__badge`),
+   и когда непрочитанного нет, у колокольчика нет ничего. */
+.tool--bell {
+  position: relative;
+}
+
+/* «RU» стоит на своей полупрозрачной плашке: иначе надпись висит прямо
+   на фотографии и читается хуже соседних значков. */
+.tool--wide {
+  background: rgba(255, 255, 255, 0.55);
+  border-color: rgba(214, 230, 245, 0.9);
+  color: #1a4fb0;
+}
+
+.tool--wide:hover {
+  background: rgba(255, 255, 255, 0.78);
 }
 
 .tool--wide {
   width: auto;
   padding: 0 10px;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 14px;
+  font-weight: 600;
 }
 
 .tool:hover {
-  background: var(--soft);
+  background: var(--hover-bg);
 }
 
 .lang--top {
@@ -338,20 +1055,26 @@ html {
   justify-content: space-between;
   gap: 20px;
   flex-wrap: wrap;
-  margin-bottom: 16px;
+  margin-bottom: 15px;
 }
 
 .head__title {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  flex-wrap: wrap;
+  color: var(--ink-strong);
   margin: 0;
   font-size: 34px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
+  line-height: 1.05;
+  font-weight: 760;
+  letter-spacing: -0.025em;
 }
 
 .head__sub {
   margin: 6px 0 0;
-  font-size: 13px;
-  color: var(--ink-2);
+  font-size: 14px;
+  color: var(--ink-secondary);
 }
 
 .dot {
@@ -371,18 +1094,32 @@ html {
   flex-wrap: wrap;
 }
 
+/* The shared select is full-width in form layouts; dashboard filters are a
+   compact toolbar and must keep region and office controls side by side. */
+.head__filters .filters > .app-select {
+  flex: 0 1 172px;
+  width: 172px;
+}
+
 .pick {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  height: 38px;
-  padding: 0 12px;
-  border: 1px solid var(--edge);
+  gap: 9px;
+  height: 41px;
+  padding: 0 13px;
+  border: 1px solid rgba(207, 223, 237, 0.9);
   border-radius: 9px;
-  background: var(--surface);
-  font-size: 13px;
-  color: var(--ink-1);
+  background: var(--surface-field);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  font-size: 14px;
+  color: var(--ink-primary);
   cursor: pointer;
+}
+
+.pick svg {
+  flex: none;
+  color: var(--ink-secondary);
 }
 
 .pick select,
@@ -390,21 +1127,559 @@ html {
   border: 0;
   outline: none;
   background: none;
-  font-size: 13px;
+  font-size: 14px;
   color: inherit;
   cursor: pointer;
 }
 
+/* --- выпадающий список ------------------------------------------------------
+   Свой, а не системный: родной `select` рисует список средствами
+   операционной системы — он не берёт ни шрифт страницы, ни её цвета, ни
+   скругления, и появляется мгновенно, как окно из другой программы. */
+
+.drop {
+  position: relative;
+}
+
+.pick--drop {
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 172px;
+  font-weight: 500;
+}
+
+.pick--drop svg {
+  transition: transform 0.18s ease;
+}
+
+.pick--open {
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 3px var(--focus-ring-soft);
+}
+
+.pick--open svg {
+  transform: rotate(180deg);
+}
+
+.drop__value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Панель с открытым списком поднимается над следующей.
+ *
+ * У каждой панели свой backdrop-filter, а он создаёт контекст наложения:
+ * z-index списка действует только внутри своей панели, и соседняя
+ * карточка всё равно рисуется поверх. Для нижнего поля формы приёма это
+ * значит, что список графиков целиком уходит под «Документы». Панель
+ * поднимается, только пока список открыт. */
+.panel:has(.drop__list) {
+  position: relative;
+  z-index: 3;
+}
+
+.drop__list {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 12;
+  margin: 0;
+  padding: 5px;
+  list-style: none;
+  max-height: 280px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--border-default);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.97);
+  -webkit-backdrop-filter: blur(18px) saturate(120%);
+  backdrop-filter: blur(18px) saturate(120%);
+  box-shadow: var(--shadow-panel);
+  transform-origin: top center;
+  animation: drop-in 0.16s ease-out;
+}
+
+@keyframes drop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.985);
+  }
+}
+
+/* Движение на экране для части людей — не приятная мелочь, а причина
+   закрыть страницу. Список при этом обязан остаться рабочим. */
+@media (prefers-reduced-motion: reduce) {
+  .drop__list,
+  .lang__list {
+    animation: none;
+  }
+
+  .pick--drop svg {
+    transition: none;
+  }
+}
+
+.drop__option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--ink-primary);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.drop__option svg {
+  flex: none;
+  color: var(--action-text);
+}
+
+/* Подсветка идёт за клавиатурой и за курсором одинаково: иначе при
+   переходе стрелками не видно, где ты находишься. */
+.drop__option--on {
+  background: var(--selection-bg);
+  color: var(--selection-text);
+}
+
+/* Shared controls for legacy screens: visual contract matches the dashboard. */
+.app-select { position: relative; display: block; min-width: 0; width: 100%; }
+.app-select__trigger {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  width: 100%; min-width: 0; min-height: 41px; padding: 0 12px;
+  border: 1px solid rgba(207, 223, 237, .95); border-radius: 9px;
+  background: rgba(255, 255, 255, .94); color: var(--ink-primary);
+  font: inherit; font-size: 14px; text-align: left; cursor: pointer;
+  transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
+}
+.app-select__trigger:hover:not(:disabled) { border-color: #a9cae9; }
+.app-select__trigger:focus-visible, .app-select__trigger--open { outline: 0; border-color: #0875e1; box-shadow: 0 0 0 3px rgba(8,117,225,.1); }
+.app-select__trigger--error { border-color: var(--status-danger); }
+.app-select__trigger:disabled { cursor: not-allowed; opacity: .55; }
+.app-select__trigger > svg { flex: none; color: var(--ink-secondary); transition: transform .16s ease; }
+.app-select__trigger--open > svg { transform: rotate(180deg); }
+.app-select__value { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.app-select__menu {
+  position: fixed; z-index: 10000; display: flex; flex-direction: column; gap: 5px;
+  padding: 6px; border: 1px solid var(--border-default); border-radius: 11px;
+  background: rgba(255,255,255,.98); backdrop-filter: blur(18px) saturate(120%);
+  box-shadow: var(--shadow-panel); animation: drop-in .16s ease-out;
+}
+.app-select__search { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 9px; border: 1px solid var(--border-default); border-radius: 8px; color: var(--ink-secondary); }
+.app-select__search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--ink-primary); font: inherit; font-size: 13px; }
+.app-select__options { overflow: auto; overscroll-behavior: contain; }
+.app-select__option { display: flex; justify-content: space-between; align-items: center; gap: 10px; width: 100%; min-height: 36px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--ink-primary); font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.app-select__option:hover, .app-select__option--active { background: var(--selection-bg); color: var(--selection-text); }
+.app-select__option--selected { font-weight: 600; }
+.app-select__option:disabled { opacity: .5; cursor: not-allowed; }
+.app-select__option svg { flex: none; color: var(--action-text); }
+.app-select__empty { margin: 8px; color: var(--ink-secondary); font-size: 13px; }
+.app-multi__menu { max-height: 320px; }
+.app-multi__option { display: flex; align-items: center; gap: 9px; min-height: 34px; padding: 0 8px; border-radius: 7px; color: var(--ink-primary); font-size: 13px; cursor: pointer; }
+.app-multi__option:hover { background: var(--selection-bg); }
+.app-multi__option input { accent-color: #0875e1; }
+.app-filter, .app-segmented__button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; padding: 0 12px; border: 1px solid #d7e5f4; border-radius: 8px; background: #fff; color: var(--ink-secondary); font: inherit; font-size: 13px; cursor: pointer; transition: .15s ease; }
+.app-filter:hover, .app-segmented__button:hover { border-color: #a9cae9; color: var(--ink-primary); }
+.app-filter--active, .app-segmented__button--active { border-color: #0875e1; background: #eaf3ff; color: #075bb4; font-weight: 600; }
+.app-filter span { padding: 1px 6px; border-radius: 10px; background: rgba(8,117,225,.12); font-size: 11px; }
+.app-segmented { display: inline-flex; gap: 4px; padding: 3px; border: 1px solid #d7e5f4; border-radius: 10px; background: rgba(255,255,255,.65); }
+.app-segmented__button { min-height: 32px; border-color: transparent; background: transparent; }
+.app-segmented__button--active { background: #fff; box-shadow: 0 1px 4px rgba(15,54,104,.12); }
+.app-segmented__count { min-width: 18px; padding: 1px 6px; border-radius: 10px; background: #e8eef6; color: #33466a; font-size: 11px; text-align: center; }
+.app-segmented__button--active .app-segmented__count { background: #cfe0f8; }
+.app-popover { position: absolute; z-index: 1000; border: 1px solid var(--border-default); border-radius: 11px; background: #fff; box-shadow: var(--shadow-panel); }
+.toolbar-select { flex: 0 1 205px; width: 205px; min-width: 145px; }
+.app-date-range .date__field { min-width: 160px; height: 41px; box-sizing: border-box; }
+.app-date-range .date__input { width: 90px; }
+.app-date-range .date__toggle { width: 28px; }
+.app-select__trigger > svg, .app-select__option > svg { flex: none; }
+@media (prefers-reduced-motion: reduce) { .app-select__menu { animation: none; } }
+
+/* --- поле даты и мини-календарь ---------------------------------------------
+   Родной календарь браузера нарисован системой: он не берёт ни шрифт
+   страницы, ни её цвета, а на Windows выглядит как окно из другой
+   программы. Поле при этом остаётся полем — дату быстрее набрать, чем
+   найти в сетке. */
+
+.date {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.date__field {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  height: 43px;
+  min-width: 190px;
+  padding: 0 12px;
+  border: 1px solid #d7e5f4;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.94);
+  color: #0b2b63;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.date__field:hover {
+  border-color: #a9cae9;
+}
+
+.date__field--open,
+.date__field:focus-within {
+  border-color: #0875e1;
+  box-shadow: 0 0 0 3px rgba(8, 117, 225, 0.1);
+}
+
+.date__field--bad,
+.date__field--bad:focus-within {
+  border-color: var(--status-danger);
+  box-shadow: 0 0 0 3px var(--focus-ring-danger);
+}
+
+.date__field > svg {
+  flex: none;
+  color: #2f6ead;
+}
+
+.date__input {
+  width: 104px;
+  border: 0;
+  outline: none;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  color: #0b2b63;
+}
+
+.date__input::placeholder {
+  color: #8da2be;
+  font-weight: 400;
+}
+
+.date__toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: #2f6ead;
+  cursor: pointer;
+}
+
+.date__toggle:hover {
+  background: #eaf4ff;
+}
+
+.date__error {
+  font-size: 12px;
+  color: var(--status-danger);
+}
+
+/* Календарь живёт в `body`: внутри панели его обрезала бы первая же
+   `overflow: hidden`, а таких на странице хватает. */
+.cal {
+  position: fixed;
+  z-index: 60;
+  width: min(320px, calc(100vw - 24px));
+  padding: 16px;
+  border: 1px solid #d7e5f4;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.97);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+  box-shadow:
+    0 16px 40px rgba(11, 43, 99, 0.12),
+    0 3px 10px rgba(11, 43, 99, 0.06);
+  animation: cal-in 0.16s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes cal-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cal {
+    animation: none;
+  }
+}
+
+.cal__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 40px;
+  margin-bottom: 6px;
+}
+
+.cal__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 9px;
+  background: none;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 680;
+  color: #0b2b63;
+  cursor: pointer;
+}
+
+.cal__title:hover {
+  background: #eaf4ff;
+}
+
+.cal__title svg {
+  color: #2f6ead;
+  transition: transform 0.16s ease;
+}
+
+.cal__title[aria-expanded='true'] svg {
+  transform: rotate(180deg);
+}
+
+/* Быстрый выбор года. Двенадцать лет на странице вместо длинного
+   списка: список на сотню значений приходится прокручивать, и попасть
+   в нужный год в нём не быстрее, чем щёлкать стрелкой по месяцу. */
+.cal__years {
+  /* Та же высота, что у сетки дней: иначе окно прыгает при переключении
+     между годами и днями. */
+  min-height: 246px;
+}
+
+.cal__years-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 34px;
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #6682aa;
+}
+
+.cal__years-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.cal__year {
+  height: 40px;
+  border: 0;
+  border-radius: 9px;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 550;
+  color: #0b2b63;
+  cursor: pointer;
+}
+
+.cal__year:hover {
+  background: #eaf4ff;
+}
+
+.cal__year--now {
+  box-shadow: inset 0 0 0 1.5px #0875e1;
+}
+
+.cal__year--on,
+.cal__year--on:hover {
+  background: #0875e1;
+  color: #ffffff;
+  font-weight: 620;
+}
+
+.cal__step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #2f6ead;
+  cursor: pointer;
+}
+
+.cal__step:hover {
+  background: #eaf4ff;
+}
+
+.cal__step:active {
+  background: #dceeff;
+}
+
+/* Значок в наборе нарисован стрелкой вниз: поворот дешевле второго. */
+.cal__step svg {
+  transform: rotate(90deg);
+}
+
+.cal__step--next svg {
+  transform: rotate(-90deg);
+}
+
+.cal__week,
+.cal__grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.cal__week {
+  margin-bottom: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #6682aa;
+  text-align: center;
+}
+
+.cal__grid:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 3px;
+  border-radius: 10px;
+}
+
+.cal__day {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  height: 38px;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  color: #0b2b63;
+  cursor: pointer;
+}
+
+.cal__day:hover:not(:disabled) {
+  background: #eaf4ff;
+}
+
+/* Дни соседних месяцев остаются на месте, но приглушены: убрать их
+   значило бы менять число строк от месяца к месяцу. */
+.cal__day--off {
+  color: #a7b7cc;
+}
+
+/* Сегодня без выбора — только обводка: заливка сделала бы его похожим
+   на выбранный, а это разные вещи. */
+.cal__day--now {
+  box-shadow: inset 0 0 0 1.5px #0875e1;
+}
+
+.cal__day--on,
+.cal__day--on:hover {
+  background: #0875e1;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+/* Сегодня и выбрано одновременно — точка под числом. */
+.cal__day--on.cal__day--now::after {
+  content: '';
+  position: absolute;
+  bottom: 6px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #ffffff;
+}
+
+.cal__day--cursor:not(.cal__day--on) {
+  box-shadow: inset 0 0 0 2px rgba(8, 117, 225, 0.35);
+}
+
+.cal__day:disabled {
+  color: #c4cfdc;
+  cursor: not-allowed;
+}
+
+.cal__hint {
+  margin: 12px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid #dce8f5;
+  font-size: 12px;
+  color: #6682aa;
+}
+
+.cal__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+}
+
+.cal__today {
+  border: 0;
+  padding: 0;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: #0875e1;
+  cursor: pointer;
+}
+
+.cal__apply {
+  height: 39px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 9px;
+  background: #0875e1;
+  color: #ffffff;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cal__apply:hover {
+  background: #0668c7;
+}
+
+.cal__apply:active {
+  background: #0559ab;
+}
+
 .pick--icon {
-  width: 38px;
+  width: 41px;
   justify-content: center;
   padding: 0;
 }
 
 .head__updated {
   margin: 0;
-  font-size: 12px;
-  color: var(--ink-2);
+  font-size: 13px;
+  color: var(--ink-secondary);
 }
 
 /* --- карточки показателей ------------------------------------------------- */
@@ -415,33 +1690,119 @@ html {
   padding: 0;
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 16px;
+  gap: 11px;
 }
 
 /* Одна сетка на все шесть: заголовок занимает фиксированную полосу,
    поэтому числа стоят на общей линии даже если подпись перенеслась. */
-.metric {
-  display: grid;
-  grid-template-rows: 20px auto auto;
-  gap: 11px;
-  background: var(--surface);
-  border: 1px solid var(--edge);
-  border-radius: 11px;
-  padding: 18px 16px 20px;
+.cards > li {
+  display: flex;
+  min-width: 0;
 }
 
-.metric--accent {
-  border-color: #9c9c9c;
+/* Одна сетка на все шесть: строка заголовка занимает фиксированную
+   полосу, поэтому числа стоят на общей линии даже если подпись
+   перенеслась. Высота задана, чтобы карточки не разъезжались по высоте
+   от длины подписи. */
+.metric {
+  flex: 1;
+  display: grid;
+  grid-template-rows: 27px 1fr auto;
+  align-content: start;
+  gap: 9px;
+  height: 136px;
+  /* Карточки прозрачнее панелей: за ними одно число, и фотографии есть
+     где показаться. */
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--border-default);
+  border-radius: var(--panel-radius);
+  box-shadow: var(--shadow-panel);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  padding: 16px 17px 15px;
+  min-width: 0;
+}
+
+/*
+ * Состояние карточки цветом.
+ *
+ * Оттенок — подложка целиком, а не одна цифра: тонкая цветная деталь на
+ * белом читается как украшение, а плашка читается как состояние. Рамка
+ * у всех шести одна и та же: шесть разных рамок — это шесть новых
+ * значений цвета ради обводки.
+ */
+.metric--tone {
+  background: var(--tone-bg);
+}
+
+/* Семантическим цветом красятся число, значок и стрелка. Название
+   остаётся тёмно-синим: оно называет показатель, а не его состояние. */
+.metric--tone .metric__value,
+.metric--tone .metric__note svg,
+.metric--tone .metric__mark {
+  color: var(--tone-ink);
+}
+
+.metric--present {
+  --tone-bg: rgba(233, 248, 241, 0.82);
+  --tone-ink: #087f5b;
+}
+
+.metric--pending {
+  --tone-bg: rgba(255, 245, 228, 0.84);
+  --tone-ink: #c46b08;
+}
+
+.metric--vacation {
+  --tone-bg: rgba(245, 238, 255, 0.84);
+  --tone-ink: #7134bd;
+}
+
+.metric--sick {
+  --tone-bg: rgba(237, 245, 251, 0.84);
+  --tone-ink: #315f89;
+}
+
+/* Первые две карточки нейтральные, но значок у них свой: у «Сотрудников»
+   он того же синего, что и стрелка перехода, у «По графику» — спокойнее. */
+.metric--people .metric__mark,
+.metric--people .metric__note svg {
+  color: #087af0;
+}
+
+.metric--plan .metric__mark {
+  color: #1d4fb3;
+}
+
+/*
+ * Значок показателя.
+ *
+ * Подложки у него нет. Цветной квадрат под иконкой сам становится
+ * пятном и спорит с плашкой состояния, на которой лежит: на карточке
+ * оказывается два прямоугольника вложенных друг в друга. Значение несёт
+ * сама иконка, поэтому цвет живёт на её линиях, а место под неё
+ * по-прежнему занимает 27 пикселей — разметка не съезжает.
+ */
+.metric__mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 27px;
+  height: 27px;
+  background: transparent;
+  color: var(--ink-secondary);
 }
 
 .metric__head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   margin: 0;
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 20px;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 27px;
+  color: var(--ink-primary);
   min-width: 0;
 }
 
@@ -456,42 +1817,175 @@ html {
 }
 
 .metric__value {
+  color: var(--ink-strong);
   margin: 0;
-  font-size: 32px;
-  font-weight: 700;
+  align-self: center;
+  font-size: 46px;
+  font-weight: 760;
   line-height: 1;
+  letter-spacing: -0.035em;
   font-variant-numeric: tabular-nums;
 }
 
 .metric__note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   margin: 0;
-  font-size: 12px;
-  line-height: 16px;
-  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 17px;
+  color: var(--ink-secondary);
+}
+
+.metric__note svg {
+  flex: none;
+  color: var(--ink-tertiary);
 }
 
 /* --- сетка ---------------------------------------------------------------- */
 
+/* Доли, а не фиксированная ширина: на 1584 это даёт 868 и 406 пикселей,
+   как в эталоне, а на других ширинах колонки меняются вместе с окном.
+   Нижняя граница правой колонки в пикселях — чтобы карточки обращений
+   не сжимались до нечитаемого. */
 .grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 356px;
-  gap: 14px;
-  align-items: start;
+  grid-template-columns: minmax(0, 2fr) minmax(380px, 1fr);
+  gap: var(--layout-gap);
+  align-items: stretch;
 }
 
 .grid__main,
 .grid__side {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--layout-gap);
   min-width: 0;
 }
 
+/* Правая колонка доходит до низа левой: иначе рядом с высокой таблицей
+   офисов она выглядит обрезанной.
+
+   Остаток высоты делят ОБЕ нижние панели поровну, а не одна последняя:
+   когда его забирали «Последние решения», соседние «Обращения» рядом с
+   ними выглядели сплющенными. Очередь наверху не растягивается — у неё
+   пять строк и кнопка, ей лишняя высота не нужна. */
+.grid__side > .panel {
+  display: flex;
+  flex-direction: column;
+  border-radius: 16px;
+  padding: 17px 17px 17px;
+}
+
+.grid__side > .panel:nth-child(n + 2) {
+  flex: 1;
+}
+
+/* Списки в нижних панелях правой колонки растягиваются на свободную
+   высоту, чтобы две панели были одинаковыми, а не разной длины. */
+.grid__side > .panel:nth-child(n + 2) .feed {
+  flex: 1;
+  justify-content: space-evenly;
+}
+
+/* Собственная белая заливка у каждой панели, а не `opacity` на всём
+   контейнере: `opacity` увела бы в полупрозрачность и текст. */
 .panel {
-  background: var(--surface);
-  border: 1px solid var(--edge);
-  border-radius: 11px;
-  padding: 14px 16px 16px;
+  background: var(--surface-glass);
+  border: 1px solid var(--border-default);
+  border-radius: var(--panel-radius);
+  box-shadow: var(--shadow-panel);
+  -webkit-backdrop-filter: blur(var(--panel-blur)) saturate(112%);
+  backdrop-filter: blur(var(--panel-blur)) saturate(112%);
+  padding: 13px 18px 11px;
+}
+
+/* Панель графика: место под полосу обновления и постоянная высота поля,
+   чтобы при первой загрузке ничто ниже не подпрыгивало. */
+.panel--chart {
+  position: relative;
+}
+
+.panel--chart > .empty {
+  display: flex;
+  align-items: center;
+  min-height: 196px;
+}
+
+/*
+ * Тонкая полоса под заголовком на время загрузки.
+ *
+ * Не затемнение панели и не крутящийся кружок поверх графика: читать
+ * прежние числа в это время можно и нужно, они ещё верны. Полоса живёт
+ * в потоке высотой в два пикселя — появление и исчезновение не двигают
+ * ничего вокруг.
+ */
+.panel__progress {
+  display: block;
+  height: 2px;
+  margin: 0 0 8px;
+  border-radius: 999px;
+  background: transparent;
+  overflow: hidden;
+}
+
+.panel__progress--on {
+  background: rgba(26, 110, 245, 0.14);
+}
+
+.panel__progress--on::after {
+  content: '';
+  display: block;
+  width: 38%;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--chart-main);
+  animation: progress-slide 1.1s ease-in-out infinite;
+}
+
+@keyframes progress-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(365%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel__progress--on::after {
+    width: 100%;
+    animation: none;
+  }
+}
+
+/* Сбой обновления не стирает то, что уже показано: прежний график
+   остаётся, а рядом — что случилось и чем это поправить. */
+.panel__retry {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 8px;
+  padding: 7px 11px;
+  border: 1px solid rgba(240, 188, 192, 0.9);
+  border-radius: 9px;
+  background: var(--status-danger-bg);
+  color: var(--status-danger);
+  font-size: 13px;
+}
+
+.panel__retry .link {
+  color: var(--status-danger);
+  font-weight: 620;
+}
+
+/* Под таблицей и плотной формой заливка плотнее: там читают числа, а не
+   любуются фоном. */
+.panel--dense {
+  background: var(--surface-glass-dense);
+  display: flex;
+  flex-direction: column;
 }
 
 .panel__head {
@@ -503,29 +1997,89 @@ html {
 }
 
 .panel__title {
+  color: var(--ink-strong);
   margin: 0;
-  font-size: 18px;
-  font-weight: 700;
+  font-size: 22px;
+  font-weight: 730;
   line-height: 1.2;
+  letter-spacing: -0.015em;
 }
 
 .panel__title--row {
   display: flex;
   align-items: center;
+  gap: 11px;
+  margin-bottom: 4px;
+}
+
+/* Значок раздела. Янтарный — там, где что-то ждёт решения; в остальных
+   местах синий. Цвет лежит на линиях значка: заливка под ним делала из
+   значка кнопку, которой он не является. */
+.panel__mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  background: transparent;
+  color: #1a6ef5;
+}
+
+/* Очередь — единственный раздел, где что-то ждёт человека, и
+   единственный янтарный значок на странице. */
+.panel__mark--pending {
+  color: #c87b0b;
+}
+
+/* Переход в раздел — прижат к правому краю заголовка. */
+.panel__aside {
+  margin-left: auto;
+  font-size: 14px;
+}
+
+/*
+ * Заголовки правой колонки чуть мельче левых.
+ *
+ * Колонка вдвое уже рабочей области, а в заголовке рядом с названием
+ * стоит ещё и переход в раздел. На двадцати двух пикселях «Последние
+ * решения» с ссылкой не помещались в строку и разъезжались на две, из-за
+ * чего панели в колонке становились разной высоты.
+ */
+.grid__side .panel__title--row {
   gap: 9px;
-  margin-bottom: 8px;
+  font-size: 20px;
+}
+
+.grid__side .panel__aside {
+  font-size: 13px;
 }
 
 .panel__sub {
-  margin: 3px 0 0;
-  font-size: 12.5px;
-  color: var(--ink-2);
+  margin: 4px 0 0;
+  font-size: 14px;
+  color: var(--ink-secondary);
+}
+
+/* Правая часть заголовка панели: поиск и переход в раздел. Переносится
+   целиком, а не по одному элементу — иначе на узком окне ссылка
+   отрывается от поля и висит сама по себе. */
+.panel__tools {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.panel__tools .find input {
+  width: 130px;
 }
 
 .panel__foot {
-  margin: 12px 0 0;
-  font-size: 12px;
-  color: var(--ink-2);
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: var(--ink-secondary);
 }
 
 .chip {
@@ -535,41 +2089,122 @@ html {
   min-width: 24px;
   padding: 1px 8px;
   border-radius: 999px;
-  background: var(--soft);
+  background: var(--surface-2);
   font-size: 12px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
-.chip--dark {
-  margin-left: auto;
-  background: var(--ink-1);
-  color: #ffffff;
-}
-
-.switch {
-  display: inline-flex;
-  gap: 2px;
-  padding: 3px;
-  border: 1px solid var(--edge);
-  border-radius: 9px;
-  background: var(--surface);
-}
-
-.switch button {
-  border: 0;
-  border-radius: 7px;
-  background: none;
-  padding: 6px 12px;
-  font-size: 12.5px;
-  color: var(--ink-2);
+/*
+ * Плашка фильтра, пришедшего по ссылке.
+ *
+ * У сужения по сотруднику нет своего поля в панели фильтров: оно
+ * приходит с главной страницы. Без видимой отметки список выглядел бы
+ * так, будто заявок в системе всего одна. Плашка называет, по кому
+ * сужено, и снимает сужение одним нажатием.
+ */
+.chip--filter {
+  gap: 6px;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  background: var(--selection-bg);
+  color: var(--selection-text);
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
 }
 
+.chip--filter:hover {
+  background: var(--hover-bg);
+}
+
+.chip--filter:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.chip--dark {
+  margin-left: auto;
+  background: var(--selection-bg);
+  color: var(--selection-text);
+}
+
+/* Счётчик рядом с заголовком: тот же вид, но без прижатия вправо —
+   он часть заголовка, а не отдельный элемент у края. */
+/* Счётчик в заголовке панели. Цифра, а не плашка: плашка рядом с
+   названием раздела читалась как кнопка. */
+.chip--count {
+  min-width: 34px;
+  height: 28px;
+  background: transparent;
+  color: #16447f;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.switch {
+  position: relative;
+  display: inline-flex;
+  gap: 3px;
+  height: 40px;
+  padding: 3px;
+  background: rgba(255, 255, 255, 0.74);
+  border: 1px solid #cbdceb;
+  border-radius: 8px;
+}
+
+.switch button {
+  position: relative;
+  z-index: 1;
+  border: 0;
+  border-radius: 6px;
+  padding: 0 14px;
+  background: transparent;
+  color: #5875a2;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 550;
+  white-space: nowrap;
+  min-width: 72px;
+  cursor: pointer;
+  transition: color 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Подложка выбранного периода — один элемент, который переезжает между
+   кнопками. У самих кнопок фона нет: иначе при переключении браузер
+   перерисовывал бы три фона вместо одного переезда.
+
+   Подложка белая, надпись на ней тёмно-синяя. Сплошная синяя заливка
+   здесь спорит с кнопкой «Открыть заявки» по соседству: обе читались бы
+   как главное действие, хотя выбор периода — это выбор, а не действие. */
+.switch__glider {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 0;
+  border-radius: 6px;
+  background: #ffffff;
+  border: 1px solid rgba(190, 214, 236, 0.9);
+  box-shadow: 0 1px 3px rgba(19, 62, 104, 0.12);
+  transition:
+    transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+    width 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: none;
+}
+
 .switch__on {
-  background: var(--soft);
-  color: var(--ink-1);
-  font-weight: 600;
+  background: transparent;
+  color: var(--ink-strong);
+  font-weight: 650;
+}
+
+/* Движение на экране для части людей — не приятная мелочь, а причина
+   закрыть страницу. Переключатель при этом остаётся рабочим. */
+@media (prefers-reduced-motion: reduce) {
+  .switch__glider {
+    transition: none;
+  }
 }
 
 /* --- график --------------------------------------------------------------- */
@@ -586,103 +2221,259 @@ html {
   min-width: 0;
   /* Высота не растёт вслед за окном: пропорции держит `viewBox`, а
      потолок не даёт рисунку отодвинуть таблицу офисов вниз. */
-  aspect-ratio: 1000 / 230;
-  max-height: 185px;
+  aspect-ratio: 1000 / 268;
+  max-height: 232px;
 }
 
 .plot {
+  display: block;
   width: 100%;
   height: 100%;
   display: block;
 }
 
+.plot__field {
+  fill: rgba(250, 252, 255, 0.5);
+}
+
+.plot__axis {
+  stroke: rgba(126, 166, 224, 0.45);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
 .plot__grid {
-  stroke: #ededed;
+  stroke: var(--chart-grid);
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
 }
 
 .plot__tick {
-  fill: var(--ink-2);
-  font-size: 11px;
+  fill: var(--chart-tick);
+  font-size: 13px;
+  font-weight: 600;
 }
 
+/* Основная серия — синяя, сравнительная — нейтральная серая и
+   пунктиром. Различие держится не только на цвете: пунктир виден
+   и на монохромной печати, и тем, кто цвета не различает. */
 .plot__line {
+  stroke-width: 3;
   fill: none;
-  stroke: var(--ink-1);
+  stroke: var(--action-bg);
   stroke-width: 2;
   stroke-linejoin: round;
   vector-effect: non-scaling-stroke;
 }
 
 .plot__line--prev {
-  stroke: #b4b4b4;
-  stroke-dasharray: 3 4;
+  stroke: var(--chart-compare);
+  stroke-width: 2;
+  stroke-dasharray: 6 5;
 }
 
 .plot__dot {
-  fill: var(--ink-1);
+  fill: var(--chart-main);
 }
 
 .plot__dot--on {
-  fill: #ffffff;
-  stroke: var(--ink-1);
-  stroke-width: 2;
+  fill: var(--chart-main);
+  stroke: #ffffff;
+  stroke-width: 2.6;
   vector-effect: non-scaling-stroke;
 }
 
+/* Кольцо вокруг точки под курсором: на месячном графике точки стоят
+   плотно, и одного увеличения радиуса мало, чтобы понять, какая из них
+   выбрана. */
+.plot__ring {
+  fill: none;
+  stroke: var(--chart-main);
+  stroke-width: 2;
+  opacity: 0.35;
+  vector-effect: non-scaling-stroke;
+}
+
+/* Вертикальная направляющая от подсказки до оси. Она отвечает на
+   вопрос «а это какой день»: без неё в тридцати точках подсказка
+   относится к чему-то примерно там. */
+.plot__guide {
+  stroke: var(--chart-main);
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+  opacity: 0.45;
+  vector-effect: non-scaling-stroke;
+}
+
+/*
+ * Подсказка под курсором — карточка, а не строка.
+ *
+ * В одну строку «198 / 214 (92,5%)» помещается, но сравнение с прошлым
+ * периодом туда уже не влезает, а именно оно отвечает на вопрос «это
+ * много или мало». Поэтому карточка: день сверху, доля крупно, прошлый
+ * период отдельной строкой со своим пунктирным значком — тем же, что у
+ * линии на поле.
+ *
+ * Карточка светлая: тёмная плашка поверх светлого графика перекрывала
+ * линию плотным пятном, и под курсором пропадало то, ради чего курсор
+ * туда подвели.
+ */
 .tip {
   position: absolute;
-  top: 12%;
-  padding: 7px 10px;
-  border-radius: 8px;
-  background: var(--ink-1);
-  color: #ffffff;
-  font-size: 11.5px;
+  top: 10px;
+  min-width: 168px;
+  padding: 9px 11px 10px;
+  border-radius: 11px;
+  border: 1px solid var(--border-default);
+  background: var(--surface-1);
+  box-shadow: 0 8px 22px rgba(16, 55, 102, 0.16);
+  color: var(--text-body);
+  font-size: 12px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
   pointer-events: none;
   white-space: nowrap;
+  z-index: 3;
+}
+
+/* Нижнее положение: карточка стоит над подписями оси, а не на линии. */
+.tip--under {
+  top: auto;
+  bottom: 42px;
 }
 
 .tip__day {
-  color: #bdbdbd;
+  color: var(--text-muted);
+  font-size: 11.5px;
 }
 
+.tip__row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-muted);
+}
+
+.tip__row b {
+  margin-left: auto;
+  padding-left: 12px;
+  color: var(--text-heading);
+  font-weight: 640;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Значки повторяют линии на поле: кружок — основная серия, пунктирная
+   чёрточка — прошлый период. Одинаковые значки означали бы, что цвет
+   остаётся единственным различием. */
+.tip__mark {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--chart-main);
+  flex: none;
+}
+
+.tip__mark--dash {
+  width: 14px;
+  height: 0;
+  border-radius: 0;
+  background: none;
+  border-top: 2px dotted var(--chart-compare);
+}
+
+.tip__big {
+  margin: 1px 0 2px;
+  font-size: 21px;
+  font-weight: 720;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: var(--text-heading);
+  font-variant-numeric: tabular-nums;
+}
+
+.tip__off {
+  color: var(--text-muted);
+  white-space: normal;
+  max-width: 190px;
+}
+
+/* Итог дня — отдельная плашка у правого края поля. Не украшение: на
+   графике из тридцати точек последнее значение теряется среди
+   остальных, а именно оно чаще всего и нужно. */
 .chart-box__total {
   flex: none;
-  text-align: right;
+  width: 126px;
+  padding: 15px 14px;
+  border-radius: 11px;
+  background: rgba(227, 241, 254, 0.9);
+  text-align: left;
 }
 
 .chart-box__total-label {
   margin: 0;
-  font-size: 12px;
-  color: var(--ink-2);
+  font-size: 13px;
+  color: #315b90;
 }
 
 .chart-box__total-main {
-  margin: 4px 0 0;
-  font-size: 18px;
-  font-weight: 600;
+  margin: 6px 0 0;
+  font-size: 19px;
+  font-weight: 640;
+  color: var(--ink-strong);
   font-variant-numeric: tabular-nums;
 }
 
 .chart-box__total-percent {
-  margin: 2px 0 0;
-  font-size: 24px;
-  font-weight: 700;
+  margin: 3px 0 0;
+  font-size: 33px;
+  font-weight: 760;
+  color: var(--ink-strong);
+  line-height: 1.08;
+  letter-spacing: -0.03em;
   font-variant-numeric: tabular-nums;
+}
+
+/* Разница с прошлым периодом. Цвет лежит на цифре и на стрелке, а не
+   на плашке под ними: подложка превращала подпись в ярлык и спорила с
+   самим числом явки, которое стоит строкой выше. Стрелка рядом с цветом
+   не для красоты — зелёное и янтарное различают не все, а «вверх» и
+   «вниз» различают все. */
+.chart-box__shift {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 8px 0 0;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 680;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-box__shift--up {
+  color: var(--green-600);
+}
+
+.chart-box__shift--down {
+  color: var(--amber-600);
+}
+
+/* Ровно столько же, сколько вчера, — это не событие: нейтральный цвет,
+   а не зелёный и не янтарный. */
+.chart-box__shift--flat {
+  color: var(--steel-600);
 }
 
 .legend {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 18px;
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--edge);
-  font-size: 12px;
-  color: var(--ink-2);
+  margin-top: 12px;
+  padding-top: 11px;
+  border-top: 1px solid var(--border-default);
+  font-size: 13px;
+  color: var(--ink-secondary);
 }
 
 .legend span {
@@ -691,16 +2482,28 @@ html {
   gap: 7px;
 }
 
+.legend__tail {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.legend__note b {
+  color: var(--text-heading);
+  font-variant-numeric: tabular-nums;
+}
+
 .legend__solid,
 .legend__dashed {
   width: 16px;
   height: 0;
-  border-top: 2px solid var(--ink-1);
+  border-top: 2px solid var(--chart-main);
 }
 
 .legend__dashed {
   border-top-style: dotted;
-  border-color: #b4b4b4;
+  border-color: var(--chart-compare);
 }
 
 /* --- таблица офисов ------------------------------------------------------- */
@@ -709,26 +2512,91 @@ html {
   overflow-x: auto;
 }
 
+/*
+ * Таблица прокручивается внутри себя.
+ *
+ * Без этого двенадцать строк растягивали левую колонку почти до
+ * тысячи трёхсот пикселей, правая тянулась за ней — и две нижние панели
+ * с двумя строками каждая раздувались до двухсот пятидесяти пикселей
+ * пустоты. Высота колонок важнее полного списка: всё равно двенадцать
+ * строк за раз никто не читает.
+ *
+ * Полоса здесь та же тонкая, шестипиксельная, без кнопок-стрелок, и от
+ * полосы страницы её отделяет почти половина экрана — рядом они не
+ * стоят. Высоту задаёт соседняя колонка, а не окно: от `100vh` отказался
+ * намеренно, иначе число видимых офисов снова начнёт зависеть от F11.
+ */
+.scroller--rows {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid rgba(214, 229, 243, 0.8);
+  border-radius: 10px;
+  background: var(--surface-inset);
+}
+
+.grid__main > .panel--dense {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Нулевая база: с `auto` таблица внесла бы в высоту колонки все свои
+   строки, и колонка снова выросла бы под них. */
+.grid__main > .panel--dense > .scroller--rows {
+  flex: 1 1 0;
+  min-height: 180px;
+}
+
 .grid-table {
   width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 14px;
   font-variant-numeric: tabular-nums;
+}
+
+.scroller--rows .grid-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #e4f0fc;
+}
+
+/* Итог держится у нижнего края. Заливка непрозрачная: при полупрозрачной
+   сквозь него просвечивала уезжающая строка. */
+.scroller--rows .grid-table tfoot td {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  background: #e6f0fb;
 }
 
 .grid-table th,
 .grid-table td {
-  padding: 6px 10px;
-  height: 30px;
+  padding: 5px 10px;
+  height: 33px;
   text-align: right;
-  border-bottom: 1px solid var(--edge);
+  border-bottom: 1px solid rgba(196, 216, 235, 0.65);
   white-space: nowrap;
+  color: #15336c;
+  font-weight: 600;
 }
 
-.grid-table th {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--ink-2);
+.grid-table thead th {
+  height: 34px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #5576a4;
+  background: rgba(229, 242, 253, 0.86);
+}
+
+.grid-table thead th:first-child {
+  border-top-left-radius: 8px;
+  border-bottom-left-radius: 8px;
+}
+
+.grid-table thead th:last-child {
+  border-top-right-radius: 8px;
+  border-bottom-right-radius: 8px;
 }
 
 .grid-table th:first-child,
@@ -739,15 +2607,118 @@ html {
 }
 
 .grid-table__name {
+  font-size: 14px;
+  font-weight: 620;
+}
+
+.grid-table__name svg {
+  flex: none;
+  margin-right: 9px;
+  vertical-align: -4px;
+  color: var(--ink-tertiary);
+}
+
+/* Спокойное выделение строки: подложка наведения, без рамки и сдвига. */
+.grid-table tbody tr:hover td {
+  background: rgba(226, 239, 252, 0.55);
+}
+
+/*
+ * Число в ячейке.
+ *
+ * Цвет повторяет состояние, но не заменяет собой подпись: над каждым
+ * столбцом стоит его название, и по одному цвету различать ничего не
+ * приходится. Ноль остаётся обычным текстом — открывать пустой список
+ * незачем, и нажимаемым он выглядеть не должен.
+ */
+.num {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.num--none {
+  color: var(--status-none);
   font-weight: 500;
 }
 
+.num--present {
+  color: var(--status-present);
+}
+
+.num--pending {
+  color: var(--status-warning);
+}
+
+.num--vacation {
+  color: var(--status-vacation);
+}
+
+.num--sick {
+  color: var(--status-sick);
+}
+
+.num {
+  font-size: 14px;
+  font-weight: 620;
+}
+
+/* Число-ссылка. Подложки нет: состояние показывает цвет самой цифры, а
+   плашка под ней добавляла в таблицу ряд цветных пятен, из-за которых
+   столбцы читались как подсветка, а не как числа. Отступы и ширина
+   сохранены — колонки стоят там же, где стояли. */
+.num--go {
+  display: inline-block;
+  min-width: 30px;
+  padding: 3px 9px;
+  background: transparent;
+  text-decoration: none;
+  font-weight: 660;
+}
+
+.num--go:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.num--go:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
 .grid-table tfoot td {
-  font-weight: 700;
+  height: 37px;
+  font-size: 14px;
+  font-weight: 740;
+  color: var(--ink-strong);
   border-bottom: 0;
+  border-top: 1px solid rgba(196, 216, 235, 0.8);
+  background: rgba(226, 240, 252, 0.82);
+}
+
+.grid-table tfoot td:first-child {
+  border-top-left-radius: 8px;
+  border-bottom-left-radius: 8px;
+}
+
+.grid-table tfoot td:last-child {
+  border-top-right-radius: 8px;
+  border-bottom-right-radius: 8px;
 }
 
 /* --- правая колонка ------------------------------------------------------- */
+
+/* Список внутри панели — отдельный, более плотный блок.
+   Панель держит заголовок и дышит фотографией, блок держит данные, и
+   читать их сквозь снимок не приходится. Кнопка входит в тот же блок:
+   она завершает список, а не стоит под ним отдельной деталью. */
+.queue-box {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 14px 14px;
+  border: 1px solid rgba(214, 229, 243, 0.9);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.94);
+}
 
 .queue {
   list-style: none;
@@ -755,15 +2726,21 @@ html {
   padding: 0;
 }
 
-/* Строка образца — около 46 px: иконка, две короткие строки текста и
+/* Строка образца — около 50 px: иконка, две короткие строки текста и
    счётчик. Больше воздуха превращает список в пять отдельных карточек. */
 .queue__row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-height: 46px;
-  padding: 6px 0;
-  border-bottom: 1px solid var(--edge);
+  gap: 13px;
+  min-height: 49px;
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(205, 222, 238, 0.75);
+}
+
+.queue__row > svg,
+.queue__go > svg:first-child {
+  flex: none;
+  color: #1a6ef5;
 }
 
 .queue--flat .queue__row:last-child,
@@ -779,56 +2756,265 @@ html {
 }
 
 .queue__title {
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 17px;
+  font-size: 15.5px;
+  font-weight: 680;
+  line-height: 20px;
+  color: var(--ink-strong);
 }
 
 .queue__note {
-  font-size: 11.5px;
-  line-height: 15px;
-  color: var(--ink-2);
+  font-size: 13.5px;
+  line-height: 18px;
+  color: var(--ink-secondary);
 }
 
+/* Строка-ссылка. Отступы вынесены наружу, чтобы подложка наведения
+   доставала до краёв панели, а текст остался на месте. */
+.queue__go {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  margin: -6px -8px;
+  padding: 6px 8px;
+  border-radius: 9px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.queue__go:hover {
+  background: var(--hover-bg);
+}
+
+.queue__go:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.queue__go > svg:last-child {
+  flex: none;
+  margin-left: 4px;
+  transform: rotate(-90deg);
+  color: #1a6ef5;
+}
+
+/* Счётчик строки очереди. Ширина и высота сохранены, чтобы столбец
+   цифр оставался ровным, но подложки под числом нет: значение несёт
+   само число и его цвет. */
 .queue__count {
   margin-left: auto;
-  min-width: 26px;
-  padding: 2px 8px;
-  border-radius: 7px;
-  background: var(--soft);
-  font-size: 12.5px;
-  font-weight: 600;
-  text-align: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 9px;
+  background: transparent;
+  color: var(--ink-secondary);
+  font-size: 16px;
+  font-weight: 680;
   font-variant-numeric: tabular-nums;
 }
 
-.talks {
+/* Ждёт решения — янтарный: это очередь, а не ошибка. Ноль остаётся
+   нейтральным, иначе «всё разобрано» выглядело бы тревогой. */
+.queue__count--on {
+  color: #c46b08;
+}
+
+/*
+ * Списки в правой колонке: обращения и решения по заявкам.
+ *
+ * Общей рамки вокруг списка нет. Рамка вокруг рамки — панель, внутри
+ * неё обведённый список, внутри него строки — читалась как три
+ * вложенных блока там, где содержимого на две строки.
+ *
+ * Нажимается строка целиком, а не заголовок внутри неё: в строку списка
+ * попасть мышью легко, в строчку текста — нет, и половина нажатий
+ * уходила в пустоту рядом с текстом. Поэтому внутри каждой строки одна
+ * ссылка на всю площадь, а не ссылка на заголовке.
+ */
+.feed {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
 }
 
-.talks li {
+.feed__row {
+  position: relative;
   display: flex;
-  gap: 10px;
+  align-items: center;
+  gap: 13px;
+  min-height: 70px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  background: var(--surface-inset);
+  color: inherit;
+  text-decoration: none;
+  overflow: hidden;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease;
 }
 
-.talks__who,
-.talks__text {
+/* Полоска слева появляется при наведении. Она нарисована всегда и
+   сдвинута за край: анимировать сдвиг дешевле, чем добавлять и убирать
+   элемент, и строка при этом не дёргается по ширине. */
+.feed__row::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--action-bg);
+  transform: translateX(-3px);
+  transition: transform 0.15s ease;
+}
+
+.feed__row:hover {
+  background: #f1f7fe;
+  border-color: rgba(150, 191, 236, 0.9);
+}
+
+.feed__row:hover::before {
+  transform: translateX(0);
+}
+
+/* Рамка фокуса тонкая и синяя — та же, что у остальных нажимаемых мест
+   CRM, чтобы обход клавиатурой выглядел одинаково везде. */
+.feed__row:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .feed__row,
+  .feed__row::before {
+    transition: none;
+  }
+}
+
+.feed .avatar {
+  width: 42px;
+  height: 42px;
+  background: #91a5c5;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+/* Значок решения: цвет на линиях, без кружка под ними. Место под него
+   отведено фиксированное, чтобы заголовки в строках стояли по одной
+   вертикали независимо от исхода. */
+.feed__mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  background: transparent;
+}
+
+.feed__mark--ok {
+  color: #0a8a61;
+}
+
+.feed__mark--no {
+  color: #d6454f;
+}
+
+.feed__text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.feed__title,
+.feed__note {
   display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.talks__who {
-  font-size: 11.5px;
-  color: var(--ink-2);
+.feed__title {
+  font-size: 15.5px;
+  font-weight: 660;
+  line-height: 20px;
+  color: var(--ink-strong);
 }
 
-.talks__text {
+.feed__note {
+  font-size: 14px;
+  line-height: 19px;
+  color: var(--ink-secondary);
+}
+
+.feed__when {
+  margin-left: auto;
+  flex: none;
+  font-size: 14px;
+  color: #6681a9;
+  white-space: nowrap;
+}
+
+/* Уголок перехода. Приглушён, пока на строку не навели: он подсказка,
+   а не то, ради чего строку читают. */
+.feed__go {
+  flex: none;
+  margin-left: 10px;
+  color: var(--action-bg);
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+}
+
+.feed__row:hover .feed__go,
+.feed__row:focus-visible .feed__go {
+  opacity: 1;
+}
+
+.verdict {
+  margin-left: auto;
+  flex: none;
+  padding: 5px 11px;
+  border: 1px solid transparent;
+  border-radius: 999px;
   font-size: 13px;
-  margin-top: 2px;
+  font-weight: 640;
+}
+
+.verdict--ok {
+  background: #e8f7f1;
+  border-color: #a9dfca;
+  color: #087c59;
+}
+
+.verdict--no {
+  background: #fff0f1;
+  border-color: #f0bcc0;
+  color: #cf3e48;
+}
+
+.panel__mark--ok {
+  width: 30px;
+  height: 30px;
+  background: transparent;
+  color: #0a8a61;
+}
+
+.panel__mark--no {
+  width: 30px;
+  height: 30px;
+  background: transparent;
+  color: #d6454f;
 }
 
 .empty {
@@ -850,12 +3036,43 @@ html {
   }
 }
 
+/* На широком экране правая колонка перестаёт расти: пять сотен пикселей
+   под список из двух строк — это не «просторно», а пусто. Лишняя ширина
+   уходит графику и таблице, где её есть чем занять. */
+@media (min-width: 1700px) {
+  .grid {
+    grid-template-columns: minmax(0, 1fr) 430px;
+  }
+}
+
 /* Шесть в ряд перестают помещаться раньше, чем ломается сетка: сначала
    карточки уходят в два ряда по три, и только потом правая колонка
-   переезжает под основную. */
-@media (max-width: 1300px) {
+   переезжает под основную.
+
+   Порог 1400, а не 1300: при 1366 шесть карточек ещё влезают, но число
+   в 46 пикселей занимает почти всю ширину, и подпись под ним обрезается
+   на первом же слове. Два ряда по три читаются, шесть сплющенных — нет. */
+@media (max-width: 1400px) {
   .cards {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  /* Меню на узком экране отдаёт двадцать пикселей рабочей области.
+     Вместе с шириной уменьшаются значок и подпись: иначе «Офисы и
+     регионы» перестают помещаться в строку и меню обзаводится
+     собственной горизонтальной прокруткой. */
+  :root {
+    --side-width: 222px;
+  }
+
+  .nav,
+  .side__exit {
+    gap: 12px;
+    font-size: 14.5px;
+  }
+
+  .side__brand img {
+    width: 186px;
   }
 }
 
@@ -866,29 +3083,6 @@ html {
 }
 
 @media (max-width: 900px) {
-  .shell {
-    grid-template-columns: 64px 1fr;
-  }
-
-  .side {
-    padding: 14px 8px;
-  }
-
-  .side__brand-text,
-  .side__group,
-  .nav span,
-  .side__who,
-  .side__exit span,
-  .nav__badge {
-    display: none;
-  }
-
-  .nav,
-  .side__exit {
-    justify-content: center;
-    padding: 10px 0;
-  }
-
   .cards {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -929,7 +3123,7 @@ html {
  */
 
 .head--tight {
-  margin-bottom: 14px;
+  margin-bottom: 10px;
 }
 
 .head__actions {
@@ -944,37 +3138,45 @@ html {
   height: 40px;
   padding: 0 16px;
   border: 1px solid var(--edge);
-  border-radius: 9px;
+  border-radius: 10px;
   background: var(--surface);
   font-size: 13.5px;
   font-weight: 500;
   color: var(--ink-1);
+  text-decoration: none;
   cursor: pointer;
 }
 
 .btn:hover:not(:disabled) {
-  background: var(--soft);
+  background: var(--hover-bg);
 }
 
 .btn:disabled {
-  color: #9a9a9a;
+  color: var(--disabled-text);
   cursor: not-allowed;
 }
 
 .btn--dark {
-  background: var(--ink-1);
-  border-color: var(--ink-1);
-  color: #ffffff;
+  background: linear-gradient(180deg, #1f86f5, #0b6ad8);
+  border-color: #0b6ad8;
+  border-radius: 10px;
+  color: var(--text-on-action);
+  box-shadow: 0 3px 10px rgba(13, 77, 133, 0.2);
 }
 
 .btn--dark:hover:not(:disabled) {
-  background: #000000;
+  background: var(--action-bg-hover);
+}
+
+.btn--dark:active:not(:disabled) {
+  background: var(--action-bg-pressed);
+  border-color: var(--action-bg-pressed);
 }
 
 .btn--dark:disabled {
-  background: #8f8f8f;
-  border-color: #8f8f8f;
-  color: #ffffff;
+  background: var(--disabled-bg);
+  border-color: var(--disabled-border);
+  color: var(--disabled-text);
 }
 
 .sheet {
@@ -991,6 +3193,16 @@ html {
   border-bottom: 1px solid var(--edge);
 }
 
+.people-layout .tabs {
+  margin-top: 16px;
+  padding: 0 12px;
+}
+
+.people-layout .tab {
+  padding: 9px 12px;
+  font-size: 14px;
+}
+
 .tab {
   display: inline-flex;
   align-items: center;
@@ -1005,24 +3217,24 @@ html {
 }
 
 .tab--on {
-  color: var(--ink-1);
+  color: var(--selection-text);
   font-weight: 600;
-  border-bottom-color: var(--ink-1);
+  border-bottom-color: var(--action-bg);
 }
 
 .tab__count {
   min-width: 22px;
   padding: 1px 7px;
   border-radius: 999px;
-  background: var(--soft);
+  background: var(--surface-2);
   font-size: 11.5px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
 .tab--on .tab__count {
-  background: var(--ink-1);
-  color: #ffffff;
+  background: var(--selection-bg);
+  color: var(--selection-text);
 }
 
 .toolbar {
@@ -1068,11 +3280,11 @@ html {
 }
 
 .people tbody tr:hover {
-  background: #fafafa;
+  background: var(--hover-bg);
 }
 
 .people tbody tr:focus-visible {
-  outline: 2px solid var(--ink-1);
+  outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 
@@ -1128,11 +3340,17 @@ html {
   font-size: 13px;
 }
 
+/* Нейтральная по умолчанию: точка сама по себе ничего не утверждает.
+   Смысл ей придаёт модификатор рядом. */
 .state__dot {
   width: 7px;
   height: 7px;
   border-radius: 999px;
-  background: var(--ink-1);
+  background: var(--text-muted);
+}
+
+.state--working .state__dot {
+  background: var(--status-success);
 }
 
 .people__go {
@@ -1187,7 +3405,7 @@ html {
   position: fixed;
   inset: 0;
   z-index: 20;
-  background: rgba(0, 0, 0, 0.18);
+  background: var(--scrim);
 }
 
 .drawer {
@@ -1322,7 +3540,7 @@ html {
   padding: 10px 12px;
   border: 1px solid var(--edge);
   border-radius: 9px;
-  background: var(--soft);
+  background: var(--surface-2);
 }
 
 .tg__link code {
@@ -1362,8 +3580,8 @@ html {
 }
 
 .people tbody tr.is-picked {
-  background: var(--soft);
-  box-shadow: inset 3px 0 0 var(--ink-1);
+  background: var(--selection-bg);
+  box-shadow: inset 3px 0 0 var(--action-bg);
 }
 
 .side-panel {
@@ -1461,7 +3679,7 @@ html {
 }
 
 .area:focus-visible {
-  outline: 2px solid var(--ink-1);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 1px;
 }
 
@@ -1627,9 +3845,9 @@ html {
 }
 
 .chip-btn--on {
-  background: var(--ink-1);
-  border-color: var(--ink-1);
-  color: #ffffff;
+  background: var(--selection-bg);
+  border-color: var(--selection-bg);
+  color: var(--selection-text);
 }
 
 .avatar--square {
@@ -1697,7 +3915,7 @@ html {
   padding: 12px 14px;
   border: 1px solid var(--edge);
   border-radius: 10px;
-  background: var(--soft);
+  background: var(--surface-2);
 }
 
 .geo__text {
@@ -1740,237 +3958,42 @@ html {
 .form-grid__input {
   height: 38px;
   padding: 0 12px;
-  border: 1px solid var(--edge);
+  border: 1px solid var(--border-default);
   border-radius: 9px;
+  background: var(--surface-1);
+  color: var(--text-body);
   font-size: 13.5px;
 }
 
+/* Фокус: синяя граница и мягкое кольцо. Кольцо, а не толстая рамка —
+   толстая сдвигает соседние поля на пиксель, и форма «дышит» при
+   переходе по табу. */
+.form-grid__input:focus,
+.form-grid__input:focus-visible {
+  outline: none;
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 3px var(--focus-ring-soft);
+}
+
+/* Ошибка обязана отличаться от фокуса, а не повторять его другим
+   оттенком: иначе поле «в фокусе» и поле «с ошибкой» выглядят одинаково
+   ровно в тот момент, когда человек в них стоит. */
 .form-grid__input[aria-invalid='true'] {
-  border-color: #6b6b6b;
+  border-color: var(--status-danger);
+}
+
+.form-grid__input[aria-invalid='true']:focus,
+.form-grid__input[aria-invalid='true']:focus-visible {
+  border-color: var(--status-danger);
+  box-shadow: 0 0 0 3px var(--focus-ring-danger);
 }
 
 .form-grid__error {
+  color: var(--status-danger);
   font-size: 12px;
 }
 
-/* --- раздел «Обращения» ------------------------------------------------------
- *
- * Три панели рядом: очередь, переписка и контекст. Спокойная рабочая
- * переписка, а не мессенджер: без тёмных пузырей и цветных выносок.
- */
-
-.talk-grid {
-  display: grid;
-  grid-template-columns: 380px minmax(0, 1fr) 330px;
-  gap: 14px;
-  align-items: start;
-}
-
-.threads {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.thread {
-  width: 100%;
-  display: flex;
-  gap: 11px;
-  padding: 11px 16px;
-  border: 0;
-  border-bottom: 1px solid var(--edge);
-  background: none;
-  text-align: left;
-  cursor: pointer;
-}
-
-.thread:hover {
-  background: #fafafa;
-}
-
-.thread--on {
-  background: var(--soft);
-  box-shadow: inset 3px 0 0 var(--ink-1);
-}
-
-.thread__text {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-  flex: 1;
-}
-
-.thread__top {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.thread__who {
-  font-size: 13.5px;
-  font-weight: 600;
-}
-
-.thread__time {
-  font-size: 12px;
-  color: var(--ink-2);
-  font-variant-numeric: tabular-nums;
-}
-
-.thread__topic {
-  font-size: 13px;
-}
-
-.thread__excerpt {
-  font-size: 12px;
-  color: var(--ink-2);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.thread .pill {
-  align-self: flex-start;
-  padding: 2px 8px;
-  font-size: 11.5px;
-}
-
-.talk {
-  display: flex;
-  flex-direction: column;
-  padding: 0;
-  min-height: 420px;
-  max-height: calc(100dvh - 190px);
-}
-
-.talk-empty {
-  min-height: 220px;
-}
-
-.talk__head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 14px 18px;
-  border-bottom: 1px solid var(--edge);
-}
-
-.talk__title {
-  flex: 1;
-  min-width: 0;
-  font-size: 16px;
-  font-weight: 700;
-}
-
-.talk__actions {
-  display: flex;
-  gap: 8px;
-}
-
-.talk__body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.talk__day {
-  margin: 0;
-  text-align: center;
-  font-size: 12px;
-  color: var(--ink-2);
-}
-
-.msg {
-  display: flex;
-  gap: 11px;
-}
-
-.msg__body {
-  min-width: 0;
-}
-
-.msg__head {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  margin: 0 0 4px;
-}
-
-.msg__who {
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.msg__time {
-  font-size: 12px;
-  color: var(--ink-2);
-  font-variant-numeric: tabular-nums;
-}
-
-.msg__text {
-  margin: 0;
-  padding: 10px 14px;
-  border-radius: 10px;
-  background: var(--soft);
-  font-size: 13.5px;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-
-.talk__event {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  margin: 0;
-  font-size: 12px;
-  color: var(--ink-2);
-}
-
-.talk__foot {
-  padding: 14px 18px 16px;
-  border-top: 1px solid var(--edge);
-}
-
-.talk__label {
-  margin: 0 0 8px;
-  font-size: 12px;
-  color: var(--ink-2);
-}
-
-.talk__send {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 10px;
-  font-size: 12px;
-}
-
-.side-panel--static {
-  position: static;
-  max-height: none;
-}
-
-@media (max-width: 1400px) {
-  .talk-grid {
-    grid-template-columns: 320px minmax(0, 1fr);
-  }
-
-  .talk-grid > .side-panel {
-    grid-column: 1 / -1;
-  }
-}
-
-@media (max-width: 1080px) {
-  .talk-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
+/* Раздел «Обращения» — в `styles/questions.css`, под префиксом `qs-`. */
 
 /* --- раздел «Аналитика» ------------------------------------------------------ */
 
@@ -2116,34 +4139,35 @@ html {
 }
 
 .kind:hover:not(:disabled) {
-  border-color: #cfcfcf;
+  border-color: var(--border-strong);
 }
 
 .kind:focus-visible {
-  outline: 2px solid var(--ink-1);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
 .kind--on {
-  border: 2px solid var(--ink-1);
+  border: 2px solid var(--action-bg);
+  background: var(--selection-bg);
   padding: 13px 15px;
 }
 
 .kind:disabled {
   cursor: not-allowed;
-  color: #9a9a9a;
-  background: #fbfbfb;
+  color: var(--disabled-text);
+  background: var(--disabled-bg);
 }
 
+/* Место под значок, а не рамка вокруг него: размеры сохранены, чтобы
+   строка не съехала, но квадрат больше не рисуется. */
 .kind__icon {
   display: grid;
   place-items: center;
   width: 38px;
   height: 38px;
   flex: none;
-  border: 1px solid var(--edge);
-  border-radius: 9px;
-  background: var(--surface);
+  background: transparent;
 }
 
 .kind__text {
@@ -2163,6 +4187,8 @@ html {
   color: var(--ink-2);
 }
 
+/* Отметка выбранного вида отчёта. Синяя галочка, а не белая галочка в
+   синем кружке: кружок в углу карточки читался как кнопка закрытия. */
 .kind__mark {
   position: absolute;
   top: 10px;
@@ -2171,9 +4197,8 @@ html {
   place-items: center;
   width: 20px;
   height: 20px;
-  border-radius: 50%;
-  background: var(--ink-1);
-  color: #ffffff;
+  background: transparent;
+  color: var(--action-bg);
 }
 
 /* --- параметры отчёта ----------------------------------------------------- */
@@ -2247,12 +4272,13 @@ html {
 
 .field__box--static {
   color: var(--ink-2);
-  background: #fcfcfc;
+  background: var(--disabled-bg);
   font-size: 13.5px;
 }
 
 .field__box:focus-within {
-  border-color: var(--ink-1);
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 3px var(--focus-ring-soft);
 }
 
 .field__box input,
@@ -2300,10 +4326,6 @@ html {
   font-size: 13px;
 }
 
-.switch--format .switch__on {
-  background: var(--ink-1);
-  color: #ffffff;
-}
 
 .setup__zone,
 .setup__hint {
@@ -2342,8 +4364,7 @@ html {
   width: 44px;
   height: 44px;
   margin-bottom: 8px;
-  border: 1px solid var(--edge);
-  border-radius: 10px;
+  background: transparent;
   color: var(--ink-1);
 }
 
@@ -2363,11 +4384,12 @@ html {
 }
 
 .btn--wide {
-  margin-top: 12px;
+  margin-top: 14px;
   width: 100%;
-  height: 46px;
+  height: 44px;
   justify-content: center;
-  font-size: 14px;
+  font-size: 16px;
+  font-weight: 650;
 }
 
 .setup__note {
@@ -2399,7 +4421,7 @@ html {
   margin: 0;
   padding: 9px 16px;
   border-bottom: 1px solid var(--edge);
-  background: var(--soft);
+  background: var(--surface-2);
   font-size: 12.5px;
   color: var(--ink-1);
 }
@@ -2448,15 +4470,43 @@ html {
   text-decoration: none;
 }
 
+/* Синий только там, где текст действительно куда-то ведёт.
+   Обычные подписи остаются нейтральными. */
 .link {
   border: 0;
   background: none;
   padding: 0;
   font: inherit;
-  color: var(--ink-1);
+  color: var(--action-text);
   text-decoration: underline;
   text-underline-offset: 3px;
   cursor: pointer;
+}
+
+/* Ссылка-переход: подчёркивание появляется при наведении, иначе строка
+   со стрелкой выглядит зачёркнутой подписью. */
+.link--go {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 550;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+.link--go:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.link--go svg {
+  flex: none;
+}
+
+/* Обычная ссылка не флексовая: значок в ней стоит на базовой линии и
+   выглядит приподнятым. Сдвиг возвращает его на середину строки. */
+.link:not(.link--go) svg {
+  vertical-align: -0.22em;
 }
 
 .link:disabled {
@@ -2598,11 +4648,13 @@ html {
 }
 
 .chip-btn:hover {
-  background: var(--soft);
+  background: var(--hover-bg);
 }
 
 .chip-btn--on {
-  border-color: var(--ink-1);
+  background: var(--selection-bg);
+  border-color: var(--selection-bg);
+  color: var(--selection-text);
   font-weight: 600;
 }
 
@@ -2613,13 +4665,13 @@ html {
 }
 
 .chip-btn--on .chip-btn__count {
-  color: var(--ink-1);
+  color: var(--selection-text);
 }
 
 /* Выбранная строка: светлая заливка и тонкая чёрная полоса слева. */
 .people tbody tr.row--on {
-  background: var(--soft);
-  box-shadow: inset 3px 0 0 0 var(--ink-1);
+  background: var(--selection-bg);
+  box-shadow: inset 3px 0 0 0 var(--action-bg);
 }
 
 /* --- карточка материала ---------------------------------------------------- */
@@ -2637,8 +4689,7 @@ html {
   width: 46px;
   height: 46px;
   flex: none;
-  border: 1px solid var(--edge);
-  border-radius: 10px;
+  background: transparent;
 }
 
 .view__who {
@@ -2711,7 +4762,7 @@ html {
   padding: 9px 12px;
   border: 1px solid var(--edge);
   border-radius: 9px;
-  background: var(--soft);
+  background: var(--surface-2);
   font-size: 12.5px;
 }
 
@@ -2783,9 +4834,9 @@ html {
 }
 
 .versions__now .versions__no {
-  background: var(--ink-1);
-  border-color: var(--ink-1);
-  color: #ffffff;
+  background: var(--action-bg);
+  border-color: var(--action-bg);
+  color: var(--text-on-action);
 }
 
 /* --- текст документа ------------------------------------------------------- */
@@ -2827,7 +4878,7 @@ html {
   padding: 10px 13px;
   border: 1px solid var(--edge);
   border-radius: 9px;
-  background: var(--soft);
+  background: var(--surface-2);
   font-size: 13px;
 }
 
@@ -2868,7 +4919,8 @@ html {
 
 .editor:focus {
   outline: none;
-  border-color: var(--ink-1);
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 3px var(--focus-ring-soft);
 }
 
 .drawer__foot {
@@ -2918,8 +4970,7 @@ html {
   justify-content: center;
   width: 38px;
   height: 38px;
-  border: 1px solid var(--edge);
-  border-radius: 10px;
+  background: transparent;
   color: var(--ink-1);
   flex: none;
 }
@@ -2965,7 +5016,7 @@ html {
 }
 
 .pick--date input:focus-visible {
-  outline: 2px solid var(--ink-1);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -3083,11 +5134,18 @@ html {
  * различает хуже.
  */
 
+/* Метка демонстрационного режима. Осталась в «Администрировании» и
+   «Настройках»: там с организацией что-то делают, и знать, что данные
+   ненастоящие, нужно до действия. */
 .chip--demo {
-  margin-left: 12px;
-  vertical-align: middle;
-  font-size: 13px;
-  font-weight: 500;
+  height: 29px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid #79b7ed;
+  background: rgba(238, 247, 255, 0.92);
+  color: #096cd2;
+  font-size: 14px;
+  font-weight: 600;
 }
 
 .tile__note {
@@ -3097,7 +5155,7 @@ html {
 
 /* строка таблицы, открытая в карточке */
 .row--on td {
-  background: var(--soft);
+  background: var(--selection-bg);
 }
 
 .who--go {
@@ -3115,7 +5173,7 @@ html {
 }
 
 .who--go:focus-visible {
-  outline: 2px solid var(--ink-1);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
   border-radius: 8px;
 }
@@ -3157,17 +5215,17 @@ html {
 }
 
 .roster__go:hover {
-  background: #fafafa;
+  background: var(--hover-bg);
 }
 
 .roster__go:focus-visible {
-  outline: 2px solid var(--ink-1);
+  outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 
 .roster__go--on {
-  background: var(--soft);
-  box-shadow: inset 3px 0 0 var(--ink-1);
+  background: var(--selection-bg);
+  box-shadow: inset 3px 0 0 var(--action-bg);
 }
 
 .role-meta {
@@ -3271,7 +5329,7 @@ html {
 }
 
 .perms__pick:hover {
-  background: var(--soft);
+  background: var(--hover-bg);
 }
 
 /* Недоступное право видно, но не выбирается: спрятать его значило бы
@@ -3356,7 +5414,7 @@ html {
   border: 1px solid var(--edge);
   border-radius: 12px;
   background: var(--surface);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 12px 32px var(--shadow-soft);
   overflow: hidden;
 }
 
@@ -3433,21 +5491,22 @@ html {
 }
 
 .setup__item:hover {
-  background: var(--soft);
+  background: var(--hover-bg);
 }
 
-/* Активный раздел отмечен полосой и фоном, а не цветом: палитра
- * страницы чёрно-белая, и «выбрано» должно читаться без него. */
+/* Активный раздел отмечен полосой и подложкой, а не сплошной заливкой:
+ * тот же образец, что у выбранной строки в списке людей и у ветки
+ * переписки. Сплошной синий здесь спорил бы с основной кнопкой. */
 .setup__item--on,
 .setup__item--on:hover {
-  background: var(--soft);
-  border-color: var(--edge);
+  background: var(--selection-bg);
+  border-color: var(--selection-bg);
   font-weight: 600;
-  box-shadow: inset 3px 0 0 var(--ink-1);
+  box-shadow: inset 3px 0 0 var(--action-bg);
 }
 
 .setup__item:focus-visible {
-  outline: 2px solid var(--ink-1);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -3557,13 +5616,13 @@ html {
 .setup__dot {
   width: 10px;
   height: 10px;
-  border: 1px solid var(--ink-2);
+  border: 1px solid var(--border-control);
   border-radius: 50%;
 }
 
 .setup__dot--on {
-  background: var(--ink-1);
-  border-color: var(--ink-1);
+  background: var(--action-bg);
+  border-color: var(--action-bg);
 }
 
 .setup__hint {
@@ -3607,7 +5666,7 @@ html {
 }
 
 .setup__link:hover {
-  background: var(--soft);
+  background: var(--hover-bg);
 }
 
 .setup__link > span:first-child {
@@ -3656,7 +5715,7 @@ html {
 
 /* Состояние подключения различается словом и обводкой, не цветом. */
 .state--working .state__dot {
-  background: var(--ink-1);
+  background: var(--status-success);
 }
 
 .state--unknown .state__dot {
@@ -3667,7 +5726,7 @@ html {
 
 .state--off .state__dot {
   background: none;
-  border: 1px solid var(--ink-2);
+  border: 1px solid var(--border-control);
 }
 
 /* --- флажки и наборы ------------------------------------------------------- */
@@ -3832,15 +5891,22 @@ html {
   font: inherit;
   color: inherit;
   text-align: left;
+  text-decoration: none;
   cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .metric--go:hover {
-  background: #fafafa;
+  border-color: var(--border-strong);
+  box-shadow: 0 6px 18px var(--shadow-lift);
+}
+
+.metric--go:active {
+  box-shadow: none;
 }
 
 .metric--go:focus-visible {
-  outline: 2px solid var(--ink-1);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -3889,15 +5955,19 @@ html {
 
 .spark__bar {
   width: 100%;
-  background: var(--ink-1);
+  background: var(--action-bg);
   border-radius: 2px 2px 0 0;
 }
 
 .spark__bar--now {
   background: repeating-linear-gradient(
-    45deg, var(--ink-1), var(--ink-1) 2px, transparent 2px, transparent 4px
+    45deg,
+    var(--action-bg),
+    var(--action-bg) 2px,
+    var(--selection-bg) 2px,
+    var(--selection-bg) 4px
   );
-  outline: 1px solid var(--ink-2);
+  outline: 1px solid var(--border-strong);
 }
 
 .marks__check {
@@ -3934,8 +6004,8 @@ html {
 }
 
 .week__day--on {
-  background: var(--soft);
-  border-color: #d5d5d5;
+  background: var(--selection-bg);
+  border-color: var(--action-bg);
 }
 
 .week__title {
@@ -3965,4 +6035,3468 @@ html {
 
 .tg-block .tg__state {
   margin: 0;
+}
+
+/* --- приём сотрудника -------------------------------------------------------
+ *
+ * Две колонки: слева форма, справа — то, что получится. Правая липнет к
+ * верху окна, потому что смотреть на неё нужно во время заполнения, а не
+ * после: она отвечает на вопрос «всё ли выбрано» раньше, чем это скажет
+ * проверка полей.
+ */
+
+.hire {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 396px;
+  align-items: start;
+  gap: var(--layout-gap);
+}
+
+.hire__main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--layout-gap);
+  min-width: 0;
+}
+
+.hire__side {
+  position: sticky;
+  top: calc(var(--topbar-height) + 14px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+/* Узкое окно: колонки встают друг под друга, и правая перестаёт липнуть —
+   липкая панель во всю ширину закрывала бы форму под собой. */
+@media (max-width: 1280px) {
+  .hire {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .hire__side {
+    position: static;
+  }
+}
+
+/* --- индикатор заполнения --- */
+
+.hire__meter {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-end;
+  min-width: 220px;
+}
+
+.hire__meter-text {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.hire__meter-track {
+  width: 100%;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(214, 229, 243, 0.9);
+  overflow: hidden;
+}
+
+.hire__meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--action-bg);
+  transition: width 0.2s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hire__meter-fill {
+    transition: none;
+  }
+}
+
+/* --- поля --- */
+
+.hire__person {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+}
+
+/* Место под фото. Кружок, а не квадрат: в остальной CRM человек всегда
+   круглый — и в списках, и в карточке, и в строке обращения. */
+.hire__photo {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex: none;
+  width: 150px;
+  height: 150px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(226, 239, 252, 0.75);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: not-allowed;
+}
+
+.hire__grid {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 20px;
+}
+
+@media (max-width: 900px) {
+  .hire__person {
+    flex-direction: column;
+  }
+
+  .hire__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.hire__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  min-width: 0;
+}
+
+.hire__label {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* Звёздочка красная и только у обязательных. Цвет не украшение: он тот
+   же, что у ошибки, и связь видна до того, как человек ошибётся. */
+.hire__star {
+  margin-left: 3px;
+  color: var(--red-600);
+}
+
+.hire__input {
+  height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  background: var(--surface-1);
+  color: var(--text-body);
+  font: inherit;
+  font-size: 14px;
+}
+
+.hire__input:focus,
+.hire__input:focus-visible {
+  outline: none;
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 3px var(--focus-ring-soft);
+}
+
+/* Ошибка отличается от фокуса рамкой другого цвета И подписью под полем:
+   если различие только в оттенке рамки, поле в фокусе и поле с ошибкой
+   выглядят одинаково ровно тогда, когда человек в нём стоит. */
+.hire__input--bad,
+.hire__field--bad .pick,
+.hire__field--bad .date__field {
+  border-color: var(--red-600);
+}
+
+.hire__input--bad:focus {
+  box-shadow: 0 0 0 3px var(--focus-ring-danger);
+}
+
+.hire__bad {
+  font-size: 12.5px;
+  color: var(--red-600);
+}
+
+.hire__hint-line {
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+/* Поля выбора и даты приводятся к той же высоте, что и текстовые: иначе
+   в одной строке формы стоят соседние поля разной высоты. */
+.hire__field .pick,
+.hire__field .date__field {
+  height: 44px;
+  border-radius: 10px;
+}
+
+/* Список и поле даты занимают всю ширину колонки: в сетке из двух
+   столбцов сжавшийся до содержимого список рвёт вертикальную линию, по
+   которой идут края остальных полей. */
+.hire__field .drop,
+.hire__field .date,
+.hire__field .pick,
+.hire__field .date__field {
+  width: 100%;
+}
+
+.hire__field .date__input {
+  width: 100%;
+}
+
+.hire__note {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* --- документы --- */
+
+.hire__docs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.hire__docs li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-default);
+  color: var(--text-muted);
+}
+
+.hire__docs li:last-child {
+  border-bottom: 0;
+}
+
+.hire__doc-title {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-heading);
+  font-size: 14px;
+  font-weight: 550;
+}
+
+.hire__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--text-muted);
+}
+
+.hire__status--ok {
+  color: var(--green-600);
+}
+
+.hire__status--wait {
+  color: var(--amber-600);
+}
+
+.hire__status--later {
+  color: var(--steel-600);
+}
+
+/* --- правая панель --- */
+
+.hire__who {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 4px 0 16px;
+}
+
+.hire__who .avatar {
+  width: 52px;
+  height: 52px;
+  font-size: 16px;
+}
+
+.hire__who-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.hire__who-name {
+  font-size: 17px;
+  font-weight: 680;
+  color: var(--text-heading);
+}
+
+.hire__who-role {
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.hire__facts {
+  margin: 0;
+  padding: 16px 0;
+  border-top: 1px solid var(--border-default);
+  border-bottom: 1px solid var(--border-default);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.hire__fact {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.hire__fact dt {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.hire__fact dd {
+  margin: 0 0 0 auto;
+  text-align: right;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-heading);
+}
+
+.hire__fact--empty {
+  font-weight: 500;
+  color: var(--text-faint);
+}
+
+.hire__sub {
+  margin: 18px 0 12px;
+  font-size: 15px;
+  font-weight: 660;
+  color: var(--text-heading);
+}
+
+.hire__auto {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.hire__auto li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  color: var(--text-body);
+}
+
+.hire__auto svg {
+  flex: none;
+  color: var(--green-600);
+}
+
+/* Блок про бота. Рамка, а не заливка: это пояснение, а не состояние. */
+.hire__telegram {
+  margin-top: 18px;
+  padding: 14px 16px;
+  border: 1px solid rgba(166, 205, 243, 0.9);
+  border-radius: 12px;
+}
+
+.hire__telegram-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 660;
+  color: var(--text-heading);
+}
+
+.hire__telegram-head svg {
+  flex: none;
+  color: var(--action-bg);
+}
+
+.hire__telegram-text {
+  margin: 6px 0 0 30px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.hire__telegram-note {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding-top: 11px;
+  border-top: 1px solid var(--border-default);
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.hire__telegram-note svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+/* --- действия --- */
+
+.hire__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.hire__actions .btn {
+  height: 48px;
+  justify-content: center;
+  font-size: 15px;
+}
+
+.hire__hint {
+  margin: 0;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.hire__fail {
+  margin: 0;
+  padding: 11px 14px;
+  border: 1px solid rgba(240, 188, 192, 0.9);
+  border-radius: 10px;
+  background: var(--red-050);
+  color: #a33038;
+  font-size: 13.5px;
+}
+
+/* --- подтверждение --- */
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(11, 43, 99, 0.42);
+  backdrop-filter: blur(3px);
+}
+
+.modal__box {
+  width: min(520px, 100%);
+  padding: 24px;
+  border-radius: 14px;
+  background: var(--surface-1);
+  box-shadow: 0 24px 60px rgba(16, 55, 102, 0.28);
+}
+
+.modal__title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 720;
+  color: var(--text-heading);
+}
+
+.modal__text {
+  margin: 10px 0 0;
+  font-size: 14.5px;
+  line-height: 1.45;
+  color: var(--text-body);
+}
+
+.modal__facts {
+  margin: 18px 0 0;
+  padding: 14px 0;
+  border-top: 1px solid var(--border-default);
+  border-bottom: 1px solid var(--border-default);
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.modal__line {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 14px;
+}
+
+.modal__line dt {
+  color: var(--text-muted);
+}
+
+.modal__line dd {
+  margin: 0 0 0 auto;
+  text-align: right;
+  font-weight: 600;
+  color: var(--text-heading);
+}
+
+.modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+/* --- результат --- */
+
+.hire__result {
+  max-width: 620px;
+}
+
+.hire__steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.hire__step {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  font-size: 15px;
+  color: var(--text-muted);
+}
+
+.hire__step svg {
+  flex: none;
+}
+
+/* Сделанный шаг зелёный, ожидающий — янтарный. Различие не только в
+   цвете: у ожидающего другой значок, и это видно без цвета вообще. */
+.hire__step--done {
+  color: var(--text-body);
+}
+
+.hire__step--done svg {
+  color: var(--green-600);
+}
+
+.hire__step:not(.hire__step--done) svg {
+  color: var(--amber-600);
+}
+
+.hire__result-note {
+  margin: 16px 0 0;
+  font-size: 13.5px;
+  color: var(--text-muted);
+}
+
+.hire__result-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+/* --- страница «Сотрудники» -------------------------------------------------
+ *
+ * Четырёх карточек с числами наверху здесь нет намеренно: те же три
+ * величины читаются строкой под заголовком и не отодвигают список на
+ * пол-экрана вниз.
+ */
+
+.head__sub--facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Разделитель точкой рисуется, а не пишется символом: так его не
+   скопируют вместе с текстом и не прочитает вслух диктор. */
+.head__sub--facts > span + span::before {
+  content: "";
+  display: inline-block;
+  width: 3px;
+  height: 3px;
+  margin-right: 8px;
+  border-radius: 999px;
+  background: currentColor;
+  vertical-align: middle;
+  opacity: 0.55;
+}
+
+.note--wide {
+  margin: 0 0 var(--layout-gap);
+}
+
+/* --- переключатель вида ---------------------------------------------------- */
+
+.modes {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.mode:hover {
+  color: var(--ink-1);
+}
+
+/* Выбранный вид — светло-синяя подложка и синяя иконка, без плотной
+   заливки: панель инструментов не должна выглядеть нажатой кнопкой. */
+.mode--on {
+  background: var(--blue-050);
+  color: var(--action-bg);
+}
+
+.mode:focus-visible {
+  outline: 2px solid var(--action-bg);
+  outline-offset: 1px;
+}
+
+/* --- карточки сотрудников -------------------------------------------------- */
+
+.people-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 0 16px 14px;
+}
+
+/* Ниже 1100 px две карточки в ряд перестают помещаться: у каждой внутри
+   три строки подписей, и они начинают рваться посреди слова. */
+@media (max-width: 1100px) {
+  .people-cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Карточка целиком — кнопка. Попасть пальцем или курсором в имя труднее,
+   чем в карточку, а действие у них одно. */
+.person {
+  display: flex;
+  gap: 12px;
+  width: 100%;
+  padding: 13px 14px;
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  background: var(--surface);
+  font: inherit;
+  color: var(--ink-1);
+  text-align: left;
+  cursor: pointer;
+}
+
+.person:hover {
+  border-color: var(--border-strong);
+  background: var(--hover-bg);
+}
+
+/* Выбранная — тонкая синяя рамка, а не заливка: заливка на списке из
+   восьми карточек читается как «эта отключена». */
+.person--on {
+  border-color: var(--action-bg);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--action-bg);
+}
+
+.person:focus-visible {
+  outline: 2px solid var(--action-bg);
+  outline-offset: 1px;
+}
+
+.person__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.person__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.person__name {
+  font-weight: 600;
+  font-size: 14px;
+  overflow-wrap: break-word;
+  min-width: 0;
+}
+
+.person__role {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--ink-1);
+}
+
+.person__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--edge);
+}
+
+.person__bit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  min-width: 0;
+}
+
+/* Цвет несёт сама линия значка — цветного квадрата под ним нет. */
+.person__bit svg,
+.chosen__fact svg {
+  flex: none;
+  color: var(--ink-2);
+}
+
+/* Выбранная строка таблицы отмечается так же, как карточка. */
+.people__row--on > td {
+  background: var(--blue-050);
+}
+
+/* --- состояния сотрудника -------------------------------------------------- */
+
+.state--ok .state__dot {
+  background: var(--status-success);
+}
+
+.state--wait .state__dot {
+  background: var(--status-warning);
+}
+
+.state--off .state__dot {
+  background: var(--text-muted);
+}
+
+/* --- сегодня в команде ----------------------------------------------------- */
+
+.shift {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.shift__top {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.shift__sum {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  min-width: 0;
+}
+
+.shift__sum strong {
+  font-size: 19px;
+  font-weight: 600;
+}
+
+.shift__sum span {
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.shift__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.shift__rows li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.shift__name {
+  flex: 1;
+  min-width: 0;
+  color: var(--ink-2);
+}
+
+.shift__count {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.shift__dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--text-muted);
+}
+
+.shift__dot--in_office {
+  background: var(--status-success);
+}
+
+.shift__dot--left {
+  background: var(--ink-2);
+}
+
+.shift__dot--not_come {
+  background: var(--status-warning);
+}
+
+/* --- кольцо доли ----------------------------------------------------------- */
+
+.ring {
+  flex: none;
+  transform: rotate(-90deg);
+}
+
+.ring__track,
+.ring__fill {
+  fill: none;
+  stroke-width: 6;
+}
+
+.ring__track {
+  stroke: var(--edge);
+}
+
+.ring__fill {
+  stroke: var(--status-success);
+  stroke-linecap: round;
+}
+
+/* Текст возвращается в нормальное положение: само кольцо повёрнуто,
+   чтобы дуга начиналась сверху, а проценты вверх ногами не читаются. */
+.ring__text {
+  transform: rotate(90deg);
+  transform-origin: 30px 30px;
+  fill: var(--ink-1);
+  font-size: 14px;
+  font-weight: 600;
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+
+/* --- выбранный сотрудник --------------------------------------------------- */
+
+.chosen {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.chosen__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.chosen__who {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.chosen__name {
+  font-size: 15px;
+  font-weight: 600;
+  overflow-wrap: break-word;
+}
+
+.chosen__role {
+  margin-top: 6px;
+  font-size: 13px;
+}
+
+.chosen__facts {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.chosen__fact {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ink-2);
+  min-width: 0;
+}
+
+.chosen__fact span {
+  overflow-wrap: break-word;
+  min-width: 0;
+}
+
+.chosen__open {
+  width: 100%;
+  justify-content: center;
+}
+
+/* --- вкладка «Посещаемость» ------------------------------------------------
+ *
+ * Пять отдельных карточек с числами заменены одной строкой: те же
+ * величины читаются за один взгляд и не отодвигают графики вниз.
+ *
+ * Высота блоков не зависит от того, пришли ли новые данные: при смене
+ * периода меняется содержимое, а не размер, иначе страница прыгает под
+ * курсором.
+ */
+
+.att {
+  display: flex;
+  flex-direction: column;
+  gap: var(--layout-gap);
+}
+
+/* Обновление показывается приглушением, а не подменой на загрузчик:
+   прежние дни остаются на экране, пока не придут новые. */
+.att--busy .att__main,
+.att--busy .att__side,
+.att--busy .att__metrics {
+  opacity: 0.65;
+  transition: opacity 180ms ease;
+}
+
+.att__main,
+.att__side,
+.att__metrics {
+  transition: opacity 180ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .att--busy .att__main,
+  .att--busy .att__side,
+  .att--busy .att__metrics,
+  .att__main,
+  .att__side,
+  .att__metrics {
+    transition: none;
+  }
+}
+
+.att__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* --- переключатель периода -------------------------------------------------- */
+
+.seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.seg__one {
+  height: 32px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.seg__one--on {
+  background: var(--action-bg);
+  color: var(--text-on-action);
+}
+
+.seg__one:focus-visible {
+  outline: 2px solid var(--action-bg);
+  outline-offset: 1px;
+}
+
+.pick--dates {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pick--dates input {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+}
+
+/* --- строка показателей ----------------------------------------------------- */
+
+.att__metrics {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0;
+  padding: 14px 8px;
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+/* Ниже 1200 px пять колонок в строку не встают: подписи начинают
+   рваться посреди слова. */
+@media (max-width: 1200px) {
+  .att__metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px 0;
+  }
+}
+
+.att__metric {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px;
+  min-width: 0;
+}
+
+/* Разделитель — граница ячейки, а не отдельный элемент. */
+.att__metric + .att__metric {
+  border-left: 1px solid var(--edge);
+}
+
+@media (max-width: 1200px) {
+  .att__metric:nth-child(odd) {
+    border-left: 0;
+  }
+}
+
+/* Цвет несёт сама линия значка — подложки под ним нет. */
+.att__metric > svg {
+  flex: none;
+  color: var(--ink-2);
+}
+
+.att__metric-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.att__metric-title {
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.att__metric-value {
+  font-size: 19px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.att__metric-value--warn {
+  color: var(--status-warning);
+}
+
+/* --- сетка вкладки ---------------------------------------------------------- */
+
+.att__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 400px);
+  gap: var(--layout-gap);
+  align-items: start;
+}
+
+@media (max-width: 1240px) {
+  .att__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.att__main,
+.att__side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--layout-gap);
+  min-width: 0;
+}
+
+.att__panel {
+  padding: 16px;
+  border-radius: 14px;
+}
+
+.att__title {
+  margin: 0 0 12px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink-1);
+}
+
+/* --- график приходов и уходов ------------------------------------------------ */
+
+.att-chart {
+  width: 100%;
+}
+
+.att-chart__svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.att-chart__grid {
+  stroke: var(--edge);
+  stroke-width: 1;
+}
+
+/* Плановые границы — пунктиром: это не измеренное значение, а правило. */
+.att-chart__plan {
+  stroke: var(--ink-2);
+  stroke-width: 1;
+  stroke-dasharray: 5 5;
+  opacity: 0.65;
+}
+
+.att-chart__axis {
+  fill: var(--ink-2);
+  font-size: 11px;
+}
+
+.att-chart__pick {
+  fill: var(--blue-050);
+}
+
+.att-chart__line {
+  fill: none;
+  stroke-width: 2;
+}
+
+.att-chart__line--in {
+  stroke: var(--action-bg);
+}
+
+.att-chart__line--out {
+  stroke: var(--status-success);
+}
+
+.att-chart__dot {
+  stroke: var(--surface);
+  stroke-width: 2;
+}
+
+.att-chart__dot--in {
+  fill: var(--action-bg);
+}
+
+.att-chart__dot--out {
+  fill: var(--status-success);
+}
+
+/* Нарушение важнее направления: опоздание и ранний уход красятся
+   одинаково, чтобы их было видно одним взглядом по всему полю. */
+.att-chart__dot--bad {
+  fill: var(--status-warning);
+}
+
+.att-chart__hit {
+  fill: transparent;
+  cursor: pointer;
+}
+
+.att-chart__hit:hover {
+  fill: var(--blue-050);
+  opacity: 0.5;
+}
+
+.att-chart__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.att-chart__legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.key {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--text-muted);
+}
+
+.key--in { background: var(--action-bg); }
+.key--out { background: var(--status-success); }
+.key--ok { background: var(--status-success); }
+.key--warn { background: var(--status-warning); }
+.key--bad { background: var(--status-warning); }
+.key--over { background: var(--action-bg); }
+.key--none { background: var(--border-strong); }
+
+.key--plan {
+  width: 16px;
+  height: 0;
+  border-radius: 0;
+  background: none;
+  border-top: 2px dashed var(--ink-2);
+}
+
+/* --- столбцы часов ----------------------------------------------------------- */
+
+.bars {
+  /* Подпись дня и зазор над ней: по ним считается, где кончается
+     колодец столбца и где должна лечь линия нормы. */
+  --bars-label: 15px;
+  --bars-gap: 4px;
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(var(--bars-count), minmax(0, 1fr));
+  gap: 3px;
+  height: 190px;
+  align-items: end;
+}
+
+.bars__slot {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--bars-gap);
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.bars__slot--on .bars__well {
+  background: var(--blue-050);
+}
+
+.bars__slot:focus-visible {
+  outline: 2px solid var(--action-bg);
+  outline-offset: 1px;
+}
+
+.bars__well {
+  display: flex;
+  align-items: flex-end;
+  flex: 1;
+  border-radius: 4px;
+}
+
+.bars__bar {
+  width: 100%;
+  border-radius: 3px 3px 0 0;
+  background: var(--border-strong);
+  transition: height 180ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bars__bar {
+    transition: none;
+  }
+}
+
+.bars__bar--ok { background: var(--status-success); }
+.bars__bar--warn { background: var(--status-warning); }
+.bars__bar--over { background: var(--action-bg); }
+.bars__bar--none { background: var(--border-strong); }
+
+.bars__label {
+  height: var(--bars-label);
+  line-height: var(--bars-label);
+  font-size: 10.5px;
+  color: var(--ink-2);
+  text-align: center;
+  overflow: hidden;
+}
+
+/* Низ колодца плюс доля его высоты. Никаких подобранных множителей:
+   `100%` здесь — высота самого графика, из неё вычитаются подпись и
+   зазор, и остаётся ровно та шкала, по которой рисуются столбцы. */
+.bars__norm {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(
+    var(--bars-label) + var(--bars-gap)
+    + (100% - var(--bars-label) - var(--bars-gap)) * var(--bars-norm, 0)
+  );
+  height: 0;
+  border-top: 1px dashed var(--ink-2);
+  opacity: 0.65;
+  pointer-events: none;
+}
+
+/* --- «когда обычно» ---------------------------------------------------------- */
+
+.dist {
+  margin-bottom: 16px;
+}
+
+.dist__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dist__text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.dist__text--end {
+  text-align: right;
+}
+
+.dist__title {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.dist__peak {
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.dist__bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 52px;
+  margin-top: 8px;
+}
+
+.dist__bar {
+  flex: 1;
+  min-width: 0;
+  border-radius: 2px 2px 0 0;
+  opacity: 0.45;
+}
+
+.dist__bar--in { background: var(--action-bg); }
+.dist__bar--out { background: var(--status-success); }
+
+/* Самый населённый интервал — полной насыщенностью: именно он и есть
+   ответ на вопрос «когда обычно». */
+.dist__bar--top {
+  opacity: 1;
+}
+
+.att__counts {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--edge);
+}
+
+.att__count {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.att__count > svg {
+  flex: none;
+  color: var(--ink-2);
+}
+
+.att__count-title {
+  flex: 1;
+  min-width: 0;
+  color: var(--ink-2);
+}
+
+.att__count-value {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.att__count-value--warn {
+  color: var(--status-warning);
+}
+
+/* --- подробности дня ---------------------------------------------------------- */
+
+.att__day-sum {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0 0 12px;
+}
+
+.att__day-sum strong {
+  font-size: 19px;
+  font-weight: 600;
+}
+
+.att__bad {
+  color: var(--status-warning);
+}
+
+.marks--thin {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--edge);
+  font-size: 12.5px;
+}
+
+.att__day-go {
+  width: 100%;
+  justify-content: center;
+  margin-top: 12px;
+}
+
+/* --- страница «Посещаемость» ------------------------------------------------
+ *
+ * Пять карточек с числами заменены одной панелью: они занимали треть
+ * экрана и отвечали на один вопрос — сколько человек где. Место
+ * досталось таблице, ради которой на страницу и заходят.
+ */
+
+.today {
+  padding: 16px 18px;
+  border-radius: 14px;
+}
+
+.today__title {
+  margin: 0 0 12px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.today__body {
+  display: grid;
+  grid-template-columns: auto minmax(180px, 1fr) auto;
+  align-items: center;
+  gap: 24px;
+}
+
+/* Ниже 1100 px три колонки в строку не встают: график приходов
+   сжимается до нечитаемой полоски. */
+@media (max-width: 1100px) {
+  .today__body {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+}
+
+.today__share {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-right: 24px;
+  border-right: 1px solid var(--edge);
+}
+
+@media (max-width: 1100px) {
+  .today__share {
+    border-right: 0;
+    padding-right: 0;
+  }
+}
+
+.today__sum {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+}
+
+.today__sum strong {
+  font-size: 24px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.today__sum span {
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+/* --- кольцо доли ------------------------------------------------------------ */
+
+.donut {
+  flex: none;
+  transform: rotate(-90deg);
+}
+
+.donut__track,
+.donut__fill {
+  fill: none;
+  stroke-width: 7;
+}
+
+.donut__track {
+  stroke: var(--edge);
+}
+
+.donut__fill {
+  stroke: var(--status-success);
+  stroke-linecap: round;
+}
+
+/* Текст возвращается в нормальное положение: кольцо повёрнуто, чтобы
+   дуга начиналась сверху, а проценты вверх ногами не читаются. */
+.donut__text {
+  transform: rotate(90deg);
+  transform-origin: 30px 30px;
+  fill: var(--ink-1);
+  font-size: 13px;
+  font-weight: 600;
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+
+/* --- динамика приходов ------------------------------------------------------ */
+
+.today__chart {
+  min-width: 0;
+}
+
+.today__chart-title {
+  margin: 0 0 8px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.today__bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 56px;
+}
+
+.today__bar {
+  flex: 1;
+  min-width: 0;
+  border-radius: 2px 2px 0 0;
+  background: var(--action-bg);
+  opacity: 0.55;
+}
+
+.today__axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+/* --- показатели панели ------------------------------------------------------ */
+
+.today__metrics {
+  display: flex;
+  gap: 0;
+  padding-left: 24px;
+  border-left: 1px solid var(--edge);
+}
+
+@media (max-width: 1100px) {
+  .today__metrics {
+    border-left: 0;
+    padding-left: 0;
+    flex-wrap: wrap;
+  }
+}
+
+/* Плитка — кнопка: она включает фильтр таблицы, а не просто показывает
+   число. Цвет несёт сама линия значка, подложки под ним нет. */
+.today__metric {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 4px 18px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 10px;
+}
+
+.today__metric + .today__metric {
+  border-left: 1px solid var(--edge);
+}
+
+.today__metric:hover {
+  background: var(--hover-bg);
+}
+
+.today__metric--on {
+  background: var(--blue-050);
+}
+
+.today__metric:focus-visible {
+  outline: 2px solid var(--action-bg);
+  outline-offset: 1px;
+}
+
+.today__metric > svg {
+  color: var(--ink-2);
+}
+
+.today__metric-title {
+  font-size: 12.5px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.today__metric-value {
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- быстрый отбор ---------------------------------------------------------- */
+
+.chips {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  background: var(--surface);
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink-1);
+  cursor: pointer;
+}
+
+.chip:hover {
+  background: var(--hover-bg);
+}
+
+.chip--on {
+  border-color: var(--action-bg);
+  background: var(--action-bg);
+  color: var(--text-on-action);
+}
+
+.chip__count {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+
+.chip:focus-visible {
+  outline: 2px solid var(--action-bg);
+  outline-offset: 1px;
+}
+
+/* --- требует внимания ------------------------------------------------------- */
+
+.att-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--layout-gap);
+  min-width: 0;
+}
+
+.attention {
+  padding: 16px;
+  border-radius: 14px;
+}
+
+.attention__title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 10px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.attention__total {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--blue-050);
+  color: var(--action-bg);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.attention__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.attention__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 8px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--ink-1);
+  text-align: left;
+  cursor: pointer;
+}
+
+.attention__row:hover {
+  background: var(--hover-bg);
+}
+
+.attention__row--on {
+  background: var(--blue-050);
+}
+
+.attention__row > svg {
+  flex: none;
+  color: var(--ink-2);
+}
+
+.attention__name {
+  flex: 1;
+  min-width: 0;
+}
+
+.attention__count {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--status-warning);
+}
+
+/* --- шкала рабочего дня ------------------------------------------------------ */
+
+.people__day {
+  width: 30%;
+  min-width: 220px;
+}
+
+.day-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.day-bar--big {
+  gap: 8px;
+}
+
+/* Полоса дня. Серая подложка — окно, в котором вообще что-то было;
+   светлый прямоугольник внутри — назначенный график. */
+.day-bar__track {
+  position: relative;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+
+.day-bar--big .day-bar__track {
+  height: 14px;
+}
+
+/* День без отметок: пунктир, а не пустая полоса. График у человека
+   есть, и видно, что он в него не попал. */
+.day-bar__track--empty {
+  background: repeating-linear-gradient(
+    90deg,
+    var(--edge) 0 6px,
+    transparent 6px 12px
+  );
+}
+
+.day-bar__plan {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 999px;
+  background: var(--border-strong);
+  opacity: 0.45;
+}
+
+/* Отрезок присутствия. Разрыв между двумя — это выход, а не пропуск
+   в данных. */
+.day-bar__run {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 999px;
+  background: var(--status-success);
+}
+
+.day-bar__late {
+  position: absolute;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  margin: -3.5px 0 0 -3.5px;
+  border-radius: 999px;
+  background: var(--status-warning);
+}
+
+/* Конец открытой сессии — точка, а не край полосы: «сейчас» у сервера
+   и у браузера разное, и рисовать его границей нельзя. */
+.day-bar__now {
+  position: absolute;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  margin: -4.5px 0 0 -4.5px;
+  border-radius: 999px;
+  background: var(--action-bg);
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+.day-bar__times {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  font-size: 11.5px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.day-bar--big .day-bar__times {
+  font-size: 12.5px;
+}
+
+.day-bar--off {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.side-panel__bar {
+  margin: 12px 0 4px;
+}
+
+.side-panel__go {
+  width: 100%;
+  justify-content: center;
+  margin-bottom: 8px;
+}
+
+/* --- фотография и документы в форме приёма ----------------------------------
+ *
+ * Круг под фотографию был заглушкой и оставался пустым. Теперь в нём
+ * изображение, а рядом — замена и удаление. Размер и форма не менялись:
+ * это то же место, только рабочее.
+ */
+
+.hire__photo-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+/* Круг с изображением: обрезка по кругу, а не подгонка пропорций —
+   вертикальный снимок иначе сплющивается. */
+.hire__photo--has {
+  position: relative;
+  padding: 0;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.hire__photo--has img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.hire__photo-busy {
+  position: absolute;
+  inset: auto 0 0;
+  padding: 6px 0;
+  background: rgba(16, 42, 86, 0.72);
+  color: #fff;
+  font-size: 11.5px;
+}
+
+.hire__photo-tools {
+  display: flex;
+  gap: 14px;
+  font-size: 12.5px;
+}
+
+.hire__photo-tools .link {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.hire__photo-tools .link[disabled] {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.link--bad {
+  color: var(--red-600);
+}
+
+.hire__photo-hint {
+  margin: 0;
+  max-width: 150px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* Ошибка занимает всю ширину строки: она длиннее подписи поля, и
+   в колонке рядом с кнопкой читалась бы по два слова в строку. */
+.hire__bad--wide {
+  grid-column: 1 / -1;
+  width: 100%;
+  margin: 0;
+}
+
+/* --- строки приложенных бумаг ----------------------------------------------- */
+
+.hire__papers {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hire__paper {
+  display: grid;
+  grid-template-columns: minmax(180px, 220px) minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+}
+
+/* Ниже 900 px четыре колонки не помещаются: имя файла сжимается до
+   многоточия раньше, чем становится понятно, что за файл. */
+@media (max-width: 900px) {
+  .hire__paper {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+
+  .hire__paper > .drop:first-of-type {
+    grid-column: 1 / -1;
+  }
+}
+
+.hire__paper .pick {
+  height: 40px;
+}
+
+.hire__paper-file {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.hire__paper-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13.5px;
+  color: var(--text-heading);
+}
+
+.hire__paper-size {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- фотография и документы в карточке сотрудника --------------------------- */
+
+/* Снимок обрезается по кругу, а не сжимается: вертикальный кадр иначе
+   становится сплющенным лицом. */
+.avatar--photo {
+  object-fit: cover;
+  padding: 0;
+}
+
+.papers {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.papers__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-default);
+  color: var(--text-muted);
+}
+
+.papers__row:last-child {
+  border-bottom: 0;
+}
+
+.papers__title {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-heading);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Подсказка под кнопкой становится предупреждением, когда приём
+   остановлен незагруженным файлом. */
+.hire__hint--bad {
+  color: var(--red-600);
+}
+
+/* Панель отбора дня — в одну строку, как в макете.
+ *
+ * Списки без потолка растягиваются по самому длинному названию: один
+ * регион с длинным именем уводил поиск и два списка на вторую строку.
+ * Потолок ставится здесь, а не у `.pick` вообще: на других страницах
+ * списки стоят по одному и места им хватает.
+ */
+/* Ниже 1700 px таблица получает около 800 px, а одни чипы занимают 433:
+   пять частей в строку не встают физически. Перенос делается нарочно —
+   чипы целой строкой, отбор целой строкой, — иначе он случается сам и
+   делит панель посередине поиска. */
+@media (max-width: 1700px) {
+  .toolbar--day .chips {
+    flex: 1 0 100%;
+  }
+}
+
+.toolbar--day .find {
+  flex: 1 1 160px;
+  min-width: 140px;
+  max-width: 240px;
+}
+
+/* Базис меньше желаемой ширины: при нехватке места списки сжимаются,
+   а не уезжают на вторую строку. Потолок оставляет им нормальный вид,
+   когда место есть. */
+.toolbar--day > .pick,
+.toolbar--day > .drop {
+  flex: 1 1 120px;
+  min-width: 110px;
+  max-width: 190px;
+}
+
+.toolbar--day .pick select {
+  min-width: 0;
+}
+
+/* --- уведомления: колокольчик и выпадающее окно ---------------------------
+ *
+ * Окно висит под колокольчиком и перекрывает страницу, поэтому фон под
+ * ним слегка притемняется: без этого две сетки — страницы и окна —
+ * читаются как одна. Затемнение лежит ОТДЕЛЬНЫМ слоем под панелью, а не
+ * тенью на ней: тень не перехватывает нажатие, а закрыть окно щелчком
+ * мимо человек ждёт.
+ *
+ * Ширина 620 и две колонки 268 + остальное — из образца. Список
+ * рассчитан на семь строк; дальше ведёт «История уведомлений».
+ */
+
+.nf {
+  position: relative;
+  display: inline-flex;
+}
+
+.nf__scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(11, 40, 100, 0.16);
+  animation: nf-fade 0.14s ease-out;
+}
+
+.nf__badge {
+  position: absolute;
+  top: 3px;
+  right: 2px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #f0402f;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 17px;
+  text-align: center;
+}
+
+.nf__panel {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: -6px;
+  z-index: 41;
+  width: 620px;
+  max-width: calc(100vw - 32px);
+  border: 1px solid var(--border-soft);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 18px 44px rgba(19, 62, 104, 0.18);
+  transform-origin: top right;
+  animation: nf-open 0.16s ease-out;
+}
+
+@keyframes nf-open {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.985);
+  }
+}
+
+@keyframes nf-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nf__panel,
+  .nf__scrim {
+    animation: none;
+  }
+}
+
+.nf__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 18px 12px;
+}
+
+.nf__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  color: var(--text-heading);
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.nf__count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #f0402f;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.nf__tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.nf__filter {
+  position: relative;
+}
+
+.nf__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--action-text);
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.nf__link:hover {
+  color: var(--blue-700);
+}
+
+.nf__link:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+.nf__sep {
+  width: 1px;
+  height: 15px;
+  background: var(--border-default);
+}
+
+.nf__menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 12;
+  width: 210px;
+  margin: 0;
+  padding: 5px;
+  list-style: none;
+  border: 1px solid var(--border-default);
+  border-radius: 11px;
+  background: #fff;
+  box-shadow: var(--shadow-panel);
+  animation: drop-in 0.16s ease-out;
+}
+
+.nf__option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--ink-primary);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nf__option:hover {
+  background: var(--hover-bg);
+}
+
+.nf__option--on {
+  background: var(--selection-bg);
+  color: var(--selection-text);
+  font-weight: 600;
+}
+
+.nf__optionCount {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* Сообщение о неудавшемся действии. Строкой в окне, а не окном поверх
+   окна: человек уже здесь, и прерывать его нечем. */
+.nf__note {
+  margin: 0 18px 8px;
+  padding: 7px 10px;
+  border-radius: 9px;
+  background: rgba(240, 64, 47, 0.08);
+  color: #b3261e;
+  font-size: 12.5px;
+}
+
+.nf__body {
+  display: grid;
+  grid-template-columns: 268px minmax(0, 1fr);
+  border-top: 1px solid var(--border-soft);
+}
+
+.nf__list {
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  border-right: 1px solid var(--border-soft);
+}
+
+.nf__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 10px;
+  border: 0;
+  border-left: 3px solid transparent;
+  border-radius: 10px;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nf__row + .nf__row {
+  border-top: 1px solid var(--border-soft);
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.nf__row:hover {
+  background: var(--hover-bg);
+}
+
+.nf__row--on {
+  border-left-color: var(--action-bg);
+  background: var(--selection-bg);
+}
+
+.nf__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: var(--blue-100);
+  color: var(--blue-700);
+}
+
+.nf__icon--red {
+  background: rgba(240, 64, 47, 0.12);
+  color: #c33227;
+}
+
+.nf__icon--orange {
+  background: rgba(240, 150, 30, 0.14);
+  color: #b26a04;
+}
+
+.nf__icon--green {
+  background: rgba(0, 155, 117, 0.12);
+  color: #00795a;
+}
+
+.nf__text {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Длинный заголовок и длинное ФИО переносятся на вторую строку, а не
+   режутся сразу: фамилию в списке читают целиком. Третьей строки не
+   бывает — дальше отточие. */
+.nf__rowTitle {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  color: var(--text-heading);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.nf__rowWho {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  color: var(--text-body);
+  font-size: 12.5px;
+  line-height: 1.3;
+}
+
+.nf__rowWhen {
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+
+.nf__dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border-radius: 999px;
+  background: var(--action-bg);
+}
+
+/* Красный — только у критичного: ошибка доставки, забытый выход за
+   половину суток. Если им метить всё, он перестаёт значить что-либо. */
+.nf__dot--red {
+  background: #f0402f;
+}
+
+.nf__history {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: auto;
+  padding: 11px 0 8px;
+  border-top: 1px solid var(--border-soft);
+  color: var(--action-text);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.nf__history:hover {
+  color: var(--blue-700);
+}
+
+.nf__card {
+  display: flex;
+  flex-direction: column;
+  min-height: 300px;
+  padding: 16px 18px 18px;
+}
+
+.nf__cardHead {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.nf__cardWho {
+  min-width: 0;
+}
+
+.nf__cardTitle {
+  margin: 0;
+  color: var(--text-heading);
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.nf__cardName {
+  margin: 4px 0 0;
+  color: var(--text-body);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.nf__cardPlace {
+  margin: 2px 0 0;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+
+.nf__facts {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 16px 0 0;
+}
+
+.nf__fact {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.nf__factIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--blue-050);
+  color: var(--blue-700);
+}
+
+.nf__fact dt {
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.nf__fact dd {
+  margin: 1px 0 0;
+  color: var(--text-heading);
+  font-size: 13.5px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.nf__state {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 7px;
+  background: rgba(240, 150, 30, 0.16);
+  color: #9a5b02;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.nf__state--green {
+  background: rgba(0, 155, 117, 0.14);
+  color: #00795a;
+}
+
+.nf__state--red {
+  background: rgba(240, 64, 47, 0.12);
+  color: #b3261e;
+}
+
+.nf__state--grey {
+  background: rgba(233, 240, 248, 0.9);
+  color: var(--text-muted);
+}
+
+.nf__comment {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.nf__commentTitle {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.nf__commentText {
+  margin: 4px 0 0;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  color: var(--text-body);
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+
+.nf__author {
+  margin: 10px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.nf__go {
+  width: 100%;
+  margin-top: auto;
+  padding: 12px 16px;
+  border: 0;
+  border-radius: 11px;
+  background: var(--action-bg);
+  color: var(--text-on-action);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.nf__go:hover {
+  background: var(--action-bg-hover);
+}
+
+.nf__empty {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 18px 12px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.nf__empty--bad {
+  color: #b3261e;
+}
+
+.nf__retry {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--action-text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* Узкий экран: две колонки не помещаются, и карточка уезжает под
+   список. Перекрывать ими друг друга нельзя — правая область важна
+   ровно настолько же, насколько левая. */
+@media (max-width: 720px) {
+  .nf__panel {
+    position: fixed;
+    top: calc(var(--topbar-height) + 8px);
+    right: 16px;
+    left: 16px;
+    width: auto;
+  }
+
+  .nf__body {
+    grid-template-columns: minmax(0, 1fr);
+    max-height: calc(100vh - var(--topbar-height) - 90px);
+    overflow-y: auto;
+  }
+
+  .nf__list {
+    border-right: 0;
+    border-bottom: 1px solid var(--border-soft);
+  }
+}
+
+/* Лента событий страницей: то же окно, развёрнутое во всю рабочую
+   область. Классы те же — иначе строка в колокольчике и строка на
+   странице разошлись бы по виду и стали бы читаться как разные вещи. */
+
+.tabs--page {
+  margin-bottom: 14px;
+}
+
+.nf--page {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--panel-radius);
+  background: #fff;
+  box-shadow: var(--shadow-panel);
+}
+
+.nf__pageHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+}
+
+.nf__body--page {
+  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+  min-height: 420px;
+}
+
+.nf__body--page .nf__list {
+  padding: 8px;
+  max-height: 620px;
+  overflow-y: auto;
+}
+
+.nf__body--page .nf__card {
+  padding: 18px 22px 22px;
+}
+
+.nf__more {
+  align-self: center;
+  margin: 10px 0 4px;
+}
+
+@media (max-width: 900px) {
+  .nf__body--page {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .nf__body--page .nf__list {
+    border-right: 0;
+    border-bottom: 1px solid var(--border-soft);
+  }
+}
+
+.cal__day--range:not(.cal__day--on) { background: #eaf3ff; border-radius: 0; color: #174a83; }
+.cal__day--range-start:not(.cal__day--on) { border-radius: 9px 0 0 9px; }
+.cal__day--range-end:not(.cal__day--on) { border-radius: 0 9px 9px 0; }
+.app-date-range { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.app-date-range .date { min-width: 0; }
+.app-date-range .date__field { min-width: 160px; }
+.app-date-range__dash { color: var(--ink-secondary); }
+@media (max-width: 560px) {
+  .app-date-range { flex-wrap: wrap; }
+  .app-date-range .date { flex: 1 1 150px; }
+  .app-date-range .date__field { width: 100%; min-width: 0; box-sizing: border-box; }
+}
+
+/* --- каркас на разных ширинах ---------------------------------------------
+ *
+ * Три состояния бокового меню, а не одно уменьшающееся:
+ *
+ *   ШИРОКОЕ (от 1280)  — меню колонкой 212 px с подписями, как в эталоне;
+ *   СРЕДНЕЕ (901–1279) — рельс 76 px: одни значки, подписи всплывают
+ *                        подсказкой. Освободившиеся 136 px уходят
+ *                        содержимому, а не пустому полю;
+ *   УЗКОЕ (до 900)     — меню выезжает поверх содержимого по кнопке.
+ *                        Рельс здесь уже мешает: на 834 px он съедает
+ *                        десятую часть ширины ради значков, по которым
+ *                        всё равно не понять раздел.
+ *
+ * Кнопка меню живёт в верхней панели и показывается только в третьем
+ * состоянии: на широком экране разделы и так на виду.
+ */
+
+.tool--menu {
+  display: none;
+  flex: none;
+}
+
+.side__scrim {
+  display: none;
+}
+
+/* --- средний экран: рельс со значками ------------------------------------- */
+
+@media (max-width: 1279px) {
+  :root {
+    --side-width: 76px;
+  }
+
+  .side {
+    padding: 14px 10px;
+    align-items: stretch;
+  }
+
+  .side__brand {
+    justify-content: center;
+    padding: 2px 0 16px;
+  }
+
+  .side__brand .brand__full {
+    display: none;
+  }
+
+  .side__brand .brand__mark {
+    display: block;
+    height: 34px;
+    width: auto;
+  }
+
+  /* Названия групп и подписи пунктов уходят, значки остаются по центру.
+     Подпись раздела доступна подсказкой — она проставлена разметкой. */
+  .side__group,
+  .nav span,
+  .side__who,
+  .side__exit span {
+    display: none;
+  }
+
+  .nav,
+  .side__exit {
+    justify-content: center;
+    gap: 0;
+    padding: 11px 0;
+  }
+
+  /* Счётчик не влезает рядом со значком — он садится на его угол.
+     Убирать его нельзя: это единственный признак, что в разделе ждут. */
+  .nav {
+    position: relative;
+  }
+
+  .nav__badge {
+    position: absolute;
+    top: 4px;
+    right: 12px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    font-size: 10px;
+    line-height: 16px;
+  }
+
+  .side__user {
+    justify-content: center;
+    padding: 10px 0;
+  }
+
+  .side__rule {
+    margin: 8px 6px;
+  }
+}
+
+/* --- узкий экран: выезжающее меню ----------------------------------------- */
+
+@media (max-width: 900px) {
+  .shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Меню выходит из потока и едет поверх содержимого. Ширина снова
+     полная: на выехавшей панели подписи нужны — по значкам вслепую
+     раздел не выбирают. */
+  .side {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 60;
+    width: 232px;
+    padding: 14px 12px;
+    transform: translateX(-100%);
+    transition: transform 0.18s ease-out;
+    box-shadow: 0 0 34px rgba(11, 40, 100, 0.28);
+  }
+
+  .side--open {
+    transform: none;
+  }
+
+  .side__brand {
+    justify-content: flex-start;
+    padding: 2px 4px 18px;
+  }
+
+  .side__brand .brand__full {
+    display: block;
+  }
+
+  .side__brand .brand__mark {
+    display: none;
+  }
+
+  .side__group,
+  .nav span,
+  .side__who,
+  .side__exit span {
+    display: revert;
+  }
+
+  .nav,
+  .side__exit {
+    justify-content: flex-start;
+    gap: 12px;
+    padding: 10px 12px;
+  }
+
+  .nav__badge {
+    position: static;
+    margin-left: auto;
+  }
+
+  .side__user {
+    justify-content: flex-start;
+    padding: 10px 6px;
+  }
+
+  /* Подложка под выехавшим меню: нажатие мимо закрывает его. */
+  .side__scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 55;
+    border: 0;
+    padding: 0;
+    background: rgba(11, 40, 100, 0.34);
+    cursor: pointer;
+  }
+
+  .tool--menu {
+    display: inline-flex;
+  }
+
+  /* Осветление больше не начинается за меню: меню вне потока. */
+  .shell__wash {
+    inset: 0;
+  }
+
+  .topbar {
+    gap: 10px;
+    padding: 0 14px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .side {
+    transition: none;
+  }
+}
+
+/* --- таблицы на узком экране: строки становятся карточками ----------------
+ *
+ * Колонок в кадровых таблицах пять-семь, и на 834 px они превращаются
+ * либо в столбик по два слова, либо в горизонтальную прокрутку, где
+ * фамилия уезжает за край вместе со статусом. Поэтому строка
+ * разворачивается в карточку: заголовок сверху, под ним пары
+ * «подпись — значение».
+ *
+ * Подпись берётся из `data-label` у ячейки, а не из шапки: CSS не умеет
+ * читать текст соседнего элемента, а подпись без значения — это
+ * догадка. Ячейка без `data-label` показывает одно значение, и это
+ * честнее выдуманного названия колонки.
+ *
+ * Класс ставится разметкой (`table-cards`), а не всем таблицам подряд:
+ * у сводных таблиц аналитики и предпросмотра отчёта колонки — это оси,
+ * и разворачивать их в карточки бессмысленно.
+ */
+
+@media (max-width: 900px) {
+  .table-cards {
+    display: block;
+    width: 100%;
+    border-collapse: separate;
+  }
+
+  .table-cards thead {
+    /* Шапка не прячется `display: none`: так она пропадает и для
+       чтения с экрана. `clip` убирает её с глаз, оставляя в дереве. */
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .table-cards tbody {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .table-cards tbody tr {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 11px 13px;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--panel-radius);
+    background: #fff;
+  }
+
+  .table-cards tbody td {
+    display: grid;
+    grid-template-columns: minmax(78px, 34%) minmax(0, 1fr);
+    align-items: baseline;
+    gap: 10px;
+    width: auto;
+    max-width: none;
+    padding: 0;
+    border: 0;
+    text-align: left;
+    white-space: normal;
+  }
+
+  .table-cards tbody td::before {
+    content: attr(data-label);
+    color: var(--text-muted);
+    font-size: 11.5px;
+    line-height: 1.45;
+  }
+
+  /* Первая ячейка — заголовок карточки: во всю ширину и крупнее. */
+  .table-cards tbody td:first-child {
+    display: block;
+    margin-bottom: 2px;
+    color: var(--text-heading);
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .table-cards tbody td:first-child::before {
+    display: none;
+  }
+
+  /* Пустая ячейка не оставляет висящей подписи. */
+  .table-cards tbody td:empty {
+    display: none;
+  }
+
+  /* Строка-заглушка «ничего не найдено» остаётся строкой. */
+  .table-cards tbody td[colspan]::before {
+    display: none;
+  }
+
+  .table-cards tbody td[colspan] {
+    display: block;
+  }
+}
+
+/* --- содержимое: поля, промежутки и потолок ширины ------------------------ */
+
+/* Сверхширокий экран. Полоса текста и таблиц не растягивается дальше
+   1860 px — дальше строка перестаёт читаться как строка, а глаз теряет
+   начало следующей. Ниже этой ширины правило ничего не меняет: на
+   1920 рабочая область и так уже 1708. */
+@media (min-width: 2100px) {
+  .canvas {
+    width: 100%;
+    max-width: 1860px;
+    margin-inline: auto;
+  }
+}
+
+/* Средний экран: промежутки и поля ужимаются, структура остаётся той же.
+   Панели по-прежнему стоят как стояли — меняется только воздух между
+   ними. */
+@media (max-width: 1366px) {
+  :root {
+    --layout-gap: 12px;
+  }
+
+  .canvas {
+    padding: 14px 16px 18px;
+  }
+}
+
+@media (max-width: 1024px) {
+  .canvas {
+    padding: 14px 14px 20px;
+  }
+
+  /* Строка действий в заголовке страницы переносится, а не сжимает
+     кнопки до значков без подписи. */
+  .head {
+    gap: 12px;
+  }
+
+  .head__actions {
+    flex-wrap: wrap;
+  }
+}
+
+/* Пока меню выехало, содержимое под ним не прокручивается: иначе
+   страница уезжает под панелью, и человек теряет место, откуда открыл
+   меню. */
+@media (max-width: 900px) {
+  .shell--menu .work {
+    overflow: hidden;
+  }
+}
+
+/* --- место под полосу прокрутки в областях, которые её показывают ---------
+ *
+ * Полоса появляется, когда содержимое переросло область, и исчезает,
+ * когда список стал короче. Каждое такое переключение сдвигает всё
+ * содержимое на её ширину — самый частый источник дёрганья при смене
+ * фильтра. Дорожка резервируется заранее у всех областей, которые
+ * прокручиваются по-настоящему.
+ */
+.work,
+.scroller,
+.scroller--rows,
+.canvas,
+.nf__list,
+.nf__body--page .nf__list,
+.qs-queue,
+.qs-talk__body,
+.rq-list,
+.rq-side,
+.emp-table-wrap,
+.att-list,
+.panel--list,
+.panel--view {
+  scrollbar-gutter: stable;
+}
+
+/* --- боковая панель: единая система ------------------------------------------
+ *
+ * Панель — одна плоская тёмно-синяя плоскость. Ни бликов, ни теней
+ * между пунктами: тени превращали список разделов в стопку отдельных
+ * выпуклых карточек, и глаз читал их как кнопки, а не как оглавление.
+ *
+ * Одна сетка на всё содержимое: знак, названия групп, пункты, профиль и
+ * выход начинаются на одной вертикали, и значки стоят в колонке
+ * постоянной ширины — подписи выравниваются сами собой.
+ *
+ * Выбранный пункт — спокойная голубая подложка и тонкая линия слева.
+ * Ни жирности, ни увеличенной высоты: и то и другое двигало список при
+ * каждом переходе.
+ */
+
+:root {
+  /* Отступ содержимого панели от левого края и ширина колонки значков.
+     Одно место на весь блок — иначе выравнивание разъезжается при
+     первой же правке. */
+  --side-pad: 14px;
+  --side-icon: 22px;
+  --side-gap: 12px;
+  --side-row: 42px;
+}
+
+.side {
+  padding: 0 10px 12px;
+  background: var(--sidebar-top);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: none;
+  border-right: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+/* Знак стоит на той же вертикали, что и подписи пунктов. */
+.side__brand {
+  height: 72px;
+  padding: 16px var(--side-pad) 10px;
+}
+
+.side__group {
+  margin: 14px var(--side-pad) 6px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.side__list {
+  gap: 2px;
+}
+
+/* Строка раздела. Высота одна у всех — и у выбранного тоже. */
+.nav {
+  min-height: var(--side-row);
+  gap: var(--side-gap);
+  padding: 0 var(--side-pad);
+  border-radius: 8px;
+  border-left: 3px solid transparent;
+  font-size: 14.5px;
+  font-weight: 400;
+}
+
+/* Значки в колонке постоянной ширины: подписи встают в одну линию,
+   как бы ни различались сами значки. */
+.side__list svg,
+.side__exit svg {
+  width: var(--side-icon);
+  height: var(--side-icon);
+}
+
+.nav:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* Выбранный раздел: спокойная подложка и линия слева. Без тени, без
+   увеличенной высоты, без полужирного — ничего, что двигало бы список
+   или делало из строки кнопку. */
+.nav--active,
+.nav--active:hover {
+  position: static;
+  border-left-color: #7db9f0;
+  background: rgba(125, 185, 240, 0.16);
+  color: #ffffff;
+  font-weight: 500;
+  box-shadow: none;
+}
+
+.nav--active::before {
+  content: none;
+}
+
+.nav__badge {
+  min-width: 20px;
+  padding: 1px 6px;
+  background: rgba(255, 255, 255, 0.14);
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 11.5px;
+}
+
+.nav--active .nav__badge {
+  background: rgba(255, 255, 255, 0.22);
+  color: #ffffff;
+}
+
+.side__rule {
+  margin: 12px var(--side-pad);
+  background: rgba(255, 255, 255, 0.09);
+}
+
+/* Профиль и выход — та же вертикаль и тот же ритм, что у разделов. */
+.side__user {
+  gap: var(--side-gap);
+  padding: 12px var(--side-pad) 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+.side__role {
+  font-size: 14px;
+}
+
+.side__scope {
+  font-size: 12.5px;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.side__exit {
+  min-height: var(--side-row);
+  gap: var(--side-gap);
+  padding: 0 var(--side-pad);
+  border-left: 3px solid transparent;
+  border-radius: 8px;
+  font-size: 14.5px;
+}
+
+.side__exit:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* Рельс на средней ширине: значки по центру, линия выбранного раздела
+   остаётся — по ней видно, где находишься, когда подписей нет. */
+@media (max-width: 1279px) {
+  .side {
+    padding: 0 8px 12px;
+  }
+
+  .nav,
+  .side__exit {
+    padding: 0;
+    border-left-width: 3px;
+    justify-content: center;
+  }
+
+  .nav--active {
+    border-left-color: #7db9f0;
+  }
+
+  .side__brand {
+    padding: 16px 0 10px;
+  }
+}
+
+
+/* Поле внутри поиска занимает остаток и не диктует ширину. */
+.find input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+}
+
+/* Результаты поиска: ФИО и должность — по одной строке каждая. Длинное
+   сокращается отточием, а не переносится на три строки: строки списка
+   должны быть одной высоты, иначе он дёргается при наборе. */
+.global-search__identity,
+.global-search__place {
+  min-width: 0;
+}
+
+.global-search__identity strong,
+.global-search__identity small,
+.global-search__place small,
+.global-search__place em {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.global-search__row > svg {
+  flex: none;
+}
+
+/* --- поле ввода ------------------------------------------------------------
+ *
+ * Класс `.input` использовался в формах, но никогда не был описан: поле
+ * рисовалось браузерным по умолчанию — квадратная рамка, чужой шрифт,
+ * своя высота. Рядом со списками и кнопками CRM это выглядело чужим.
+ *
+ * Размеры те же, что у `.field__box`: одна высота строки во всех формах,
+ * иначе поле и список рядом стоят на разной высоте.
+ */
+
+.input {
+  width: 100%;
+  min-width: 0;
+  /* Высота, рамка и фон — те же, что у кнопки списка
+     (`.app-select__trigger`): в одной форме поле и список стоят рядом,
+     и разница в один пиксель читается как небрежность. */
+  min-height: 41px;
+  padding: 0 12px;
+  border: 1px solid rgba(207, 223, 237, 0.95);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--ink-1);
+  font: inherit;
+  font-size: 14px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.input::placeholder {
+  color: var(--ink-2);
+}
+
+.input:hover:not(:disabled) {
+  border-color: #a9cae9;
+}
+
+/* Обводка своя, а не общая документная: у поля она повторяет рамку, и
+   две рамки одна поверх другой выглядели бы ошибкой. */
+.input:focus,
+.input:focus-visible {
+  outline: 0;
+  border-color: #0875e1;
+  box-shadow: 0 0 0 3px rgb(8 117 225 / 10%);
+}
+
+.input:disabled {
+  background: var(--disabled-bg);
+  color: var(--ink-2);
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* Многострочное поле: высота растёт от содержимого, а не задана строкой. */
+textarea.input,
+.input--area {
+  min-height: 76px;
+  padding: 10px 12px;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+/* Время: узкое поле, но той же высоты, что и соседние. */
+.input--time {
+  width: 112px;
+  padding: 0 10px;
+}
+
+/* Поле с ошибкой. Красная рамка держится и в фокусе: иначе ошибка
+   пропадает ровно тогда, когда человек вернулся её исправлять. */
+.adm-field--bad .input,
+.of-field .input[aria-invalid='true'] {
+  border-color: var(--danger, #b42318);
+}
+
+.adm-field--bad .input:focus {
+  box-shadow: 0 0 0 3px rgb(180 35 24 / 16%);
+}
+
+/* Причина отказа под кнопками приглашения. Красная, но не тревожная:
+   ссылку почти всегда можно выдать заново, и человеку нужно знать
+   причину, а не испугаться. */
+.hire__result-note--bad {
+  color: var(--status-danger, #b42318);
+}
+
+.hire__invite {
+  max-width: 620px;
+}
+
+.hire__invite-link {
+  margin: 16px 0 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line, #dbe5f3);
+  border-radius: 10px;
+  background: #f7faff;
+  overflow-wrap: anywhere;
+}
+
+.hire__invite-note {
+  margin: 0;
+  color: var(--muted, #64748b);
+}
+
+
+/* --- список с несколькими отметками ----------------------------------------- */
+
+.app-multi__heading {
+  margin: 2px 4px 8px;
+  font-size: 14.5px;
+  font-weight: 700;
+  color: var(--ink-primary);
+}
+
+.app-multi__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 18px;
+}
+
+.app-multi__text small {
+  font-size: 12px;
+  color: var(--ink-secondary);
+}
+
+.app-multi__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 6px;
+  padding: 8px 4px 2px;
+  border-top: 1px solid var(--border-default);
+  font-size: 13px;
+  color: var(--ink-secondary);
+}
+
+.app-multi__done {
+  height: 34px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 8px;
+  background: #1b6ef3;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #ffffff;
+  cursor: pointer;
+}
+
+.app-multi__done:hover {
+  background: #185fc4;
 }

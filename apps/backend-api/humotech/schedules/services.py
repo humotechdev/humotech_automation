@@ -17,6 +17,8 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import date, time, timedelta
 
+from django.db.models import Q
+
 from humotech.core.errors import Conflict, NotFound, ValidationFailed
 from humotech.core.pagination import Page, paginate
 from humotech.core.rbac import Actor, snapshot
@@ -27,7 +29,7 @@ from humotech.core.validation import (
     validate_day_interval,
     validate_timezone,
 )
-from humotech.employees.models import Employee
+from humotech.employees.models import Employee, EmployeeAssignment
 from humotech.schedules.models import (
     EmployeeScheduleAssignment,
     ScheduleBreak,
@@ -212,6 +214,36 @@ class WorkScheduleService(BaseService):
 
     # ------------------------------------------------- назначение сотруднику
 
+    def delete(self, actor: Actor, schedule_id: uuid.UUID) -> None:
+        """Убрать график совсем — только пока его никому не назначали.
+
+        Назначенный график остаётся навсегда: по нему считается
+        отработанное время прошлых месяцев. Такой график выключают.
+        """
+        self.access.require(actor, "schedules.manage")
+        schedule = self.access.require_schedule(actor, schedule_id)
+
+        used = EmployeeScheduleAssignment.objects.filter(
+            schedule_id=schedule.id
+        ).count()
+        if used:
+            raise Conflict(
+                f"График уже назначен сотрудникам ({used}). Его можно только "
+                f"выключить: по нему считается отработанное время прошлых "
+                f"месяцев",
+                details={"schedule_id": str(schedule.id), "used": used},
+            )
+
+        with self.atomic():
+            self.audit.record(
+                actor, action="schedule.delete", entity_type="work_schedules",
+                entity_id=schedule.id, before=snapshot(schedule, AUDITED_FIELDS),
+                after=None,
+            )
+            # Дни и перерывы уходят вместе с графиком: они его часть, а не
+            # самостоятельные записи, и ссылаются только на него.
+            schedule.delete()
+
     def assign_to_employee(
         self,
         actor: Actor,
@@ -292,6 +324,59 @@ class WorkScheduleService(BaseService):
                        "valid_from": str(valid_from)},
             )
         return assignment
+
+    def assign_to_department(
+        self,
+        actor: Actor,
+        *,
+        department_id: uuid.UUID,
+        schedule_id: uuid.UUID,
+        valid_from: date,
+    ) -> dict:
+        """Назначить график всем, кто числится в отделе СЕЙЧАС.
+
+        Это снимок состава, а не правило «у отдела такой график». Разница
+        видна при переводе: человек, пришедший в отдел завтра, графика от
+        этого назначения не получит, а ушедший из отдела не потеряет тот,
+        по которому уже работает. Правило «график следует за отделом»
+        меняло бы прошлое при каждом переводе — и табель за прошлый месяц
+        переставал бы сходиться сам собой.
+
+        Отказ по одному человеку не отменяет остальных: у кого-то график
+        уже назначен с той же даты, и это не повод не назначить его всем
+        прочим. Кто не получил и почему — в ответе.
+        """
+        self.access.require(actor, "schedules.manage")
+
+        today_staff = list(
+            EmployeeAssignment.objects.filter(
+                department_id=department_id, organization_id=actor.organization_id
+            )
+            .filter(Q(valid_to__isnull=True) | Q(valid_to__gte=valid_from))
+            .values_list("employee_id", flat=True)
+            .distinct()
+        )
+        if not today_staff:
+            raise Conflict(
+                "В отделе нет сотрудников: назначать график некому",
+                details={"department_id": str(department_id)},
+            )
+
+        assigned: list[str] = []
+        skipped: list[dict] = []
+        for employee_id in today_staff:
+            try:
+                self.assign_to_employee(
+                    actor,
+                    employee_id=employee_id,
+                    schedule_id=schedule_id,
+                    valid_from=valid_from,
+                )
+                assigned.append(str(employee_id))
+            except (Conflict, ValidationFailed) as exc:
+                skipped.append({"employee_id": str(employee_id),
+                                "reason": str(exc)})
+        return {"assigned": assigned, "skipped": skipped}
 
     def current_assignment(
         self, employee_id: uuid.UUID, *, at: date | None = None

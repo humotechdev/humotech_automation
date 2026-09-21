@@ -15,7 +15,7 @@
 
 import type { Profile as ProfileData, Status } from '../api';
 import { PRESENCE } from '../format';
-import { initials } from '../ui/AppHeader';
+import { initials } from '../ui/TopBar';
 import { ClockIcon, OfficeIcon } from '../ui/icons';
 import {
   Card,
@@ -84,10 +84,6 @@ export function Profile({
         <SectionHeader title="Место работы" />
         <ListItem title="Офис" trailing={profile.office.name} />
         <ListItem title="Часовой пояс" trailing={profile.office.timezone} />
-        <ListItem
-          title="Табельный номер"
-          trailing={profile.employee.employee_number}
-        />
         {profile.assignment && (
           <>
             <ListItem
@@ -154,8 +150,7 @@ export function Profile({
         </p>
         <ListItem
           title="Отдел кадров"
-          subtitle="Обращайтесь в рабочее время, назовите табельный номер"
-          trailing={profile.employee.employee_number}
+          subtitle="Обращайтесь в рабочее время: назовите фамилию и офис"
         />
         <ListItem
           title="Забыли отметиться"

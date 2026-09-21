@@ -102,6 +102,31 @@ def validate_phone(value: str | None, *, field: str = "phone") -> str | None:
     return cleaned
 
 
+def validate_pinfl(value: str | None, *, field: str = "pinfl",
+                   required: bool = False) -> str | None:
+    """ПИНФЛ — четырнадцать цифр и ничего кроме них.
+
+    Пробелы и дефисы, которыми его иногда разбивают при наборе, снимаются:
+    это разное написание одного и того же номера, и если их не снять, один
+    человек заведётся дважды — проверка на дубликат сравнивает строки.
+
+    Контрольную сумму здесь не считаем: открытого описания её алгоритма нет,
+    а самодельная проверка отклоняла бы настоящие номера.
+    """
+    cleaned = clean_text(value, field=field, max_length=32)
+    if cleaned is None:
+        if required:
+            raise ValidationFailed("Укажите ПИНФЛ", details={"field": field})
+        return None
+    digits = cleaned.replace(" ", "").replace("-", "")
+    if not digits.isdigit() or len(digits) != 14:
+        raise ValidationFailed(
+            "ПИНФЛ состоит из 14 цифр",
+            details={"field": field, "value": cleaned},
+        )
+    return digits
+
+
 def require_order(earlier: date | None, later: date | None, *,
                   message: str, details: dict | None = None) -> None:
     """`later` не раньше `earlier`, если обе даты заданы."""

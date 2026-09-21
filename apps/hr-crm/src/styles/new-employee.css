@@ -1,0 +1,802 @@
+/*
+ * «Новый сотрудник»: три шага в одной карточке.
+ *
+ * Префикс `nh-` — свой: прежние правила приёма (`hire__`) лежат в общем
+ * `crm.css` и рассчитаны на форму в две колонки со сводкой справа. Ни
+ * одно из них здесь не действует, и подгонять их под мастер значило бы
+ * тронуть страницу, которой больше нет.
+ */
+
+.nh {
+  --nh-ink: #13295a;
+  --nh-text: #22355c;
+  --nh-muted: #6b7c98;
+  --nh-line: #e1e8f1;
+  --nh-field: #d3deeb;
+  --nh-blue: #1b6ef3;
+  --nh-red: #d93a2b;
+
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  font-family: 'Segoe UI', 'Open Sans', system-ui, sans-serif;
+  color: var(--nh-text);
+
+  /* Форма — колонка посреди страницы, а не во всю её ширину. Поля
+     растянутые на полтора экрана читать нечем: глаз ведёт от подписи
+     к полю через пустоту, и два столбца расходятся по краям. */
+  width: 100%;
+  max-width: 1060px;
+  margin: 0 auto;
+}
+
+.nh-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #1466d8;
+  text-decoration: none;
+}
+
+.nh-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.nh-head__title {
+  margin: 0;
+  font-size: 30px;
+  line-height: 34px;
+  font-weight: 700;
+  color: var(--nh-ink);
+}
+
+.nh-head__step {
+  font-size: 15px;
+  color: var(--nh-muted);
+}
+
+/* --- шаги --------------------------------------------------------------- */
+
+/* Шаги строкой с чертой под всеми и подчёркиванием у открытого. Коробка
+   с кнопками спорила бы с полями формы ниже: две рамки рядом, и обе
+   выглядят нажимаемыми. */
+.nh-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 18px;
+  border-bottom: 1px solid var(--nh-line);
+}
+
+.nh-step {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1 1 200px;
+  height: 46px;
+  padding: 0 16px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 15px;
+  color: #4d5f7d;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.nh-step b {
+  font-weight: 600;
+  color: var(--nh-muted);
+}
+
+.nh-step--on {
+  color: #1466d8;
+  font-weight: 600;
+}
+
+.nh-step--on b {
+  color: #1466d8;
+}
+
+.nh-step--done b {
+  color: #1aa35a;
+}
+
+.nh-step--on::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: #1466d8;
+}
+
+/* --- карточка ----------------------------------------------------------- */
+
+.nh-card {
+  margin-top: 20px;
+  padding: 26px 28px 22px;
+  border: 1px solid rgba(221, 229, 239, 0.9);
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 6px 24px rgba(30, 64, 120, 0.06);
+}
+
+.nh-card__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.nh-card__title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--nh-ink);
+}
+
+.nh-card__note {
+  font-size: 13px;
+  color: var(--nh-muted);
+}
+
+.nh-card__note i,
+.nh-star {
+  margin-left: 3px;
+  font-style: normal;
+  color: var(--nh-red);
+}
+
+.nh-card__note i {
+  margin: 0 2px 0 0;
+}
+
+/* --- фотография --------------------------------------------------------- */
+
+.nh-photo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  margin: 22px 0 6px;
+}
+
+.nh-photo__face {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 72px;
+  height: 72px;
+  overflow: hidden;
+  border-radius: 50%;
+  background: #eef3f9;
+  color: #8fa2bb;
+}
+
+.nh-photo__face img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.nh-photo__face > svg {
+  width: 30px;
+  height: 30px;
+}
+
+.nh-photo__pick {
+  height: 40px;
+  padding: 0 20px;
+  border: 1px solid var(--nh-blue);
+  border-radius: 8px;
+  background: #ffffff;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1466d8;
+  cursor: pointer;
+}
+
+.nh-photo__pick:hover:not(:disabled) {
+  background: #f2f7ff;
+}
+
+.nh-photo__pick:disabled {
+  border-color: var(--nh-field);
+  color: var(--nh-muted);
+  cursor: default;
+}
+
+.nh-photo__drop {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--nh-muted);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.nh-photo__hint {
+  font-size: 13.5px;
+  color: var(--nh-muted);
+}
+
+/* --- поля --------------------------------------------------------------- */
+
+.nh-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px 28px;
+  margin-top: 22px;
+}
+
+.nh-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+  margin: 0;
+}
+
+.nh-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--nh-ink);
+}
+
+.nh-input {
+  height: 44px;
+  min-width: 0;
+  padding: 0 14px;
+  border: 1px solid var(--nh-field);
+  border-radius: 8px;
+  background: #ffffff;
+  font: inherit;
+  font-size: 14.5px;
+  color: var(--nh-ink);
+}
+
+.nh-input::placeholder {
+  color: #9aabc2;
+}
+
+.nh-input:focus {
+  outline: 0;
+  border-color: #0875e1;
+  box-shadow: 0 0 0 3px rgba(8, 117, 225, 0.1);
+}
+
+.nh-input--bad {
+  border-color: var(--nh-red);
+}
+
+.nh-input--slim {
+  height: 36px;
+  font-size: 14px;
+}
+
+/* Дата и списки внутри поля — той же высоты, что и текстовые поля:
+   разнобой в пару пикселей в соседних столбцах виден сразу. */
+.nh-field .app-select__trigger,
+.nh-field .datepick__field,
+.nh-field input[type='date'] {
+  min-height: 44px;
+  border-radius: 8px;
+  background: #ffffff;
+  font-size: 14.5px;
+}
+
+.nh-bad {
+  font-size: 12.5px;
+  color: var(--nh-red);
+}
+
+.nh-bad--wide {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+.nh-hint-line {
+  font-size: 12.5px;
+  color: var(--nh-muted);
+}
+
+.nh-say {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--nh-muted);
+}
+
+.nh-lead {
+  margin: 18px 0 0;
+  font-size: 14.5px;
+  line-height: 21px;
+  color: var(--nh-muted);
+}
+
+.nh-hint {
+  margin: 14px 0 0;
+  font-size: 13px;
+  color: var(--nh-muted);
+}
+
+.nh-hint--bad {
+  color: var(--nh-red);
+}
+
+.nh-fail {
+  margin: 16px 0 0;
+  padding: 11px 14px;
+  border: 1px solid #f2c7c2;
+  border-radius: 9px;
+  background: #fdf3f2;
+  font-size: 14px;
+  color: #98261c;
+}
+
+/* --- документы ---------------------------------------------------------- */
+
+.nh-docs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 18px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.nh-docs--extra {
+  margin-top: 8px;
+}
+
+.nh-doc {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--nh-line);
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+/* Приложенный документ виден с одного взгляда: зелёная галка и светлая
+   подложка. Без этого в списке из десяти строк не найти, что сделано. */
+.nh-doc--done {
+  border-color: #c4e6d4;
+  background: #f5fbf7;
+}
+
+.nh-doc__mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: #eef3f9;
+  color: #7f92ad;
+}
+
+.nh-doc--done .nh-doc__mark {
+  background: #dff2e7;
+  color: #17844f;
+}
+
+.nh-doc__text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+
+.nh-doc__text b {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--nh-ink);
+}
+
+.nh-doc__text small {
+  font-size: 12.5px;
+  line-height: 17px;
+  color: var(--nh-muted);
+}
+
+.nh-doc__tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+.nh-doc__off {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--nh-muted);
+  cursor: pointer;
+}
+
+.nh-doc__off:hover:not(:disabled) {
+  color: #b42318;
+}
+
+.nh-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-start;
+  margin-top: 12px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1466d8;
+  cursor: pointer;
+}
+
+.nh-sub {
+  margin: 26px 0 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--nh-ink);
+}
+
+.nh-paper {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.nh-paper li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 14px;
+  border-left: 2px solid var(--nh-line);
+}
+
+.nh-paper b {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--nh-ink);
+}
+
+.nh-paper span {
+  font-size: 12.5px;
+  line-height: 17px;
+  color: var(--nh-muted);
+}
+
+.nh-contact {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 20px 0 0;
+  padding: 13px 15px;
+  border: 1px solid #cfe0f5;
+  border-radius: 10px;
+  background: #f4f9ff;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--nh-text);
+}
+
+.nh-contact > svg {
+  flex: none;
+  margin-top: 1px;
+  color: #1466d8;
+}
+
+.nh-contact a {
+  color: #1466d8;
+  white-space: nowrap;
+}
+
+/* --- подвал ------------------------------------------------------------- */
+
+.nh-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 26px;
+  padding-top: 20px;
+  border-top: 1px solid var(--nh-line);
+}
+
+.nh-foot__end {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  min-width: 0;
+}
+
+.nh-foot__end .nh-hint {
+  margin: 0;
+}
+
+.nh-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 24px;
+  border: 1px solid var(--nh-field);
+  border-radius: 8px;
+  background: #ffffff;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--nh-ink);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.nh-btn:hover:not(:disabled) {
+  border-color: #b9d0ee;
+  background: #f5f9ff;
+}
+
+.nh-btn--blue {
+  border-color: var(--nh-blue);
+  background: var(--nh-blue);
+  color: #ffffff;
+}
+
+.nh-btn--blue:hover:not(:disabled) {
+  border-color: #185fc4;
+  background: #185fc4;
+}
+
+.nh-btn--small {
+  height: 34px;
+  padding: 0 16px;
+  font-size: 13.5px;
+}
+
+.nh-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Узкий экран: два столбца полей в один, кнопки шага во всю ширину. */
+@media (max-width: 860px) {
+  .nh-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .nh-step {
+    flex: 1 1 100%;
+  }
+
+  .nh-doc {
+    flex-wrap: wrap;
+  }
+}
+
+/* --- окна мастера -------------------------------------------------------- */
+
+/*
+ * Подтверждение и ссылка Telegram — в том же стиле, что и сам мастер.
+ * Прежде они брали общие `.modal`, рассчитанные на список определений:
+ * подпись и значение вставали друг под другом со сдвигом, и окно
+ * читалось как сломанное.
+ */
+.nh-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(15, 28, 56, 0.45);
+}
+
+.nh-modal__box {
+  width: min(540px, 100%);
+  max-height: calc(100dvh - 40px);
+  overflow-y: auto;
+  padding: 26px 28px 24px;
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 24px 60px rgba(13, 32, 70, 0.3);
+  font-family: 'Segoe UI', 'Open Sans', system-ui, sans-serif;
+  color: #22355c;
+}
+
+.nh-modal__title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  color: #13295a;
+}
+
+.nh-modal__text {
+  margin: 10px 0 0;
+  font-size: 14px;
+  line-height: 20px;
+  color: #6b7c98;
+}
+
+.nh-modal__link {
+  margin: 16px 0 0;
+  padding: 12px 14px;
+  border: 1px solid #cfe0f5;
+  border-radius: 10px;
+  background: #f4f9ff;
+  font-size: 13.5px;
+  overflow-wrap: anywhere;
+}
+
+.nh-modal__link a {
+  color: #1466d8;
+}
+
+.nh-modal__note {
+  margin: 12px 0 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: #6b7c98;
+}
+
+/* Сверка: подпись слева, значение справа, по строке на каждое. */
+.nh-sum {
+  display: flex;
+  flex-direction: column;
+  margin: 18px 0 0;
+}
+
+.nh-sum__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+  padding: 10px 0;
+  border-bottom: 1px solid #eef2f8;
+}
+
+.nh-sum__row:last-child {
+  border-bottom: 0;
+}
+
+.nh-sum dt {
+  flex: none;
+  font-size: 14px;
+  color: #6b7c98;
+}
+
+.nh-sum dd {
+  min-width: 0;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #13295a;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.nh-modal__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid #e1e8f1;
+}
+
+/* Кнопки окна живут вне `.nh`, и переменные блока сюда не достают. */
+.nh-modal .nh-btn {
+  border-color: #d3deeb;
+  color: #13295a;
+}
+
+.nh-modal .nh-btn--blue {
+  border-color: #1b6ef3;
+  background: #1b6ef3;
+  color: #ffffff;
+}
+
+/* Сверка правки: подпись, было, стало. Зачёркнутое прежнее и тёмное
+   новое читаются быстрее, чем две колонки с одинаковым начертанием. */
+.nh-diff {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 18px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.nh-diff li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 16px;
+  min-width: 0;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #eef2f8;
+}
+
+.nh-diff li:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.nh-diff__title {
+  flex: none;
+  font-size: 14px;
+  color: #6b7c98;
+}
+
+.nh-diff__pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 14px;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.nh-diff__pair s {
+  color: #93a3ba;
+}
+
+.nh-diff__pair > svg {
+  flex: none;
+  color: #93a3ba;
+}
+
+.nh-diff__pair b {
+  font-weight: 600;
+  color: #13295a;
+}
+
+/* Пояснение под парой дат стажировки: во всю ширину сетки, чтобы не
+   делить строку с соседним полем. */
+.nh-say--wide {
+  grid-column: 1 / -1;
+}

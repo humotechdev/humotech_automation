@@ -1,0 +1,2349 @@
+/*
+ * Страница «Обращения» по образцу 1672×941.
+ * Всё под префиксом `qs-`: правки не задевают другие страницы.
+ */
+
+.qs {
+  --qs-ink: #13295a;
+  --qs-text: #22355c;
+  --qs-muted: #6b7c98;
+  --qs-line: #e3eaf3;
+  --qs-field: #d9e2ec;
+  --qs-blue: #1f6fe0;
+  --qs-blue-soft: #eaf2ff;
+  --qs-green: #1b9e5f;
+  --qs-green-soft: #e5f6ed;
+  --qs-orange: #d97a06;
+  --qs-orange-soft: #fff1dc;
+  --qs-red: #e0453f;
+  --qs-red-soft: #fdecea;
+  --qs-card: #ffffff;
+  --qs-radius: 14px;
+
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  font-family: 'Segoe UI', 'Open Sans', system-ui, sans-serif;
+  color: var(--qs-text);
+}
+
+.qs-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* --- шапка ------------------------------------------------------------------ */
+
+.qs-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex: none;
+  margin: -8px 12px 0 5px;
+}
+
+.qs-head__title {
+  margin: 0;
+  font-size: 33px;
+  line-height: 40px;
+  font-weight: 700;
+  color: var(--qs-ink);
+}
+
+.qs-head__sub {
+  margin: 0;
+  font-size: 15.5px;
+  line-height: 22px;
+  color: #3e4f6d;
+}
+
+.qs-head__tools {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.qs-select {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.qs-select select {
+  appearance: none;
+  height: 42px;
+  min-width: 146px;
+  padding: 0 38px 0 18px;
+  border: 1px solid var(--qs-field);
+  border-radius: 10px;
+  background: var(--qs-card);
+  font: inherit;
+  font-size: 14px;
+  color: var(--qs-text);
+  cursor: pointer;
+}
+
+.qs-select--wide select {
+  min-width: 188px;
+}
+
+.qs-select svg {
+  position: absolute;
+  right: 14px;
+  pointer-events: none;
+  color: var(--qs-muted);
+}
+.questions-select { flex: 0 1 180px; width: 180px; }
+.questions-select--wide { width: 220px; }
+.qs-more .app-select { min-width: 0; }
+
+.qs-icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 54px;
+  height: 42px;
+  border: 1px solid var(--qs-field);
+  border-radius: 10px;
+  background: var(--qs-card);
+  color: var(--qs-ink);
+  cursor: pointer;
+}
+
+.qs-icon-btn:hover {
+  border-color: #b9c7d8;
+}
+
+.qs-icon-btn--sm {
+  width: 34px;
+  height: 36px;
+}
+
+.qs-icon-btn--spin svg {
+  animation: qs-spin 1s linear infinite;
+}
+
+@keyframes qs-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qs-icon-btn--spin svg { animation: none; }
+}
+
+.qs-dots {
+  font-size: 20px;
+  line-height: 1;
+}
+
+/* --- вкладки ------------------------------------------------------------------ */
+
+.qs-tabs {
+  display: flex;
+  gap: 4px;
+  flex: none;
+  margin: 12px 12px 10px 0;
+  border-bottom: 1px solid var(--qs-line);
+}
+
+.qs-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px 10px;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: none;
+  font: inherit;
+  font-size: 14.5px;
+  color: #3e4f6d;
+  cursor: pointer;
+}
+
+.qs-tab--on {
+  border-bottom-color: var(--qs-blue);
+  color: var(--qs-blue);
+  font-weight: 600;
+}
+
+.qs-tab--static {
+  cursor: default;
+}
+
+.qs-tab__count {
+  min-width: 22px;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--qs-ink);
+  text-align: center;
+}
+
+.qs-tab--on .qs-tab__count {
+  background: var(--qs-blue-soft);
+  color: var(--qs-blue);
+}
+
+/* --- сетка -------------------------------------------------------------------- */
+
+.qs-grid {
+  flex: 1 1 0;
+  min-height: 560px;
+  display: grid;
+  grid-template-columns: 360px minmax(0, 1fr) 330px;
+  gap: 10px;
+  margin: 0 12px 12px 0;
+}
+
+/* At the reference desktop width the conversation is the primary surface;
+   keep its header compact and let the queue/context retain their readable
+   widths instead of producing a tall, sparse middle column. */
+@media (min-width: 1500px) {
+  .qs-talk__title { display: none; }
+  .qs-talk__head { padding-top: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--qs-line); }
+  .qs-thread { padding-top: 12px; }
+}
+
+@media (min-width: 1500px) and (max-width: 1750px) {
+  .qs-grid { grid-template-columns: 360px minmax(0, 1fr) 330px; }
+}
+
+.qs-card {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--qs-line);
+  border-radius: var(--qs-radius);
+  background: var(--qs-card);
+  box-shadow: 0 1px 2px rgba(19, 41, 90, 0.05);
+}
+
+/* --- общие кнопки ------------------------------------------------------------- */
+
+.qs-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 16px;
+  border: 1px solid var(--qs-field);
+  border-radius: 9px;
+  background: var(--qs-card);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--qs-ink);
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.qs-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.qs-btn--blue {
+  border-color: var(--qs-blue);
+  background: var(--qs-blue);
+  color: #fff;
+}
+
+.qs-btn--blue:hover:not(:disabled) {
+  background: #1a61c7;
+}
+
+.qs-btn--red {
+  border-color: var(--qs-red);
+  background: var(--qs-red);
+  color: #fff;
+}
+
+.qs-btn--sm {
+  height: 30px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+.qs-btn--block {
+  width: 100%;
+  margin-top: 10px;
+}
+
+.qs-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--qs-blue);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.qs-link:disabled {
+  opacity: 0.55;
+}
+
+.qs-link--go {
+  margin-top: 8px;
+}
+
+.qs-input {
+  width: 100%;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--qs-field);
+  border-radius: 9px;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--qs-text);
+  box-sizing: border-box;
+}
+
+.qs-state {
+  margin: 0;
+  padding: 18px;
+  font-size: 13.5px;
+  color: var(--qs-muted);
+}
+
+.qs-state p {
+  margin: 0 0 10px;
+}
+
+.qs-state--center {
+  margin: auto;
+  text-align: center;
+}
+
+.qs-state--page {
+  padding: 40px;
+  font-size: 15px;
+}
+
+/* --- очередь ------------------------------------------------------------------ */
+
+.qs-queue__search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin: 12px 12px 10px;
+}
+
+.qs-queue__search svg {
+  position: absolute;
+  left: 14px;
+  color: var(--qs-muted);
+}
+
+.qs-queue__search input {
+  width: 100%;
+  height: 42px;
+  padding: 0 12px 0 40px;
+  border: 1px solid var(--qs-field);
+  border-radius: 10px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--qs-text);
+  box-sizing: border-box;
+}
+
+.qs-quick {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 12px 10px;
+}
+
+.qs-quick .qs-chip:not(.qs-chip--icon) {
+  padding: 0 7px;
+  font-size: 12px;
+}
+
+.qs-chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--qs-line);
+  border-radius: 9px;
+  background: var(--qs-card);
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--qs-text);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.qs-chip--on {
+  border-color: var(--qs-blue);
+  background: var(--qs-blue);
+  color: #fff;
+}
+
+.qs-chip__count {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--qs-blue-soft);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--qs-blue);
+  text-align: center;
+}
+
+.qs-chip--on .qs-chip__count {
+  background: rgba(255, 255, 255, 0.25);
+  color: #fff;
+}
+
+.qs-chip--icon {
+  margin-left: auto;
+  width: 34px;
+  padding: 0;
+  justify-content: center;
+}
+
+.qs-more {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0 12px 10px;
+}
+
+.qs-more select {
+  min-width: 0;
+  height: 32px;
+  padding: 0 6px;
+  border: 1px solid var(--qs-field);
+  border-radius: 8px;
+  background: var(--qs-card);
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--qs-text);
+}
+
+.qs-queue__list {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  border-top: 1px solid var(--qs-line);
+  transition: opacity 0.15s;
+}
+
+.qs-queue__list--busy {
+  opacity: 0.85;
+}
+
+.qs-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.qs-row {
+  position: relative;
+  width: 100%;
+  display: flex;
+  gap: 12px;
+  padding: 13px 12px 12px 14px;
+  border: 0;
+  border-bottom: 1px solid var(--qs-line);
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.qs-row:hover {
+  background: #f6f9fd;
+}
+
+.qs-row--on {
+  background: #edf4ff;
+  box-shadow: inset 3px 0 0 var(--qs-blue);
+}
+
+.qs-row--ghost {
+  cursor: default;
+}
+
+.qs-row__photo {
+  width: 44px;
+  height: 44px;
+  font-size: 15px;
+}
+
+.qs-row__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+/* Строка: текст сжимается с многоточием, флаги и время — никогда. */
+.qs-row__line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.qs-row__name,
+.qs-row__topic,
+.qs-row__snippet {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qs-row__name {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--qs-ink);
+}
+
+.qs-row--unread .qs-row__name {
+  font-weight: 700;
+}
+
+.qs-row__time {
+  flex: none;
+  font-size: 12.5px;
+  color: var(--qs-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.qs-row__topic {
+  font-size: 13.5px;
+  color: var(--qs-text);
+}
+
+.qs-row__snippet {
+  font-size: 12.5px;
+  color: var(--qs-muted);
+}
+
+.qs-row__snippet b {
+  font-weight: 600;
+}
+
+.qs-row__meta {
+  overflow: hidden;
+  font-size: 12.5px;
+  color: var(--qs-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qs-row .qs-flag,
+.qs-row .qs-status {
+  flex: none;
+}
+
+.qs-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--qs-blue);
+}
+
+.qs-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.qs-flag svg {
+  width: 14px;
+  height: 14px;
+}
+
+.qs-flag--red {
+  background: var(--qs-red-soft);
+  color: var(--qs-red);
+}
+
+.qs-flag--wait {
+  padding-left: 0;
+  color: var(--qs-red);
+}
+
+.qs-flag--wait::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  margin-right: 3px;
+  border-radius: 50%;
+  background: var(--qs-red);
+}
+
+.qs-flag--urgent {
+  background: var(--qs-orange-soft);
+  color: var(--qs-orange);
+}
+
+.qs-flag--high {
+  background: #fff6e8;
+  color: #b56a07;
+}
+
+.qs-queue__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 52px;
+  padding: 0 14px;
+  border-top: 1px solid var(--qs-line);
+  font-size: 13px;
+  color: var(--qs-muted);
+}
+
+.qs-stale {
+  font-style: normal;
+  color: var(--qs-orange);
+}
+
+/* --- фото и заглушки ------------------------------------------------------------ */
+
+.qs-photo {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  object-fit: cover;
+  background: #e6eef9;
+  font-weight: 600;
+  color: #36588f;
+}
+
+.qs-photo--md {
+  width: 46px;
+  height: 46px;
+  font-size: 15px;
+}
+
+.qs-photo--lg {
+  width: 56px;
+  height: 56px;
+  font-size: 18px;
+}
+
+.qs-ghost {
+  display: block;
+  border-radius: 6px;
+  background: linear-gradient(90deg, #eef3f9 0%, #f7f9fc 50%, #eef3f9 100%);
+  background-size: 200% 100%;
+  animation: qs-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes qs-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qs-ghost { animation: none; }
+}
+
+.qs-ghost--round {
+  width: 44px;
+  height: 44px;
+  flex: none;
+  border-radius: 50%;
+}
+
+.qs-ghost--big {
+  width: 56px;
+  height: 56px;
+}
+
+.qs-ghost--line {
+  height: 12px;
+  margin: 4px 0;
+}
+
+.qs-ghost--short {
+  width: 60%;
+}
+
+.qs-ghost--block {
+  height: 120px;
+  margin-top: 14px;
+}
+
+/* --- переписка ------------------------------------------------------------------ */
+
+.qs-talk__body,
+.qs-talk__loading {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.qs-talk__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px 8px 16px;
+}
+
+.qs-talk__who {
+  flex: 1 1 200px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.qs-talk__where {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.qs-talk__name {
+  margin: 0;
+  overflow: hidden;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--qs-ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qs-talk__where {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 0;
+  font-size: 13.5px;
+  color: var(--qs-muted);
+  white-space: nowrap;
+}
+
+.qs-talk__where .qs-badge {
+  flex: none;
+  margin-left: 2px;
+}
+
+.qs-talk__assign {
+  min-width: 128px;
+  justify-content: center;
+}
+
+.qs-talk__assign span {
+  margin-left: 3px;
+  font-size: 17px;
+  line-height: 1;
+}
+
+.qs-tg::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  vertical-align: middle;
+  background: var(--qs-green);
+}
+
+.qs-tg--off {
+  color: var(--qs-red);
+}
+
+.qs-tg--off::before {
+  background: var(--qs-red);
+}
+
+.qs-talk__topic {
+  margin: 2px 0 0;
+  font-size: 13.5px;
+  color: var(--qs-muted);
+}
+
+.qs-deadline {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  font-size: 13px;
+  color: var(--qs-green);
+  white-space: nowrap;
+}
+
+.qs-deadline span {
+  display: flex;
+  gap: 6px;
+}
+
+.qs-deadline b {
+  font-weight: 500;
+}
+
+.qs-deadline small {
+  font-size: 12.5px;
+}
+
+.qs-deadline--late {
+  color: var(--qs-red);
+}
+
+.qs-deadline--wait {
+  color: var(--qs-orange);
+}
+
+.qs-deadline--none {
+  display: none;
+}
+
+.qs-talk__actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: 8px;
+}
+
+.qs-pop {
+  position: relative;
+}
+
+.qs-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 230px;
+  max-height: 360px;
+  margin: 0;
+  padding: 6px;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid var(--qs-line);
+  border-radius: 10px;
+  background: var(--qs-card);
+  box-shadow: 0 10px 30px rgba(19, 41, 90, 0.14);
+}
+
+.qs-menu--right {
+  left: auto;
+  right: 0;
+}
+
+.qs-menu button {
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--qs-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.qs-menu button:hover:not(:disabled) {
+  background: #f1f6fd;
+}
+
+.qs-menu button[aria-checked='true'] {
+  color: var(--qs-blue);
+  font-weight: 600;
+}
+
+.qs-menu button:disabled {
+  cursor: default;
+}
+
+.qs-menu__group {
+  padding: 4px 0;
+  border-top: 1px solid var(--qs-line);
+}
+
+.qs-menu__label {
+  display: block;
+  padding: 4px 10px;
+  font-size: 11.5px;
+  color: var(--qs-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.qs-menu__group select {
+  width: calc(100% - 20px);
+  margin: 2px 10px 4px;
+  height: 32px;
+  border: 1px solid var(--qs-field);
+  border-radius: 7px;
+  font: inherit;
+  font-size: 13px;
+}
+
+.qs-menu__note {
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--qs-muted);
+}
+
+.qs-menu .qs-menu__danger {
+  color: var(--qs-red);
+}
+
+.qs-talk__title {
+  padding: 0 16px 10px;
+  border-bottom: 1px solid var(--qs-line);
+}
+
+.qs-talk__title h2 {
+  margin: 0 0 8px;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--qs-ink);
+}
+
+.qs-talk__number {
+  font-weight: 500;
+  color: var(--qs-muted);
+}
+
+.qs-talk__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.qs-pill {
+  padding: 3px 10px;
+  border-radius: 8px;
+  background: #eef3fa;
+  font-size: 12.5px;
+  color: #3e4f6d;
+}
+
+.qs-pill--URGENT {
+  background: var(--qs-orange-soft);
+  color: var(--qs-orange);
+  font-weight: 600;
+}
+
+.qs-pill--HIGH {
+  background: #fff6e8;
+  color: #b56a07;
+}
+
+.qs-pill--quiet {
+  background: none;
+  color: var(--qs-muted);
+}
+
+.qs-status {
+  padding: 3px 9px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.qs-status--NEW {
+  background: var(--qs-blue-soft);
+  color: var(--qs-blue);
+}
+
+.qs-status--IN_PROGRESS {
+  background: #eef0ff;
+  color: #4b50c9;
+}
+
+.qs-status--WAITING_EMPLOYEE {
+  background: var(--qs-orange-soft);
+  color: var(--qs-orange);
+}
+
+.qs-status--CLOSED {
+  background: var(--qs-green-soft);
+  color: var(--qs-green);
+}
+
+.qs-notice {
+  margin: 8px 16px 0;
+  padding: 8px 12px;
+  border-radius: 9px;
+  background: var(--qs-green-soft);
+  font-size: 13px;
+  color: #17744a;
+}
+
+.qs-notice--error {
+  background: var(--qs-red-soft);
+  color: #b5302b;
+}
+
+.qs-close {
+  margin: 8px 16px 0;
+  padding: 12px;
+  border: 1px solid #f3c9c6;
+  border-radius: 10px;
+  background: #fffafa;
+}
+
+.qs-close fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 0 0 8px;
+  padding: 0;
+  border: 0;
+}
+
+.qs-close legend {
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--qs-ink);
+}
+
+.qs-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.qs-close__buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* лента */
+
+.qs-thread {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 22px 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.qs-day {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 4px 0 2px;
+  font-size: 12.5px;
+  color: var(--qs-muted);
+}
+
+.qs-day::before,
+.qs-day::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--qs-line);
+}
+
+.qs-day span {
+  padding: 3px 12px;
+  border-radius: 12px;
+  background: #eef3fa;
+}
+
+.qs-event {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--qs-muted);
+  text-align: center;
+}
+
+.qs-event svg {
+  flex: none;
+}
+
+.qs-msg {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  max-width: 78%;
+}
+
+.qs-msg__photo {
+  width: 36px;
+  height: 36px;
+  font-size: 13px;
+}
+
+.qs-msg__hr-avatar {
+  flex: none;
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border-radius: 50%;
+  background: #dcecff;
+  color: var(--qs-blue);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.qs-msg__body {
+  min-width: 0;
+}
+
+.qs-msg__text {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: #f1f5fa;
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.qs-msg__meta {
+  margin: 4px 0 0 2px;
+  font-size: 12px;
+  color: var(--qs-muted);
+}
+
+.qs-msg--hr {
+  align-self: flex-end;
+  flex-direction: row-reverse;
+}
+
+.qs-msg--hr .qs-msg__body {
+  max-width: calc(100% - 54px);
+}
+
+.qs-msg--hr .qs-msg__text {
+  background: var(--qs-blue-soft);
+  color: #17325f;
+}
+
+.qs-msg--hr .qs-msg__meta,
+.qs-msg__author {
+  text-align: right;
+}
+
+.qs-msg__author {
+  margin: 0 2px 3px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--qs-ink);
+}
+
+.qs-delivery--DELIVERED,
+.qs-delivery--READ {
+  color: var(--qs-green);
+}
+
+.qs-delivery--FAILED {
+  color: var(--qs-red);
+}
+
+.qs-closed {
+  margin: 4px 0 0;
+  padding: 8px 12px;
+  border-radius: 9px;
+  background: var(--qs-green-soft);
+  font-size: 13px;
+  color: #17744a;
+  text-align: center;
+}
+
+/* черновик */
+
+.qs-draft {
+  margin: 4px 26px 2px 26px;
+  padding: 12px 14px;
+  border: 1px solid #d8e5f7;
+  border-radius: 12px;
+  background: #fbfdff;
+  box-shadow: 0 2px 10px rgba(31, 111, 224, 0.06);
+}
+
+.qs-draft--warn {
+  border-color: #f2d6a8;
+  background: #fffcf6;
+}
+
+.qs-draft--empty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--qs-muted);
+}
+
+.qs-draft--empty p {
+  margin: 0;
+}
+
+.qs-draft__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 14px;
+  color: var(--qs-ink);
+}
+
+.qs-draft__head .qs-link {
+  margin-left: auto;
+  font-size: 12.5px;
+}
+
+.qs-draft__spark {
+  color: var(--qs-blue);
+  font-size: 16px;
+}
+
+.qs-level {
+  padding: 2px 9px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.qs-level--high {
+  background: var(--qs-green-soft);
+  color: var(--qs-green);
+}
+
+.qs-level--mid {
+  background: var(--qs-blue-soft);
+  color: var(--qs-blue);
+}
+
+.qs-level--low {
+  background: var(--qs-orange-soft);
+  color: var(--qs-orange);
+}
+
+.qs-draft__warn {
+  margin: 0 0 8px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: var(--qs-orange-soft);
+  font-size: 13px;
+  color: #8a4e04;
+}
+
+.qs-draft__muted {
+  margin: 0;
+  font-size: 13px;
+  color: var(--qs-muted);
+}
+
+.qs-draft__text {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: #f1f5fa;
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.qs-draft__source {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  color: var(--qs-muted);
+}
+
+.qs-draft__sources {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+}
+
+.qs-draft__sources a {
+  color: var(--qs-blue);
+}
+
+.qs-draft__buttons {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+/* связанные действия */
+
+.qs-related {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 8px 16px;
+}
+
+/* ответ */
+
+.qs-composer {
+  flex: none;
+  margin: 0 8px 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--qs-line);
+  border-radius: 12px;
+  background: var(--qs-card);
+}
+
+.qs-composer--off {
+  font-size: 13px;
+  color: var(--qs-muted);
+}
+
+.qs-composer__label {
+  display: block;
+  margin: 0 0 6px 2px;
+  font-size: 13px;
+  color: var(--qs-muted);
+}
+
+.qs-composer .qs-notice {
+  margin: 0 0 6px;
+}
+
+.qs-composer textarea {
+  width: 100%;
+  min-height: 58px;
+  max-height: 180px;
+  padding: 8px 10px;
+  border: 1px solid var(--qs-field);
+  border-radius: 9px;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--qs-text);
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.qs-composer__bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.qs-composer__tools {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.qs-composer__foot {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 4px;
+  padding: 0 2px;
+}
+
+.qs-composer__foot .qs-composer__hint {
+  margin-left: auto;
+}
+
+.qs-tool {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 8px;
+  white-space: nowrap;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  color: #3e4f6d;
+  cursor: pointer;
+}
+
+.qs-tool:hover:not(:disabled) {
+  background: #f1f6fd;
+}
+
+.qs-tool:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.qs-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.qs-send {
+  flex: none;
+  height: 38px;
+  padding: 0 20px;
+}
+
+.qs-composer__hint {
+  font-size: 11.5px;
+  color: var(--qs-muted);
+  white-space: nowrap;
+}
+
+.qs-pop--up .qs-picker,
+.qs-pop--up .qs-emoji {
+  position: absolute;
+  z-index: 20;
+  bottom: calc(100% + 6px);
+  left: 0;
+  border: 1px solid var(--qs-line);
+  border-radius: 10px;
+  background: var(--qs-card);
+  box-shadow: 0 10px 30px rgba(19, 41, 90, 0.14);
+}
+
+.qs-picker {
+  width: 340px;
+  max-height: 320px;
+  padding: 8px;
+  overflow-y: auto;
+}
+
+.qs-picker__title,
+.qs-picker__note {
+  margin: 2px 4px 6px;
+  font-size: 12.5px;
+  color: var(--qs-muted);
+}
+
+.qs-picker ul {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.qs-picker li button {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.qs-picker li button:hover:not(:disabled) {
+  background: #f1f6fd;
+}
+
+.qs-picker li b {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--qs-ink);
+}
+
+.qs-picker li span {
+  overflow: hidden;
+  font-size: 12.5px;
+  color: var(--qs-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qs-emoji {
+  display: grid;
+  grid-template-columns: repeat(8, 32px);
+  gap: 2px;
+  padding: 6px;
+}
+
+.qs-emoji button {
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  font-size: 18px;
+  cursor: pointer;
+}
+
+.qs-emoji button:hover {
+  background: #f1f6fd;
+}
+
+/* --- контекст ------------------------------------------------------------------ */
+
+.qs-side {
+  overflow-y: auto;
+}
+
+.qs-side__ghost {
+  padding: 16px;
+}
+
+.qs-side__body {
+  display: flex;
+  flex-direction: column;
+}
+
+.qs-side__block {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--qs-line);
+}
+
+.qs-side__block--last {
+  border-bottom: 0;
+}
+
+.qs-side__title {
+  margin: 0 0 10px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--qs-ink);
+}
+
+.qs-side__title--row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 2px 8px;
+}
+
+.qs-side__count {
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 400;
+  color: var(--qs-muted);
+}
+
+.qs-side__muted {
+  margin: 0;
+  font-size: 13px;
+  color: var(--qs-muted);
+}
+
+.qs-person {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.qs-person__name {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--qs-ink);
+}
+
+.qs-person__number {
+  margin: 2px 0 4px;
+  font-size: 13px;
+  color: var(--qs-muted);
+}
+
+.qs-badge {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.qs-badge--ok {
+  background: var(--qs-green-soft);
+  color: var(--qs-green);
+}
+
+.qs-badge--warn {
+  background: var(--qs-orange-soft);
+  color: var(--qs-orange);
+}
+
+.qs-badge--off {
+  background: #eef1f5;
+  color: var(--qs-muted);
+}
+
+.qs-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.qs-fact {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13.5px;
+  color: var(--qs-text);
+}
+
+.qs-fact svg {
+  flex: none;
+  color: #4d6384;
+}
+
+.qs-fact--empty {
+  color: var(--qs-muted);
+}
+
+.qs-linked {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--qs-text);
+  text-decoration: none;
+}
+
+a.qs-linked:hover .qs-linked__text span {
+  color: var(--qs-blue);
+}
+
+.qs-linked svg {
+  flex: none;
+  color: #4d6384;
+}
+
+.qs-linked__text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.qs-linked__text span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qs-linked__text b {
+  font-weight: 600;
+  color: var(--qs-ink);
+}
+
+.qs-linked--static > b {
+  font-weight: 600;
+  color: var(--qs-ink);
+}
+
+.qs-req {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 9px;
+  background: #eef3fa;
+  font-size: 12px;
+  color: #3e4f6d;
+}
+
+.qs-req--SUBMITTED,
+.qs-req--IN_REVIEW {
+  background: var(--qs-orange-soft);
+  color: var(--qs-orange);
+}
+
+.qs-req--APPROVED {
+  background: var(--qs-green-soft);
+  color: var(--qs-green);
+}
+
+.qs-req--REJECTED {
+  background: var(--qs-red-soft);
+  color: var(--qs-red);
+}
+
+.qs-history {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.qs-history button {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.qs-history__topic {
+  font-size: 13.5px;
+  color: var(--qs-text);
+}
+
+.qs-history button:hover .qs-history__topic {
+  color: var(--qs-blue);
+}
+
+.qs-history__side {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--qs-muted);
+}
+
+.qs-materials {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Строка материала больше не ссылка: раздела «База знаний» у кадровика
+   нет, и вести отсюда некуда. Синим она тоже не красится — синий здесь
+   обещал бы переход. */
+.qs-materials__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13.5px;
+  color: var(--qs-ink, inherit);
+}
+
+.qs-materials small {
+  margin-left: 28px;
+  font-size: 12px;
+  color: var(--qs-orange);
+}
+
+/* --- ширина экрана ---------------------------------------------------------------- */
+
+@media (max-width: 1400px) {
+  .qs-grid {
+    grid-template-columns: 330px minmax(0, 1fr) 280px;
+  }
+
+  .qs-composer__bar {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 1180px) {
+  .qs-grid {
+    grid-template-columns: 320px minmax(0, 1fr);
+    grid-template-rows: minmax(560px, 1fr) auto;
+  }
+
+  .qs-side {
+    grid-column: 1 / -1;
+    overflow: visible;
+  }
+
+  .qs-head {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 860px) {
+  .qs-grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto;
+  }
+
+  .qs-queue {
+    max-height: 520px;
+  }
+
+  .qs-talk {
+    min-height: 640px;
+  }
+
+  .qs-head__tools {
+    flex-wrap: wrap;
+  }
+
+  .qs-talk__head {
+    flex-wrap: wrap;
+  }
+
+  .qs-msg {
+    max-width: 92%;
+  }
+}
+
+/* Нижняя панель ответа: инструменты и «Отправить» в одной строке, пока
+   помещаются. Раньше строка не переносилась, и кнопка отправки ложилась
+   поверх «Шаблонов» и «Базы знаний». */
+.qs-composer__bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+}
+
+.qs-composer__tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.qs-composer__bar .qs-send {
+  flex: none;
+  margin-left: auto;
+}
+
+.qs-composer__foot {
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+
+/* Подписи инструментов не режутся и не переносятся внутри кнопки. */
+.qs-tool {
+  white-space: nowrap;
+  flex: none;
+}
+
+/* --- центральная колонка: это мессенджер ------------------------------------
+ *
+ * Правило простое: переписка занимает всё, что не заняли тонкая шапка и
+ * поле ответа. Раньше высоту делили поровну шапка, полоса связанных
+ * действий, предупреждение о Telegram, поле ответа, строка инструментов
+ * и строка флажков — самой переписке оставалась половина колонки.
+ *
+ * Высоты заданы через flex, а не числами: при изменении окна растёт и
+ * сжимается только лента сообщений.
+ */
+.qs-talk {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.qs-talk__head {
+  flex: 0 0 auto;
+  min-height: 56px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+/* Лента сообщений — единственное, что растягивается. Свой скролл,
+   прижата к низу: последнее сообщение видно сразу. */
+.qs-thread {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.qs-composer {
+  flex: 0 0 auto;
+  max-height: 220px;
+  gap: 8px;
+}
+
+/* Поле ответа — от 96 до 120: выше оно отнимает высоту у переписки,
+   ниже в него не помещается ответ из двух предложений. */
+.qs-composer textarea {
+  min-height: 96px;
+  max-height: 120px;
+  resize: vertical;
+}
+
+/* Шапка чата: имя, офис, состояние и метка Telegram в одну строку с
+   переносом — метка не должна обрезаться на середине слова. */
+.qs-talk__head {
+  gap: 10px;
+}
+
+.qs-talk__who {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.qs-talk__where {
+  flex-wrap: wrap;
+  row-gap: 2px;
+  min-width: 0;
+}
+
+.qs-tg {
+  flex: none;
+  white-space: nowrap;
+}
+
+.qs-talk__actions {
+  flex: none;
+}
+
+/* Панель действий под полем ответа — одна строка: «Ответ от AI»,
+   «Другой вариант», «Прикрепить», «Шаблоны» и «Отправить» справа. */
+.qs-composer__bar {
+  flex-wrap: nowrap;
+}
+
+.qs-composer__tools {
+  flex-wrap: wrap;
+  overflow: hidden;
+}
+
+/* Нижняя строка ответа — как в утверждённом виде: слева инструменты
+   («Прикрепить», «Шаблоны», «Эмодзи»), справа пара кнопок — «Ответ от
+   AI» и «Отправить». Ничего не переносится: инструменты сжимаются,
+   кнопки — никогда. */
+.qs-composer__bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 10px;
+}
+
+.qs-composer__tools {
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-wrap: nowrap;
+  gap: 4px;
+  overflow: hidden;
+}
+
+.qs-composer__send {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  margin-left: auto;
+}
+
+.qs-composer__bar .qs-tool {
+  padding: 0 8px;
+  font-size: 12.5px;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.qs-composer__bar .qs-tool svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Поле ответа и ссылка «Другой вариант» в его правом верхнем углу. */
+.qs-composer__field {
+  position: relative;
+  display: flex;
+}
+
+.qs-composer__field textarea {
+  width: 100%;
+  padding-right: 148px;
+}
+
+.qs-again {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--action-text, #0878ef);
+  font: inherit;
+  font-size: 12.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.qs-again:hover:not(:disabled) {
+  background: #eef5ff;
+}
+
+.qs-again:disabled {
+  color: #8aa0bd;
+  cursor: default;
+}
+
+/* Инструмент без подписи — квадратная кнопка по размеру значка. */
+.qs-composer__bar .qs-tool--icon {
+  padding: 0 8px;
+  font-size: 15px;
+}
+
+/* --- «Обращения»: плотная рабочая страница -----------------------------------
+ *
+ * Требование было такое: при масштабе браузера 100 % страница должна
+ * вмещать столько же, сколько сейчас вмещает при 80 %. Масштабированием
+ * этого добиваться нельзя — `zoom` и `transform` не уменьшают размеры,
+ * а врут о них: интерфейс остаётся крупным, просто нарисован мельче.
+ *
+ * Поэтому уменьшены сами величины. Все они собраны здесь, в переменных
+ * страницы, а не разбросаны по правилам: изменить плотность целиком
+ * можно одной правкой, и ни одна страница, кроме этой, не затронута.
+ *
+ * Нижняя граница текста — 13 px. Ниже читать таблицу фамилий и
+ * переписку уже тяжело, и экономия высоты не стоит этого.
+ */
+
+.qs {
+  --qs-gap: 10px;
+  --qs-pad: 12px;
+  --qs-row: 34px;
+  --qs-font: 13.5px;
+  --qs-small: 12.5px;
+}
+
+/* Страница ровно в высоту рабочей области: прокручиваются три колонки
+   по отдельности, а не документ целиком. */
+.canvas:has(> .qs) {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.qs {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Заголовок и вкладки не уезжают при прокрутке: они вне колонок. */
+.qs-head {
+  flex: none;
+  margin: -4px 10px 0 4px;
+}
+
+.qs-head__title {
+  font-size: 26px;
+  line-height: 32px;
+}
+
+.qs-head__sub {
+  font-size: 13.5px;
+  line-height: 19px;
+}
+
+.qs-tabs {
+  flex: none;
+}
+
+/* Три колонки: список, чат, контекст. Ширины в заданных пределах, чат
+   забирает остаток и остаётся главным. */
+.qs-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  grid-template-columns: clamp(300px, 22vw, 340px) minmax(0, 1fr) clamp(320px, 23vw, 360px);
+  gap: var(--qs-gap);
+  margin: 0 10px 10px 0;
+}
+
+.qs-queue,
+.qs-talk,
+.qs-side {
+  min-height: 0;
+  min-width: 0;
+}
+
+/* Каждая колонка прокручивается у себя. */
+.qs-queue__list,
+.qs-side {
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+/* --- левая колонка ---------------------------------------------------------- */
+
+.qs-queue__search {
+  margin: 10px 10px 8px;
+}
+
+.qs-queue__search input {
+  height: 36px;
+  font-size: var(--qs-font);
+}
+
+.qs-queue__filters,
+.qs-queue__chips {
+  padding: 0 10px 8px;
+  gap: 6px;
+}
+
+.qs-row {
+  padding: 9px 10px;
+  gap: 9px;
+}
+
+.qs-row__name {
+  font-size: var(--qs-font);
+}
+
+.qs-row__topic,
+.qs-row__snippet {
+  font-size: var(--qs-small);
+}
+
+.qs-row__meta,
+.qs-row__time {
+  font-size: 11.5px;
+}
+
+.qs-row__photo {
+  width: 34px;
+  height: 34px;
+}
+
+/* --- центр: чат ------------------------------------------------------------- */
+
+.qs-talk__head {
+  min-height: 52px;
+  max-height: 56px;
+  padding: 6px 12px;
+  gap: 10px;
+}
+
+.qs-talk__name {
+  font-size: 15px;
+  line-height: 20px;
+}
+
+.qs-talk__where {
+  font-size: var(--qs-small);
+}
+
+.qs-thread {
+  padding: 10px 12px;
+  gap: 8px;
+}
+
+/* Пузырь сообщения: читаемая ширина и небольшие поля. */
+.qs-msg {
+  max-width: 72%;
+}
+
+.qs-msg__body {
+  padding: 8px 11px;
+  font-size: var(--qs-font);
+  line-height: 1.4;
+}
+
+.qs-msg__time,
+.qs-day {
+  font-size: 11.5px;
+}
+
+.qs-composer {
+  padding: 10px 12px;
+  gap: 6px;
+  max-height: 200px;
+}
+
+.qs-composer__label {
+  font-size: 11.5px;
+}
+
+.qs-composer textarea {
+  min-height: 92px;
+  max-height: 116px;
+  padding: 9px 11px;
+  font-size: var(--qs-font);
+}
+
+.qs-composer__bar .qs-tool {
+  height: 30px;
+  font-size: 12px;
+}
+
+.qs-composer__send .qs-btn {
+  height: 34px;
+  font-size: 13px;
+}
+
+/* --- правая колонка --------------------------------------------------------- */
+
+.qs-side {
+  padding: 10px 12px;
+  gap: 10px;
+}
+
+.qs-side h2,
+.qs-side h3 {
+  font-size: 14px;
+  line-height: 19px;
+}
+
+.qs-side p,
+.qs-side li,
+.qs-side dd,
+.qs-side dt {
+  font-size: var(--qs-small);
+  line-height: 1.4;
+}
+
+/* Длинное значение переносится и не выходит за край колонки. */
+.qs-side,
+.qs-side * {
+  min-width: 0;
+}
+
+.qs-side p,
+.qs-side li {
+  overflow-wrap: break-word;
+}
+
+/* Невысокое окно: поле ответа ужимается, чтобы переписке осталась
+   большая часть колонки. На 1080 этого не требуется — там ленте и так
+   достаётся около трёх четвертей. */
+@media (max-height: 900px) {
+  .qs-composer textarea {
+    min-height: 72px;
+    max-height: 92px;
+  }
+
+  .qs-composer {
+    padding: 8px 12px;
+    max-height: 170px;
+  }
+
+  .qs-thread {
+    padding: 8px 12px;
+  }
+}
+
+/* Переписка прижата к низу: короткий разговор стоит над полем ответа,
+   а не висит у шапки с пустотой во весь экран. При длинной ленте отступ
+   схлопывается сам, и прокрутка работает как обычно. */
+.qs-thread {
+  display: flex;
+  flex-direction: column;
+}
+
+.qs-thread > *:first-child {
+  margin-top: auto;
+}
+
+/* Кнопка эмодзи не должна прятаться за переполнением строки. */
+.qs-composer__tools .qs-pop {
+  flex: none;
+}
+
+/* Шапка чата — всегда одна строка: аватар, имя, офис, состояние, метка
+   Telegram и «⋯». Тема вопроса и чипы отсюда убраны: тема стоит в
+   строке списка слева и в правой колонке, а здесь они разгоняли шапку
+   до полутора сотен пикселей и отнимали высоту у переписки. */
+.qs-talk__title,
+.qs-talk__chips {
+  display: none;
+}
+
+/* Узкая центральная колонка: у инструментов остаются значки, подписи
+   уходят. Обрезанное «Г» вместо «Прикрепить» — хуже, чем значок. */
+.qs-talk {
+  container-type: inline-size;
+  container-name: qs-talk;
+}
+
+@container qs-talk (max-width: 560px) {
+  .qs-composer__bar .qs-tool {
+    font-size: 0;
+    gap: 0;
+    padding: 0 9px;
+  }
+
+  .qs-composer__bar .qs-tool svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .qs-composer__bar .qs-tool--icon {
+    font-size: 15px;
+  }
+}
+
+/* Инструменты не прячутся переполнением: лучше ужать их до значков
+   (это делает контейнерный запрос выше), чем срезать кнопку целиком. */
+.qs-composer__tools {
+  overflow: visible;
+}
+
+/* «Закрыть после отправки» — рядом с кнопкой отправки.
+
+   Чекбокс, а не второй ряд кнопок: это уточнение к отправке, а не
+   отдельное действие, и выносить его в ряд с «Отправить» значило бы
+   предлагать выбор там, где его нет. */
+.qs-after {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--muted, #6b7280);
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  /* На телефоне строка отправки переносится: подпись целиком не
+     помещается рядом с двумя кнопками. */
+  .qs-composer__send {
+    flex-wrap: wrap;
+  }
+
+  .qs-after {
+    flex: 1 1 100%;
+    white-space: normal;
+  }
+}

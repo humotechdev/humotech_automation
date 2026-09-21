@@ -16,6 +16,7 @@ import time
 
 from django.core.management.base import BaseCommand
 
+from humotech.reports import heartbeat
 from humotech.reports.service import purge_expired
 from humotech.reports.worker import reclaim_stale, run_once
 
@@ -43,15 +44,21 @@ class Command(BaseCommand):
             run_once()
             return
 
-        logger.info("исполнитель выгрузок запущен, пауза %s c", pause)
+        logger.info(
+            "исполнитель выгрузок запущен: пауза %s с, уборка каждые %s проходов, "
+            "признак жизни %s", pause, HOUSEKEEPING_EVERY, heartbeat.heartbeat_path(),
+        )
+        heartbeat.beat(force=True)
         passes = 0
         while True:
             if passes % HOUSEKEEPING_EVERY == 0:
                 self._housekeeping()
             passes += 1
+            worked = run_once()
+            heartbeat.beat(force=True)
             # Пауза только когда работы нет: очередь из десяти заданий
             # не должна разбираться десять пауз.
-            if not run_once():
+            if not worked:
                 time.sleep(pause)
 
     def _housekeeping(self) -> None:

@@ -1,0 +1,15 @@
+# Надстройка для стенда, который работает на исходниках, а не на образе.
+#
+#   docker compose -p humotech_e2e -f docker-compose.e2e.yml \
+#     -f docker-compose.e2e.live.yml up -d --no-deps export-worker-e2e
+#
+# Backend такого стенда (`humotech-e2e-live`) смонтирован из
+# apps/backend-api и пишет выгрузки в apps/backend-api/private-exports.
+# Исполнитель обязан видеть тот же код и тот же каталог: иначе файл
+# собирает одна версия, отдаёт другая, а скачивание отвечает 404.
+# Каталог private-exports в .gitignore.
+
+services:
+  export-worker-e2e:
+    volumes: !override
+      - ../../apps/backend-api:/app

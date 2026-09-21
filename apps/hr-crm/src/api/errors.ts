@@ -44,13 +44,48 @@ export class ApiFailure extends Error {
   readonly kind: FailureKind;
   readonly status: number;
   readonly fields: Record<string, string[]>;
+  /**
+   * Поле, на которое сервер указал в `details.field`.
+   *
+   * Нужно, чтобы отказ встал рядом с тем полем, из-за которого он
+   * произошёл, а не общей строкой над формой: «Сотрудник с таким ПИНФЛ
+   * уже есть» над всей страницей не говорит, какое из четырнадцати полей
+   * править. Текст при этом остаётся наш — сюда попадает только имя поля.
+   */
+  readonly field: string | null;
+  /**
+   * Код сервера (`error.code`) как есть. Вид отказа отвечает «что делать
+   * человеку», код — «что именно случилось»: 409 бывает и «уже закрыто»,
+   * и «Telegram не подключён», и совет у них разный.
+   */
+  readonly code: string | null;
+  /**
+   * Текст отказа, как его написал сервер.
+   *
+   * Общая фраза по виду ошибки говорит, ЧТО случилось («конфликт»), но
+   * не почему именно: «в отделе ещё числятся семеро» знает только
+   * сервер. Без этого поля причина отказа до человека не доходила.
+   *
+   * `null` — сервер причины не назвал; тогда показывают общую фразу.
+   */
+  readonly detail: string | null;
 
-  constructor(kind: FailureKind, status = 0, fields: Record<string, string[]> = {}) {
+  constructor(
+    kind: FailureKind,
+    status = 0,
+    fields: Record<string, string[]> = {},
+    field: string | null = null,
+    code: string | null = null,
+    detail: string | null = null,
+  ) {
     super(kind);
     this.name = 'ApiFailure';
     this.kind = kind;
     this.status = status;
     this.fields = fields;
+    this.field = field;
+    this.code = code;
+    this.detail = detail;
   }
 }
 

@@ -83,6 +83,10 @@ async def _deliver(sender: Sender, item: dict) -> dict:
         chat_id=item["chat_id"],
         text=item["text"],
         notification_type=item.get("type") or "",
+        # На что ссылается уведомление. Нужно там, где к сообщению
+        # полагается кнопка: приглашение на опрос без этого открывало бы
+        # «какой-то» опрос.
+        entity_id=item.get("entity_id"),
     )
     if outcome.sent:
         return {"id": item["id"], "sent": True}

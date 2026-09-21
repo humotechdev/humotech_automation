@@ -64,7 +64,10 @@ services:
       DJANGO_SETTINGS_MODULE: config.settings.production
       # Внутри сети Docker база — это имя сервиса и внутренний порт.
       # 127.0.0.1:5433 здесь означал бы «сам контейнер», где базы нет.
-      DJANGO_DATABASE_URL: postgresql://humotech:humotech_local@postgres:5432/humotech_django
+      # Какая база у стенда — решает `.env`, а не файл: одна установка
+      # работает с демонстрационными данными, другая с рабочими, и
+      # переключение не должно быть правкой compose.
+      DJANGO_DATABASE_URL: ${DJANGO_DATABASE_URL:-postgresql://humotech:humotech_local@postgres:5432/humotech_django}
       # Публичное имя и внутреннее. Второе обязательно: бот ходит к API
       # внутри сети Docker, и в его запросах Host — это `gateway`, а не
       # адрес снаружи. Без него каждый запрос бота получает 400 от
@@ -197,10 +200,54 @@ services:
         condition: service_completed_successfully
     networks:
       - humotech
+    # Признак жизни: исполнитель трогает файл на каждом проходе и на
+    # каждом шаге сборки. Проверка без Django и без базы — см.
+    # humotech/reports/heartbeat.py. Упавший процесс перезапускает
+    # `restart`, зависший — видно по unhealthy.
+    healthcheck:
+      test: ["CMD", "python", "-m", "humotech.reports.heartbeat"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
     restart: unless-stopped
     # Незавершённая сборка не портит данные: задание останется в
     # RUNNING и вернётся в очередь по времени (`reclaim_stale`).
     stop_grace_period: 30s
+    logging: *logging
+
+  # Напоминания о начале рабочего дня. Отдельный процесс, а не поток
+  # внутри backend: проверка идёт по всем сотрудникам и ходит в базу,
+  # и делать это там, где отвечают на запросы, значит однажды
+  # придержать интерфейс ради рассылки.
+  #
+  # Частота не влияет на то, сколько сообщений получит человек: повтор
+  # закрыт уникальным ключом в очереди. Пять минут — это лишь верхняя
+  # граница задержки напоминания.
+  attendance-reminders:
+    build:
+      context: ../../apps/backend-api
+    image: humotech/backend:local
+    container_name: humotech_attendance_reminders
+    command:
+      - python
+      - manage.py
+      - attendance_reminders
+      - --loop=300
+    env_file:
+      - ../../apps/backend-api/.env
+    environment: *backend_env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - humotech
+    restart: unless-stopped
+    # Проход короткий: прерывать его на середине нечем, но дать ему
+    # закончиться дешевле, чем разбираться в половинчатом состоянии.
+    stop_grace_period: 20s
     logging: *logging
 
   # Имя `gateway` — адрес, на который смотрит агент ngrok

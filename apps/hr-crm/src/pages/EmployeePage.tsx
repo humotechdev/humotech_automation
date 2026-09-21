@@ -13,16 +13,21 @@
  * второй, посчитанный в браузере.
  */
 
-import { useCallback, useMemo, useState } from 'react';
+import { type ReactNode, useCallback, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 
 import * as api from '../api/crm';
 import { ApiFailure, messageFor } from '../api/errors';
 import { AppShell } from '../components/AppShell';
-import { Icon, type IconName } from '../components/nav-icons';
+import { AppIcon, type AppIconName } from '../components/AppIcon';
+import { AppSelectField } from '../components/AppSelect';
+import { Modal, ModalField, ModalTools } from '../components/admin/Modal';
+import { Refusal, useSaving } from '../components/admin/Parts';
+import { Attendance, AttendanceTools } from '../features/employee/Attendance';
 import { useSession } from '../features/auth/session';
 import { useBlock, type Block } from '../features/dashboard/data';
-import { clockOnDay, moment, shortDate } from '../features/time/zone';
+import { employmentStatus, isTrainee } from '../features/employees/status';
+import { clockOnDay, moment } from '../features/time/zone';
 import {
   CORRECTION_STATUS,
   DOCUMENT_STATUS,
@@ -34,7 +39,6 @@ import {
   duration,
   initials,
   isTab,
-  lateness,
   orDash,
   todayIso,
   type Tab,
@@ -98,12 +102,11 @@ export function EmployeePage() {
   const zone = session.status === 'authenticated' ? session.user.timezone : '';
 
   return (
-    <AppShell breadcrumb="Сотрудники" section="employees">
-      <p className="crumbs crumbs--inline">
-        <Link className="link" to={back || '/employees'}>← Все сотрудники</Link>
-        <span className="dot">/</span>
-        <span>{name || 'Карточка сотрудника'}</span>
-      </p>
+    <AppShell
+      breadcrumb={['Сотрудники', shortName(name) || 'Карточка сотрудника',
+        TABS.find((item) => item.key === tab)?.title ?? ''].filter(Boolean).join(' / ')}
+      section="employees"
+    >
 
       {card.state === 'loading' && (
         <p className="empty" role="status">Открываем карточку…</p>
@@ -124,13 +127,28 @@ export function EmployeePage() {
 
       {card.state === 'ready' && (
         <>
-          <Header person={person} zone={zone} rights={rights} />
+          <Header
+            person={person}
+            back={back}
+            tools={tab === 'attendance' && rights.attendance ? (
+              <AttendanceTools id={id} canExport={rights.export} />
+            ) : rights.manage ? (
+              <Link className="ep-edit" to={`/employees/${id}/edit`}>Редактировать</Link>
+            ) : null}
+          />
 
-          <div className="tabs tabs--bare" role="tablist" aria-label="Разделы карточки">
+          {/* Решение по стажировке принимают один раз и в карточке —
+              там же, где видно, как человек отработал испытательный
+              срок. Отдельного раздела оно не стоит. */}
+          {rights.manage && isTrainee(text(person, 'employment_status')) && (
+            <Probation id={id} person={person} onChanged={reload} />
+          )}
+
+          <div className="ep-tabs" role="tablist" aria-label="Разделы карточки">
             {TABS.map((item) => (
               <button key={item.key} type="button" role="tab"
                       aria-selected={tab === item.key}
-                      className={`tab${tab === item.key ? ' tab--on' : ''}`}
+                      className={tab === item.key ? 'ep-tab ep-tab--on' : 'ep-tab'}
                       onClick={() => open(item.key)}>
                 {item.title}
               </button>
@@ -142,7 +160,15 @@ export function EmployeePage() {
                       onGo={open} onChanged={reload} />
           )}
           {tab === 'attendance' && (
-            <Attendance id={id} rights={rights} zone={zone} />
+            <Attendance
+              id={id}
+              rights={{
+                attendance: rights.attendance,
+                export: rights.export,
+                correct: rights.correct,
+              }}
+              zone={zone}
+            />
           )}
           {tab === 'schedule' && <Schedule id={id} />}
           {tab === 'requests' && (
@@ -164,47 +190,132 @@ type Rights = {
 
 // --- общая шапка -------------------------------------------------------------
 
-function Header({ person, zone, rights }: {
-  person: Person; zone: string; rights: Rights;
-}) {
-  const status = text(person, 'employment_status');
+/** «Мирзаева Лола» из «Мирзаева Лола Азизовна». */
+function shortName(full: string | null): string {
+  return (full ?? '').split(' ').slice(0, 2).join(' ');
+}
+
+
+/**
+ * Шапка карточки по эталону: фото, имя, номер и должность с плашкой
+ * состояния, отдел и офис. Справа — инструменты открытой вкладки
+ * (у посещаемости это период и экспорт).
+ */
+function Header({ person, back, tools }: { person: Person; back: string; tools: ReactNode }) {
+  const status = text(person, 'employment_status') ?? '';
+  const [title, tone] = employmentStatus(status);
+  const id = text(person, 'id');
+  // В карточке приходит только признак фото; сам снимок — отдельным
+  // адресом, где право спрашивается при каждом открытии.
+  const hasPhoto = person['photo'] !== null && person['photo'] !== undefined;
+  // Должность, отдел и офис живут в текущем назначении, а не в самой
+  // карточке: на верхнем уровне этих полей нет, и строки выходили пустыми.
+  const assignment = (person['current_assignment'] ?? {}) as Person;
+  const first = text(assignment, 'position_name') ?? '';
+  const second = [text(assignment, 'department_name'), text(assignment, 'office_name')]
+    .filter(Boolean).join(' · ');
   return (
-    <header className="who who--card">
-      <span className="avatar avatar--big" aria-hidden="true">
-        {initials(text(person, 'first_name'), text(person, 'last_name'))}
-      </span>
-      <span className="who__text">
-        <span className="who__name">{text(person, 'full_name') ?? '—'}</span>
-        <span className="who__id">
-          Табельный {orDash(text(person, 'employee_number'))}
-        </span>
-        <span className="who__where">
-          {[
-            text(person, 'position_name'),
-            text(person, 'department_name'),
-            text(person, 'office_name'),
-          ].filter(Boolean).join(' · ') || 'Назначение не указано'}
-        </span>
-      </span>
-      <span className="who__side">
-        <span className="state">
-          <span className="state__dot" aria-hidden="true" />
-          {status === 'ACTIVE' ? 'Работает'
-            : status === 'TERMINATED' ? 'Уволен'
-            : orDash(status)}
-        </span>
-        {text(person, 'hire_date') && (
-          <span className="muted">
-            В штате с {shortDate(`${text(person, 'hire_date')}T00:00:00Z`, zone)}
+    <header className="ep-head">
+      <Link className="ep-back" to={back || '/employees'}>
+        <AppIcon name="back" size={16} />
+        Все сотрудники
+      </Link>
+      <div className="ep-head__row">
+        {hasPhoto && id ? (
+          <img className="ep-photo" src={api.employeePhotoUrl(id)} alt="" />
+        ) : (
+          <span className="ep-photo" aria-hidden="true">
+            {initials(text(person, 'first_name'), text(person, 'last_name'))}
           </span>
         )}
-      </span>
-      {rights.manage && (
-        <span className="who__actions">
-          <Link className="btn btn--dark" to="/employees">Редактировать</Link>
-        </span>
-      )}
+        <div className="ep-head__text">
+          {/* Фамилия и имя, как в эталоне: отчество есть в «Обзоре». */}
+          <h1 className="ep-name">{shortName(text(person, 'full_name')) || '—'}</h1>
+          <p className="ep-line">
+            {first || 'Назначение не указано'}
+            <span className={`ep-status ep-status--${tone}`}>{title}</span>
+          </p>
+          {second && <p className="ep-line ep-line--muted">{second}</p>}
+        </div>
+        <div className="ep-head__tools">{tools}</div>
+      </div>
     </header>
+  );
+}
+
+/** Анкетные значения словами. Кода в карточке человек видеть не должен. */
+const GENDER: Record<string, string> = {
+  MALE: 'Мужской',
+  FEMALE: 'Женский',
+};
+
+const MARITAL: Record<string, string> = {
+  SINGLE: 'Не женат / не замужем',
+  MARRIED: 'Женат / замужем',
+  DIVORCED: 'Разведён(а)',
+  WIDOWED: 'Вдовец / вдова',
+};
+
+const PAPER_KIND: Record<string, string> = {
+  IDENTITY: 'Паспорт или ID-карта',
+  CONTRACT: 'Трудовой договор',
+  HIRE_ORDER: 'Приказ о приёме',
+  OTHER: 'Другой документ',
+};
+
+const PAPER_STATE: Record<string, string> = {
+  MISSING: 'Не добавлен',
+  UPLOADED: 'Загружен',
+  GENERATED_LATER: 'Будет сформирован',
+  REVIEW: 'Требует проверки',
+};
+
+/**
+ * Документы сотрудника.
+ *
+ * Строка с файлом — ссылка: она открывает и позволяет сохранить. Строка
+ * без файла остаётся строкой: чек-лист показывает, чего ещё нет, и
+ * кнопка на ней обещала бы открыть несуществующее.
+ */
+function Papers({ person }: { person: Person }) {
+  const id = text(person, 'id');
+  const rows = Array.isArray(person['documents'])
+    ? (person['documents'] as Record<string, unknown>[])
+    : [];
+
+  return (
+    <section className="panel">
+      <h3 className="panel__title">Документы</h3>
+      {rows.length === 0 ? (
+        <p className="muted">Документов пока нет.</p>
+      ) : (
+        <ul className="papers">
+          {rows.map((row) => {
+            const file = row['file_id'];
+            const key = String(row['id'] ?? '');
+            const kind = String(row['kind'] ?? '');
+            const title = String(row['title'] ?? '') || PAPER_KIND[kind] || 'Документ';
+            const state = String(row['status'] ?? '');
+            return (
+              <li key={key} className="papers__row">
+                <AppIcon name="doc" size={18} />
+                <span className="papers__title">{title}</span>
+                {file && id ? (
+                  <a className="link link--go"
+                     href={api.employeeDocumentUrl(id, key)}
+                     target="_blank" rel="noreferrer">
+                    Открыть
+                    <AppIcon name="arrow" size={16} />
+                  </a>
+                ) : (
+                  <span className="muted">{PAPER_STATE[state] ?? state}</span>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
   );
 }
 
@@ -274,9 +385,13 @@ function Overview({ id, person, zone, rights, onGo, onChanged }: {
               <Fact label="Офис" value={text(person, 'office_name')} />
               <Fact label="Телефон" value={text(person, 'phone')} />
               <Fact label="Рабочая почта" value={text(person, 'corporate_email')} />
-              <Fact label="Табельный номер" value={text(person, 'employee_number')} />
+              <Fact label="Пол" value={GENDER[text(person, 'gender') ?? ''] ?? null} />
+              <Fact label="Семейное положение"
+                    value={MARITAL[text(person, 'marital_status') ?? ''] ?? null} />
             </dl>
           </section>
+
+          <Papers person={person} />
 
           <section className="panel">
             <h3 className="panel__title">Последние заявки</h3>
@@ -340,7 +455,7 @@ function Overview({ id, person, zone, rights, onGo, onChanged }: {
  * превращается в кнопку, которая ничего не делает.
  */
 function Tile({ icon, title, note, value, hint, onGo }: {
-  icon: IconName;
+  icon: AppIconName;
   title: string;
   note: string;
   value: string;
@@ -350,7 +465,7 @@ function Tile({ icon, title, note, value, hint, onGo }: {
   const body = (
     <>
       <span className="metric__head">
-        <Icon name={icon} size={16} />
+        <AppIcon name={icon} size={16} />
         <span>{title}</span>
       </span>
       <span className="metric__value">{value}</span>
@@ -415,311 +530,6 @@ function TelegramBlock({ id, block, onChanged }: {
     </div>
   );
 }
-
-// --- вкладка «Посещаемость» --------------------------------------------------
-
-function Attendance({ id, rights, zone }: {
-  id: string; rights: Rights; zone: string;
-}) {
-  const month = useMemo(() => currentMonth(), []);
-  const [first, setFirst] = useState(month.first);
-  const [last, setLast] = useState(month.last);
-  const [state, setState] = useState('');
-  const [picked, setPicked] = useState<string | null>(null);
-
-  const [journal, reloadJournal] = useBlock(
-    (signal) => api.attendanceDaily(
-      { employee_id: id, date_from: first, date_to: last }, signal,
-    ),
-    `journal|${id}|${first}|${last}`,
-    rights.attendance,
-  );
-
-  if (!rights.attendance) {
-    return (
-      <p className="empty empty--bad">
-        Нет права на посещаемость. Это отдельное разрешение —
-        попросите <span className="mono">attendance.read</span>.
-      </p>
-    );
-  }
-
-  const report = journal.state === 'ready' ? journal.data : null;
-  const rows = (report?.days ?? []).filter(
-    (row) => !state || row.state === state,
-  );
-
-  return (
-    <>
-      <div className="toolbar toolbar--thin">
-        <label className="pick">
-          <span className="muted">С</span>
-          <input type="date" value={first} aria-label="Начало периода"
-                 onChange={(event) => setFirst(event.target.value)} />
-        </label>
-        <label className="pick">
-          <span className="muted">по</span>
-          <input type="date" value={last} aria-label="Конец периода"
-                 onChange={(event) => setLast(event.target.value)} />
-        </label>
-        <label className="pick">
-          <select value={state} aria-label="Состояние"
-                  onChange={(event) => setState(event.target.value)}>
-            <option value="">Все состояния</option>
-            <option value="IN_OFFICE">В офисе</option>
-            <option value="LEFT">Ушёл</option>
-            <option value="NOT_COME">Нет отметки</option>
-            <option value="DAY_OFF">Выходной</option>
-            <option value="NO_SCHEDULE">Без графика</option>
-            <option value="VACATION">Отпуск</option>
-            <option value="SICK_LEAVE">Больничный</option>
-          </select>
-        </label>
-        {rights.export && (
-          <Link className="btn"
-                to={`/reports?kind=sessions&employee_id=${id}&date_from=${first}&date_to=${last}`}>
-            Выгрузка
-          </Link>
-        )}
-      </div>
-
-      {journal.state === 'loading' && (
-        <p className="empty" role="status">Считаем журнал…</p>
-      )}
-      {journal.state === 'error' && (
-        <p className="empty empty--bad">
-          Не удалось получить журнал.{' '}
-          <button type="button" className="link" onClick={reloadJournal}>
-            Повторить
-          </button>
-        </p>
-      )}
-
-      {report && (
-        <>
-          {report.note && <p className="note note--dim">{report.note}</p>}
-
-          <ul className="cards cards--four" aria-label="Показатели за период">
-            {/* Без перехода: это итог периода, показанного тут же.
-                Кнопка, ведущая на саму себя, обещала бы действие. */}
-            <Tile icon="clock" title="Время в офисе" note="За весь период"
-                  value={duration(report.totals.seconds)} />
-            <Tile icon="check" title="Дней с отметками" note="За весь период"
-                  value={String(report.totals.days_with_marks)}
-                  hint={`рабочих ${report.totals.working_days}`} />
-            <Tile icon="late" title="Опозданий" note="Сверх допуска графика"
-                  value={String(report.totals.late_days)}
-                  {...(report.totals.late_minutes
-                    ? { hint: `${report.totals.late_minutes} мин` } : {})} />
-            <Tile icon="alert" title="Незакрытых сессий"
-                  note="Без отметки выхода"
-                  value={String(report.totals.open_sessions)} />
-          </ul>
-
-          <div className="split split--open">
-            <section className="panel panel--list">
-              <div className="scroller">
-                <table className="grid-table" aria-label="Журнал по дням">
-                  <thead>
-                    <tr>
-                      <th scope="col">Дата</th>
-                      <th scope="col">Первый вход</th>
-                      <th scope="col">Последний выход</th>
-                      <th scope="col">В офисе</th>
-                      <th scope="col">Сессий</th>
-                      <th scope="col">Состояние</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((row) => (
-                      <tr key={row.day}
-                          className={picked === row.day ? 'row--on' : undefined}>
-                        <td>
-                          <button type="button" className="linky"
-                                  onClick={() => setPicked(row.day)}>
-                            {row.day}
-                          </button>
-                        </td>
-                        <td>{row.first_entry_at
-                          ? clockOnDay(row.first_entry_at, row.timezone, row.day) : '—'}</td>
-                        <td>{row.last_exit_at
-                          ? clockOnDay(row.last_exit_at, row.timezone, row.day)
-                          : row.open_session_id ? 'открыта' : '—'}</td>
-                        <td>{duration(row.seconds)}</td>
-                        <td>{row.sessions || '—'}</td>
-                        <td>{dayState(row)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              {rows.length === 0 && (
-                <p className="empty">За выбранный период и состояние строк нет.</p>
-              )}
-              <HoursChart rows={report.days} today={todayIso()} />
-            </section>
-
-            <section className="panel panel--view">
-              {picked ? (
-                <DayDetails id={id} day={picked}
-                            row={report.days.find((r) => r.day === picked) ?? null}
-                            zone={zone} rights={rights}
-                            onClose={() => setPicked(null)} />
-              ) : (
-                <p className="empty">Выберите день, чтобы увидеть его отметки.</p>
-              )}
-            </section>
-          </div>
-        </>
-      )}
-    </>
-  );
-}
-
-/**
- * Компактный график часов по дням.
- *
- * Ноль и отсутствие данных различаются: у дня без отметок столбца нет
- * вовсе, а у дня с нулём — тонкая черта у основания. Будущие дни не
- * показываются пропусками, а сегодняшний помечен отдельно: он ещё
- * не кончился, и сравнивать его с полными днями нельзя.
- */
-function HoursChart({ rows, today }: { rows: api.DailyRow[]; today: string }) {
-  const shown = rows.filter((row) => row.day <= today);
-  const top = Math.max(1, ...shown.map((row) => row.seconds));
-  if (shown.length === 0) return null;
-  return (
-    <div className="spark" aria-label="Часы по дням">
-      {shown.map((row) => {
-        const height = Math.round((row.seconds / top) * 100);
-        const unfinished = row.day === today;
-        return (
-          <span key={row.day} className="spark__slot"
-                title={`${row.day} · ${duration(row.seconds)}${unfinished ? ' · день не закончен' : ''}`}>
-            <span className={`spark__bar${unfinished ? ' spark__bar--now' : ''}`}
-                  style={{ height: `${row.seconds > 0 ? Math.max(height, 2) : 0}%` }} />
-          </span>
-        );
-      })}
-    </div>
-  );
-}
-
-function DayDetails({ id, day, row, zone, rights, onClose }: {
-  id: string; day: string; row: api.DailyRow | null; zone: string;
-  rights: Rights; onClose: () => void;
-}) {
-  const [detail] = useBlock(
-    (signal) => Promise.all([
-      api.events({ employee_id: id, date_from: day, date_to: day, limit: '50' }, signal),
-      api.attendanceSessions({ employee_id: id, date_from: day, date_to: day, limit: '20' }, signal),
-    ]).then(([events, sessions]) => ({ events: events.items, sessions: sessions.items })),
-    `day|${id}|${day}`,
-  );
-
-  return (
-    <>
-      <div className="side-panel__head">
-        <h3 className="side-panel__title">{day}</h3>
-        <button type="button" className="nav" onClick={onClose} aria-label="Закрыть">
-          <Icon name="cross" size={16} />
-        </button>
-      </div>
-
-      {row && (
-        <dl className="facts">
-          <Fact label="Состояние" value={dayState(row)} />
-          <Fact label="Офис" value={row.office_name} />
-          <Fact label="Пояс дня" value={row.timezone} />
-          <Fact label="Время в офисе" value={duration(row.seconds)} />
-          <Fact label="Опоздание" value={lateness(row.late_minutes)} />
-          <Fact label="Начало по графику" value={row.scheduled_start} />
-        </dl>
-      )}
-      {row?.conflicting_marks && (
-        <p className="note note--dim">
-          В этот день есть и подтверждённое отсутствие, и отметки. Расхождение
-          разбирает человек — само оно не исчезнет.
-        </p>
-      )}
-
-      {detail.state === 'loading' && <p className="empty" role="status">Читаем отметки…</p>}
-      {detail.state === 'error' && (
-        <p className="empty empty--bad">Не удалось получить отметки дня.</p>
-      )}
-      {detail.state === 'ready' && (
-        <>
-          <h4 className="side-panel__label">Сессии</h4>
-          {detail.data.sessions.length === 0 ? (
-            <p className="muted">Сессий нет.</p>
-          ) : (
-            <ul className="marks">
-              {detail.data.sessions.map((session) => (
-                <li key={session.id} className="marks__line">
-                  <span className="marks__time">
-                    {clockOnDay(session.started_at, zone, day)} —{' '}
-                    {session.ended_at ? clockOnDay(session.ended_at, zone, day) : 'открыта'}
-                  </span>
-                  <span className="marks__what">{duration(session.duration_seconds)}</span>
-                  <span className="marks__where">{orDash(session.office_name)}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-
-          <h4 className="side-panel__label">Отметки</h4>
-          {detail.data.events.length === 0 ? (
-            <p className="muted">Событий нет.</p>
-          ) : (
-            <ul className="marks">
-              {detail.data.events.map((mark) => (
-                <li key={mark.id} className="marks__line">
-                  <span className="marks__time">
-                    {clockOnDay(mark.occurred_at, zone, day)}
-                  </span>
-                  <span className="marks__kind">
-                    {mark.event_type === 'ENTRY' ? 'Вход' : 'Выход'}
-                  </span>
-                  <span className="marks__what">
-                    {mark.source === 'MANUAL' ? 'Вручную' : mark.source}
-                  </span>
-                  <span className="marks__where">{orDash(mark.office_name)}</span>
-                  <span className="marks__check">
-                    {verification(mark)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-
-          <p className="field__hint">
-            Исправление отметки — это решение по заявке, а не правка события:
-            сырое событие не меняется никогда. Кадровик может добавить
-            недостающую отметку отдельным действием с обязательной причиной,
-            и она навсегда останется помеченной как ручная.
-          </p>
-          {rights.correct && (
-            <Link className="link" to={`/requests?kind=correction&employee_id=${id}`}>
-              Заявки на исправление →
-            </Link>
-          )}
-        </>
-      )}
-    </>
-  );
-}
-
-/** Что известно о проверке отметки. «Не проводилась» — честный ответ. */
-function verification(mark: api.EventRow): string {
-  const parts: string[] = [];
-  if (mark.verification_status) parts.push(mark.verification_status);
-  if (mark.inside_geofence === true) parts.push('в геозоне');
-  else if (mark.inside_geofence === false) parts.push('вне геозоны');
-  else parts.push('геопроверка не проводилась');
-  return parts.join(' · ');
-}
-
-// --- вкладка «График и назначения» -------------------------------------------
 
 function Schedule({ id }: { id: string }) {
   const [data, reload] = useBlock(
@@ -950,24 +760,18 @@ function Requests({ id, rights, zone }: {
   return (
     <>
       <div className="toolbar toolbar--thin">
-        <label className="pick">
-          <select value={kind} aria-label="Тип заявки"
-                  onChange={(event) => { setKind(event.target.value); setPicked(null); }}>
+        <AppSelectField className="toolbar-select" label="Тип заявки" value={kind} onChange={(value) => { setKind(value); setPicked(null); }}>
             <option value="">Все типы</option>
             <option value="absence">Отсутствия</option>
             <option value="correction">Исправления отметок</option>
-          </select>
-        </label>
-        <label className="pick">
-          <select value={status} aria-label="Состояние"
-                  onChange={(event) => { setStatus(event.target.value); setPicked(null); }}>
+        </AppSelectField>
+        <AppSelectField className="toolbar-select" label="Состояние" value={status} onChange={(value) => { setStatus(value); setPicked(null); }}>
             <option value="">Все состояния</option>
             <option value="SUBMITTED">На рассмотрении</option>
             <option value="APPROVED">Подтверждены</option>
             <option value="REJECTED">Отклонены</option>
             <option value="CANCELLED">Отменены</option>
-          </select>
-        </label>
+        </AppSelectField>
         <span className="toolbar__note">
           {list.state === 'ready'
             ? `Показано ${items.length}${list.data.has_more ? ' — есть ещё' : ''}`
@@ -1078,7 +882,7 @@ function RequestDetails({ item, zone, rights, onClose, onDone }: {
           {item.kind === 'absence' ? 'Заявка на отсутствие' : 'Исправление отметки'}
         </h3>
         <button type="button" className="nav" onClick={onClose} aria-label="Закрыть">
-          <Icon name="cross" size={16} />
+          <AppIcon name="cross" size={16} />
         </button>
       </div>
 
@@ -1186,16 +990,13 @@ function History({ id, rights, zone }: {
   return (
     <>
       <div className="toolbar toolbar--thin">
-        <label className="pick">
-          <select value={action} aria-label="Действие"
-                  onChange={(event) => { setAction(event.target.value); setPicked(null); }}>
+        <AppSelectField className="toolbar-select" label="Действие" value={action} onChange={(value) => { setAction(value); setPicked(null); }}>
             <option value="">Все действия</option>
             <option value="employee.">Профиль и переводы</option>
             <option value="attendance.">Посещаемость</option>
             <option value="absence">Заявки на отсутствие</option>
             <option value="schedule">Графики</option>
-          </select>
-        </label>
+        </AppSelectField>
         <span className="toolbar__note">
           {log.state === 'ready'
             ? `Показано ${rows.length}${log.data.has_more ? ' — есть ещё' : ''}`
@@ -1245,7 +1046,7 @@ function History({ id, rights, zone }: {
                 <h3 className="side-panel__title">{chosen.action}</h3>
                 <button type="button" className="nav" aria-label="Закрыть"
                         onClick={() => setPicked(null)}>
-                  <Icon name="cross" size={16} />
+                  <AppIcon name="cross" size={16} />
                 </button>
               </div>
               <dl className="facts">
@@ -1286,9 +1087,157 @@ function Diff({ before, after }: {
         <li key={key} className="marks__line">
           <span className="marks__kind">{key}</span>
           <span className="marks__what">{orDash(before?.[key])}</span>
-          <span className="marks__time">→ {orDash(after?.[key])}</span>
+          <span className="marks__time"><AppIcon name="arrow" size={16} /> {orDash(after?.[key])}</span>
         </li>
       ))}
     </ul>
+  );
+}
+
+/**
+ * Решение по стажировке: принять в штат или расстаться.
+ *
+ * Полоса стоит под шапкой карточки, а не в отдельном разделе: решение
+ * принимают один раз, глядя на то, как человек отработал испытательный
+ * срок, — то есть ровно здесь, где видно его посещаемость и историю.
+ *
+ * Обе кнопки открывают окно. «Принять в штат» — потому что по итогам
+ * стажировки должность иногда пересматривают, и предложить это надо до
+ * нажатия, а не после. «Завершить стажировку» — потому что это
+ * увольнение, и сделать его одним щелчком нельзя.
+ */
+function Probation({ id, person, onChanged }: {
+  id: string;
+  person: Person;
+  onChanged: () => void;
+}) {
+  const [asking, setAsking] = useState<'promote' | 'end' | null>(null);
+
+  const name = [text(person, 'last_name'), text(person, 'first_name')]
+    .filter(Boolean).join(' ');
+
+  return (
+    <section className="ep-probation" aria-label="Стажировка">
+      <span className="ep-probation__mark" aria-hidden="true">
+        <AppIcon name="clock" size={18} />
+      </span>
+      <p className="ep-probation__text">
+        <b>Идёт стажировка</b>
+        <span>
+          По итогам испытательного срока человека принимают в штат или
+          расстаются с ним.
+        </span>
+      </p>
+      <button type="button" className="btn btn--primary"
+              onClick={() => setAsking('promote')}>
+        Принять в штат
+      </button>
+      <button type="button" className="btn"
+              onClick={() => setAsking('end')}>
+        Завершить стажировку
+      </button>
+
+      {asking === 'promote' && (
+        <PromoteForm id={id} name={name}
+                     onClose={() => setAsking(null)}
+                     onSaved={() => { setAsking(null); onChanged(); }} />
+      )}
+      {asking === 'end' && (
+        <EndProbationForm id={id} name={name}
+                          onClose={() => setAsking(null)}
+                          onSaved={() => { setAsking(null); onChanged(); }} />
+      )}
+    </section>
+  );
+}
+
+/** Приём в штат: подтверждение и, если нужно, другая должность. */
+function PromoteForm({ id, name, onClose, onSaved }: {
+  id: string;
+  name: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [position, setPosition] = useState('');
+  const saving = useSaving();
+  const [positions] = useBlock((signal) => api.positions(signal), 'promote-positions');
+
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault();
+    void saving.run(
+      () => api.promoteEmployee(id, position ? { position_id: position } : {}),
+      onSaved,
+    );
+  };
+
+  return (
+    <Modal title="Принять в штат" onClose={onClose}>
+      <form className="adm-modal__form" onSubmit={submit}>
+        <p className="muted">
+          {name || 'Сотрудник'} перейдёт из стажировки в штат. Он получит
+          сообщение в Telegram с должностью и графиком.
+        </p>
+
+        <ModalField label="Должность"
+                    hint="Оставьте пустой, если должность не меняется">
+          <AppSelectField label="Должность" value={position} searchable
+                          onChange={setPosition}>
+            <option value="">Оставить прежнюю</option>
+            {positions.state === 'ready'
+              ? positions.data.items.map((one) => (
+                  <option key={one.id} value={one.id}>{one.name}</option>
+                ))
+              : null}
+          </AppSelectField>
+        </ModalField>
+
+        <Refusal text={saving.refusal} />
+        <ModalTools busy={saving.busy} onCancel={onClose}
+                    submitLabel="Принять в штат" />
+      </form>
+    </Modal>
+  );
+}
+
+/** Расставание по итогам стажировки. */
+function EndProbationForm({ id, name, onClose, onSaved }: {
+  id: string;
+  name: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [reason, setReason] = useState('');
+  const saving = useSaving();
+
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault();
+    void saving.run(
+      () => api.endProbation(id, reason.trim() ? { reason: reason.trim() } : {}),
+      onSaved,
+    );
+  };
+
+  return (
+    <Modal title="Завершить стажировку" onClose={onClose}>
+      <form className="adm-modal__form" onSubmit={submit}>
+        <p className="muted">
+          {name || 'Сотрудник'} будет уволен с причиной «Не прошёл
+          стажировку». Назначения и график закроются сегодняшним днём,
+          история отметок останется. Человек получит нейтральное
+          сообщение без объяснений и оценок.
+        </p>
+
+        <ModalField label="Причина"
+                    hint="Оставьте пустой — запишется «Не прошёл стажировку»">
+          <input className="input" value={reason} maxLength={255}
+                 placeholder="Не прошёл стажировку"
+                 onChange={(event) => setReason(event.target.value)} />
+        </ModalField>
+
+        <Refusal text={saving.refusal} />
+        <ModalTools busy={saving.busy} onCancel={onClose}
+                    submitLabel="Завершить стажировку" />
+      </form>
+    </Modal>
   );
 }

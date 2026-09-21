@@ -1,0 +1,561 @@
+/*
+ * Главная страница «Обзор на сегодня» — плотная рабочая страница.
+ *
+ * Та же задача, что решена на «Обращениях», «Сотрудниках» и
+ * «Посещаемости»: при масштабе браузера 100 % страница должна вмещать
+ * столько же, сколько сейчас вмещает при 80 %. Уменьшены сами
+ * величины, а не картинка: `zoom` и `transform` оставили бы интерфейс
+ * крупным, просто нарисованным мельче.
+ *
+ * Основа оформления — общие `.head`, `.cards`, `.panel` из `crm.css`:
+ * ими пользуются и другие разделы. Поэтому всё здесь привязано к
+ * корню `.dash`, и ни одна другая страница этих правок не видит.
+ */
+
+/* --- страница в высоту окна ------------------------------------------------
+ *
+ * Шапка и показатели стоят на месте, рабочая часть забирает остаток
+ * высоты, а внутри неё левая и правая колонки прокручиваются каждая у
+ * себя. Только при двух колонках и окне не ниже 700: на узком экране
+ * колонки стоят одна под другой, и честнее прокручивать страницу.
+ */
+@media (min-width: 1121px) and (min-height: 700px) {
+  .canvas:has(> .dash) {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: hidden;
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+
+  .dash {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .dash > .head,
+  .dash > .cards,
+  .dash > .empty {
+    flex: none;
+  }
+
+  .dash > .grid {
+    flex: 1 1 auto;
+    min-height: 0;
+    align-items: stretch;
+  }
+
+  .dash .grid__main,
+  .dash .grid__side {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+  }
+
+  /* График не растягивается: всю лишнюю высоту левой колонки получает
+     таблица офисов (как она себя ведёт — ниже, в разделе таблицы). */
+  .dash .grid__main > .panel--chart {
+    flex: none;
+  }
+
+  /* В правой колонке панели идут по высоте содержимого, а не делят
+     остаток поровну: колонка прокручивается, растягивать нечего.
+     Последняя панель дотягивается до низа, если места всё же больше. */
+  .dash .grid__side > .panel,
+  .dash .grid__side > .panel:nth-child(n + 2) {
+    flex: none;
+  }
+
+  .dash .grid__side > .panel:last-child {
+    flex: 1 0 auto;
+  }
+
+  .dash .grid__side > .panel:nth-child(n + 2) .feed {
+    flex: none;
+    justify-content: flex-start;
+  }
+}
+
+/* --- шапка ---------------------------------------------------------------- */
+
+.dash > .head {
+  align-items: center;
+  gap: 10px 20px;
+  margin-bottom: 10px;
+}
+
+.dash .head__title {
+  font-size: 26px;
+  line-height: 32px;
+}
+
+.dash .head__sub {
+  margin-top: 2px;
+  font-size: 12.5px;
+  line-height: 18px;
+}
+
+/* Фильтры — одной строкой справа. Когда шапке не хватает ширины, они
+   переносятся целиком под заголовок, а внутри строки — по одному
+   элементу, но никогда не обрезаются. */
+.dash .head__filters {
+  min-width: 0;
+  max-width: 100%;
+  gap: 3px;
+}
+
+.dash .filters {
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.dash .head__filters .filters > .app-select {
+  flex: 0 1 160px;
+  width: 160px;
+  min-width: 128px;
+}
+
+.dash .head__filters .app-select__trigger {
+  min-height: 34px;
+  padding: 0 10px;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.dash .head__filters .date__field {
+  height: 34px;
+  min-width: 150px;
+  padding: 0 10px;
+  gap: 7px;
+  font-size: 13px;
+}
+
+.dash .head__filters .date__input {
+  font-size: 13px;
+}
+
+.dash .head__filters .pick {
+  height: 34px;
+}
+
+.dash .head__filters .pick--icon {
+  width: 34px;
+}
+
+.dash .head__updated {
+  max-width: 100%;
+  font-size: 12px;
+  line-height: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* --- показатели ----------------------------------------------------------- */
+
+.dash > .cards {
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.dash .metric {
+  grid-template-rows: 22px 1fr auto;
+  gap: 4px;
+  height: 104px;
+  padding: 10px 14px 9px;
+}
+
+.dash .metric__mark {
+  width: 22px;
+  height: 22px;
+}
+
+.dash .metric__head {
+  gap: 7px;
+  font-size: 13.5px;
+  line-height: 22px;
+}
+
+/* Число остаётся главным в карточке: крупное, но без лишнего воздуха
+   вокруг себя. */
+.dash .metric__value {
+  font-size: 34px;
+}
+
+.dash .metric__note {
+  min-width: 0;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.dash .metric__note span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* На 1440 шесть карточек в ряд ещё помещаются, но подписи начинают
+   обрезаться уже на первом слове: подпись и число уменьшаются, а не
+   исчезают. Ниже 1400 правило `crm.css` ставит два ряда по три. */
+@media (max-width: 1480px) {
+  .dash .metric {
+    padding-inline: 12px;
+  }
+
+  .dash .metric__head {
+    font-size: 13px;
+  }
+
+  .dash .metric__value {
+    font-size: 30px;
+  }
+}
+
+/* --- рабочая часть -------------------------------------------------------- */
+
+/* Правая колонка — до 520 px на широком экране и не уже 400 на
+   узком: ровно 520 на 1536 оставили бы графику и таблице офисов
+   меньше восьмисот пикселей. */
+.dash > .grid {
+  grid-template-columns: minmax(0, 1fr) clamp(400px, 32vw, 520px);
+  gap: 14px;
+}
+
+.dash .grid__main,
+.dash .grid__side {
+  gap: 12px;
+}
+
+@media (max-width: 1120px) {
+  .dash > .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* --- панели --------------------------------------------------------------- */
+
+.dash .panel {
+  padding: 10px 14px 10px;
+}
+
+.dash .panel__head {
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.dash .panel__title {
+  font-size: 17px;
+  line-height: 22px;
+}
+
+.dash .panel__sub {
+  margin-top: 1px;
+  font-size: 12.5px;
+  line-height: 17px;
+}
+
+.dash .panel__progress {
+  margin-bottom: 4px;
+}
+
+.dash .panel__foot {
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+/* --- график явки ---------------------------------------------------------- */
+
+/* Переключатель периода — по ширине подписей, не растягивается. */
+.dash .switch {
+  flex: none;
+  height: 32px;
+  padding: 2px;
+}
+
+.dash .switch button {
+  min-width: 0;
+  padding: 0 11px;
+  font-size: 13px;
+}
+
+.dash .switch__glider {
+  top: 2px;
+  bottom: 2px;
+}
+
+.dash .chart-box {
+  gap: 14px;
+}
+
+.dash .chart-box__plot {
+  max-height: 186px;
+}
+
+.dash .chart-box__total {
+  width: 112px;
+  padding: 10px 12px;
+}
+
+.dash .chart-box__total-label {
+  font-size: 12px;
+}
+
+.dash .chart-box__total-main {
+  margin-top: 4px;
+  font-size: 16px;
+}
+
+.dash .chart-box__total-percent {
+  font-size: 26px;
+}
+
+.dash .chart-box__shift {
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+.dash .legend {
+  gap: 8px 16px;
+  margin-top: 6px;
+  padding-top: 6px;
+  font-size: 12.5px;
+}
+
+/* --- таблица офисов -------------------------------------------------------
+ *
+ * Панель офисов не сжимается под остаток колонки. Когда сжималась, на
+ * невысоком окне таблица показывала три строки с отдельной прокруткой,
+ * а подпись под ней вылезала за низ панели. Теперь таблица показывает
+ * все офисы — до 480 px, это двенадцать строк с шапкой и итогом, — и
+ * только длинный список прокручивается внутри. Если вместе с графиком
+ * это выше окна, прокручивается левая колонка целиком.
+ */
+
+.dash .grid__main > .panel--dense {
+  flex: 1 0 auto;
+  min-height: auto;
+}
+
+.dash .grid__main > .panel--dense > .scroller--rows {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 480px;
+}
+
+/* На невысоком окне график ниже: таблице офисов нужнее место. */
+@media (max-height: 820px) {
+  .dash .chart-box__plot {
+    max-height: 150px;
+  }
+}
+
+.dash .panel__tools {
+  gap: 10px;
+}
+
+.dash .panel__tools .find {
+  width: auto;
+  height: 32px;
+  padding: 0 10px;
+  gap: 7px;
+}
+
+.dash .panel__tools .find input {
+  width: 120px;
+  font-size: 13px;
+}
+
+.dash .panel__tools .link {
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+/* Строки не переносятся: у названия офиса своё многоточие, у чисел —
+   своя колонка по ширине содержимого. */
+.dash .grid-table {
+  font-size: 13px;
+}
+
+.dash .grid-table th,
+.dash .grid-table td {
+  height: 32px;
+  padding: 3px 10px;
+}
+
+.dash .grid-table tfoot td {
+  height: 34px;
+  border-bottom: 0;
+}
+
+.dash .grid-table thead th {
+  height: 30px;
+  font-size: 12px;
+}
+
+.dash .grid-table th:first-child,
+.dash .grid-table td:first-child {
+  min-width: 140px;
+  max-width: 240px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dash .grid-table__name {
+  font-size: 13px;
+}
+
+.dash .grid-table__name svg {
+  margin-right: 7px;
+  vertical-align: -3px;
+}
+
+/* --- правая колонка ------------------------------------------------------- */
+
+.dash .grid__side > .panel {
+  padding: 10px 12px 12px;
+  border-radius: 14px;
+}
+
+.dash .grid__side .panel__title--row {
+  gap: 7px;
+  margin-bottom: 6px;
+  font-size: 16px;
+  line-height: 22px;
+}
+
+.dash .panel__mark {
+  width: 24px;
+  height: 24px;
+}
+
+.dash .chip--count {
+  min-width: 26px;
+  height: 22px;
+  font-size: 14px;
+}
+
+.dash .grid__side .panel__aside {
+  flex: none;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+/* «Требует внимания» */
+.dash .queue-box {
+  padding: 2px 12px 10px;
+  border-radius: 11px;
+}
+
+.dash .queue__row {
+  gap: 10px;
+  min-height: 40px;
+  padding: 3px 0;
+}
+
+.dash .queue__go {
+  gap: 9px;
+  margin: -3px -6px;
+  padding: 3px 6px;
+}
+
+.dash .queue__row svg {
+  width: 18px;
+  height: 18px;
+}
+
+.dash .queue__text {
+  gap: 0;
+}
+
+.dash .queue__title {
+  font-size: 13.5px;
+  line-height: 18px;
+}
+
+.dash .queue__note {
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.dash .queue__count {
+  flex: none;
+  min-width: 28px;
+  height: 26px;
+  padding: 0 6px;
+  font-size: 14px;
+}
+
+/* Кнопка — во всю ширину блока и с подписью в одну строку: не
+   вылезает за край и не обрезается. */
+.dash .btn--wide {
+  max-width: 100%;
+  height: 36px;
+  margin-top: 8px;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+/* «Обращения» и «Последние решения» */
+.dash .feed {
+  gap: 6px;
+}
+
+.dash .feed__row {
+  gap: 10px;
+  min-height: 50px;
+  padding: 7px 10px;
+  border-radius: 10px;
+}
+
+.dash .feed .avatar {
+  width: 32px;
+  height: 32px;
+  font-size: 12px;
+}
+
+.dash .feed__mark {
+  width: 24px;
+  height: 24px;
+}
+
+.dash .feed__text {
+  flex: 1 1 auto;
+  gap: 1px;
+}
+
+.dash .feed__title {
+  font-size: 13.5px;
+  line-height: 18px;
+}
+
+.dash .feed__note {
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.dash .feed__when {
+  font-size: 12px;
+}
+
+.dash .feed__go {
+  margin-left: 4px;
+  width: 16px;
+  height: 16px;
+}
+
+.dash .verdict {
+  padding: 3px 9px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.dash .empty {
+  margin: 8px 0;
+  font-size: 13px;
+}

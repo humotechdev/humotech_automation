@@ -1,0 +1,2196 @@
+/*
+ * Страница «Сотрудники» — размеры сняты с эталона 1672×941.
+ *
+ * Всё под префиксом `emp-`: правки здесь не задевают другие страницы.
+ * Шрифт содержимого в эталоне обычной ширины, не узкий. Каркас (меню и
+ * верхняя панель) общий для всех страниц и остаётся как есть.
+ */
+
+.emp {
+  font-family: 'Segoe UI', 'Open Sans', system-ui, sans-serif;
+  --emp-ink: #13295a;
+  --emp-text: #22355c;
+  --emp-muted: #6b7c98;
+  --emp-line: #e1e8f1;
+  --emp-field: #d9e2ec;
+  --emp-blue: #1673ee;
+  --emp-blue-soft: #eaf3ff;
+
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  color: var(--emp-text);
+}
+
+/* --- шапка ------------------------------------------------------------------ */
+
+.emp-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  height: 69px;
+  flex: none;
+  padding-left: 4px;
+}
+
+.emp-head__title {
+  margin: 0;
+  font-size: 33px;
+  line-height: 37px;
+  font-weight: 700;
+  color: var(--emp-ink);
+  letter-spacing: -0.2px;
+}
+
+.emp-head__facts {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 5px 0 0;
+  font-size: 14px;
+  line-height: 20px;
+  color: #4d5f7d;
+}
+
+.emp-head__dot {
+  font-style: normal;
+  color: #8a99b1;
+}
+
+.emp-head__bar {
+  width: 1px;
+  height: 16px;
+  margin: 0 8px;
+  background: #c9d3e0;
+}
+
+.emp-head__when {
+  color: var(--emp-muted);
+}
+
+.emp-head__actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 1px;
+}
+
+/* --- кнопки ----------------------------------------------------------------- */
+
+.emp-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 44px;
+  padding: 0 18px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.emp-btn--light {
+  width: 142px;
+  border-color: var(--emp-field);
+  background: #ffffff;
+  color: var(--emp-ink);
+}
+
+.emp-btn--blue {
+  background: linear-gradient(180deg, #1a7df3 0%, #0d69e8 100%);
+  border-color: #0d69e8;
+  color: #ffffff;
+  box-shadow: 0 3px 10px rgba(13, 105, 232, 0.22);
+}
+
+.emp-head__actions .emp-btn--blue {
+  width: 229px;
+}
+
+.emp-btn--outline {
+  border-color: var(--emp-blue);
+  background: #ffffff;
+  color: var(--emp-blue);
+}
+
+.emp-btn:disabled,
+.emp-btn--off {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.emp-note {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+/* --- две колонки ------------------------------------------------------------ */
+
+.emp-grid {
+  /* Обе панели заканчиваются вместе с содержимым списка, а не у нижнего
+     края экрана. */
+  flex: 0 1 auto;
+  min-height: 0;
+  display: grid;
+  /* Левая колонка забирает всю свободную ширину, правая всегда 400 и
+     прижата к правому краю. При 1672 левая выходит ровно 1003, как в
+     эталоне; на широком экране справа не остаётся пустоты. */
+  grid-template-columns: minmax(0, 1fr) 400px;
+  column-gap: 19px;
+}
+
+.emp-list,
+.emp-team {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(221, 229, 239, 0.9);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 6px 24px rgba(30, 64, 120, 0.06);
+}
+
+.emp-list {
+  margin-left: 1px;
+  padding: 17px 13px 16px;
+  /* Таблица короче сводки справа. Не растягиваем её белую панель до
+     высоты соседней колонки: низ должен быть сразу после пагинации. */
+  align-self: start;
+}
+
+/* --- отбор ------------------------------------------------------------------ */
+
+.emp-filters {
+  display: grid;
+  /* Поиск растягивается вместе с панелью; при 1672 он ровно 390. */
+  grid-template-columns: minmax(200px, 1fr) 114px 116px 118px 195px;
+  column-gap: 11px;
+  height: 40px;
+  flex: none;
+}
+
+.emp-search {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 0 14px;
+  border: 1px solid var(--emp-field);
+  border-radius: 8px;
+  background: #ffffff;
+  color: #50627f;
+}
+
+.emp-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  color: var(--emp-text);
+}
+
+.emp-search input::placeholder {
+  color: #74849d;
+}
+
+.emp-search:focus-within,
+.emp-select:focus-within {
+  border-color: var(--emp-blue);
+}
+
+.emp-select {
+  position: relative;
+  display: flex;
+  border: 1px solid var(--emp-field);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.emp-select select {
+  width: 100%;
+  min-width: 0;
+  padding: 0 26px 0 12px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  appearance: none;
+  font: inherit;
+  font-size: 13px;
+  color: var(--emp-ink);
+  cursor: pointer;
+}
+
+.emp-select__arrow {
+  position: absolute;
+  top: 11px;
+  right: 11px;
+  color: #3b4d6c;
+  pointer-events: none;
+}
+
+.emp-view {
+  display: flex;
+  border: 1px solid var(--emp-field);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.emp-view__one {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  flex: 1;
+  margin: -1px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  font: inherit;
+  font-size: 13.5px;
+  color: #5a6b86;
+  cursor: pointer;
+}
+
+.emp-view__one--on {
+  flex: none;
+  width: 100px;
+  border: 1.5px solid #3a86ea;
+  background: var(--emp-blue-soft);
+  color: #1466d8;
+}
+
+/* --- вкладки ---------------------------------------------------------------- */
+
+.emp-tabs {
+  display: flex;
+  gap: 14px;
+  height: 39px;
+  margin-top: 10px;
+  flex: none;
+  border-bottom: 1px solid var(--emp-line);
+}
+
+.emp-tab {
+  position: relative;
+  padding: 0 10px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 14.5px;
+  color: #4d5f7d;
+  cursor: pointer;
+}
+
+.emp-tab--on {
+  font-weight: 600;
+  color: #1466d8;
+}
+
+.emp-tab--on::after {
+  content: '';
+  position: absolute;
+  left: -1px;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--emp-blue);
+}
+
+/* --- карточки --------------------------------------------------------------- */
+
+.emp-body {
+  /* На коротком экране блок может ужаться и прокручиваться. */
+  flex: 0 1 auto;
+  min-height: 0;
+  padding-top: 18px;
+  /* Окно ниже 941: карточки прокручиваются внутри панели, а не
+     обрезаются под пагинацией. */
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.emp-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: 139px;
+  gap: 10px 10px;
+}
+
+.emp-card {
+  position: relative;
+  display: flex;
+  gap: 18px;
+  padding: 12px 12px 0 10px;
+  border: 1px solid var(--emp-line);
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(22, 48, 92, 0.04);
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.emp-card:hover {
+  border-color: #c7d7ea;
+}
+
+.emp-card--on {
+  border: 1.5px solid #3a86ea;
+  padding: 11.5px 11.5px 0 9.5px;
+  background: #f7fbff;
+  box-shadow: 0 4px 14px rgba(26, 110, 220, 0.1);
+}
+
+.emp-card:focus-visible {
+  outline: 2px solid #9cc4f6;
+  outline-offset: 2px;
+}
+
+.emp-photo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  object-fit: cover;
+  background: #e6effa;
+  color: #1c4c93;
+  font-weight: 600;
+}
+
+.emp-card__photo {
+  width: 90px;
+  height: 94px;
+  border-radius: 8px;
+  font-size: 26px;
+}
+
+.emp-card__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.emp-card__body p,
+.emp-card__body h3 {
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.emp-card__name {
+  padding-right: 150px;
+  font-size: 16px;
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--emp-ink);
+}
+
+.emp-card__number {
+  margin-top: 1px !important;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--emp-muted);
+}
+
+.emp-card__role {
+  margin-top: 3px !important;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--emp-text);
+}
+
+.emp-card__dept {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--emp-muted);
+}
+
+.emp-card__meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px !important;
+  margin-left: -2px !important;
+  font-size: 12.5px;
+  line-height: 20px;
+}
+
+/* Сжимается офис, график — никогда: часы важнее названия офиса. */
+.emp-card__meta .emp-bit:nth-child(1) { flex: 0 1 auto; }
+.emp-card__meta .emp-bit:nth-child(2) { flex: none; }
+.emp-card__meta .emp-bit:nth-child(3) { flex: 0 1 auto; }
+
+.emp-bit > svg {
+  width: 15px;
+  height: 15px;
+}
+
+.emp-bit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: #53647f;
+}
+
+.emp-bit > svg {
+  flex: none;
+  color: #4d6d9c;
+}
+
+.emp-bit__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.emp-bit--link,
+.emp-bit--link > svg {
+  color: #1466d8;
+}
+
+/* Состояние стоит в строке имени, а не поверх карточки.
+   Прежние `position: absolute; right: 55px` оставляли место под меню
+   «•••» в правом верхнем углу; меню убрано, а полсотни пикселей
+   пустоты остались — из-за них «Стажировка» висела у середины. */
+.emp-card__status {
+  position: static;
+}
+
+/* --- плашка состояния -------------------------------------------------------- */
+
+.emp-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 26px;
+  padding: 0 13px 0 11px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.emp-status::before {
+  content: '';
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.emp-status--ok { background: #e7f6ee; color: #1b7e4c; }
+.emp-status--ok::before { background: #1fa45f; }
+.emp-status--warn { background: #fff1e2; color: #c0660a; }
+.emp-status--warn::before { background: #f08a1d; }
+.emp-status--off { background: #edf1f6; color: #4f5f78; }
+.emp-status--off::before { background: #8391a8; }
+
+/* --- меню карточки ---------------------------------------------------------- */
+
+.emp-menu {
+  position: absolute;
+  top: 17px;
+  right: 12px;
+}
+
+.emp-menu__dots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.emp-menu__dots i {
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: #2b62b8;
+}
+
+.emp-menu__dots:hover {
+  background: #eef3f9;
+}
+
+.emp-menu__drop {
+  position: absolute;
+  top: 30px;
+  right: 0;
+  z-index: 5;
+  min-width: 170px;
+  padding: 5px;
+  border: 1px solid var(--emp-line);
+  border-radius: 9px;
+  background: #ffffff;
+  box-shadow: 0 8px 24px rgba(22, 48, 92, 0.12);
+}
+
+.emp-menu__drop button {
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.emp-menu__drop button:hover {
+  background: #eef3f9;
+}
+
+/* --- таблица ---------------------------------------------------------------- */
+
+.emp-table-wrap {
+  height: 100%;
+  overflow: auto;
+}
+
+.emp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.emp-table th {
+  position: sticky;
+  top: 0;
+  padding: 8px 10px;
+  background: #f6f9fc;
+  font-weight: 600;
+  color: var(--emp-muted);
+  text-align: left;
+}
+
+.emp-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--emp-line);
+  vertical-align: middle;
+}
+
+.emp-table small {
+  display: block;
+  color: var(--emp-muted);
+}
+
+.emp-table tr {
+  cursor: pointer;
+}
+
+.emp-table__on td {
+  background: #f3f8ff;
+}
+
+.emp-table__who {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.emp-table__photo {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.emp-empty {
+  margin: 24px 0;
+  color: var(--emp-muted);
+}
+
+.emp-empty--bad {
+  color: #b42318;
+}
+
+/* --- пагинация -------------------------------------------------------------- */
+
+.emp-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 40px;
+  margin-top: 14px;
+  padding-left: 3px;
+  flex: none;
+}
+
+.emp-pager__note {
+  margin: 0;
+  font-size: 13px;
+  color: #53647f;
+}
+
+.emp-pages {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.emp-pages__arrow,
+.emp-pages__one {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  border: 1px solid var(--emp-line);
+  border-radius: 6px;
+  background: #ffffff;
+  font: inherit;
+  font-size: 14px;
+  color: #2c3e5e;
+  cursor: pointer;
+}
+
+.emp-pages__arrow {
+  width: 35px;
+}
+
+.emp-pages__arrow:first-child {
+  margin-right: 1px;
+}
+
+.emp-pages__arrow:last-child {
+  margin-left: 5px;
+}
+
+.emp-pages__arrow:disabled {
+  color: #a3b0c3;
+  cursor: default;
+}
+
+.emp-pages__one {
+  min-width: 29px;
+  padding: 0 7px;
+}
+
+.emp-pages__one--on {
+  border-color: #b7d3fa;
+  background: #e4efff;
+  color: #1466d8;
+  font-weight: 600;
+}
+
+.emp-pages__gap {
+  width: 22px;
+  text-align: center;
+  color: #6b7c98;
+}
+
+/* --- правая панель ---------------------------------------------------------- */
+
+.emp-team {
+  padding: 16px 9px 0 10px;
+  overflow: hidden;
+}
+
+.emp-team__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 22px;
+  padding: 0 9px 0 8px;
+}
+
+.emp-team__title {
+  margin: 0;
+  font-size: 17px;
+  line-height: 22px;
+  font-weight: 600;
+  color: var(--emp-ink);
+}
+
+.emp-team__date {
+  font-size: 14px;
+  color: #3e4f6d;
+}
+
+.emp-team__wait {
+  margin: 12px 8px;
+  font-size: 13px;
+  color: var(--emp-muted);
+}
+
+.emp-sum {
+  display: flex;
+  align-items: flex-start;
+  height: 80px;
+  margin: 20px 0 24px;
+  padding: 0 9px 0 7px;
+}
+
+.emp-ring {
+  flex: none;
+  margin-top: -2px;
+}
+
+.emp-ring__track,
+.emp-ring__fill {
+  fill: none;
+  stroke-width: 8;
+}
+
+.emp-ring__track { stroke: #e3eaf2; }
+
+.emp-ring__fill {
+  stroke: #1f9d6a;
+  stroke-linecap: round;
+}
+
+.emp-ring__text {
+  fill: var(--emp-ink);
+  font-size: 19px;
+  font-weight: 700;
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+
+.emp-sum__main {
+  display: flex;
+  flex-direction: column;
+  margin: 17px 0 0 13px;
+}
+
+.emp-sum__main strong {
+  font-size: 20px;
+  line-height: 26px;
+  font-weight: 700;
+  color: var(--emp-ink);
+  white-space: nowrap;
+}
+
+.emp-sum__main span {
+  font-size: 12.5px;
+  line-height: 18px;
+  color: var(--emp-muted);
+  white-space: nowrap;
+}
+
+.emp-sum__legend {
+  display: flex;
+  flex-direction: column;
+  width: 128px;
+  margin: 0 0 0 auto;
+  padding: 0;
+  list-style: none;
+}
+
+.emp-sum__legend li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 26px;
+  font-size: 13px;
+  color: #4d5f7d;
+}
+
+.emp-sum__legend b {
+  margin-left: auto;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--emp-ink);
+}
+
+.emp-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  flex: none;
+}
+
+.emp-dot--ok { background: #1f9d6a; }
+.emp-dot--idle { background: #9fb3cf; }
+.emp-dot--warn { background: #f08a1d; }
+
+/* --- три перехода ----------------------------------------------------------- */
+
+.emp-tile {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 82px;
+  margin-bottom: 8px;
+  padding: 14px 44px 14px 70px;
+  border: 1px solid var(--emp-line);
+  border-radius: 10px;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.emp-tile--progress {
+  min-height: 109px;
+  align-items: flex-start;
+  padding-top: 15px;
+}
+
+.emp-tile:hover {
+  border-color: #c7d7ea;
+}
+
+.emp-tile__icon {
+  position: absolute;
+  top: 50%;
+  left: 18px;
+  display: flex;
+  transform: translateY(-50%);
+}
+
+.emp-tile--progress .emp-tile__icon {
+  top: 17px;
+  transform: none;
+}
+
+/* Крупнее ряда размеров иконок: в эталоне значок перехода около 26 px. */
+.emp-tile__icon svg {
+  width: 26px;
+  height: 26px;
+}
+
+.emp-tile__icon--blue { color: #1f6fe0; }
+.emp-tile__icon--red { color: #e0453f; }
+.emp-tile__icon--amber { color: #f08a1d; }
+
+.emp-tile__text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.emp-tile__text b {
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--emp-ink);
+}
+
+.emp-tile__text span {
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--emp-text);
+}
+
+.emp-tile__text small {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--emp-muted);
+}
+
+.emp-tile__of {
+  position: absolute;
+  right: 40px;
+  top: 58px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--emp-ink);
+}
+
+.emp-tile__bar {
+  position: absolute;
+  left: 70px;
+  right: 40px;
+  bottom: 18px;
+  height: 7px;
+  border-radius: 999px;
+  background: #e4eaf2;
+  overflow: hidden;
+}
+
+.emp-tile__bar i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: #1f9d6a;
+}
+
+.emp-tile__go {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  color: #34507f;
+  transform: translateY(-50%);
+}
+
+.emp-tile--progress .emp-tile__go {
+  top: 23px;
+  transform: none;
+}
+
+.emp-faces {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  margin-right: 22px;
+}
+
+.emp-faces__one {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  border: 2px solid #ffffff;
+  font-size: 12px;
+}
+
+.emp-faces--tight .emp-faces__one {
+  width: 34px;
+  height: 34px;
+}
+
+.emp-faces--tight .emp-faces__one + .emp-faces__one {
+  margin-left: -13px;
+}
+
+.emp-faces__rest {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin-left: 3px;
+  border-radius: 999px;
+  background: #eaf1fa;
+  font-size: 12px;
+  color: #4d5f7d;
+}
+
+/* --- выбранный сотрудник ---------------------------------------------------- */
+
+.emp-chosen {
+  margin-top: 2px;
+  padding: 16px 9px 0 8px;
+  border-top: 1px solid var(--emp-line);
+}
+
+.emp-chosen__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 24px;
+}
+
+.emp-chosen__go {
+  display: flex;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #34507f;
+  cursor: pointer;
+}
+
+.emp-chosen__who {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 13px;
+}
+
+.emp-chosen__photo {
+  width: 82px;
+  height: 86px;
+  border-radius: 8px;
+  font-size: 24px;
+}
+
+.emp-chosen__text {
+  min-width: 0;
+  width: 100%;
+}
+
+.emp-chosen__text p {
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.emp-chosen__top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 27px;
+}
+
+.emp-chosen__top b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--emp-ink);
+}
+
+.emp-chosen__number {
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--emp-muted);
+}
+
+.emp-chosen__role {
+  margin-top: 3px !important;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--emp-text);
+}
+
+.emp-chosen__dept {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--emp-muted);
+}
+
+.emp-chosen__facts {
+  margin: 8px 0 0;
+}
+
+.emp-chosen__row {
+  display: flex;
+  gap: 14px;
+  height: 27px;
+  margin: 0;
+  align-items: center;
+  font-size: 13px;
+}
+
+.emp-chosen__row .emp-bit {
+  gap: 10px;
+  flex: 0 1 auto;
+}
+
+.emp-chosen__row .emp-bit:nth-child(2) {
+  flex: none;
+}
+
+.emp-chosen__row .emp-bit > svg {
+  color: #2f6fd0;
+}
+
+.emp-chosen__row .emp-bit__text {
+  color: #2c3e5e;
+}
+
+.emp-chosen__actions {
+  display: grid;
+  grid-template-columns: 194px 1fr;
+  gap: 11px;
+  margin-top: 13px;
+}
+
+.emp-chosen__actions .emp-btn {
+  height: 42px;
+  font-size: 14px;
+}
+
+/* --- «Сотрудники» на любой ширине --------------------------------------------
+ *
+ * Верх страницы раньше был набором жёстких чисел: заголовок ровно 69 px,
+ * отбор — сетка из пяти колонок по 114, 116, 118 и 195, правая колонка
+ * 400. На любом экране, кроме эталонного, из этого выходило одно и то
+ * же: подписи ужимались до «Все офи…», переключатель наезжал на отбор,
+ * а карточки резали фамилию.
+ *
+ * Здесь чисел нет. У каждого поля своя основа и свой предел сжатия, и
+ * когда места не хватает, поле переносится целиком, а не сжимается до
+ * отточия. Карточки набираются по ширине: сколько влезет, столько и
+ * будет в ряду, но ни одна не уже 320 — на этом пороге ФИО, должность и
+ * Telegram ещё читаются.
+ */
+
+/* Заголовок и кнопки — одна строка, пока помещаются; дальше кнопки
+   переезжают под заголовок целиком. */
+.emp-head {
+  height: auto;
+  min-height: 69px;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+}
+
+.emp-head > * {
+  min-width: 0;
+}
+
+.emp-head__actions,
+.emp-head__tools {
+  flex: none;
+}
+
+/* Строка отбора: гибкая, с переносом. Ни одно поле не уходит под
+   соседнее и не сокращается до «Все от…». */
+.emp-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  height: auto;
+}
+
+/* Компактно и рядом: поля не растягиваются по свободному месту, у
+   каждого своя ширина. Не помещаются — переносятся целиком, но на
+   большом экране стоят в одну строку и не расползаются. */
+.emp-filters .emp-search {
+  /* Растёт, когда место есть, и первым отдаёт его, когда нет: подпись
+     «Поиск по ФИО, должности или Telegram» длинная, и лишние сто
+     пикселей ей нужнее, чем выбору офиса. */
+  flex: 1 1 240px;
+  min-width: 200px;
+}
+
+.emp-filters .app-select {
+  flex: 0 1 168px;
+  min-width: 142px;
+}
+
+/* Переключатель вида — своя ширина по содержимому, сжиматься ему
+   нечем: «Таблица» и «Карточки» подписаны словами. */
+.emp-filters .emp-view,
+.emp-view {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* Две колонки, пока правой хватает места. Её ширина — доля от окна в
+   разумных пределах, а не фиксированные 400: на 1280 они забирали
+   треть страницы у списка. */
+.emp-grid {
+  grid-template-columns: minmax(0, 1fr) clamp(320px, 24%, 400px);
+}
+
+.emp-grid > * {
+  min-width: 0;
+}
+
+/* Карточки набираются по ширине. 320 — тот предел, ниже которого
+   фамилия перестаёт помещаться в строку. */
+/* 430 — та ширина, при которой в карточку помещаются и фамилия с
+   именем, и плашка состояния рядом. На 320 их влезало три в ряд, но
+   фамилия обрывалась на середине — а она здесь главное. */
+.emp-cards {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 430px), 1fr));
+  grid-auto-rows: minmax(139px, auto);
+}
+
+.emp-card > * {
+  min-width: 0;
+}
+
+/* Ниже 1040 правая панель встаёт под список: рядом ей уже негде стоять,
+   не отобрав у карточек их минимум. */
+@media (max-width: 1040px) {
+  .emp-grid {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 14px;
+  }
+}
+
+/* --- правая панель и подписи карточек ----------------------------------------
+ *
+ * Панель стала уже фиксированных четырёхсот, и всё, что было рассчитано
+ * ровно на них, поехало: заголовок с датой лез в две строки, легенда
+ * состава сжималась до «Нет на / месте», а число уходило за край.
+ *
+ * Лечится не шириной, а разрешением переноса: строке заголовка — перенос,
+ * легенде — свой минимум, подписям в карточке — вторая строка вместо
+ * отточия. Telegram и офис читаются целиком, как и просили.
+ */
+
+.emp-team__head {
+  height: auto;
+  min-height: 22px;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+}
+
+.emp-team__date {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* Состав: кольцо и легенда рядом, пока хватает места; дальше легенда
+   переезжает под кольцо целиком. */
+/* Кольцо, число и легенда стоят вместе слева направо, а не по углам
+   панели. Прежде легенда прижималась к правому краю (`margin-left:
+   auto`) и между нею и кольцом зияла пустота в половину панели. */
+.emp-sum {
+  height: auto;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.emp-sum > * {
+  min-width: 0;
+}
+
+.emp-sum__main {
+  margin: 0;
+}
+
+/* Имя переносится по словам и не сокращается отточием: «Муродова М…»
+   — это не фамилия. Если рядом не помещается плашка состояния, она
+   уходит на следующую строку, а имя остаётся целым. */
+/* Состояние в одной строке с именем: перенос добавлял карточке целую
+   строку, и после уплотнения она стала бы выше, чем была до него. */
+.emp-card__title {
+  flex-wrap: nowrap;
+}
+
+.emp-card__title .emp-card__name {
+  padding-right: 0;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+
+.emp-card__title .emp-card__status {
+  position: static;
+  flex: none;
+}
+
+/* Строки сведений в правой панели переносятся, а не режут название
+   офиса до «Головно…». Высота больше не задана числом: две строки
+   вместо одной — это нормально, обрезанное слово — нет. */
+.emp-chosen__row {
+  height: auto;
+  min-height: 27px;
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+
+/* Desktop toolbar: keep search, filters and view switch on one stable axis.
+   The old flex layout let the native control's intrinsic width push the
+   switch onto a lonely second row at common laptop/zoom sizes. */
+@media (min-width: 1041px) {
+  .emp-filters {
+    display: grid;
+    grid-template-columns: minmax(230px, 1fr) repeat(3, minmax(128px, 168px)) max-content;
+    align-items: stretch;
+    gap: 10px;
+    height: 40px;
+  }
+
+  .emp-filters .emp-search,
+  .emp-filters .app-select,
+  .emp-filters .emp-view {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .emp-filters .emp-view {
+    justify-self: end;
+  }
+}
+
+@media (min-width: 1041px) and (max-width: 1350px) {
+  .emp-filters {
+    grid-template-columns: minmax(190px, 1fr) repeat(3, minmax(108px, 1fr)) max-content;
+    gap: 8px;
+  }
+  .emp-filters .app-select select,
+  .emp-filters .app-select__trigger {
+    font-size: 12px;
+  }
+}
+
+/* Сводка команды: круг, итог и статусы на одной ясной линии. */
+.emp-sum {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  column-gap: 12px;
+  row-gap: 10px;
+  height: auto;
+  min-height: 122px;
+  margin: 16px 0 18px;
+  padding: 0 8px;
+}
+
+.emp-sum__main { margin: 14px 0 0; }
+/* Легенда набирается по ширине панели, а не тремя колонками жёстко:
+   при трёх на 380 пикселях последнему числу («253» у «Нет на месте»)
+   не оставалось места, и оно срезалось краем панели. */
+.emp-sum__legend {
+  grid-column: 1 / -1;
+  width: auto;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  align-self: start;
+  gap: 6px 12px;
+}
+
+.emp-sum__legend li {
+  min-width: 0;
+  height: auto;
+  gap: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+/* Число не сжимается и стоит сразу за подписью. */
+.emp-sum__legend b {
+  flex: none;
+  margin-left: 6px;
+}
+
+.emp-chosen__row .emp-bit,
+.emp-chosen__row .emp-bit:nth-child(2) {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.emp-chosen__row .emp-bit__text {
+  overflow: visible;
+  white-space: normal;
+  text-overflow: clip;
+  overflow-wrap: break-word;
+}
+
+/* Строки «На месте / Ушли / Нет на месте» на странице больше нет —
+   тот же состав виден числом «0 из 253» над ней. Сводка стала в одну
+   строку: кольцо и итог. */
+.emp-sum {
+  grid-template-columns: 86px minmax(0, 1fr);
+  min-height: 0;
+  margin: 16px 0 14px;
+}
+
+/* Подписи в карточке переносятся ЦЕЛИКОМ, по меткам, а не по буквам:
+   «Головной офис» уезжает на следующую строку целой меткой, а не
+   рвётся на «Головно / й офис». */
+.emp-card__meta {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+
+.emp-card__meta .emp-bit {
+  flex: 0 0 auto;
+  overflow: visible;
+  white-space: nowrap;
+}
+
+.emp-card__meta .emp-bit__text {
+  overflow: visible;
+  white-space: nowrap;
+  text-overflow: clip;
+}
+
+/* Имя занимает столько, сколько нужно ему, а не всю строку: тогда
+   состояние остаётся рядом, а не уходит под него. */
+.emp-card__title .emp-card__name {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/* Состояние остаётся в строке имени и не сжимается. */
+.emp-card__title .emp-card__status {
+  position: static;
+  flex: none;
+  align-self: center;
+}
+
+/* --- «Сотрудники»: плотная рабочая страница ----------------------------------
+ *
+ * Та же задача, что решена на «Обращениях»: при масштабе браузера 100 %
+ * страница должна вмещать столько же, сколько сейчас вмещает при 80 %.
+ * Уменьшены сами величины, а не картинка: `zoom` и `transform` оставили
+ * бы интерфейс крупным, просто нарисованным мельче.
+ *
+ * Величины собраны здесь, в переменных страницы. Нижняя граница текста
+ * — 13 px: ниже список фамилий читать тяжело, и экономия высоты этого
+ * не стоит.
+ */
+
+.emp {
+  --emp-gap: 10px;
+  --emp-pad: 12px;
+  --emp-font: 13.5px;
+  --emp-small: 12.5px;
+}
+
+/* --- шапка страницы --------------------------------------------------------- */
+
+.emp-head {
+  min-height: 0;
+  margin-bottom: 2px;
+}
+
+.emp-head__title {
+  font-size: 26px;
+  line-height: 32px;
+}
+
+.emp-head__facts {
+  margin-top: 3px;
+  font-size: var(--emp-small);
+  line-height: 18px;
+}
+
+.emp-head__actions .emp-btn,
+.emp-head__actions .btn {
+  height: 36px;
+  font-size: 13.5px;
+}
+
+/* --- отбор и вкладки -------------------------------------------------------- */
+
+.emp-list {
+  padding: 12px 10px 12px;
+}
+
+.emp-filters {
+  gap: 8px;
+}
+
+.emp-filters .emp-search,
+.emp-filters .app-select__trigger,
+.emp-filters .app-select select {
+  height: 36px;
+  font-size: var(--emp-font);
+}
+
+.emp-tabs {
+  margin: 10px 0 8px;
+}
+
+.emp-tabs [role='tab'] {
+  min-height: 30px;
+  font-size: 13px;
+}
+
+/* --- карточки --------------------------------------------------------------- */
+
+.emp-cards {
+  gap: 8px;
+  /* Высота по содержимому, а не 139 фиксированных: карточка без
+     Telegram не обязана занимать столько же, сколько с ним. */
+  grid-auto-rows: minmax(118px, auto);
+}
+
+.emp-card {
+  padding: 10px 12px;
+  gap: 10px;
+}
+
+.emp-card__photo {
+  width: 74px;
+  height: 74px;
+}
+
+.emp-card__name {
+  font-size: 14.5px;
+  line-height: 19px;
+}
+
+.emp-card__number,
+.emp-card__dept {
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.emp-card__role {
+  font-size: var(--emp-font);
+  line-height: 18px;
+}
+
+.emp-card__meta {
+  margin-top: 8px !important;
+  font-size: 12px;
+  line-height: 17px;
+}
+
+/* --- таблица ---------------------------------------------------------------- */
+
+.emp-table th,
+.emp-table td {
+  padding: 8px 10px;
+  font-size: var(--emp-font);
+}
+
+.emp-table small {
+  font-size: 11.5px;
+}
+
+/* --- пагинация -------------------------------------------------------------- */
+
+.emp-pager {
+  min-height: 34px;
+  margin-top: 10px;
+  font-size: var(--emp-small);
+}
+
+/* --- правая колонка --------------------------------------------------------- */
+
+.emp-team {
+  padding: 12px 10px 12px;
+}
+
+.emp-team__title {
+  font-size: 15px;
+  line-height: 20px;
+}
+
+.emp-team__date {
+  font-size: var(--emp-small);
+}
+
+.emp-sum {
+  min-height: 0;
+  margin: 12px 0 12px;
+}
+
+.emp-sum__main strong {
+  font-size: 18px;
+  line-height: 23px;
+}
+
+.emp-sum__main span {
+  font-size: 12px;
+}
+
+.emp-tile {
+  min-height: 68px;
+  margin-bottom: 6px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.emp-tile--progress {
+  min-height: 92px;
+  padding-top: 11px;
+}
+
+.emp-chosen {
+  padding: 10px;
+}
+
+.emp-tile__line,
+.emp-chosen__role,
+.emp-chosen__number {
+  font-size: var(--emp-small);
+}
+
+.emp-chosen__actions .emp-btn {
+  height: 36px;
+  font-size: 13.5px;
+}
+
+
+/* --- прокрутка внутри списка, а не всей страницы ------------------------------
+ *
+ * Включается только там, где колонки стоят рядом и экран достаточно
+ * высок. В одноколоночной раскладке список длиннее окна, и прокручиваться
+ * должна вся страница — иначе её низ просто недоступен.
+ */
+@media (min-width: 1041px) and (min-height: 780px) {
+  .canvas:has(> .emp) {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .emp {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .emp-grid {
+    flex: 1 1 auto;
+    min-height: 0;
+    align-items: stretch;
+  }
+
+  .emp-list,
+  .emp-team {
+    align-self: stretch;
+    min-height: 0;
+  }
+
+  .emp-list {
+    overflow: hidden;
+  }
+
+  /* Прокручивается только список карточек; отбор, вкладки и пагинация
+     остаются на виду. */
+  .emp-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+  }
+
+  .emp-team {
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+  }
+}
+
+/* Имя и состояние в одной строке — правило стоит последним намеренно:
+   выше по файлу `.emp-card__title` получает `display: block` от более
+   общего правила карточки, и без этой строки состояние уходит под имя,
+   добавляя карточке лишние двадцать пикселей. */
+.emp-card__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  min-width: 0;
+  padding-right: 30px;
+}
+
+/* Плитке с полосой готовности нужна её высота: при меньшей полоса и
+   число наезжают на подпись. */
+.emp-tile--progress {
+  min-height: 100px;
+}
+
+/* --- плотность под эталон ----------------------------------------------------
+ *
+ * Эталон — эта же страница при масштабе браузера 80 %: на экране 1920
+ * туда помещается семь карточек, шапка занимает 42 приведённых пикселя,
+ * отбор 32, вкладки 31. Значения ниже подобраны так, чтобы при 100 %
+ * получалось то же самое: семь карточек, те же высоты, тот же вид.
+ * Проверялось замером, а не на глаз.
+ */
+
+.emp-head__title {
+  font-size: 22px;
+  line-height: 27px;
+}
+
+.emp-head__facts {
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.emp-head__actions .emp-btn,
+.emp-head__actions .btn {
+  height: 32px;
+  font-size: 13px;
+}
+
+.emp-filters .emp-search,
+.emp-filters .app-select__trigger,
+.emp-filters .app-select select {
+  height: 32px;
+  font-size: 13px;
+}
+
+.emp-tabs {
+  margin: 8px 0 6px;
+}
+
+.emp-tabs [role='tab'] {
+  min-height: 26px;
+  font-size: 12.5px;
+}
+
+/* Карточка: 106 вместо 127 — ровно столько, чтобы семь штук
+   помещались в список на экране 1080. */
+.emp-cards {
+  gap: 7px;
+  grid-auto-rows: minmax(100px, auto);
+}
+
+.emp-card {
+  padding: 9px 11px;
+  gap: 9px;
+}
+
+.emp-card__photo {
+  width: 64px;
+  height: 64px;
+}
+
+.emp-card__name {
+  font-size: 14px;
+  line-height: 18px;
+}
+
+.emp-card__number,
+.emp-card__dept {
+  font-size: 11.5px;
+  line-height: 15px;
+}
+
+.emp-card__role {
+  font-size: 13px;
+  line-height: 17px;
+}
+
+.emp-card__meta {
+  margin-top: 6px !important;
+  font-size: 11.5px;
+  line-height: 16px;
+}
+
+/* Правая колонка — ровно 400, как в эталоне. */
+.emp-grid {
+  grid-template-columns: minmax(0, 1fr) 400px;
+  column-gap: 14px;
+}
+
+@media (max-width: 1240px) {
+  .emp-grid {
+    grid-template-columns: minmax(0, 1fr) 340px;
+  }
+}
+
+/* Второй проход подгонки: замер показал карточку 119 при нужных 106 и
+   отбор с вкладками на четверть выше эталона. */
+.emp-card {
+  padding: 8px 10px;
+  gap: 8px;
+}
+
+.emp-card__photo {
+  width: 58px;
+  height: 58px;
+}
+
+.emp-card__name {
+  font-size: 13.5px;
+  line-height: 17px;
+}
+
+.emp-card__number,
+.emp-card__dept {
+  font-size: 11px;
+  line-height: 14px;
+}
+
+.emp-card__role {
+  font-size: 12.5px;
+  line-height: 16px;
+}
+
+.emp-card__meta {
+  margin-top: 5px !important;
+  font-size: 11px;
+  line-height: 15px;
+}
+
+.emp-cards {
+  gap: 6px;
+  grid-auto-rows: minmax(96px, auto);
+}
+
+/* Отбор и вкладки: высота задаётся полями, а не содержимым. */
+.emp-filters {
+  gap: 7px;
+}
+
+.emp-filters .emp-search,
+.emp-filters .app-select__trigger,
+.emp-filters .app-select select,
+.emp-filters .emp-view button {
+  height: 30px;
+  font-size: 12.5px;
+}
+
+.emp-tabs {
+  margin: 7px 0 5px;
+  padding: 2px;
+}
+
+.emp-tabs [role='tab'] {
+  min-height: 24px;
+  padding: 0 10px;
+  font-size: 12.5px;
+}
+
+/* Две колонки карточек там, где они помещаются. Порог 430 был взят под
+   прежнюю, более крупную карточку: после уплотнения фамилия со
+   состоянием укладывается и в 360, а при 430 на экране 1530 списку
+   доставалось 815 — и карточки вставали в один столбец. */
+.emp-cards {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr));
+}
+
+/* Строка отбора переносится, а не обрезает переключатель вида. */
+.emp-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.emp-filters .emp-view {
+  flex: 0 0 auto;
+}
+
+/* Строка отбора растёт при переносе. Без явной высоты она оставалась
+   в 40 px, и переключатель вида, уехавший на вторую строку, ложился
+   поверх вкладок. */
+.emp-filters {
+  height: auto;
+  row-gap: 8px;
+}
+
+/* Сводке нужна её высота: с нулевой кольцо и число уходили под
+   соседнюю плитку. 104 — ровно под кольцо с подписью. */
+.emp-sum {
+  min-height: 104px;
+  margin: 10px 0 12px;
+}
+
+
+/* ============================================================================
+   Список во всю ширину: правой колонки больше нет.
+
+   Блок идёт последним намеренно. Выше лежат правила, подогнанные под
+   прежнюю раскладку в две колонки — пятиколоночная сетка отборов,
+   ширина карточек под 430 пикселей, поля под панель «Сегодня в
+   команде». Переписывать их по месту значило бы тронуть десяток
+   медиазапросов; здесь они перекрыты целиком и по одному разу.
+   ========================================================================== */
+
+.emp-list {
+  width: 100%;
+  margin-left: 0;
+  padding: 18px 18px 18px;
+}
+
+/* --- строка отборов --- */
+
+.emp-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  height: auto;
+  grid-template-columns: none;
+}
+
+.emp-filters .emp-search {
+  flex: 1 1 260px;
+  min-width: 220px;
+  height: 42px;
+  border-radius: 9px;
+}
+
+/* Ширина у каждого отбора своя: у общего списка она 100%, и шесть
+   таких в строке вытесняли бы друг друга на отдельные строки. */
+.emp-pick {
+  flex: 0 0 auto;
+  width: 172px;
+}
+
+.emp-pick .app-select__trigger {
+  min-height: 42px;
+  border-radius: 9px;
+  background: #ffffff;
+}
+
+.emp-filters .emp-view {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+/* --- что выбрано --- */
+
+/* Свёрнутый «Офисы · 2» не говорит, ЧТО выбрано. Плашки говорят, и
+   каждую можно снять по одной, не открывая список заново. */
+.emp-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  margin-top: 12px;
+}
+
+.emp-chips__group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.emp-chips__label {
+  font-size: 13px;
+  color: var(--emp-muted);
+}
+
+.emp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 4px 0 10px;
+  border: 1px solid #cfe0f5;
+  border-radius: 8px;
+  background: #f2f7fd;
+  font-size: 13px;
+  color: #1c4c93;
+}
+
+.emp-chip button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: #5b7ba6;
+  cursor: pointer;
+}
+
+.emp-chip button:hover {
+  color: #0b3f8c;
+}
+
+.emp-chips__clear {
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #1466d8;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* --- карточки --- */
+
+/* Три в ряд на широком экране: панели справа больше нет, и место под
+   третью карточку освободилось. 320 — предел, ниже которого фамилия
+   перестаёт помещаться в строку рядом с состоянием. */
+.emp-cards {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+  grid-auto-rows: auto;
+  gap: 14px;
+}
+
+.emp-card {
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+  border-radius: 12px;
+  cursor: default;
+}
+
+.emp-card:hover {
+  border-color: #c7d7ea;
+  box-shadow: 0 6px 18px rgba(26, 72, 140, 0.08);
+}
+
+.emp-card__top {
+  display: flex;
+  gap: 14px;
+  min-width: 0;
+  padding: 16px 16px 14px;
+}
+
+.emp-card__photo {
+  width: 56px;
+  height: 56px;
+  border-radius: 12px;
+  font-size: 18px;
+}
+
+.emp-card__name {
+  padding-right: 0;
+  font-size: 16.5px;
+  line-height: 22px;
+}
+
+.emp-card__role {
+  margin-top: 2px !important;
+  font-size: 13.5px;
+  line-height: 19px;
+  color: var(--emp-muted);
+}
+
+.emp-card__meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  margin-top: 10px !important;
+}
+
+/* --- подвал карточки --- */
+
+.emp-card__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  padding: 11px 16px;
+  border-top: 1px solid var(--emp-line);
+}
+
+/* Состояние дня: цветом говорит точка, слово остаётся тёмным. */
+.emp-day {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13.5px;
+  color: var(--emp-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.emp-day i {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #97a5bb;
+}
+
+.emp-day--ok i { background: #1aa35a; }
+.emp-day--warn i { background: #e08507; }
+.emp-day--blue i { background: #1b6ef3; }
+.emp-day--violet i { background: #7b5cf0; }
+
+.emp-card__go {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #1466d8;
+  cursor: pointer;
+}
+
+.emp-card__go:hover {
+  color: #0b4ea8;
+}
+
+/* Таблица ведёт туда же, куда карточка. */
+.emp-table tbody tr {
+  cursor: pointer;
+}
+
+/* Кнопки шапки — крупнее: в строке с заголовком «Сотрудники» они
+   выглядели тоньше всего остального. Ширина не задаётся числом, а
+   растёт от подписи: «Добавить сотрудника» длиннее «Экспорта», и
+   одинаковые 142 и 229 пикселей подходили только этим двум словам. */
+.emp-head__actions .emp-btn {
+  height: 48px;
+  padding: 0 24px;
+  border-radius: 10px;
+  font-size: 15.5px;
+  font-weight: 600;
+}
+
+.emp-head__actions .emp-btn--light {
+  width: auto;
+  min-width: 150px;
+}
+
+.emp-head__actions .emp-btn--blue {
+  width: auto;
+  min-width: 240px;
+}
+
+/* Заголовок и список — не впритык. После укрупнения кнопок отступ в
+   два пикселя превратил шапку и белую панель в один слипшийся блок. */
+.emp-head {
+  margin-bottom: 18px;
+}
+
+/* Состояние в карточке — слово цветом, без плашки и кружка: подложка
+   делала из подписи кнопку, которой она не является. Прижато к правому
+   краю строки имени. */
+.emp-card__title {
+  justify-content: space-between;
+}
+
+.emp-card .emp-status {
+  height: auto;
+  padding: 0;
+  margin-left: auto;
+  border-radius: 0;
+  background: none;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.emp-card .emp-status::before {
+  display: none;
+}
+
+.emp-card .emp-status--ok { color: #1b7e4c; }
+.emp-card .emp-status--warn { color: #c0660a; }
+.emp-card .emp-status--off { color: #4f5f78; }
+
+/* «Должность: Менеджер» — подпись серая, само название тёмное. */
+.emp-card__role b {
+  font-weight: 600;
+  color: var(--emp-ink);
+}
+
+/* Строка имени — гибкая, и без отбивки справа.
+   `padding-right: 30px` выше по файлу держал место под меню «•••» в
+   углу карточки. Меню убрано, а тридцать пикселей пустоты остались —
+   из-за них «Стажировка» не доходила до края. */
+.emp-card__title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding-right: 0;
+}
+
+/* Небольшой просвет после двоеточия: «Должность:  Менеджер». */
+.emp-card__role b {
+  margin-left: 4px;
+}
+
+/* Состояние прижато к правому краю карточки.
+   В старой вёрстке оно было выведено из потока: `position: absolute;
+   right: 55px` — те самые полсотни пикселей пустоты, из-за которых
+   «Стажировка» висела ближе к середине. Возвращаем его в строку имени
+   и снимаем координаты: место теперь определяет сама строка. */
+.emp-card .emp-card__title .emp-card__status {
+  position: static;
+  top: auto;
+  right: auto;
+  flex: none;
+  margin: 0 0 0 auto;
+  padding: 0;
+  height: auto;
+  border-radius: 0;
+  background: none;
+}
+
+/* Telegram в карточке — ссылка на сам Telegram. Подчёркивание только
+   под наведением: десяток подчёркнутых строк в списке рябит. */
+.emp-bit--go {
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.emp-bit--go:hover .emp-bit__text {
+  text-decoration: underline;
+}

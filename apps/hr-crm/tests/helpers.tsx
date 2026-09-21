@@ -1,6 +1,6 @@
 /** Общий каркас тестов: приложение целиком поверх поддельного `fetch`. */
 
-import { render } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { vi } from 'vitest';
 
@@ -49,7 +49,11 @@ export function fakeNetwork(handler: (path: string, call: Call) => Response | Pr
       url,
       method: init?.method ?? 'GET',
       headers: (init?.headers as Record<string, string>) ?? {},
-      body: init?.body ? JSON.parse(String(init.body)) : undefined,
+      // Многопартовое тело остаётся собой: разобрать его как JSON
+      // нельзя, а проверяют в нём поля формы, а не структуру.
+      body: init?.body instanceof FormData
+        ? init.body
+        : init?.body ? JSON.parse(String(init.body)) : undefined,
     };
     calls.push(call);
     return handler(url, call);
@@ -109,4 +113,25 @@ export function renderApp(path = '/') {
       </SessionProvider>
     </MemoryRouter>,
   );
+}
+
+/**
+ * Выбрать значение в списке CRM.
+ *
+ * Списки здесь — своё меню, а не `<select>`: у него кнопка с подписью и
+ * список вариантов. `fireEvent.change` по такому элементу не делает
+ * ничего, и отбор в тесте молча не применяется — проверка проходит
+ * мимо того, что должна была проверить.
+ *
+ * `label` ищется по началу: у кнопки списка подпись вида
+ * «Статус: Все статусы», и точное совпадение её не найдёт.
+ */
+const SPECIAL = /[.*+?^${}()|[\]\\]/g;
+
+export async function pick(label: string | RegExp, option: string | RegExp) {
+  const trigger = typeof label === 'string'
+    ? new RegExp(`^${label.replace(SPECIAL, '\\$&')}`)
+    : label;
+  fireEvent.click(await screen.findByLabelText(trigger));
+  fireEvent.click(await screen.findByRole('option', { name: option }));
 }

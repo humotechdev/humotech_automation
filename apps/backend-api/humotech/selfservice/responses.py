@@ -48,6 +48,8 @@ class DaySerializer(serializers.Serializer):
     missed = serializers.BooleanField()
     absence_code = serializers.CharField(allow_null=True)
     absence_name = serializers.CharField(allow_null=True)
+    # Норма дня: 0 у выходного, null — графика на этот день нет.
+    norm_seconds = serializers.IntegerField(allow_null=True)
 
 
 class DayWithSessionsSerializer(DaySerializer):
@@ -199,6 +201,19 @@ class ScanResultSerializer(serializers.Serializer):
     office_name = serializers.CharField(allow_null=True)
     point_name = serializers.CharField(allow_null=True)
     occurred_at = serializers.DateTimeField(allow_null=True)
+    occurred_at_local = serializers.CharField(
+        allow_null=True,
+        help_text="Время отметки «ЧЧ:ММ» в часовом поясе офиса",
+    )
+    point_mode = serializers.CharField(
+        allow_null=True, help_text="Направление точки: ENTRY, EXIT или BOTH",
+    )
+    distance_m = serializers.FloatField(
+        allow_null=True, help_text="Расстояние до офиса, если сравнивали",
+    )
+    radius_m = serializers.IntegerField(
+        allow_null=True, help_text="Допустимый радиус геозоны офиса",
+    )
     session = ScanSessionSerializer(allow_null=True)
 
 
