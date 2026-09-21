@@ -83,6 +83,17 @@ def _log_attempt(
     )
 
 
+#: Уведомления, к которым полагается вложение, и какое именно.
+#:
+#: Файл не кладётся в очередь: он собирается из заявки на каждое
+#: обращение, и сохранённая копия молча разошлась бы с продлённой
+#: заявкой. В очереди только признак — бот по нему скачивает бумагу
+#: тем же запросом, что и человек из кабинета.
+ATTACHMENTS = {
+    "absence.created": "absence_application",
+}
+
+
 @dataclass(frozen=True)
 class Outgoing:
     """Сообщение, готовое к отправке."""
@@ -96,6 +107,12 @@ class Outgoing:
     #: прикладывают кнопку: без идентификатора бот знает, что опрос
     #: пришёл, но не знает какой.
     related_entity_id: str | None = None
+    #: Что приложить к сообщению. `None` — обычный текст.
+    attachment: str | None = None
+    #: От чьего имени бот запросит вложение. Совпадает с `chat_id` в
+    #: личном чате, но полагаться на это нельзя: они разные величины,
+    #: и однажды разойдутся.
+    telegram_user_id: int | None = None
 
 
 def enqueue(
@@ -216,6 +233,13 @@ def claim(*, limit: int = 20, now: datetime | None = None) -> list[Outgoing]:
                         str(row.related_entity_id)
                         if row.related_entity_id else None
                     ),
+                    # Вложение только там, где есть на что сослаться:
+                    # без записи скачивать нечего.
+                    attachment=(
+                        ATTACHMENTS.get(row.notification_type)
+                        if row.related_entity_id else None
+                    ),
+                    telegram_user_id=account.telegram_user_id,
                 )
             )
     return ready

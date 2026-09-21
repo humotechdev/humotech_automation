@@ -169,9 +169,11 @@ class TestSurveyButton:
 
         class Watching:
             async def deliver(self, *, chat_id, text, notification_type,
-                              entity_id=None):
+                              entity_id=None, attachment=None,
+                              telegram_user_id=None):
                 seen["entity_id"] = entity_id
                 seen["type"] = notification_type
+                seen["attachment"] = attachment
                 from src.notifications.sender import Outcome
 
                 return Outcome(sent=True)
@@ -182,4 +184,10 @@ class TestSurveyButton:
 
         asyncio.run(tick(Watching(), client))
 
-        assert seen == {"entity_id": "recipient-77", "type": "survey.invite"}
+        # Вложения у приглашения на опрос нет: файл прикладывается
+        # только там, где он есть, — у заявления на больничный.
+        assert seen == {
+            "entity_id": "recipient-77",
+            "type": "survey.invite",
+            "attachment": None,
+        }

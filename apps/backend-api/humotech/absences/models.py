@@ -94,6 +94,13 @@ class AbsenceRequest(UUIDPrimaryKeyModel, OrganizationScopedModel, TimestampedMo
     )
     requested_start_at = models.DateTimeField(null=True, blank=True)
     requested_end_at = models.DateTimeField(null=True, blank=True)
+    # Подписанное заявление пришло кадровику по почте.
+    #
+    # Отдельно от справки намеренно: бумага подтверждает намерение
+    # человека, справка — факт болезни, и приходят они разными дорогами.
+    # Одна отметка на оба пункта означала бы, что половину работы
+    # кадровик подтверждает не глядя.
+    application_received_at = models.DateTimeField(null=True, blank=True)
     employee_comment = models.TextField(null=True, blank=True)
     status = models.CharField(
         max_length=20, choices=choices(ABSENCE_REQUEST_STATUSES)

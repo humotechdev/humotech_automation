@@ -25,7 +25,21 @@ import {
 import { REQUEST_STATUS, isoToday, period } from '../format';
 import { haptic } from '../telegram';
 import { DateRangePicker, Field, FileUploadField } from '../ui/fields';
-import { CheckIcon, MedicalIcon, PlaneIcon, RequestsIcon } from '../ui/icons';
+import {
+  AfterSubmitNote,
+  CertificateRow,
+  OnBehalfRow,
+  OptionalDateRange,
+  OptionalLabel,
+  TermsCheckbox,
+} from '../ui/sick-fields';
+import {
+  CheckIcon,
+  MedicalIcon,
+  PlaneIcon,
+  RequestsIcon,
+  SendIcon,
+} from '../ui/icons';
 import { BottomSheet, ConfirmationDialog } from '../ui/overlays';
 import {
   Card,
@@ -39,6 +53,20 @@ import { EmptyState, ErrorState, LoadingScreen } from '../ui/states';
 
 export type AbsenceKind = 'SICK_LEAVE' | 'ANNUAL_LEAVE';
 
+/**
+ * Условия оформления больничного.
+ *
+ * Здесь, а не на сервере: это не документ, с которым сверяют согласие,
+ * а объяснение порядка — то же, что кадровик говорит вслух. Документ
+ * версионируется и подтверждается отдельно, в разделе ознакомления.
+ */
+const TERMS_TEXT = [
+  'Заявка создаётся сразу, без согласования.',
+  'Заявление по шаблону придёт в Telegram: распечатайте, подпишите и отправьте на почту HR.',
+  'Справку можно приложить сейчас или позже, в карточке заявки.',
+  'Фактические даты больничного кадровик проставит по справке.',
+].join(' ');
+
 /** Заявки, по которым ещё возможны действия. Остальное — история. */
 const ACTIVE_STATUSES = ['DRAFT', 'SUBMITTED', 'IN_REVIEW'];
 
@@ -51,7 +79,14 @@ const TONE: Record<string, Tone> = {
   DRAFT: 'neutral',
 };
 
-export function Requests({ openForm }: { openForm?: AbsenceKind | null }) {
+export function Requests({
+  openForm,
+  fullName,
+}: {
+  openForm?: AbsenceKind | null;
+  /** На кого оформляется заявка. Человек должен это видеть. */
+  fullName: string;
+}) {
   const [options, setOptions] = useState<AbsenceOptions | null>(null);
   const [requests, setRequests] = useState<AbsenceRequest[] | null>(null);
   const [balance, setBalance] = useState<number | null>(null);
@@ -196,6 +231,7 @@ export function Requests({ openForm }: { openForm?: AbsenceKind | null }) {
         kind={form}
         options={options}
         balance={balance}
+        fullName={fullName}
         onClose={() => setForm(null)}
         onCreated={() => {
           setForm(null);
@@ -334,17 +370,25 @@ export function AbsenceForm({
   kind,
   options,
   balance,
+  fullName,
   onClose,
   onCreated,
 }: {
   kind: AbsenceKind | null;
   options: AbsenceOptions | null;
   balance: number | null;
+  fullName: string;
   onClose: () => void;
   onCreated: () => void;
 }) {
+  const sick = kind === 'SICK_LEAVE';
+  // У больничного даты пустые: человек заболел и не знает, когда
+  // выйдет. У отпуска — сегодняшние: его планируют, и пустое поле там
+  // означало бы недозаполненную форму, а не «неизвестно».
   const [first, setFirst] = useState(isoToday());
   const [last, setLast] = useState(isoToday());
+  const [agreed, setAgreed] = useState(false);
+  const [terms, setTerms] = useState(false);
   const [comment, setComment] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
@@ -360,10 +404,12 @@ export function AbsenceForm({
 
   useEffect(() => {
     if (!kind) return;
-    setFirst(isoToday());
-    setLast(isoToday());
+    const start = kind === 'SICK_LEAVE' ? '' : isoToday();
+    setFirst(start);
+    setLast(start);
     setComment('');
     setFile(null);
+    setAgreed(false);
     setError(null);
     setCreated(null);
   }, [kind]);
@@ -384,8 +430,13 @@ export function AbsenceForm({
 
     const form = new FormData();
     form.append('absence_type_code', kind as string);
-    form.append('first_day', first);
-    form.append('last_day', last);
+    // Пустые даты не отправляются вовсе. Пустая строка в
+    // `multipart/form-data` — это значение, и сервер разбирал бы её
+    // как неверную дату вместо «не указано».
+    if (first && last) {
+      form.append('first_day', first);
+      form.append('last_day', last);
+    }
     if (comment.trim()) form.append('comment', comment.trim());
     if (file) form.append('document', file);
 
@@ -410,7 +461,9 @@ export function AbsenceForm({
           <span className="scan-mark">
             <CheckIcon size={34} />
           </span>
-          <p className="scan-title">Заявка отправлена</p>
+          <p className="scan-title">
+            {sick ? 'Заявка создана' : 'Заявка отправлена'}
+          </p>
           <p className="state-text">
             {created.first_day && created.last_day
               ? `${period(created.first_day, created.last_day)} · ${
@@ -419,15 +472,110 @@ export function AbsenceForm({
               : ''}
           </p>
           <p className="state-text">
-            {options?.policy.require_hr_approval === false
-              ? 'Согласование не требуется — заявка уже в силе.'
-              : 'Отдел кадров рассмотрит её и пришлёт решение в этот чат.'}
+            {sick
+              ? 'В Telegram придёт заявление по шаблону. Распечатайте его, подпишите и отправьте на почту HR.'
+              : options?.policy.require_hr_approval === false
+                ? 'Согласование не требуется — заявка уже в силе.'
+                : 'Отдел кадров рассмотрит её и пришлёт решение в этот чат.'}
           </p>
           <PrimaryButton onClick={onCreated} wide>
             Готово
           </PrimaryButton>
         </div>
       </BottomSheet>
+    );
+  }
+
+  if (sick) {
+    /*
+     * Больничный. Отдельная ветка, а не флаги в общей форме: правила
+     * различаются в каждом поле — даты, справка, согласие, — и общая
+     * форма превратилась бы в пять ветвлений подряд, где каждое надо
+     * читать, чтобы понять любое.
+     */
+    return (
+      <>
+        <BottomSheet open title={title} onClose={onClose}>
+          <div className="sick-form">
+            <OnBehalfRow fullName={fullName} />
+
+            <OptionalDateRange
+              first={first}
+              last={last}
+              onFirst={setFirst}
+              onLast={setLast}
+              disabled={busy}
+              {...(first && last && last < first
+                ? { error: 'Конец периода раньше начала' }
+                : {})}
+            />
+
+            <div className="sick-block">
+              <OptionalLabel label="Комментарий" htmlFor="sick-comment" />
+              <textarea
+                id="sick-comment"
+                className="sick-area"
+                value={comment}
+                placeholder="Напишите, если есть важная информация"
+                onChange={(event) => setComment(event.target.value)}
+                maxLength={2000}
+                disabled={busy}
+              />
+              <p className="sick-note">Диагноз указывать не нужно.</p>
+            </div>
+
+            <CertificateRow
+              file={file}
+              onFile={setFile}
+              {...(options?.policy.allowed_document_types
+                ? { allowedTypes: options.policy.allowed_document_types }
+                : {})}
+              {...(options?.policy.max_document_bytes
+                ? { maxBytes: options.policy.max_document_bytes }
+                : {})}
+              disabled={busy}
+            />
+
+            <AfterSubmitNote icon={<SendIcon size={22} />} title="После отправки">
+              В Telegram придёт готовый шаблон заявления. Распечатайте его,
+              подпишите и отправьте на электронную почту HR.
+            </AfterSubmitNote>
+
+            {error && (
+              <p className="field-error" role="alert">
+                {error}
+              </p>
+            )}
+          </div>
+
+          {/* Согласие и кнопка прижаты к низу: до них дотягиваются
+              большим пальцем, а список полей над ними прокручивается. */}
+          <div className="sick-footer">
+            <TermsCheckbox
+              checked={agreed}
+              onChange={setAgreed}
+              onTerms={() => setTerms(true)}
+              disabled={busy}
+            />
+            <PrimaryButton
+              onClick={() => void send()}
+              disabled={busy || !agreed || (Boolean(first && last) && last < first)}
+              wide
+            >
+              {busy ? 'Создаём…' : 'Создать заявку'}
+            </PrimaryButton>
+          </div>
+        </BottomSheet>
+
+        <ConfirmationDialog
+          open={terms}
+          title="Условия оформления больничного"
+          description={TERMS_TEXT}
+          confirmLabel="Понятно"
+          onConfirm={() => setTerms(false)}
+          onCancel={() => setTerms(false)}
+        />
+      </>
     );
   }
 
@@ -448,15 +596,7 @@ export function AbsenceForm({
           }
         />
 
-        <Field
-          label="Комментарий"
-          htmlFor="absence-comment"
-          hint={
-            kind === 'SICK_LEAVE'
-              ? 'Диагноз указывать не нужно.'
-              : 'Необязательно.'
-          }
-        >
+        <Field label="Комментарий" htmlFor="absence-comment" hint="Необязательно.">
           <textarea
             id="absence-comment"
             value={comment}
@@ -466,7 +606,7 @@ export function AbsenceForm({
           />
         </Field>
 
-        {(documentRequired || kind === 'SICK_LEAVE') && (
+        {documentRequired && (
           <FileUploadField
             file={file}
             onFile={setFile}

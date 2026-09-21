@@ -382,6 +382,12 @@ function Details({ item, onClose, onDone }: {
   const [docSending, setDocSending] = useState<'accept' | 'reject' | null>(null);
   const [docFailed, setDocFailed] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  // Фактические даты по справке. Пустая строка — поле не трогали.
+  const [realFirst, setRealFirst] = useState('');
+  const [realLast, setRealLast] = useState('');
+  const [periodBusy, setPeriodBusy] = useState(false);
+  const [periodFailed, setPeriodFailed] = useState<string | null>(null);
+  const [paperBusy, setPaperBusy] = useState(false);
 
   const person = personOf(item);
   const state = statusOf(item);
@@ -415,6 +421,39 @@ function Details({ item, onClose, onDone }: {
       setDocFailed(messageFor(error));
     } finally {
       setDocSending(null);
+    }
+  }
+
+  async function saveRealPeriod() {
+    if (periodBusy || !realFirst || !realLast) return;
+    if (realLast < realFirst) {
+      setPeriodFailed('Конец периода раньше начала.');
+      return;
+    }
+    setPeriodBusy(true);
+    setPeriodFailed(null);
+    try {
+      await api.setAbsencePeriod(item.id, {
+        first_day: realFirst, last_day: realLast,
+      });
+      onDone();
+    } catch (error) {
+      setPeriodFailed(messageFor(error));
+    } finally {
+      setPeriodBusy(false);
+    }
+  }
+
+  async function togglePaper(received: boolean) {
+    if (paperBusy) return;
+    setPaperBusy(true);
+    try {
+      await api.markApplicationReceived(item.id, received);
+      onDone();
+    } catch (error) {
+      setFailed(messageFor(error));
+    } finally {
+      setPaperBusy(false);
     }
   }
 
@@ -475,6 +514,83 @@ function Details({ item, onClose, onDone }: {
           <section className="rq-block">
             <h3><AppIcon name="doc" size={20} />{item.kind === 'absence' ? 'Причина' : 'Причина исправления'}</h3>
             <p className="rq-block__text">{reason}</p>
+          </section>
+        )}
+
+        {/*
+          * Два пункта проверки — раньше документа и решения: пока хоть
+          * один не закрыт, одобрять нечего. Пункты независимы намеренно:
+          * подписанное заявление подтверждает намерение человека,
+          * справка — факт болезни, и приходят они разными дорогами.
+          */}
+        {item.kind === 'absence' && open && (
+          <section className="rq-block">
+            <h3><AppIcon name="check" size={20} />Что проверить</h3>
+            <ul className="rq-checks">
+              <li className={absence?.application_received_at ? 'is-done' : ''}>
+                <span>
+                  <b>Подписанное заявление</b>
+                  <small>
+                    {absence?.application_received_at
+                      ? `Получено ${dateTime(absence.application_received_at)}`
+                      : 'Ждём письмо на почту HR'}
+                  </small>
+                </span>
+                <button type="button" className="btn" disabled={paperBusy}
+                        onClick={() => void togglePaper(!absence?.application_received_at)}>
+                  {absence?.application_received_at ? 'Снять отметку' : 'Получено'}
+                </button>
+              </li>
+              <li className={document?.verification_status === 'VERIFIED' ? 'is-done' : ''}>
+                <span>
+                  <b>Справка</b>
+                  <small>
+                    {document
+                      ? docTitle(document.verification_status)
+                      : 'Сотрудник ещё не приложил'}
+                  </small>
+                </span>
+              </li>
+            </ul>
+          </section>
+        )}
+
+        {/*
+          * Фактические даты. Ради них даты в заявке и необязательны:
+          * человек подал её, не зная, когда выйдет, а в справке стоит
+          * точный период. До решения его правит кадровик.
+          */}
+        {item.kind === 'absence' && open && (
+          <section className="rq-block">
+            <h3><AppIcon name="calendar" size={20} />Фактический период</h3>
+            <p className="rq-block__text">
+              {period.long === '—'
+                ? 'Сотрудник не указал даты. Перенесите период из справки.'
+                : 'Если в справке другой период, исправьте его здесь.'}
+            </p>
+            <div className="rq-period">
+              <label>
+                <span>С какого дня</span>
+                <input type="date" className="input" value={realFirst}
+                       onChange={(event) => setRealFirst(event.target.value)} />
+              </label>
+              <label>
+                <span>По какой день</span>
+                <input type="date" className="input" value={realLast}
+                       min={realFirst || undefined}
+                       onChange={(event) => setRealLast(event.target.value)} />
+              </label>
+              <button type="button" className="btn btn--primary"
+                      disabled={periodBusy || !realFirst || !realLast}
+                      onClick={() => void saveRealPeriod()}>
+                {periodBusy ? 'Сохраняем…' : 'Сохранить'}
+              </button>
+            </div>
+            {periodFailed && (
+              <p className="rq-block__text rq-block__text--warn" role="alert">
+                {periodFailed}
+              </p>
+            )}
           </section>
         )}
 

@@ -24,7 +24,9 @@ from typing import Protocol
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError
+from aiogram.types import BufferedInputFile
 
+from src.api.errors import ApiError
 from src.config.settings import settings
 from src.notifications.buttons import markup_for
 
@@ -48,23 +50,47 @@ class Sender(Protocol):
     async def deliver(
         self, *, chat_id: int, text: str, notification_type: str,
         entity_id: str | None = None,
+        attachment: str | None = None,
+        telegram_user_id: int | None = None,
     ) -> Outcome: ...
 
 
 class TelegramSender:
-    """Настоящая доставка. Единственное место, где бот пишет в чат."""
+    """Настоящая доставка. Единственное место, где бот пишет в чат.
 
-    def __init__(self, bot: Bot) -> None:
+    `client` нужен ради вложений: заявление на больничный приходит
+    человеку файлом, а файл собирается из заявки на каждое обращение и
+    в очереди не лежит. Без клиента отправщик остаётся прежним и шлёт
+    только текст.
+    """
+
+    def __init__(self, bot: Bot, client=None) -> None:
         self._bot = bot
+        self._client = client
 
     async def deliver(
         self, *, chat_id: int, text: str, notification_type: str,
         entity_id: str | None = None,
+        attachment: str | None = None,
+        telegram_user_id: int | None = None,
     ) -> Outcome:
         # Тип теперь важен: по нему под сообщением появляется кнопка.
         # Какая именно — решает `buttons.py`, а не это место.
         markup = markup_for(notification_type, entity_id)
         try:
+            document = await self._fetch(attachment, entity_id, telegram_user_id)
+            if document is not None:
+                content, name = document
+                # Текст уходит подписью к файлу, а не отдельным
+                # сообщением: два сообщения подряд про одно и то же
+                # человек читает как два разных события.
+                await self._bot.send_document(
+                    chat_id,
+                    BufferedInputFile(content, filename=name),
+                    caption=text,
+                    reply_markup=markup,
+                )
+                return Outcome(sent=True)
             await self._bot.send_message(chat_id, text, reply_markup=markup)
             return Outcome(sent=True)
         except TelegramForbiddenError:
@@ -76,6 +102,28 @@ class TelegramSender:
             # содержать эхо запроса, то есть само уведомление.
             logger.info("send failed: %s", type(error).__name__)
             return Outcome(sent=False, error=type(error).__name__)
+
+    async def _fetch(
+        self, attachment: str | None, entity_id: str | None,
+        telegram_user_id: int | None,
+    ) -> tuple[bytes, str] | None:
+        """Вложение, если оно полагается и его удалось получить.
+
+        Неудача здесь НЕ проваливает доставку: человеку важнее узнать,
+        что заявка создана, чем не узнать ничего из-за недоступной
+        бумаги. Заявление он в любом случае откроет из кабинета.
+        """
+        if attachment != "absence_application":
+            return None
+        if self._client is None or entity_id is None or telegram_user_id is None:
+            return None
+        try:
+            return await self._client.absence_application(
+                telegram_user_id, entity_id
+            )
+        except ApiError as error:
+            logger.info("application not attached: %s", error.code)
+            return None
 
 
 class StubSender:
@@ -92,9 +140,12 @@ class StubSender:
     async def deliver(
         self, *, chat_id: int, text: str, notification_type: str,
         entity_id: str | None = None,
+        attachment: str | None = None,
+        telegram_user_id: int | None = None,
     ) -> Outcome:
         del text  # содержимое проверочного сообщения в журнал не идёт
         del entity_id  # заглушка кнопок не рисует
+        del attachment, telegram_user_id  # и файлов никуда не носит
         if any(notification_type.startswith(part) for part in self._fail):
             logger.info("STUB FAIL chat=%s type=%s", chat_id, notification_type)
             return Outcome(sent=False, error="stub_forced_failure")

@@ -619,6 +619,14 @@ export type AbsenceRow = AbsenceRequestRow & {
   kind?: string;
   documents: DocumentRow[];
   requires_document: boolean;
+  /**
+   * Подписанное заявление дошло по почте.
+   *
+   * Второй, независимый от справки пункт проверки: бумага подтверждает
+   * намерение человека, справка — факт болезни, и приходят они разными
+   * дорогами.
+   */
+  application_received_at?: string | null;
   /** Что написал сам сотрудник. Диагноза здесь быть не должно. */
   comment: string | null;
   review_comment: string | null;
@@ -707,6 +715,32 @@ export const decideAbsenceDocument = (
   request<{ id: string; verification_status: string; verification_comment: string | null }>(
     `/absence-requests/${requestId}/documents/${documentId}/${decision}`,
     { method: 'POST', body: comment ? { comment } : {} },
+  );
+
+/**
+ * Фактические даты больничного по справке.
+ *
+ * Ради этого даты в заявке и необязательны: человек подал её, не зная,
+ * когда выйдет, а в справке стоит точный период. Правится только до
+ * решения — у подтверждённой заявки период уже стал строкой табеля.
+ */
+export const setAbsencePeriod = (
+  id: string,
+  body: { first_day: string; last_day: string; comment?: string },
+) =>
+  request<unknown>(`/absence-requests/${id}/period`, { method: 'POST', body });
+
+/**
+ * Подписанное заявление дошло по почте.
+ *
+ * Второй, независимый от справки пункт проверки: бумага подтверждает
+ * намерение человека, справка — факт болезни, и приходят они разными
+ * дорогами.
+ */
+export const markApplicationReceived = (id: string, received = true) =>
+  request<unknown>(
+    `/absence-requests/${id}/application-received?received=${received}`,
+    { method: 'POST' },
   );
 
 /** Решение по заявке на отсутствие. `decision` — часть адреса, как у backend. */

@@ -35,6 +35,16 @@ LINK_REJECTED = (
 # --- больничный ------------------------------------------------------------
 
 SICK_CREATED = "Заявка на больничный с {first} по {last} отправлена."
+#: Больничный, поданный без дат. Отдельный текст, а не общий с прочерками:
+#: «с — по —» выглядит как потерянные данные, хотя человек их и не
+#: указывал. Заодно сообщение объясняет, что делать с заявлением,
+#: которое придёт следом файлом.
+SICK_CREATED_NO_DATES = (
+    "Заявка на больничный создана. Мы подготовили заявление по шаблону. "
+    "Распечатайте документ, подпишите его и отправьте на электронную "
+    "почту HR. Справку можно приложить в карточке заявки, если вы ещё "
+    "не сделали этого."
+)
 SICK_APPROVED = "Больничный с {first} по {last} подтверждён."
 SICK_REJECTED = "Заявка на больничный с {first} по {last} отклонена."
 SICK_DOCUMENT_REQUESTED = (
@@ -100,6 +110,8 @@ def human_date(value: date | None) -> str:
 
 def for_request(absence_type_code: str, event: str, first, last) -> str:
     """Текст про заявку. Незнакомый вид — нейтральная формулировка."""
+    if absence_type_code == "SICK_LEAVE" and event == "created" and not first:
+        return SICK_CREATED_NO_DATES
     templates = _BY_TYPE.get(absence_type_code) or {
         "created": NEUTRAL_CREATED,
         "approved": NEUTRAL_APPROVED,

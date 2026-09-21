@@ -92,9 +92,11 @@ class Application:
     office: str | None
     absence_name: str
     absence_code: str
-    first_day: date
-    last_day: date
-    days: int
+    #: Период. `None` — человек подал заявление, не зная дат: он
+    #: впишет их от руки, когда получит выписку.
+    first_day: date | None
+    last_day: date | None
+    days: int | None
     comment: str | None
     #: Номер заявки для ссылки в кадровом деле.
     number: str
@@ -209,19 +211,34 @@ def _header_lines(application: Application) -> list[str]:
     return lines
 
 
+#: Место под дату, которую впишут от руки. Подчёркивание, а не пропуск:
+#: пустое место в бумаге читается как забытое поле, а линия — как то,
+#: что заполняют ручкой.
+BLANK_DATE = "«____» ______________ 20___ г."
+
+
 def _body_lines(application: Application) -> list[str]:
-    same_day = application.first_day == application.last_day
-    when = (
-        f"{human_date(application.first_day)}"
-        if same_day
-        else f"с {human_date(application.first_day)} "
-             f"по {human_date(application.last_day)}"
-    )
+    known = application.first_day is not None and application.last_day is not None
+    if known:
+        same_day = application.first_day == application.last_day
+        when = (
+            f"{human_date(application.first_day)}"
+            if same_day
+            else f"с {human_date(application.first_day)} "
+                 f"по {human_date(application.last_day)}"
+        )
+        how_long = f" ({plural_days(application.days)})"
+    else:
+        # Даты вписывают от руки. Заявление всё равно нужно сейчас:
+        # его несут в отдел кадров вместе со справкой, а справку
+        # выдают в день выписки.
+        when = f"с {BLANK_DATE} по {BLANK_DATE}"
+        how_long = ""
 
     if application.absence_code == "SICK_LEAVE":
         first = (
-            f"Прошу считать период {when} "
-            f"({plural_days(application.days)}) периодом временной "
+            f"Прошу считать период {when}"
+            f"{how_long} периодом временной "
             "нетрудоспособности."
         )
         second = (
@@ -231,7 +248,7 @@ def _body_lines(application: Application) -> list[str]:
     else:
         first = (
             f"Прошу предоставить мне {application.absence_name.lower()} "
-            f"{when} ({plural_days(application.days)})."
+            f"{when}{how_long}."
         )
         second = ""
 

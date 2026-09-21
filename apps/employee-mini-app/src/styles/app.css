@@ -1783,3 +1783,319 @@ button.note-card {
   color: var(--success, #15803d);
   font-size: 26px;
 }
+
+/* --- больничный ------------------------------------------------------------
+ *
+ * Своя форма, а не общая с отпуском: у больничного другие правила в
+ * каждом поле — даты необязательны, справка одной строкой, согласие
+ * перед отправкой. Оформление при этом общее: те же токены, тот же
+ * белый лист под тёмно-синей шапкой, никаких цветных плашек.
+ *
+ * Содержимое прокручивается, согласие и кнопка прижаты к низу: до них
+ * дотягиваются большим пальцем, и они не уезжают за экран на коротком
+ * телефоне.
+ */
+
+.sick-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.sick-behalf {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--text-body);
+  color: var(--text-muted);
+}
+
+.sick-behalf svg {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+
+.sick-behalf b {
+  color: var(--text);
+  font-weight: var(--weight-medium);
+}
+
+/* --- даты ------------------------------------------------------------------ */
+
+.sick-dates {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* Две колонки, но с нижней границей: на узком экране поля ломались бы
+   пополам вместе с иконкой и подписью. */
+.sick-dates-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-3);
+}
+
+.sick-date {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.sick-date > label {
+  font-size: var(--text-small);
+  color: var(--text-muted);
+}
+
+.sick-date-box {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 0 var(--space-3);
+  height: 48px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+}
+
+.sick-date-box:focus-within {
+  border-color: var(--accent);
+}
+
+.sick-date-box svg {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+
+.sick-date-box input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  padding: 0;
+  background: none;
+  font: inherit;
+  font-size: var(--text-body);
+  color: var(--text);
+}
+
+.sick-date-box input:focus {
+  outline: none;
+}
+
+.sick-date-box input::placeholder {
+  color: var(--text-faint);
+}
+
+.sick-date-clear {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.sick-note {
+  margin: 0;
+  font-size: var(--text-small);
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+/* --- блоки с пометкой «Необязательно» -------------------------------------- */
+
+.sick-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.sick-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.sick-label > label,
+.sick-label > span:first-child {
+  font-size: var(--text-section);
+  font-weight: var(--weight-strong);
+  color: var(--text);
+}
+
+.sick-label > span:last-child {
+  font-size: var(--text-small);
+  color: var(--text-muted);
+}
+
+.sick-area {
+  min-height: 112px;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  font: inherit;
+  font-size: var(--text-body);
+  color: var(--text);
+  resize: vertical;
+}
+
+.sick-area:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.sick-area::placeholder {
+  color: var(--text-faint);
+}
+
+/* --- справка --------------------------------------------------------------- */
+
+/* Одна строка вместо трёх кнопок: системный выбор файла и так
+   предлагает камеру, галерею и документы. */
+.sick-attach {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 52px;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  font-size: var(--text-body);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.sick-attach svg {
+  color: var(--text-muted);
+}
+
+.sick-attach input {
+  display: none;
+}
+
+.sick-file {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+}
+
+.sick-file svg {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
+.sick-file-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.sick-file-name {
+  font-size: var(--text-body);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sick-file-size {
+  font-size: var(--text-small);
+  color: var(--text-muted);
+}
+
+.sick-file-clear {
+  flex: 0 0 auto;
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: var(--text-small);
+  color: var(--danger);
+  cursor: pointer;
+}
+
+/* --- что будет после отправки ---------------------------------------------- */
+
+.sick-after {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+.sick-after-mark {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
+.sick-after-title {
+  margin: 0 0 2px;
+  font-size: var(--text-body);
+  font-weight: var(--weight-strong);
+  color: var(--text);
+}
+
+.sick-after-text {
+  margin: 0;
+  font-size: var(--text-small);
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* --- согласие и кнопка ------------------------------------------------------ */
+
+.sick-footer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.sick-terms {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.sick-terms input {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  accent-color: var(--navy);
+}
+
+.sick-terms label {
+  font-size: var(--text-small);
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.sick-terms-link {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+}

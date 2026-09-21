@@ -24,11 +24,16 @@ from humotech.selfservice.views import EmployeeSelfView
 
 
 class AbsenceCreateSerializer(serializers.Serializer):
-    """Заявка. `employee_id` здесь нет и быть не может."""
+    """Заявка. `employee_id` здесь нет и быть не может.
+
+    Даты необязательны: заболевший не знает, когда выйдет, и требовать
+    от него число значит получить выдуманное. Что делать с пустым
+    периодом, решает сервис — у отпуска он его не примет.
+    """
 
     absence_type_code = serializers.CharField(max_length=50)
-    first_day = serializers.DateField()
-    last_day = serializers.DateField()
+    first_day = serializers.DateField(required=False, allow_null=True)
+    last_day = serializers.DateField(required=False, allow_null=True)
     comment = serializers.CharField(
         max_length=2000, required=False, allow_blank=True
     )
@@ -237,8 +242,8 @@ class AbsenceListView(EmployeeSelfView):
         view = AbsenceService().create(
             self.context,
             absence_type_code=data["absence_type_code"],
-            first_day=data["first_day"],
-            last_day=data["last_day"],
+            first_day=data.get("first_day"),
+            last_day=data.get("last_day"),
             comment=data.get("comment") or None,
             # Справка приходит тем же запросом, если организация её требует.
             document=request.FILES.get("document"),

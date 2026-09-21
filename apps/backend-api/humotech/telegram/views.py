@@ -166,6 +166,17 @@ class OutboxMessageSerializer(serializers.Serializer):
             "кнопку — например, открывает нужный опрос в Mini App"
         ),
     )
+    attachment = serializers.CharField(
+        allow_null=True, required=False,
+        help_text=(
+            "Что приложить к сообщению. Сам файл в очередь не кладётся: "
+            "бот скачивает его тем же запросом, что и человек из кабинета"
+        ),
+    )
+    telegram_user_id = serializers.IntegerField(
+        allow_null=True, required=False,
+        help_text="От чьего имени бот запросит вложение",
+    )
 
 
 class OutboxBatchSerializer(serializers.Serializer):
@@ -485,6 +496,11 @@ class BotOutboxView(APIView):
                         # по нему кнопку: без этого он знает, что опрос
                         # пришёл, но не знает какой.
                         "entity_id": item.related_entity_id,
+                        # Что приложить к сообщению и от чьего имени это
+                        # скачать. Сам файл в очередь не кладётся: он
+                        # собирается из заявки на каждое обращение.
+                        "attachment": item.attachment,
+                        "telegram_user_id": item.telegram_user_id,
                     }
                     for item in batch
                 ],

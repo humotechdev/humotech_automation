@@ -61,6 +61,13 @@ class HrAbsenceRequestSerializer(serializers.Serializer):
         allow_null=True, help_text="Заявка на продление ссылается на исходную",
     )
     absence_type = AbsenceTypeBriefSerializer()
+    application_received_at = serializers.DateTimeField(
+        allow_null=True, required=False,
+        help_text=(
+            "Подписанное заявление пришло по почте. Второй, независимый "
+            "от справки пункт проверки"
+        ),
+    )
     status = serializers.CharField()
     first_day = serializers.DateField(allow_null=True)
     last_day = serializers.DateField(allow_null=True)
@@ -116,6 +123,13 @@ def hr_request_json(request) -> dict:
         "last_day": (
             request.requested_end_at.date().isoformat()
             if request.requested_end_at else None
+        ),
+        # Подписанное заявление пришло по почте. Второй, независимый от
+        # справки пункт: бумага подтверждает намерение человека, справка
+        # — факт болезни, и приходят они разными дорогами.
+        "application_received_at": (
+            request.application_received_at.isoformat()
+            if request.application_received_at else None
         ),
         # Документы отдельно от самой заявки: «справка загружена» и
         # «справка проверена» — разные состояния, и слить их значило бы
@@ -242,6 +256,87 @@ class AbsenceDecisionView(APIView):
         return Response(hr_request_json(row))
 
 
+class PeriodSerializer(serializers.Serializer):
+    """Фактические даты по справке."""
+
+    first_day = serializers.DateField()
+    last_day = serializers.DateField()
+    comment = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True, max_length=1000
+    )
+
+
+@extend_schema(tags=["Отсутствия"])
+class AbsencePeriodView(APIView):
+    """Проставить фактические даты больничного по справке.
+
+    Ради этого даты в заявке и сделаны необязательными: человек подал
+    её, не зная, когда выйдет, а в справке стоит точный период.
+    Кадровик переносит его в заявку — и только после этого её можно
+    подтвердить.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        operation_id="absence_request_set_period",
+        summary="Фактические даты по справке",
+        parameters=[
+            OpenApiParameter(
+                "request_id", OpenApiTypes.UUID, location=OpenApiParameter.PATH
+            ),
+        ],
+        request=PeriodSerializer,
+        responses={200: HrAbsenceRequestSerializer},
+    )
+    def post(self, request, request_id):
+        data = validated(PeriodSerializer, request.data)
+        row = AbsenceService().set_period(
+            Actor.from_user(request.user),
+            request_id,
+            first_day=data["first_day"],
+            last_day=data["last_day"],
+            comment=data.get("comment") or None,
+        )
+        return Response(hr_request_json(row))
+
+
+@extend_schema(tags=["Отсутствия"])
+class AbsenceApplicationReceivedView(APIView):
+    """Отметить, что подписанное заявление дошло по почте.
+
+    Отдельно от решения по справке: два независимых пункта проверки, и
+    одна отметка на оба означала бы, что половину работы кадровик
+    подтверждает не глядя.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        operation_id="absence_request_application_received",
+        summary="Заявление получено",
+        parameters=[
+            OpenApiParameter(
+                "request_id", OpenApiTypes.UUID, location=OpenApiParameter.PATH
+            ),
+            OpenApiParameter(
+                "received", OpenApiTypes.BOOL,
+                description="false — снять отметку, поставленную по ошибке",
+            ),
+        ],
+        request=None,
+        responses={200: HrAbsenceRequestSerializer},
+    )
+    def post(self, request, request_id):
+        received = str(request.query_params.get("received", "true")).lower()
+        row = AbsenceService().mark_application_received(
+            Actor.from_user(request.user),
+            request_id,
+            received=received not in ("false", "0"),
+        )
+        return Response(hr_request_json(row))
+
+
 @extend_schema(tags=["Отсутствия"])
 class AbsenceDocumentDownloadView(APIView):
     """Файл справки к заявке.
@@ -356,8 +451,10 @@ class AbsenceApplicationView(APIView):
 
 __all__ = [
     "AbsenceApplicationView",
+    "AbsenceApplicationReceivedView",
     "AbsenceDocumentDecisionView",
     "AbsenceDecisionView",
+    "AbsencePeriodView",
     "AbsenceDocumentDownloadView",
     "PendingAbsenceRequestsView",
 ]

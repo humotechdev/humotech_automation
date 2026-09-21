@@ -113,7 +113,9 @@ async def main() -> None:
     await ensure_menu_button(bot)
     logger.info("bot @%s started, api=%s", me.username, settings.backend_api_url)
 
-    worker = asyncio.create_task(run_worker(TelegramSender(bot), client))
+    # Клиент отдаётся отправщику: заявление на больничный приходит
+    # человеку файлом, а файл собирается из заявки на каждое обращение.
+    worker = asyncio.create_task(run_worker(TelegramSender(bot, client), client))
     try:
         await dispatcher.start_polling(bot)
     finally:

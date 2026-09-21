@@ -135,6 +135,114 @@ def test_sick_leave_request_waits_for_hr(service, context, sick_leave):
     ).exists()
 
 
+# --- больничный без дат ----------------------------------------------------
+#
+# Человек заболел в пятницу вечером и не знает, выйдет ли он во вторник
+# или в четверг. Требовать от него число — значит получить выдуманное,
+# которое потом всё равно исправят по справке.
+
+
+def test_sick_leave_is_created_without_dates(service, context, sick_leave):
+    view = service.create(context, absence_type_code="SICK_LEAVE")
+
+    assert view.request.status == "SUBMITTED"
+    assert view.request.requested_start_at is None
+    assert view.request.requested_end_at is None
+    assert view.working_days == 0
+
+
+def test_half_a_period_is_refused(service, context, sick_leave):
+    """Одна дата из двух — недописанная форма, а не «неизвестно»."""
+    with pytest.raises(ValidationFailed) as failure:
+        service.create(
+            context, absence_type_code="SICK_LEAVE", first_day=soon(0)
+        )
+
+    assert failure.value.details["reason"] == "half_period"
+
+
+def test_leave_still_needs_its_dates(service, context, annual_leave, balance):
+    """У отпуска даты обязательны: из них считается остаток."""
+    with pytest.raises(ValidationFailed) as failure:
+        service.create(context, absence_type_code="ANNUAL_LEAVE")
+
+    assert failure.value.details["reason"] == "period_required"
+
+
+def test_dateless_request_waits_for_hr_even_without_approval(
+    service, context, sick_leave, organization
+):
+    """Отсутствие — это период в табеле, и «примерно» его не записать.
+
+    Организация могла отключить согласование, но заявка без дат всё
+    равно ждёт кадровика: ему нужно перенести период из справки.
+    """
+    save_policy(organization.id, {"require_hr_approval": False})
+
+    view = service.create(context, absence_type_code="SICK_LEAVE")
+
+    assert view.request.status == "SUBMITTED"
+    assert not EmployeeAbsence.objects.filter(
+        origin_request=view.request
+    ).exists()
+
+
+def test_hr_sets_the_real_period_from_the_certificate(
+    service, context, sick_leave, hr
+):
+    view = service.create(context, absence_type_code="SICK_LEAVE")
+
+    service.set_period(
+        hr, view.request.id, first_day=soon(-3), last_day=soon(1),
+    )
+
+    row = AbsenceRequest.objects.get(id=view.request.id)
+    # Период хранится моментами и сравнивается в поясе офиса: в UTC
+    # начало суток Душанбе приходится на предыдущий день, и сравнение
+    # «как есть» поймало бы разницу поясов, а не ошибку в коде.
+    tz = context.timezone
+    assert row.requested_start_at.astimezone(tz).date() == soon(-3)
+    assert row.requested_end_at.astimezone(tz).date() == soon(1)
+    # В истории заявки видно, что период взят из документа, а не со слов.
+    assert row.actions.filter(action="PERIOD_SET").exists()
+
+
+def test_period_is_not_editable_after_the_decision(
+    service, context, sick_leave, hr
+):
+    """У подтверждённой заявки период уже стал строкой табеля."""
+    view = service.create(
+        context, absence_type_code="SICK_LEAVE",
+        first_day=soon(0), last_day=soon(2),
+    )
+    service.decide(hr, view.request.id, approve=True)
+
+    with pytest.raises(Conflict):
+        service.set_period(
+            hr, view.request.id, first_day=soon(0), last_day=soon(5),
+        )
+
+
+def test_application_and_certificate_are_two_separate_marks(
+    service, context, sick_leave, hr
+):
+    """Бумага подтверждает намерение, справка — факт болезни.
+
+    Одна отметка на оба пункта означала бы, что половину работы
+    кадровик подтверждает не глядя.
+    """
+    view = service.create(context, absence_type_code="SICK_LEAVE")
+    assert view.request.application_received_at is None
+
+    row = service.mark_application_received(hr, view.request.id)
+    assert row.application_received_at is not None
+    # Справки при этом по-прежнему нет.
+    assert row.documents.count() == 0
+
+    back = service.mark_application_received(hr, view.request.id, received=False)
+    assert back.application_received_at is None
+
+
 def test_pending_request_does_not_count_as_absence(service, context, sick_leave):
     """Неподтверждённая заявка не должна попадать в статистику."""
     service.create(

@@ -1776,3 +1776,84 @@
   width: 100%;
   resize: vertical;
 }
+
+/* --- два пункта проверки больничного ----------------------------------------
+ *
+ * Список, а не пара плашек: кадровик смотрит на него как на чек-лист —
+ * что закрыто, что нет. Пункты независимы намеренно: подписанное
+ * заявление подтверждает намерение человека, справка — факт болезни,
+ * и приходят они разными дорогами.
+ */
+
+.rq-checks {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rq-checks li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--rq-line);
+  border-radius: 10px;
+}
+
+/* Закрытый пункт — зелёная полоса слева, а не зелёная заливка: строка
+   должна оставаться читаемой, а не превращаться в плашку. */
+.rq-checks li.is-done {
+  border-left: 3px solid var(--rq-green);
+}
+
+.rq-checks li span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.rq-checks li b {
+  font-size: 14px;
+  color: var(--rq-ink);
+}
+
+.rq-checks li small {
+  font-size: 12px;
+  color: var(--rq-muted);
+}
+
+.rq-checks li.is-done small {
+  color: var(--rq-green);
+}
+
+/* --- фактический период ------------------------------------------------------ */
+
+.rq-period {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.rq-period label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 140px;
+  min-width: 0;
+}
+
+.rq-period label span {
+  font-size: 12px;
+  color: var(--rq-muted);
+}
+
+.rq-period .input {
+  width: 100%;
+}

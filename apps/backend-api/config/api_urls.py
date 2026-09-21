@@ -39,7 +39,9 @@ from humotech.departments.views import DepartmentViewSet, PositionViewSet
 from humotech.employees.views import EmployeeViewSet
 from humotech.absences.type_views import AbsenceTypeViewSet
 from humotech.absences.views import (
+    AbsenceApplicationReceivedView,
     AbsenceApplicationView,
+    AbsencePeriodView,
     AbsenceDocumentDecisionView,
     AbsenceDecisionView,
     AbsenceDocumentDownloadView,
@@ -394,6 +396,14 @@ urlpatterns = [
     # «application» разобралось бы как решение по заявке.
     path("absence-requests/<uuid:request_id>/application",
          AbsenceApplicationView.as_view(), name="absence-request-application"),
+    # Оба пункта проверки кадровика. Стоят РАНЬШЕ общего маршрута с
+    # <str:decision>: иначе «period» и «application-received» разобрались
+    # бы как решения по заявке.
+    path("absence-requests/<uuid:request_id>/period",
+         AbsencePeriodView.as_view(), name="absence-request-period"),
+    path("absence-requests/<uuid:request_id>/application-received",
+         AbsenceApplicationReceivedView.as_view(),
+         name="absence-request-application-received"),
     path("absence-requests/<uuid:request_id>/<str:decision>",
          AbsenceDecisionView.as_view(), name="absence-request-decision"),
     path("absence-requests/<uuid:request_id>/documents/<uuid:document_id>/download",

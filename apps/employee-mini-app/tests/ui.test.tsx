@@ -308,6 +308,7 @@ describe('заявки', () => {
     render(
       <AbsenceForm
         kind="ANNUAL_LEAVE"
+        fullName="Иванов Иван"
         options={options}
         balance={14}
         onClose={noop}
@@ -583,6 +584,7 @@ describe('загрузка справки', () => {
     const { container } = render(
       <AbsenceForm
         kind="SICK_LEAVE"
+        fullName="Иванов Иван"
         options={options}
         balance={null}
         onClose={noop}
@@ -592,12 +594,71 @@ describe('загрузка справки', () => {
 
     const comment = screen.getByLabelText(/Комментарий/) as HTMLTextAreaElement;
     fireEvent.change(comment, { target: { value: 'вернусь в среду' } });
-    choose(inputFor(container, 'Сфотографировать'), [
+    // Строка одна: системный выбор файла и так предлагает камеру,
+    // галерею и документы, и три кнопки были ответом на вопрос,
+    // которого человек не задавал.
+    choose(inputFor(container, 'Прикрепить справку'), [
       image('справка.jpg', 4096),
     ]);
 
     expect(comment.value).toBe('вернусь в среду');
     expect(screen.getByText('справка.jpg')).toBeTruthy();
+  });
+
+  it('заявка оформляется на того, кто вошёл', () => {
+    // Имя видно прямо в форме: человек должен понимать, за кого
+    // расписывается, а не узнавать это из письма кадровику.
+    render(
+      <AbsenceForm
+        kind="SICK_LEAVE"
+        fullName="Мурадов Азизбек"
+        options={options}
+        balance={null}
+        onClose={noop}
+        onCreated={noop}
+      />,
+    );
+
+    expect(screen.getByText('Мурадов Азизбек')).toBeTruthy();
+  });
+
+  it('без согласия с условиями заявку не создать', () => {
+    render(
+      <AbsenceForm
+        kind="SICK_LEAVE"
+        fullName="Иванов Иван"
+        options={options}
+        balance={null}
+        onClose={noop}
+        onCreated={noop}
+      />,
+    );
+
+    const submit = screen.getByRole('button', { name: 'Создать заявку' });
+    expect((submit as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.click(screen.getByRole('checkbox'));
+    expect((submit as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('даты у больничного пустые и необязательные', () => {
+    // Человек заболел в пятницу вечером и не знает, выйдет ли во
+    // вторник. Требовать от него число — получить выдуманное.
+    render(
+      <AbsenceForm
+        kind="SICK_LEAVE"
+        fullName="Иванов Иван"
+        options={options}
+        balance={null}
+        onClose={noop}
+        onCreated={noop}
+      />,
+    );
+
+    const first = screen.getByLabelText('С какого дня') as HTMLInputElement;
+    expect(first.value).toBe('');
+    expect(first.placeholder).toBe('Не указано');
+    expect(first.required).toBe(false);
   });
 
   it('у поля есть подпись, связанная с элементом', () => {
@@ -744,11 +805,16 @@ describe('доступность', () => {
 
 // --- вспомогательное --------------------------------------------------------
 
-/** Скрытый input, который откроется по нажатию на подпись. */
+/** Скрытый input, который откроется по нажатию на подпись.
+ *
+ * Классов два: `file-field` — прежние кнопки отпуска, `sick-attach` —
+ * одна строка больничного. Искать по обоим, а не по одному: форм две,
+ * и у каждой свой способ приложить бумагу.
+ */
 function inputFor(container: HTMLElement, label: string): HTMLInputElement {
-  const found = Array.from(container.querySelectorAll('label.file-field')).find(
-    (node) => node.textContent?.includes(label),
-  );
+  const found = Array.from(
+    container.querySelectorAll('label.file-field, label.sick-attach'),
+  ).find((node) => node.textContent?.includes(label));
   if (!found) throw new Error(`нет действия «${label}»`);
   return found.querySelector('input[type="file"]') as HTMLInputElement;
 }

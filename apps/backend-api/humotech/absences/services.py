@@ -196,33 +196,64 @@ class AbsenceService(BaseService):
         context,
         *,
         absence_type_code: str,
-        first_day: date,
-        last_day: date,
+        first_day: date | None = None,
+        last_day: date | None = None,
         comment: str | None = None,
         document=None,
         now: datetime | None = None,
     ) -> RequestView:
-        """Новая заявка на отсутствие — больничный или отпуск."""
+        """Новая заявка на отсутствие — больничный или отпуск.
+
+        **Даты необязательны у того, что не списывает остаток.** Человек
+        заболел в пятницу вечером и не знает, выйдет ли он во вторник
+        или в четверг; требовать от него число — значит получить
+        выдуманное, которое потом всё равно исправят по справке.
+        Фактический период проставляет кадровик, когда справка на руках
+        (`set_period`).
+
+        У отпуска даты обязательны, и это не симметрия ради симметрии:
+        отпуск резервирует дни из остатка, а резерв без периода
+        невозможно ни посчитать, ни снять.
+        """
         moment = now or timezone.now()
         policy = policy_for(context.organization_id)
         absence_type = self._require_type(context, absence_type_code)
 
-        self._check_period(context, first_day, last_day)
-        self._check_backdating(context, first_day, policy, moment)
-        self._check_lead_time(context, absence_type, first_day, policy, moment)
-        self._check_overlap(context, first_day, last_day)
-
-        # Конец ВКЛЮЧЁН: `end_at` читают через `local_date(end_at)`, и
-        # полуинтервал дал бы начало следующих суток — лишний день
-        # в каждом больничном и в каждом отпуске.
-        start_at, end_at = closed_range_bounds(
-            first_day, last_day, context.timezone
-        )
-        working_days = self._working_days(context, first_day, last_day)
-        if absence_type.deducts_leave_balance:
-            self._check_balance(
-                context, absence_type, working_days, policy, start_at
+        # Одна дата из двух — это не «период неизвестен», а недописанная
+        # форма: принять её значило бы сохранить половину ответа и
+        # притвориться, что вопрос закрыт.
+        if (first_day is None) != (last_day is None):
+            raise ValidationFailed(
+                "Укажите обе даты или оставьте оба поля пустыми",
+                details={"reason": "half_period"},
             )
+        if first_day is None and absence_type.deducts_leave_balance:
+            raise ValidationFailed(
+                "Для отпуска нужны даты: из них считается остаток",
+                details={"reason": "period_required"},
+            )
+
+        start_at = end_at = None
+        working_days = 0
+        if first_day is not None and last_day is not None:
+            self._check_period(context, first_day, last_day)
+            self._check_backdating(context, first_day, policy, moment)
+            self._check_lead_time(
+                context, absence_type, first_day, policy, moment
+            )
+            self._check_overlap(context, first_day, last_day)
+
+            # Конец ВКЛЮЧЁН: `end_at` читают через `local_date(end_at)`, и
+            # полуинтервал дал бы начало следующих суток — лишний день
+            # в каждом больничном и в каждом отпуске.
+            start_at, end_at = closed_range_bounds(
+                first_day, last_day, context.timezone
+            )
+            working_days = self._working_days(context, first_day, last_day)
+            if absence_type.deducts_leave_balance:
+                self._check_balance(
+                    context, absence_type, working_days, policy, start_at
+                )
 
         if self._document_needed(policy, working_days) and document is None:
             raise ValidationFailed(
@@ -256,9 +287,13 @@ class AbsenceService(BaseService):
                 # чего не случилось.
                 self._reserve(context, absence_type, working_days, start_at)
 
-            if not policy.require_hr_approval:
+            if not policy.require_hr_approval and start_at is not None:
                 # Организация решила обходиться без согласования: заявка
                 # подтверждается сразу и становится отсутствием.
+                #
+                # Заявка без дат так подтвердиться не может: отсутствие —
+                # это период в табеле, и записать его «примерно» нельзя.
+                # Она ждёт кадровика, который проставит даты по справке.
                 self._approve(context, request, actor=None, comment=None, now=moment)
 
             self._notify(request, "created")
@@ -491,6 +526,115 @@ class AbsenceService(BaseService):
                 actor,
                 action="absence.request.approve" if approve else
                        "absence.request.reject",
+                entity_type=ENTITY_REQUEST,
+                entity_id=request.id,
+                before=before,
+                after=snapshot(request, REQUEST_AUDIT_FIELDS),
+            )
+        request.refresh_from_db()
+        return request
+
+    def set_period(
+        self,
+        actor: Actor,
+        request_id: uuid.UUID,
+        *,
+        first_day: date,
+        last_day: date,
+        comment: str | None = None,
+        now: datetime | None = None,
+    ) -> AbsenceRequest:
+        """Проставить фактические даты больничного по справке.
+
+        Нужно ровно затем, ради чего даты в заявке сделаны
+        необязательными: человек подал её, не зная, когда выйдет, а в
+        справке стоит точный период. Кадровик переносит его в заявку —
+        и только после этого её можно подтвердить.
+
+        Правится ТОЛЬКО нерассмотренная заявка. У подтверждённой период
+        уже превратился в строку табеля, и менять его задним числом —
+        это отмена и новая заявка, а не правка поля.
+        """
+        self.access.require(actor, "absences.approve")
+        moment = now or timezone.now()
+        request = (
+            AbsenceRequest.objects.filter(
+                id=request_id, organization_id=actor.organization_id
+            )
+            .select_related("absence_type", "employee")
+            .first()
+        )
+        if request is None:
+            raise NotFound("Заявка не найдена")
+        if request.status not in OPEN_STATUSES:
+            raise Conflict(
+                "Период правится до решения по заявке",
+                details={"status": request.status},
+            )
+
+        context = _ContextFromRequest(request)
+        self._check_period(context, first_day, last_day)
+        start_at, end_at = closed_range_bounds(
+            first_day, last_day, context.timezone
+        )
+
+        with self.atomic():
+            before = snapshot(request, REQUEST_AUDIT_FIELDS)
+            request.requested_start_at = start_at
+            request.requested_end_at = end_at
+            request.save(
+                update_fields=[
+                    "requested_start_at", "requested_end_at", "updated_at",
+                ]
+            )
+            self._act(
+                context, request, "PERIOD_SET", request.status, request.status,
+                actor=actor, comment=comment,
+            )
+            self.audit.record(
+                actor,
+                action="absence.request.set_period",
+                entity_type=ENTITY_REQUEST,
+                entity_id=request.id,
+                before=before,
+                after=snapshot(request, REQUEST_AUDIT_FIELDS),
+            )
+        request.refresh_from_db()
+        return request
+
+    def mark_application_received(
+        self,
+        actor: Actor,
+        request_id: uuid.UUID,
+        *,
+        received: bool = True,
+        now: datetime | None = None,
+    ) -> AbsenceRequest:
+        """Отметить, что подписанное заявление дошло по почте.
+
+        Второй, независимый от справки пункт проверки. Их намеренно два:
+        подписанная бумага подтверждает намерение человека, справка —
+        факт болезни, и приходят они разными дорогами. Одна отметка на
+        оба означала бы, что половину работы кадровик подтверждает не
+        глядя.
+        """
+        self.access.require(actor, "absences.documents")
+        moment = now or timezone.now()
+        request = AbsenceRequest.objects.filter(
+            id=request_id, organization_id=actor.organization_id
+        ).select_related("absence_type", "employee").first()
+        if request is None:
+            raise NotFound("Заявка не найдена")
+
+        with self.atomic():
+            before = snapshot(request, REQUEST_AUDIT_FIELDS)
+            request.application_received_at = moment if received else None
+            request.save(
+                update_fields=["application_received_at", "updated_at"]
+            )
+            self.audit.record(
+                actor,
+                action="absence.request.application_received",
                 entity_type=ENTITY_REQUEST,
                 entity_id=request.id,
                 before=before,
@@ -1455,8 +1599,18 @@ def _application_of(request, employee, tz) -> Application:
     from humotech.employees.models import EmployeeAssignment
     from humotech.organizations.models import Organization
 
-    first_day = request.requested_start_at.astimezone(tz).date()
-    last_day = request.requested_end_at.astimezone(tz).date()
+    # Дат может не быть вовсе: больничный оформляют, не зная, когда
+    # выйдешь. Бланк при этом нужен сразу — его как раз и несут в отдел
+    # кадров, — поэтому период в нём остаётся пустым местом, которое
+    # заполняют от руки, когда выписка на руках.
+    first_day = (
+        request.requested_start_at.astimezone(tz).date()
+        if request.requested_start_at else None
+    )
+    last_day = (
+        request.requested_end_at.astimezone(tz).date()
+        if request.requested_end_at else None
+    )
     place = (
         EmployeeAssignment.objects.filter(employee_id=employee.id, is_primary=True)
         .select_related("office", "department", "position")
@@ -1481,7 +1635,10 @@ def _application_of(request, employee, tz) -> Application:
         absence_code=request.absence_type.code,
         first_day=first_day,
         last_day=last_day,
-        days=(last_day - first_day).days + 1,
+        days=(
+            (last_day - first_day).days + 1
+            if first_day and last_day else None
+        ),
         comment=request.employee_comment,
         # Восемь знаков идентификатора: достаточно, чтобы найти заявку,
         # и коротко настолько, чтобы переписать с бумаги от руки.

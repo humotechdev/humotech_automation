@@ -66,6 +66,28 @@ class SelfServiceClient:
             "/me/absences", telegram_id, params={"limit": limit}
         )
 
+    async def absence_application(
+        self, telegram_id: int, request_id: str
+    ) -> tuple[bytes, str]:
+        """Заявление по заявке: содержимое PDF и имя файла.
+
+        Тот же адрес, что и у кабинета. Бумага собирается из заявки на
+        каждое обращение, поэтому в очереди её нет и быть не может:
+        сохранённая копия молча разошлась бы с продлённой заявкой.
+        """
+        session = await self._get_session()
+        headers = {
+            BOT_SECRET_HEADER: settings.backend_bot_secret,
+            EMPLOYEE_HEADER: str(telegram_id),
+        }
+        async with session.get(
+            f"{self._base_url}/me/absences/{request_id}/application",
+            headers=headers,
+        ) as response:
+            if response.status >= 400:
+                raise _error(response.status, await self._body(response))
+            return await response.read(), f"zayavlenie-{request_id[:8]}.pdf"
+
     async def leave_balance(self, telegram_id: int) -> dict:
         return await self._get("/me/leave-balance", telegram_id)
 

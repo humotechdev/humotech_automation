@@ -18,6 +18,7 @@
 
 import type { ComponentType, SVGProps } from 'react';
 import {
+  Attachment,
   Bell,
   Building,
   Calendar,
@@ -40,6 +41,7 @@ import {
   Refresh,
   ReportColumns,
   ScanQrCode,
+  SendDiagonal,
   Umbrella,
   User,
   WarningCircle,
@@ -101,6 +103,10 @@ export const ImageIcon = icon(MediaImage);
 export const BellIcon = icon(Bell);
 export const UserIcon = icon(User);
 export const MegaphoneIcon = icon(Megaphone);
+/** Скрепка: приложить справку. */
+export const ClipIcon = icon(Attachment);
+/** Бумажный самолётик: что будет после отправки. */
+export const SendIcon = icon(SendDiagonal);
 export const PencilIcon = icon(EditPencil);
 export const ChatIcon = icon(ChatBubbleEmpty);
 export const RingsIcon = icon(PercentageCircle);

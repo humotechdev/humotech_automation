@@ -87,6 +87,11 @@ async def _deliver(sender: Sender, item: dict) -> dict:
         # полагается кнопка: приглашение на опрос без этого открывало бы
         # «какой-то» опрос.
         entity_id=item.get("entity_id"),
+        # Что приложить к сообщению и от чьего имени это скачать.
+        # Самого файла в очереди нет: он собирается из заявки на
+        # каждое обращение.
+        attachment=item.get("attachment"),
+        telegram_user_id=item.get("telegram_user_id"),
     )
     if outcome.sent:
         return {"id": item["id"], "sent": True}

@@ -192,6 +192,23 @@ class TestByRequest:
 
 # --- через HTTP --------------------------------------------------------------
 
+def test_application_is_ready_before_the_dates_are_known(
+    service, context, sick_leave
+):
+    """Бланк нужен сразу, даже когда период ещё не известен.
+
+    Заявление несут в отдел кадров вместе со справкой, а справку
+    выдают в день выписки. Если бы бланк собирался только по датам,
+    человеку пришлось бы ждать её, чтобы начать оформление, — и весь
+    смысл необязательных дат пропал бы.
+    """
+    view = service.create(context, absence_type_code="SICK_LEAVE")
+
+    pdf = service.application(context, view.request.id)
+
+    assert pdf.startswith(b"%PDF")
+    # Место под даты в бумаге есть — его заполняют ручкой.
+    assert len(pdf) > 500
 
 def test_application_over_http(bot_client, service, context, sick_leave):
     first = date.today()
