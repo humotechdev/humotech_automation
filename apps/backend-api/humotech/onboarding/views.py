@@ -239,11 +239,15 @@ class EmployeeOnboardingActionView(APIView):
             made = service.invite(
                 actor, employee_pk, replace=(action == "reinvite")
             )
+            invitation = made["invitation"]
             return Response({
                 "link": made["link"],
                 "expires_at": made["expires_at"],
-                "invitation_id": str(made["invitation"].id),
-                "status": made["invitation"].status,
+                "invitation_id": str(invitation.id) if invitation else None,
+                "status": invitation.status if invitation else None,
+                # Ссылки нет и не будет: человек уже привязан. Это не
+                # отказ — в программу он включён.
+                "linked": made["linked"],
             }, status=status.HTTP_201_CREATED)
 
         if action == "revoke":

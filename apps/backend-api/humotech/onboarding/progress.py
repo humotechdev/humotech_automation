@@ -126,6 +126,27 @@ class Progress:
 
     @property
     def info_completed(self) -> bool:
+        """Прочитаны ли информационные карточки.
+
+        Однажды дочитавший считается дочитавшим НАВСЕГДА — даже если
+        кадровик потом добавил одиннадцатую карточку. Это не поблажка,
+        а та же граница, что проходит через весь раздел: карточка
+        рассказывает, документ обязывает. «Прочитал десять карточек» —
+        утверждение о прошлом, и оно не перестаёт быть правдой;
+        «согласен с действующей редакцией» — утверждение о настоящем, и
+        новая редакция его отменяет.
+
+        Без этого правила добавление одного раздела молча отбирало бы
+        бота у всей компании: люди, прошедшие программу год назад,
+        оказались бы «9 из 10» и потеряли отметки присутствия.
+
+        Плата названа прямо: тот, кто уже закончил, новую карточку в
+        чате не увидит — её прочитают те, кто ещё проходит программу.
+        Если материал обязателен для всех, он должен быть документом:
+        документ и создан затем, чтобы вернуть к подтверждению.
+        """
+        if self.onboarding.info_completed_at is not None:
+            return True
         return self.sections_done >= self.sections_total
 
     @property
@@ -340,6 +361,32 @@ def refresh(
     return progress
 
 
+def resync(organization_id: uuid.UUID, *, now: datetime | None = None) -> int:
+    """Пересчитать витрину всем участникам программы организации.
+
+    Нужно после того, как изменился ОБЩИЙ состав программы: выпущена
+    редакция документа, добавлена или убрана карточка. Правду и так
+    говорит пересчёт, но списки кадровика читают колонку `status`, и без
+    этого прохода они показывали бы вчерашнее состояние.
+
+    Возвращает число обновлённых строк — по нему видно, что проход
+    действительно был, а не пропущен из-за пустого отбора.
+    """
+    moment = now or timezone.now()
+    documents = list(published_documents(organization_id))
+    sections: dict[uuid.UUID, list[OnboardingSection]] = {}
+    touched = 0
+    for row in EmployeeOnboarding.objects.filter(
+        organization_id=organization_id
+    ).select_related("program"):
+        if row.program_id not in sections:
+            sections[row.program_id] = list(active_sections(row.program_id))
+        refresh(row, now=moment, sections=sections[row.program_id],
+                documents=documents)
+        touched += 1
+    return touched
+
+
 # ------------------------------------------------------------------ гейт
 
 
@@ -376,4 +423,5 @@ __all__ = [
     "is_blocked",
     "published_documents",
     "refresh",
+    "resync",
 ]

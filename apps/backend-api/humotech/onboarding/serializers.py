@@ -98,7 +98,7 @@ class AcknowledgeSerializer(serializers.Serializer):
     message_id = serializers.IntegerField(required=False, allow_null=True)
 
 
-class DecisionSerializer(serializers.Serializer):
+class PolicyDecisionSerializer(serializers.Serializer):
     version_id = serializers.UUIDField()
     decision = serializers.ChoiceField(choices=["ACCEPTED", "DECLINED"])
 
@@ -144,10 +144,13 @@ class InvitationResultSerializer(serializers.Serializer):
     выдаётся заново.
     """
 
-    link = serializers.CharField()
-    expires_at = serializers.DateTimeField()
-    invitation_id = serializers.UUIDField()
-    status = serializers.CharField()
+    link = serializers.CharField(allow_null=True)
+    expires_at = serializers.DateTimeField(allow_null=True)
+    invitation_id = serializers.UUIDField(allow_null=True)
+    status = serializers.CharField(allow_null=True)
+    linked = serializers.BooleanField(
+        help_text="Telegram уже привязан: ссылка не нужна и не выдавалась",
+    )
 
 
 class SectionWriteSerializer(serializers.Serializer):
@@ -241,7 +244,7 @@ __all__ = [
     "AcknowledgeSerializer",
     "BeginSerializer",
     "CrmSectionSerializer",
-    "DecisionSerializer",
+    "PolicyDecisionSerializer",
     "DocumentPatchSerializer",
     "DocumentSerializer",
     "DocumentWriteSerializer",

@@ -193,6 +193,31 @@ export function EmployeesPage() {
     return map;
   }, [presence]);
 
+  /*
+   * Ознакомление — одним запросом на всю страницу, по тому же правилу,
+   * что и присутствие. Спрашивать его на карточку значило бы
+   * пятнадцать запросов на экран ради одной строки в каждом.
+   *
+   * Сбой здесь карточку не ломает: строка просто не появится. Список
+   * сотрудников существует не ради ознакомления, и падать из-за него
+   * целиком он не должен.
+   */
+  const [onboarding] = useBlock(
+    // Потолок сервера. Если в программе окажется больше людей, у тех,
+    // кто не попал в эту выборку, строка просто не появится — это
+    // отсутствие сведений, а не ложное «не прошёл». Полная картина
+    // всегда в разделе «Ознакомление».
+    (signal) => api.onboardingProgress({ limit: '200' }, signal).catch(() => null),
+    'employees-onboarding',
+  );
+  const programme = useMemo(() => {
+    const map = new Map<string, api.OnboardingRow>();
+    if (onboarding.state === 'ready' && onboarding.data) {
+      for (const row of onboarding.data.items) map.set(row.employee_id, row);
+    }
+    return map;
+  }, [onboarding]);
+
   const [updated, setUpdated] = useState<Date | null>(null);
   useEffect(() => {
     if (list.state === 'ready') setUpdated(new Date());
@@ -377,6 +402,7 @@ export function EmployeesPage() {
                   <div className="emp-cards">
                     {data.items.map((person) => (
                       <PersonCard key={person.id} person={person} today={today.get(person.id)}
+                                  plan={programme.get(person.id)}
                                   onOpen={() => openProfile(person.id)} />
                     ))}
                   </div>
@@ -450,10 +476,12 @@ function groupsOf<T extends { group: string }>(rows: T[]): [string, T[]][] {
 
 // --- список ----------------------------------------------------------------
 
-function PersonCard({ person, today, onOpen }: {
+function PersonCard({ person, today, plan, onOpen }: {
   person: api.EmployeeRow;
   /** Что у человека сегодня. `undefined` — отметок дня нет вовсе. */
   today: api.PresenceRow | undefined;
+  /** Ознакомление. `undefined` — человека в программу не звали. */
+  plan: api.OnboardingRow | undefined;
   onOpen: () => void;
 }) {
   const at = person.current_assignment;
@@ -484,6 +512,13 @@ function PersonCard({ person, today, onOpen }: {
               ? <Bit icon="send" text={`@${telegram}`} tone="link"
                      href={`https://t.me/${telegram.replace(/^@/, '')}`} />
               : <Bit icon="doc" text={telegramShort(person.telegram_state)} />}
+            {/* Строка появляется только у тех, кого позвали: у
+                остальных она означала бы «не прошёл», а они и не
+                должны были проходить. */}
+            {plan && (
+              <Bit icon={plan.completed ? 'check' : 'book'}
+                   text={onboardingShort(plan)} />
+            )}
           </p>
         </div>
       </div>
@@ -664,6 +699,23 @@ function scheduleLine(schedule: api.Schedule | null): string {
 function telegramShort(state: string | null | undefined): string {
   if (!state) return 'Не привязан';
   return TELEGRAM_TITLE[state] ?? state;
+}
+
+/**
+ * Ознакомление одной строкой.
+ *
+ * Показывается та половина, на которой человек стоит: пока он читает
+ * карточки, «0/3 документа» ничего не добавляет, а место занимает.
+ * Отказ называется отказом — это единственное состояние, где кадровику
+ * надо что-то делать самому.
+ */
+function onboardingShort(plan: api.OnboardingRow): string {
+  if (plan.status === 'BLOCKED_BY_DECLINED_POLICY') return 'Отказ от документа';
+  if (plan.completed) return 'Ознакомлен';
+  if (plan.sections_done < plan.sections_total) {
+    return `Разделы ${plan.sections_done}/${plan.sections_total}`;
+  }
+  return `Документы ${plan.policies_done}/${plan.policies_total}`;
 }
 
 function ago(moment: Date): string {

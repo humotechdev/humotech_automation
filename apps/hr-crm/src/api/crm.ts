@@ -3024,3 +3024,233 @@ export const surveySummary = (id: string, signal?: AbortSignal) =>
     `/surveys/campaigns/${id}/summary/`,
     signal ? { signal } : {},
   );
+
+// --- первичное ознакомление ------------------------------------------------
+//
+// Разделы и документы — разные справочники, и адреса у них разные.
+// Карточка рассказывает о компании, документ обязывает, и версионируются
+// они по-разному: правка карточки никого не возвращает к чтению, а выпуск
+// редакции документа закрывает бота всем, кто её не подтвердил.
+
+export type OnboardingStatus =
+  | 'NOT_STARTED'
+  | 'IN_PROGRESS'
+  | 'INFO_COMPLETED'
+  | 'POLICIES_IN_PROGRESS'
+  | 'COMPLETED'
+  | 'BLOCKED_BY_DECLINED_POLICY';
+
+export type OnboardingRow = {
+  employee_id: string;
+  full_name: string;
+  employee_number: string | null;
+  office_name: string | null;
+  department_name: string | null;
+  position_name: string | null;
+  /** Состояние привязки: без него «0 из 10» не отличить от «некуда слать». */
+  telegram_state: string;
+  status: OnboardingStatus;
+  stage: 'SECTIONS' | 'POLICIES' | 'BLOCKED' | 'DONE';
+  completed: boolean;
+  sections_done: number;
+  sections_total: number;
+  policies_done: number;
+  policies_total: number;
+  invited_at: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  last_reminder_at: string | null;
+  invitation_status: string | null;
+  invitation_expires_at: string | null;
+};
+
+export type OnboardingEvent = {
+  kind: string;
+  at: string;
+  title: string;
+  detail: string | null;
+};
+
+export type OnboardingCard = OnboardingRow & { timeline: OnboardingEvent[] };
+
+export const onboardingProgress = (
+  params: { status?: string; search?: string; office_id?: string; limit?: string } = {},
+  signal?: AbortSignal,
+) =>
+  request<Cursored<OnboardingRow>>(
+    `/onboarding/progress${query({ limit: '100', ...params })}`,
+    signal ? { signal } : {},
+  );
+
+export const onboardingCounts = (signal?: AbortSignal) =>
+  request<Record<string, number>>('/onboarding/counts', signal ? { signal } : {});
+
+export const onboardingExport = (signal?: AbortSignal) =>
+  request<{ items: Record<string, string | number | null>[]; total: number }>(
+    '/onboarding/export',
+    signal ? { signal } : {},
+  );
+
+export const employeeOnboarding = (id: string, signal?: AbortSignal) =>
+  request<OnboardingCard>(`/employees/${id}/onboarding`, signal ? { signal } : {});
+
+/**
+ * Выдать персональную ссылку.
+ *
+ * Ссылка видна РОВНО ОДИН раз: в базе лежит хеш токена, и показать её
+ * второй раз невозможно даже суперпользователю. Потерянная отзывается и
+ * выдаётся заново.
+ */
+export type OnboardingInvite = {
+  /** `null` — Telegram уже привязан: ссылка не нужна и не выдавалась. */
+  link: string | null;
+  expires_at: string | null;
+  invitation_id: string | null;
+  status: string | null;
+  linked: boolean;
+};
+
+export const inviteToOnboarding = (id: string, again = false) =>
+  request<OnboardingInvite>(
+    `/employees/${id}/onboarding/${again ? 'reinvite' : 'invite'}`,
+    { method: 'POST' },
+  );
+
+export const revokeOnboardingInvite = (id: string) =>
+  request<{ status: string }>(`/employees/${id}/onboarding/revoke`, { method: 'POST' });
+
+export const remindOnboarding = (id: string) =>
+  request<{ sent_at: string }>(`/employees/${id}/onboarding/remind`, { method: 'POST' });
+
+export const enrolInOnboarding = (id: string) =>
+  request<{ status: string }>(`/employees/${id}/onboarding/enrol`, { method: 'POST' });
+
+// --- разделы ознакомления --------------------------------------------------
+
+export type OnboardingSection = {
+  id: string;
+  position: number;
+  title: string;
+  body: string;
+  /** Подпись кнопки подтверждения — часть содержимого, а не оформления. */
+  button_label: string;
+  version: number;
+  updated_at: string;
+};
+
+export const onboardingSections = (signal?: AbortSignal) =>
+  request<{ items: OnboardingSection[] }>(
+    '/onboarding/sections/',
+    signal ? { signal } : {},
+  );
+
+export const createOnboardingSection = (body: {
+  title: string;
+  body: string;
+  button_label?: string;
+  position?: number;
+}) => request<OnboardingSection>('/onboarding/sections/', { method: 'POST', body });
+
+export const updateOnboardingSection = (
+  id: string,
+  body: { title?: string; body?: string; button_label?: string; position?: number },
+) => request<OnboardingSection>(`/onboarding/sections/${id}/`, {
+  method: 'PATCH',
+  body,
+});
+
+export const archiveOnboardingSection = (id: string) =>
+  request<OnboardingSection>(`/onboarding/sections/${id}/archive/`, { method: 'POST' });
+
+// --- обязательные документы ------------------------------------------------
+
+export type PolicyVersion = {
+  id: string;
+  version: string;
+  status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
+  summary: string;
+  body: string | null;
+  agree_label: string;
+  has_file: boolean;
+  file_name: string | null;
+  published_at: string | null;
+  created_at: string;
+};
+
+export type PolicyDocument = {
+  id: string;
+  code: string;
+  title: string;
+  description: string | null;
+  is_mandatory: boolean;
+  position: number;
+  archived_at: string | null;
+  current_version: PolicyVersion | null;
+  versions: PolicyVersion[];
+};
+
+export const policyDocuments = (signal?: AbortSignal) =>
+  request<{ items: PolicyDocument[] }>(
+    '/onboarding/documents/',
+    signal ? { signal } : {},
+  );
+
+export const createPolicyDocument = (body: {
+  code: string;
+  title: string;
+  description?: string;
+  is_mandatory?: boolean;
+  position?: number;
+}) => request<PolicyDocument>('/onboarding/documents/', { method: 'POST', body });
+
+export const updatePolicyDocument = (
+  id: string,
+  body: { title?: string; description?: string; is_mandatory?: boolean; position?: number },
+) => request<PolicyDocument>(`/onboarding/documents/${id}/`, { method: 'PATCH', body });
+
+export const archivePolicyDocument = (id: string) =>
+  request<PolicyDocument>(`/onboarding/documents/${id}/archive/`, { method: 'POST' });
+
+export const createPolicyVersion = (
+  id: string,
+  body: { version: string; summary: string; body?: string; agree_label?: string },
+) => request<PolicyVersion>(`/onboarding/documents/${id}/versions/`, {
+  method: 'POST',
+  body,
+});
+
+export const updatePolicyVersion = (
+  id: string,
+  body: { version?: string; summary?: string; body?: string; agree_label?: string },
+) => request<PolicyVersion>(`/onboarding/versions/${id}`, { method: 'PATCH', body });
+
+/**
+ * Выпустить редакцию.
+ *
+ * Самое тяжёлое действие раздела: с этой секунды все, кто не подтвердил
+ * новый текст, теряют рабочие функции бота, пока не подтвердят.
+ */
+export const publishPolicyVersion = (id: string) =>
+  request<PolicyVersion>(`/onboarding/versions/${id}/publish`, { method: 'POST' });
+
+export const uploadPolicyFile = (id: string, file: File) => {
+  const form = new FormData();
+  form.append('document', file);
+  return upload<PolicyVersion>(`/onboarding/versions/${id}/file`, form);
+};
+
+export const policyFileUrl = (id: string) =>
+  apiUrl(`/onboarding/versions/${id}/file`);
+
+export type PolicyPendingRow = {
+  employee_id: string;
+  full_name: string;
+  employee_number: string | null;
+  declined_at: string | null;
+};
+
+export const policyPending = (id: string, signal?: AbortSignal) =>
+  request<{ items: PolicyPendingRow[]; total: number }>(
+    `/onboarding/documents/${id}/pending/`,
+    signal ? { signal } : {},
+  );

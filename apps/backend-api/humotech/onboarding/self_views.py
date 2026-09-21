@@ -26,7 +26,7 @@ from humotech.onboarding.presentation import state_json
 from humotech.onboarding.serializers import (
     AcknowledgeSerializer,
     BeginSerializer,
-    DecisionSerializer,
+    PolicyDecisionSerializer,
     OnboardingStateSerializer,
     PolicyTextSerializer,
     SectionSerializer,
@@ -144,11 +144,11 @@ class OnboardingDecisionView(OnboardingSelfView):
     @extend_schema(
         operation_id="me_onboarding_decide",
         summary="Решение по документу",
-        request=DecisionSerializer,
+        request=PolicyDecisionSerializer,
         responses={200: OnboardingStateSerializer},
     )
     def post(self, request):
-        data = validated(DecisionSerializer, request.data)
+        data = validated(PolicyDecisionSerializer, request.data)
         progress = self.flow.decide(
             self.employee_id,
             data["version_id"],

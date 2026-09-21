@@ -19,6 +19,7 @@ import { OfficesPage } from '../pages/OfficesPage';
 import { OfficeSetupPage } from '../pages/OfficeSetupPage';
 import { QuestionsPage } from '../pages/QuestionsPage';
 import { SurveysPage } from '../pages/SurveysPage';
+import { OnboardingPage } from '../pages/OnboardingPage';
 import { SurveyCampaignPage } from '../pages/SurveyCampaignPage';
 import { AnalyticsPage } from '../pages/AnalyticsPage';
 import { ReportsPage } from '../pages/ReportsPage';
@@ -63,6 +64,11 @@ export function App() {
             с именными ответами. */}
         <Route path="/surveys" element={<SurveysPage />} />
         <Route path="/surveys/:id" element={<SurveyCampaignPage />} />
+        {/* Первичное ознакомление: кто где остановился, тексты разделов
+            и обязательные документы. Карточка одного человека
+            открывается тут же, панелью — отдельного адреса у неё нет:
+            это состояние, а не самостоятельная страница. */}
+        <Route path="/onboarding" element={<OnboardingPage />} />
         <Route path="/analytics" element={<AnalyticsPage />} />
         <Route path="/reports" element={<ReportsPage />} />
         {/* Адресов `/knowledge` и `/settings` больше нет: материалы

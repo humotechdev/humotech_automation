@@ -177,6 +177,50 @@ def test_invitation_lives_a_week_not_a_day(hr, employee, content, telegram_setti
     assert 167 <= left.total_seconds() / 3600 <= 168
 
 
+def test_invite_to_an_already_linked_person_enrols_without_a_link(
+    hr, employee, content
+):
+    """Ссылка существует, чтобы привязку СОЗДАТЬ.
+
+    У того, кто уже пользуется ботом, её выдавать не из чего: раньше
+    здесь был тупик — кадровик жал «Отправить ознакомление» и получал
+    «сначала отключите Telegram», хотя отключать ничего не требовалось.
+    """
+    link_employee(employee)
+
+    response = hr.post(f"{API}/employees/{employee.id}/onboarding/invite")
+
+    assert response.status_code == 201, response.json()
+    body = response.json()
+    assert body["linked"] is True
+    assert body["link"] is None
+    # Главное: в программу человек всё равно включён.
+    assert EmployeeOnboarding.objects.filter(employee_id=employee.id).exists()
+
+
+def test_expired_link_is_not_shown_as_live(hr, employee, content):
+    """«Действует до» о вчерашней ссылке — обещание, которого нет.
+
+    Срок держится на `expires_at`, а не на статусе: строку переводят
+    в EXPIRED, когда на неё натыкаются. Список только читает, поэтому
+    поправку делает он сам.
+    """
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from humotech.telegram.models import TelegramLinkInvitation
+
+    hr.post(f"{API}/employees/{employee.id}/onboarding/invite")
+    TelegramLinkInvitation.objects.filter(employee_id=employee.id).update(
+        expires_at=timezone.now() - timedelta(minutes=1)
+    )
+
+    row = hr.get(f"{API}/onboarding/progress").json()["items"][0]
+
+    assert row["invitation_status"] == "EXPIRED"
+
+
 def test_reminder_refuses_when_there_is_no_chat(hr, employee, content):
     """Бот не может написать первым — это правило Telegram.
 
@@ -652,6 +696,47 @@ def test_editing_a_card_raises_its_version_but_reopens_nothing(
     assert response.status_code == 200
     assert response.json()["version"] == 2
     assert bot(api_client, "get", "/me/status").status_code == 200
+
+
+def test_adding_a_section_does_not_kick_out_those_who_finished(
+    hr, hr_actor_full, employee, content, api_client, telegram_settings
+):
+    """Одиннадцатая карточка не отбирает бота у всей компании.
+
+    «Прочитал десять карточек» — утверждение о прошлом, и оно не
+    перестаёт быть правдой. Обязывает документ, и только он возвращает
+    к подтверждению.
+    """
+    OnboardingService().enrol(hr_actor_full, employee.id)
+    link_employee(employee)
+    accept_policies(api_client, walk_sections(api_client, employee))
+
+    made = hr.post(
+        f"{API}/onboarding/sections/",
+        {"title": "Новая карточка", "body": "Текст"}, format="json",
+    )
+    assert made.status_code == 201, made.json()
+
+    assert bot(api_client, "get", "/me/status").status_code == 200
+    state = bot(api_client, "get", "/me/onboarding").json()
+    assert state["sections_total"] == 11
+    assert state["completed"] is True
+
+
+def test_adding_a_section_still_applies_to_those_mid_way(
+    hr, hr_actor_full, employee, content, api_client, telegram_settings
+):
+    """Тот, кто ещё читает, получает новую карточку наравне с остальными."""
+    OnboardingService().enrol(hr_actor_full, employee.id)
+    link_employee(employee)
+    bot(api_client, "post", "/me/onboarding/start")
+
+    hr.post(f"{API}/onboarding/sections/",
+            {"title": "Новая карточка", "body": "Текст"}, format="json")
+
+    state = bot(api_client, "get", "/me/onboarding").json()
+    assert state["sections_total"] == 11
+    assert state["completed"] is False
 
 
 def test_section_list_is_ordered_and_carries_button_labels(hr, content):

@@ -406,7 +406,7 @@ function Overview({ id, person, zone, rights, onGo, onChanged }: {
 
         <div className="setup__aside">
           <section className="panel">
-            <h3 className="panel__title">Telegram</h3>
+            <h3 className="panel__title">Telegram и ознакомление</h3>
             <TelegramBlock id={id} block={link} onChanged={onChanged} />
           </section>
 
@@ -491,11 +491,32 @@ function Fact({ label, value }: { label: string; value: string | null }) {
   );
 }
 
+/**
+ * Telegram и ознакомление — один блок, потому что это одна дорога.
+ *
+ * Привязка без ознакомления открывает человеку бота, ознакомление без
+ * привязки некуда отправить. Держать их в двух панелях значило бы
+ * заставить кадровика собирать картину из двух мест и гадать, почему
+ * «приглашение отправлено», а человек ничего не читает.
+ *
+ * Ссылка показывается РОВНО ОДИН раз — в ответе на её выдачу: в базе
+ * лежит хеш токена, и достать её оттуда нельзя. Потерянная отзывается
+ * и выпускается заново.
+ */
 function TelegramBlock({ id, block, onChanged }: {
   id: string; block: Block<api.TelegramLink | null>; onChanged: () => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [issued, setIssued] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+
+  // Ознакомление грузится отдельно и молча: сотрудника могли не звать в
+  // программу, и 404 здесь — обычный ответ, а не сбой.
+  const [plan, reloadPlan] = useBlock(
+    (signal) => api.employeeOnboarding(id, signal).catch(() => null),
+    `overview-onboarding|${id}`,
+  );
 
   if (block.state === 'loading') return <p className="empty" role="status">Проверяем…</p>;
   if (block.state !== 'ready') {
@@ -503,33 +524,144 @@ function TelegramBlock({ id, block, onChanged }: {
   }
   const link = block.data;
   const state = link?.state ?? null;
+  const card = plan.state === 'ready' ? plan.data : null;
+  const linked = state === 'ACTIVE';
+  const live = card?.invitation_status === 'ACTIVE';
+
+  const run = async (action: () => Promise<unknown>, after?: () => void) => {
+    setBusy(true);
+    setError(null);
+    setNote(null);
+    try {
+      await action();
+      after?.();
+      reloadPlan();
+      onChanged();
+    } catch (failure) {
+      setError(failure instanceof ApiFailure
+        ? messageFor(failure) : 'Не удалось выполнить действие.');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <div className="tg-block">
       <p className="tg__state">
-        {state === 'ACTIVE' ? 'Привязан'
+        {linked ? 'Привязан'
           : state === 'PENDING' ? 'Приглашение отправлено, ожидает подтверждения'
           : 'Не привязан'}
       </p>
-      {state !== 'ACTIVE' && (
-        <button type="button" className="btn" disabled={busy}
-                onClick={async () => {
-                  setBusy(true); setError(null);
-                  try {
-                    await api.inviteToTelegram(id);
-                    onChanged();
-                  } catch (failure) {
-                    setError(failure instanceof ApiFailure
-                      ? messageFor(failure) : 'Не удалось создать приглашение.');
-                  } finally { setBusy(false); }
-                }}>
-          {busy ? 'Создаём…' : 'Пригласить в Telegram'}
-        </button>
+
+      {card ? (
+        <dl className="facts">
+          <Fact label="Ознакомление" value={ONBOARDING_STATE[card.status] ?? card.status} />
+          <Fact label="Разделы"
+                value={`${card.sections_done} из ${card.sections_total}`} />
+          <Fact label="Документы"
+                value={`${card.policies_done} из ${card.policies_total}`} />
+        </dl>
+      ) : (
+        <p className="muted">Ознакомление не назначено.</p>
       )}
+
+      <div className="tg-block__tools">
+        {!card && (
+          <button type="button" className="btn btn--primary" disabled={busy}
+                  onClick={() => run(async () => {
+                    // Одним действием: человек включается в программу и
+                    // получает ссылку. Два раздельных нажатия здесь
+                    // означали бы состояние «позвали, но не позвали».
+                    const made = await api.inviteToOnboarding(id);
+                    setIssued(made.link);
+                    if (made.linked) {
+                      // Ссылка не нужна: бот у человека уже есть, и
+                      // ознакомление он увидит при следующем заходе.
+                      setNote('Ознакомление назначено. Ссылка не нужна — Telegram уже привязан.');
+                    }
+                  })}>
+            Отправить ознакомление
+          </button>
+        )}
+        {card && !linked && !live && (
+          <button type="button" className="btn btn--primary" disabled={busy}
+                  onClick={() => run(async () => {
+                    const made = await api.inviteToOnboarding(id);
+                    setIssued(made.link);
+                  })}>
+            Создать приглашение
+          </button>
+        )}
+        {card && live && (
+          <>
+            <button type="button" className="btn" disabled={busy}
+                    onClick={() => run(async () => {
+                      const made = await api.inviteToOnboarding(id, true);
+                      setIssued(made.link);
+                    })}>
+              Новая ссылка
+            </button>
+            <button type="button" className="btn" disabled={busy}
+                    onClick={() => run(
+                      () => api.revokeOnboardingInvite(id),
+                      () => setIssued(null),
+                    )}>
+              Отозвать
+            </button>
+          </>
+        )}
+        {card && linked && !card.completed && (
+          <button type="button" className="btn" disabled={busy}
+                  onClick={() => run(
+                    () => api.remindOnboarding(id),
+                    () => setNote('Напоминание отправлено'),
+                  )}>
+            Напомнить
+          </button>
+        )}
+        {/* Обычная привязка остаётся: она нужна тем, кого в программу
+            не зовут, — например, уже работающим сотрудникам. */}
+        {!card && !linked && (
+          <button type="button" className="btn" disabled={busy}
+                  onClick={() => run(() => api.inviteToTelegram(id))}>
+            Пригласить в Telegram
+          </button>
+        )}
+      </div>
+
+      {issued && (
+        <div className="tg-block__link">
+          <p className="muted">
+            Ссылка персональная и одноразовая — показывается один раз.
+          </p>
+          <input readOnly value={issued} aria-label="Ссылка на ознакомление"
+                 onFocus={(event) => event.currentTarget.select()} />
+        </div>
+      )}
+
+      {card && (
+        <p className="tg-block__more">
+          <Link className="link" to={`/onboarding?employee=${id}`}>
+            Открыть ознакомление
+          </Link>
+        </p>
+      )}
+
+      {note && <p className="muted">{note}</p>}
       {error && <p className="form-grid__error" role="alert">{error}</p>}
     </div>
   );
 }
+
+/** Состояние ознакомления словами. Совпадает с разделом «Ознакомление». */
+const ONBOARDING_STATE: Record<string, string> = {
+  NOT_STARTED: 'Не начал',
+  IN_PROGRESS: 'Читает разделы',
+  INFO_COMPLETED: 'Ждёт согласия',
+  POLICIES_IN_PROGRESS: 'Подтверждает документы',
+  COMPLETED: 'Завершил',
+  BLOCKED_BY_DECLINED_POLICY: 'Отказался',
+};
 
 function Schedule({ id }: { id: string }) {
   const [data, reload] = useBlock(

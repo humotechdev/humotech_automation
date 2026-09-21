@@ -214,10 +214,18 @@ class OnboardingService(BaseService):
             row.employee_id: row
             for row in TelegramAccount.objects.filter(employee_id__in=employee_ids)
         }
+        # Последнее приглашение по каждому человеку. Просроченное
+        # помечается здесь, а не в базе: список читают, а не правят, и
+        # писать в него на каждый показ незачем. Без этой поправки
+        # карточка сообщала бы «действует до» о ссылке, срок которой
+        # вышел вчера.
+        moment = timezone.now()
         invitations: dict[uuid.UUID, TelegramLinkInvitation] = {}
         for row in TelegramLinkInvitation.objects.filter(
             employee_id__in=employee_ids
         ).order_by("created_at"):
+            if row.status == "ACTIVE" and row.expires_at <= moment:
+                row.status = "EXPIRED"
             invitations[row.employee_id] = row
 
         built: list[ProgressRow] = []
@@ -414,6 +422,24 @@ class OnboardingService(BaseService):
         self.access.require(actor, "telegram.manage")
         row = self.enrol(actor, employee_id, now=now)
 
+        # У привязанного ссылка не нужна и выдана быть не может: она
+        # существует ровно затем, чтобы привязку СОЗДАТЬ. Раньше здесь
+        # случался тупик — кадровик жал «Отправить ознакомление» уже
+        # работающему человеку и получал «сначала отключите Telegram»,
+        # хотя отключать ничего не требовалось. Человек при этом в
+        # программу уже включён и увидит ознакомление при следующем
+        # обращении к боту.
+        account = TelegramAccount.objects.filter(
+            employee_id=employee_id, status="ACTIVE"
+        ).first()
+        if account is not None:
+            return {
+                "invitation": None,
+                "link": None,
+                "expires_at": None,
+                "linked": True,
+            }
+
         issued = TelegramLinkService().create_invitation(
             actor, employee_id, replace=replace,
             ttl_seconds=settings.TELEGRAM["ONBOARDING_INVITATION_TTL_SECONDS"],
@@ -439,6 +465,7 @@ class OnboardingService(BaseService):
             "invitation": issued.invitation,
             "link": link,
             "expires_at": issued.invitation.expires_at,
+            "linked": False,
         }
 
     def revoke(self, actor: Actor, employee_id: uuid.UUID) -> TelegramLinkInvitation:
@@ -592,6 +619,10 @@ class OnboardingContentService(BaseService):
                 entity_id=row.id,
                 after=snapshot(row, SECTION_AUDIT_FIELDS),
             )
+        # Состав программы изменился — витрина у всех участников
+        # устарела. Допуск и так считается заново, но список кадровика
+        # читает колонку.
+        progress_module.resync(actor.organization_id)
         return row
 
     def update_section(
@@ -658,6 +689,7 @@ class OnboardingContentService(BaseService):
                 before=before,
                 after=snapshot(row, SECTION_AUDIT_FIELDS),
             )
+        progress_module.resync(actor.organization_id)
         return row
 
     def _require_section(
@@ -896,30 +928,8 @@ class PolicyService(BaseService):
                 before=before,
                 after=snapshot(row, VERSION_AUDIT_FIELDS),
             )
-        self._resync(actor.organization_id, now=moment)
+        progress_module.resync(actor.organization_id, now=moment)
         return row
-
-    def _resync(self, organization_id: uuid.UUID, *, now: datetime) -> None:
-        """Пересчитать витрину всем участникам программы.
-
-        Статус — вычисляемая колонка, и после публикации она устарела у
-        всех сразу. Правду и так говорит пересчёт, но список HR читает
-        колонку, и без этого прохода он показывал бы «завершено» тем,
-        кто новый текст ещё не видел.
-        """
-        documents = list(progress_module.published_documents(organization_id))
-        sections: dict[uuid.UUID, list[OnboardingSection]] = {}
-        for row in EmployeeOnboarding.objects.filter(
-            organization_id=organization_id
-        ).select_related("program"):
-            if row.program_id not in sections:
-                sections[row.program_id] = list(
-                    progress_module.active_sections(row.program_id)
-                )
-            progress_module.refresh(
-                row, now=now, sections=sections[row.program_id],
-                documents=documents,
-            )
 
     def pending_employees(
         self, actor: Actor, document_id: uuid.UUID
@@ -938,6 +948,11 @@ class PolicyService(BaseService):
         if live is None:
             return []
 
+        # Область видимости считается тем же кодом, что и в списке
+        # прогресса: два ответа на вопрос «кого этот кадровик видит»
+        # разошлись бы, и здесь оказались бы чужие фамилии. Кэш
+        # разрешений передаётся вместе с правилом — иначе роли
+        # перечитывались бы второй раз на тот же запрос.
         service = OnboardingService()
         service.access = self.access
         visible = service._visible_employees(actor).values_list("id", flat=True)

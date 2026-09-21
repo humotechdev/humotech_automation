@@ -6037,6 +6037,34 @@ html {
   margin: 0;
 }
 
+/* Действий стало несколько — они переносятся, а не сжимаются:
+   «Отозвать» в полсимвола шириной хуже второй строки. */
+.tg-block__tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tg-block__link {
+  width: 100%;
+}
+
+.tg-block__link input {
+  width: 100%;
+  margin-top: 6px;
+  padding: 7px 9px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--white);
+  font-size: 12px;
+  color: var(--text-body);
+}
+
+.tg-block__more {
+  margin: 0;
+  font-size: 13px;
+}
+
 /* --- приём сотрудника -------------------------------------------------------
  *
  * Две колонки: слева форма, справа — то, что получится. Правая липнет к

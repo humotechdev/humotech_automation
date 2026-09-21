@@ -39,6 +39,13 @@ export interface Section<T> {
    * разное. null — последняя попытка удалась.
    */
   kind: 'auth' | 'network' | 'server' | 'refused' | null;
+  /**
+   * Код причины отказа, как его назвал сервер. Нужен там, где отказ —
+   * не поломка: «сначала пройдите ознакомление» требует не повторить
+   * запрос, а пойти в чат с ботом, и предлагать в этом случае «Выйти»
+   * значит отправлять человека не туда.
+   */
+  reason: string | null;
   reload: () => void;
 }
 
@@ -56,6 +63,7 @@ export function useSection<T>(
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [kind, setKind] = useState<Section<T>['kind']>(null);
+  const [reason, setReason] = useState<string | null>(null);
 
   const generation = useRef(0);
   const alive = useRef(true);
@@ -81,10 +89,12 @@ export function useSection<T>(
       setData(result.value);
       setError(null);
       setKind(null);
+      setReason(null);
     } else {
       // Данные не трогаем: показанное вчерашнее лучше пустого места.
       setError(result.message);
       setKind(result.kind);
+      setReason(result.reason ?? null);
     }
   }, []);
 
@@ -99,6 +109,7 @@ export function useSection<T>(
     refreshing: busy && data !== null,
     error,
     kind,
+    reason,
     reload: () => void run(),
   };
 }

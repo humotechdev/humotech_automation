@@ -28,7 +28,12 @@ from src.handlers.onboarding.router import (
     rules_and_documents,
     _split,
 )
-from src.handlers.start.router import is_onboarding_link, parse_link_payload, start_with_link
+from src.handlers.start.router import (
+    is_onboarding_link,
+    parse_link_payload,
+    plain_or_recognize,
+    start_with_link,
+)
 from src.keyboards import employee as kb
 from src.keyboards import onboarding as ob
 from src.messages import onboarding as text
@@ -127,6 +132,10 @@ class FakeMessage:
             id=user_id, username="ivan", language_code="ru", first_name="Иван"
         )
         self.chat = SimpleNamespace(id=user_id, type="private")
+        # Обычный `/start` снимает персональную кнопку чата — для этого
+        # ему нужен `bot`. Запоминаем запись вместо обращения в Telegram.
+        self.menu_writes: list[tuple[object, object]] = []
+        self.bot = SimpleNamespace(set_chat_menu_button=self._remember)
         self.message_id = message_id
         self.answers: list[tuple[str, object]] = []
         self.edits: list[tuple[str, object]] = []
@@ -149,6 +158,9 @@ class FakeMessage:
 
     async def answer_document(self, document, **kwargs):
         self.documents.append(document)
+
+    async def _remember(self, *, chat_id=None, menu_button=None):
+        self.menu_writes.append((chat_id, menu_button))
 
 
 class FakeCallback:
@@ -544,9 +556,38 @@ def test_refusal_gets_its_own_explanation():
 
 
 def test_start_during_onboarding_is_routed_to_the_cards():
-    assert mid_onboarding(FakeMessage(), profile()) is True
-    assert mid_onboarding(FakeMessage(), profile(completed=True)) is False
-    assert mid_onboarding(FakeMessage(), None) is False
+    """`/start` посреди ознакомления ведёт к карточке, а не к отказу.
+
+    Проверяется НАСТОЯЩАЯ дорога: `/start` без полезной нагрузки
+    перехватывает роутер `start`, который включён первым, и фильтр в
+    роутере ознакомления до него не доехал бы. Тест зовёт тот самый
+    обработчик, в который Telegram приводит человека.
+    """
+    assert mid_onboarding(profile()) is True
+    assert mid_onboarding(profile(completed=True)) is False
+    assert mid_onboarding(None) is False
+
+    client = FakeClient(onboarding=state(
+        sections_done=2, section={**SECTION, "position": 3},
+    ))
+    message = FakeMessage()
+
+    asyncio.run(plain_or_recognize(message, profile(), None, client))
+
+    body, markup = message.answers[-1]
+    assert "Ознакомление · 3 из 10" in body
+    assert markup.inline_keyboard[0][-1].callback_data.startswith(ob.ACK)
+
+
+def test_start_after_onboarding_goes_to_the_usual_menu():
+    """Закончившего `/start` возвращает в обычное меню, как и раньше."""
+    message = FakeMessage()
+
+    asyncio.run(plain_or_recognize(message, profile(completed=True), None,
+                                   FakeClient()))
+
+    labels = [b.text for row in message.answers[-1][1].keyboard for b in row]
+    assert kb.BTN_WHERE_AM_I in labels
 
 
 # --- мелочи -----------------------------------------------------------------

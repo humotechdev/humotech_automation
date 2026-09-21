@@ -1,0 +1,476 @@
+/*
+ * Первичное ознакомление. Префикс классов — `ob-`.
+ *
+ * Своей палитры здесь нет: цвета берутся из общих ролей `crm.css`.
+ * Второй набор значений однажды разойдётся с первым, и страница станет
+ * выглядеть чужой ровно после того, как кто-то поправит один из них.
+ *
+ * Разметка максимально опирается на `admin.css`: таблица, панель,
+ * поля и подтверждения — те же самые. Здесь только то, чего там нет:
+ * полоска прогресса, временная линия и карточки разделов.
+ */
+
+/* --- отбор по состоянию ----------------------------------------------------- */
+
+.ob-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ob-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 999px;
+  background: var(--surface-inset);
+  color: var(--text-body);
+  font-size: 13px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.ob-chip:hover {
+  background: var(--hover-bg);
+}
+
+.ob-chip--on {
+  border-color: var(--action-bg);
+  background: var(--selection-bg);
+  color: var(--selection-text);
+  font-weight: 600;
+}
+
+.ob-chip__count {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.ob-chip--on .ob-chip__count {
+  color: var(--selection-text);
+}
+
+/* --- прогресс --------------------------------------------------------------- */
+
+/*
+ * Полоска и число рядом. Полоска отвечает на вопрос «много ли
+ * осталось» по всему столбцу сразу, число — «сколько именно», когда
+ * взгляд остановился на строке. По отдельности каждое из них требует
+ * второго взгляда.
+ */
+.ob-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.ob-progress__bar {
+  display: block;
+  width: 64px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.ob-progress__fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--action-bg);
+}
+
+.ob-progress__fill--done {
+  background: var(--green-600);
+}
+
+.ob-progress__num {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-body);
+}
+
+.ob-progress__none {
+  color: var(--text-faint);
+}
+
+/* --- состояние привязки ------------------------------------------------------ */
+
+.ob-tg {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.ob-tg--on {
+  color: var(--green-600);
+}
+
+/* --- карточка сотрудника ----------------------------------------------------- */
+
+.ob-person {
+  margin: 0;
+  font-size: 16px;
+  color: var(--text-heading);
+}
+
+.ob-person__sub {
+  margin: 2px 0 14px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.ob-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.ob-fact {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--surface-inset);
+}
+
+.ob-fact__label {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.ob-fact__value {
+  font-size: 14px;
+  color: var(--text-heading);
+}
+
+.ob-sub {
+  margin: 18px 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-heading);
+}
+
+/* --- приглашение ------------------------------------------------------------- */
+
+.ob-invite__state {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.ob-invite__tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ob-link {
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  background: var(--blue-050);
+}
+
+.ob-link__hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.ob-link__row {
+  display: flex;
+  gap: 8px;
+}
+
+.ob-link__value {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 7px 9px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--white);
+  font-size: 12px;
+  color: var(--text-body);
+}
+
+.ob-note {
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: var(--green-600);
+}
+
+/* --- временная линия --------------------------------------------------------- */
+
+.ob-line {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.ob-line__row {
+  position: relative;
+  display: flex;
+  gap: 10px;
+  padding: 0 0 14px 0;
+}
+
+/* Соединительная черта между отметками. Последняя её не рисует —
+   иначе линия уходила бы в пустоту под последним событием. */
+.ob-line__row::before {
+  content: '';
+  position: absolute;
+  left: 11px;
+  top: 24px;
+  bottom: 0;
+  width: 1px;
+  background: var(--border-soft);
+}
+
+.ob-line__row:last-child {
+  padding-bottom: 0;
+}
+
+.ob-line__row:last-child::before {
+  display: none;
+}
+
+.ob-line__mark {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border-soft);
+  border-radius: 50%;
+  background: var(--surface-inset);
+  color: var(--text-muted);
+}
+
+.ob-line__body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 13px;
+  color: var(--text-body);
+}
+
+.ob-line__when {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.ob-more {
+  margin: 10px 16px 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* --- разделы ----------------------------------------------------------------- */
+
+.ob-about {
+  flex: 1 1 320px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.ob-cards,
+.ob-docs {
+  margin: 0;
+  padding: 0 16px 16px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ob-card,
+.ob-doc {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--surface-1);
+  text-align: left;
+  color: var(--text-body);
+  cursor: pointer;
+}
+
+.ob-card:hover,
+.ob-doc:hover {
+  border-color: var(--border-strong);
+  background: var(--hover-bg);
+}
+
+.ob-card__no {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--blue-100);
+  color: var(--blue-700);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ob-card__body,
+.ob-doc__body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ob-card__title,
+.ob-doc__title {
+  font-size: 14px;
+  color: var(--text-heading);
+}
+
+.ob-card__text {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.ob-card__foot,
+.ob-doc__foot,
+.ob-doc__sub {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.ob-doc__warn {
+  color: var(--amber-600);
+}
+
+.ob-area {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--surface-field);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-body);
+  resize: vertical;
+}
+
+/* --- документы --------------------------------------------------------------- */
+
+.ob-version {
+  padding: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--surface-inset);
+}
+
+.ob-version__head {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: var(--text-heading);
+}
+
+.ob-version__summary {
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  color: var(--text-body);
+}
+
+.ob-tools {
+  justify-content: flex-start;
+}
+
+.ob-pending,
+.ob-drafts,
+.ob-history {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+  color: var(--text-body);
+}
+
+.ob-pending__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ob-pending__no {
+  margin-left: 6px;
+  color: var(--red-600);
+}
+
+.ob-drafts__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--surface-inset);
+}
+
+.ob-drafts__tools {
+  display: flex;
+  gap: 6px;
+}
+
+.ob-history {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-muted);
+}
+
+/* Загрузка файла — подпись поверх скрытого поля: собственная кнопка
+   браузера в этот интерфейс не вписывается ничем. */
+.ob-file {
+  cursor: pointer;
+}
+
+/* Широкое окно для правки текста редакции: правовой документ в узкое
+   не помещается, и читать его там нельзя. */
+.adm-ask__box--wide {
+  max-width: 720px;
+  width: min(720px, calc(100vw - 32px));
+}
+
+@media (max-width: 720px) {
+  .ob-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ob-progress__bar {
+    display: none;
+  }
+}

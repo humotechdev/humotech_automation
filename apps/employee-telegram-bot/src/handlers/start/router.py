@@ -190,8 +190,15 @@ async def plain_or_recognize(
     на каждый /start — это запрос на каждый /start.
     """
     from src.handlers.menu.router import start as plain_start
+    from src.handlers.onboarding.router import continue_onboarding, mid_onboarding
 
     if employee is not None:
+        # Не дочитавшего `/start` ведёт туда, где он остановился, а не в
+        # объяснение, почему остальное закрыто: человек, набравший
+        # /start посреди ознакомления, хочет продолжить.
+        if mid_onboarding(employee):
+            await continue_onboarding(message, employee, denial, client)
+            return
         await plain_start(message, employee, denial)
         return
 

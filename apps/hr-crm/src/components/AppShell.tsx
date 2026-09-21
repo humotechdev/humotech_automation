@@ -43,6 +43,9 @@ const WORKSPACE: Item[] = [
   { key: 'analytics', title: 'Аналитика', icon: 'chart', to: '/analytics' },
   { key: 'questions', title: 'Обращения', icon: 'chat', to: '/questions' },
   { key: 'surveys', title: 'Опросы', icon: 'sheet', to: '/surveys' },
+  // Рядом с сотрудниками по смыслу, но ниже по частоте обращения:
+  // сюда заходят, когда принимают человека, а не каждый день.
+  { key: 'onboarding', title: 'Ознакомление', icon: 'book', to: '/onboarding' },
 ];
 
 /*
