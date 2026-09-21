@@ -12,13 +12,14 @@
 новой редакции возвращает сотрудника к подтверждению — не к чтению
 десяти карточек заново.
 
-Отсюда шесть таблиц:
+Отсюда семь таблиц:
 
   * `onboarding_programs`  — программа: набор карточек организации;
   * `onboarding_sections`  — одна карточка;
   * `employee_onboarding`  — где человек в программе;
   * `employee_onboarding_section_acks` — какую карточку он подтвердил;
-  * `policy_documents` + `policy_document_versions` — документ и его редакции;
+  * `policy_documents` — обязательный документ как таковой;
+  * `policy_document_versions` — его редакция: текст, файл, дата выпуска;
   * `employee_policy_acceptances` — решение человека по одной редакции.
 
 Про `employee_onboarding.status` отдельно и важно. Он **вычисляемый**:
