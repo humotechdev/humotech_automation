@@ -517,7 +517,7 @@ function Blank({ filtered, onClear, onAdd }: {
     return (
       <div className="emp-blank">
         <span className="emp-blank__icon" aria-hidden="true">
-          <AppIcon name="filter-list" size={20} />
+          <AppIcon name="blank-search" size={20} />
         </span>
         <h2 className="emp-blank__title">По этим фильтрам сотрудников нет</h2>
         <p className="emp-blank__text">
@@ -534,7 +534,7 @@ function Blank({ filtered, onClear, onAdd }: {
     <div className="emp-blank emp-blank--first">
       <div className="emp-blank__main">
         <span className="emp-blank__icon" aria-hidden="true">
-          <AppIcon name="user-plus" size={20} />
+          <AppIcon name="blank-people" size={20} />
         </span>
         <h2 className="emp-blank__title">В компании пока нет сотрудников</h2>
         <p className="emp-blank__text">

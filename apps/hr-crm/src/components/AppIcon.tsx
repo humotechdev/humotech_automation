@@ -22,6 +22,19 @@
  */
 
 import type { ComponentType, SVGProps } from 'react';
+/*
+ * Второй набор — Lucide, и он здесь ровно для двух крупных значков
+ * пустых состояний.
+ *
+ * Правило «один набор на систему» это не отменяет: у Iconoir рисунок
+ * рассчитан на строку интерфейса, и увеличенный до сорока пикселей он
+ * выглядит пустым внутри. Lucide рисует плотнее, и крупно читается.
+ *
+ * Смешивать их в одной строке нельзя — разная посадка в квадрате
+ * видна сразу. Поэтому имена ниже отмечены как «крупные»: они стоят
+ * по одному на экране, рядом с заголовком, и ни с чем не соседствуют.
+ */
+import { SearchX, UsersRound } from 'lucide-react';
 import {
   Archive, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, Bell, Book,
   Building, Calendar, ChatBubble, CheckCircle, CircleSpark, Clock,
@@ -41,6 +54,8 @@ export type AppIconName =
   | 'download' | 'check' | 'cross' | 'lock' | 'late' | 'sheet' | 'filter'
   | 'plus' | 'pencil' | 'archive' | 'half' | 'key' | 'list' | 'grid'
   | 'user' | 'user-plus' | 'filter-list' | 'eye' | 'eye-off'
+  /* Крупные значки пустых состояний — единственные из Lucide. */
+  | 'blank-people' | 'blank-search'
   | 'close' | 'back' | 'next' | 'trend-up' | 'trend-down';
 
 type Glyph = ComponentType<SVGProps<SVGSVGElement>>;
@@ -92,13 +107,13 @@ const GLYPHS: Record<AppIconName, Glyph> = {
   half: CircleSpark,
   key: Key,
   user: User,
-  // «Завести первого сотрудника»: значок называет само действие, а не
-  // предмет, которого нет. Пустому списку это подходит больше, чем
-  // группа людей, которой там как раз и нет.
   'user-plus': UserPlus,
-  // Отбор, который ничего не дал: список с лупой. Одна лупа значила бы
-  // «ищите», а искать человек уже пробовал — менять нужно условия.
   'filter-list': FilterList,
+  // Пустые состояния. Из Lucide — см. пояснение у импорта.
+  'blank-people': UsersRound,
+  // Лупа с крестиком: не «ищите», а «искали и не нашлось». Искать
+  // человек уже пробовал, менять надо условия.
+  'blank-search': SearchX,
   eye: Eye,
   'eye-off': EyeClosed,
   // Закрыть — голый крест. `cross` в круге означает отказ по существу
