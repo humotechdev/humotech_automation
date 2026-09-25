@@ -212,3 +212,40 @@ class TestHttp:
         )
         answer = api_client.get(f"{API}/analytics/overview?date_from={MONDAY}&date_to={SUNDAY}")
         assert answer.status_code == 403
+
+
+# --- люди за период подробнее ---------------------------------------------------
+
+
+def test_person_row_carries_time_absences_and_problem_days(
+    service, analyst, organization, employee, office, make_absence
+):
+    """Строка сотрудника: время, оформленные отсутствия и дни, куда идти."""
+    five_day_schedule(organization, employee, grace=0)
+    worked(organization, employee, office, date(2026, 3, 2))                      # 9 ч
+    worked(organization, employee, office, date(2026, 3, 3), came=time(9, 20))    # опоздание 20 мин
+    # 4 марта — без отметки; 5 и 6 — согласованный отпуск.
+    tz_name = str(office_zone(office))
+    for day in (date(2026, 3, 5), date(2026, 3, 6)):
+        make_absence(employee, code="ANNUAL_LEAVE", day=day, tz_name=tz_name)
+
+    body = service.overview(analyst, first=MONDAY, last=SUNDAY, now=LATER)
+    row = next(one for one in body["employees"] if one["id"] == str(employee.id))
+
+    assert row["seconds"] == 9 * 3600 + (8 * 3600 + 40 * 60)
+    assert row["vacation_days"] == 2 and row["sick_days"] == 0
+    assert row["missed_dates"] == ["2026-03-04"]
+    assert row["late_dates"] == [{"day": "2026-03-03", "minutes": 20}]
+    assert row["office_id"] == str(office.id)
+
+
+def test_people_limit_widens_the_list(service, analyst, organization, office):
+    for n in range(3):
+        person, _ = make_person(organization, office, number=f"EMP-LIM-{n}")
+        give_schedule(organization, person, start=time(9, 0))
+
+    short = service.overview(analyst, first=MONDAY, last=SUNDAY, now=LATER, people_limit=2)
+    full = service.overview(analyst, first=MONDAY, last=SUNDAY, now=LATER, people_limit=100)
+
+    assert len(short["employees"]) == 2
+    assert len(full["employees"]) >= 3

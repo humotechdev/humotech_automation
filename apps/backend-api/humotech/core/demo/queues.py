@@ -106,6 +106,8 @@ def absences(org, people, types, stage: date, tz, reviewer) -> list[EmployeeAbse
                 origin_request=request,
                 start_at=start,
                 end_at=end,
+                start_date=start.astimezone(tz).date(),
+                end_date=end.astimezone(tz).date(),
                 status="ACTIVE",
             ))
 
@@ -143,7 +145,10 @@ def absences(org, people, types, stage: date, tz, reviewer) -> list[EmployeeAbse
                            comment="Плановый отпуск.")
         rows.append(EmployeeAbsence(
             organization=org, employee=person.employee, absence_type=leave,
-            origin_request=request, start_at=start, end_at=end, status="PLANNED",
+            origin_request=request, start_at=start, end_at=end,
+            start_date=start.astimezone(tz).date(),
+            end_date=end.astimezone(tz).date(),
+            status="PLANNED",
         ))
 
     # 4. Завершённые: отпуск и больничный, которые уже прошли.
@@ -156,6 +161,8 @@ def absences(org, people, types, stage: date, tz, reviewer) -> list[EmployeeAbse
         rows.append(EmployeeAbsence(
             organization=org, employee=person.employee, absence_type=kind,
             origin_request=request, start_at=start, end_at=end,
+            start_date=start.astimezone(tz).date(),
+            end_date=end.astimezone(tz).date(),
             status="COMPLETED", completed_at=end,
         ))
 
@@ -177,6 +184,8 @@ def absences(org, people, types, stage: date, tz, reviewer) -> list[EmployeeAbse
         rows.append(EmployeeAbsence(
             organization=org, employee=person.employee, absence_type=leave,
             origin_request=parent, start_at=start, end_at=end,
+            start_date=start.astimezone(tz).date(),
+            end_date=end.astimezone(tz).date(),
             status="CANCELLED" if decided else "PLANNED",
             cancelled_at=_at(stage, WORK_END, tz) if decided else None,
         ))

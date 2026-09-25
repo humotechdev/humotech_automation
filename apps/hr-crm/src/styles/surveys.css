@@ -1,80 +1,2980 @@
 /*
- * Опросы: редактор вопросов, именные ответы и сводка.
- * Префикс классов — `sv-`.
+ * Модуль «Опросы».
  *
- * Цвета берутся из общих ролей `crm.css`. Отдельной палитры здесь нет:
- * второй набор значений однажды разойдётся с первым.
+ * Одна визуальная система на все семь экранов: библиотека шаблонов,
+ * редактор, список рассылок, мастер из четырёх шагов, автоматизации,
+ * редактор правила и результаты. Префикс классов — `sv-`.
+ *
+ * Общее правило плотности: контент собран в колонку ограниченной
+ * ширины и прижат к верху страницы. Растянутый на всю ширину список —
+ * это полоса текста слева и состояние у правого края, а между ними
+ * половина экрана пустоты; глаз перестаёт связывать их в одну строку.
+ *
+ * Цвета берутся из ролей `crm.css`. Второго набора значений здесь нет:
+ * он однажды разойдётся с первым. Зелёный означает только «опубликован»
+ * и «завершил», янтарный — только предупреждение, красный — только
+ * ошибку и удаление. Синий — главное действие, активное состояние и
+ * ссылка, и больше ничего.
  */
 
-/* --- редактор вопросов ------------------------------------------------------ */
+/* --- оболочка модуля ---------------------------------------------------------- */
 
-.sv-questions {
+/*
+ * Страница занимает всю рабочую область: узкая колонка посреди широкого
+ * экрана оставляла бы справа пустоту, а таблице она нужна вся —
+ * получатели, прогресс, дата и состояние стоят колонками и сравниваются
+ * взглядом сверху вниз.
+ */
+.sv-page {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  /* Лист стоит по центру рабочей области и по вертикали: короткий
+     список, прижатый к шапке, оставлял под собой полэкрана пустоты.
+     Высокий лист центр не сдвигает — страница растёт вместе с ним. */
+  flex: 1 0 auto;
+  justify-content: center;
+  width: 100%;
 }
 
-.sv-questions__head {
+/*
+ * Раздел — один белый лист.
+ *
+ * Путь, заголовок, вкладки и сам список живут внутри него: отдельные
+ * плашки поверх фотографии читались как разные экраны одного раздела,
+ * а шапка с фотографией спорила со списком за внимание.
+ */
+.sv-sheet {
+  /* Своя мерка, а не вся рабочая область: по бокам остаётся воздух и
+     видна подложка. Растянутый на всю ширину, лист с четырьмя
+     строками выглядел пустым полем с текстом по краям. */
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 20px 26px 22px;
+  border: 1px solid rgba(226, 233, 242, 0.9);
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 4px 20px rgba(30, 64, 120, 0.04);
+}
+
+/* Путь внутри листа: он про этот раздел, а не про систему вообще. */
+.sv-crumbs {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-}
-
-.sv-questions__count {
-  font-size: 12px;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  font-size: 13px;
   color: var(--text-muted);
 }
 
-.sv-question {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px;
-  border: 1px solid var(--border-default);
-  border-radius: 12px;
+.sv-crumbs a {
+  color: inherit;
+  text-decoration: none;
 }
 
-.sv-question__top {
+/* Под курсором темнеет ровно то, по чему и перейдёшь. */
+.sv-crumbs a:hover { color: var(--text-heading); }
+.sv-crumbs i { font-style: normal; color: #b6c2d4; }
+.sv-crumbs b { font-weight: 500; color: var(--text-heading); }
+
+/*
+ * Лист во весь рост окна, не выше.
+ *
+ * Потолок — высота рабочей области за вычетом одинаковых полей сверху
+ * и снизу. Всё, что не поместилось, уходит в прокрутку самого списка
+ * строк, а не страницы: поиск, вкладки и пояснение остаются на виду.
+ */
+.sv-sheet--list {
+  display: flex;
+  flex-direction: column;
+  height: calc(100dvh - var(--topbar-height) - 64px);
+  min-height: 520px;
+}
+
+/* Место под вкладку: постоянное, одной высоты на всех вкладках. */
+.sv-pane-place {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Содержимое вкладки: мягко проявляется, без сдвига и вспышки. Длинный
+   список прокручивается внутри, а лист остаётся на месте. */
+.sv-pane {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #d5dfec transparent;
+  animation: sv-pane-in 140ms ease-out;
+}
+
+@keyframes sv-pane-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sv-pane { animation: none; }
+}
+
+/* На шаблонах поиск и пояснение стоят на месте, прокручиваются строки. */
+.sv-pane--fit {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sv-pane--fit > .sv-box {
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 auto;
+  min-height: 0;
+}
+
+.sv-pane--fit .sv-rows {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* Место под полосу держится всегда: иначе на пятнадцатом шаблоне
+     все колонки разом съезжали бы влево на её ширину. */
+  scrollbar-gutter: stable;
+  /* Полоса прокрутки тонкая и светлая: она подсказывает, что строк
+     больше, но не спорит со строками. */
+  scrollbar-width: thin;
+  scrollbar-color: #d5dfec transparent;
+}
+
+.sv-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 20px;
+}
+
+/* Заголовок крупный, но не тяжёлый: уверенность — от размера и
+   цвета, а не от жирности. */
+.sv-top__title {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+  color: var(--text-heading);
+}
+
+.sv-top__about {
+  margin: 6px 0 0;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: #5d6f8a;
+}
+
+/*
+ * Кнопка создания — контурная, а не залитая.
+ *
+ * На странице списка главное — сам список; кнопка — одно из действий
+ * рядом, и залитый синий прямоугольник тянул бы взгляд с первой строки.
+ */
+.sv-create {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 0 auto;
+  height: 38px;
+  padding: 0 15px;
+  border: 1px solid #c3daf6;
+  border-radius: 9px;
+  background: #f7fbff;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  color: #1466d8;
+  cursor: pointer;
+}
+
+.sv-create:hover:not(:disabled) {
+  border-color: #8fbaf0;
+  background: #eaf3ff;
+}
+
+.sv-create:disabled {
+  border-color: var(--disabled-border);
+  background: var(--disabled-bg);
+  color: var(--disabled-text);
+  cursor: default;
+}
+
+/* Вкладки — текст с тонкой линией под активной, а не кнопки. */
+.sv-tabs {
+  display: flex;
+  align-items: center;
+  gap: 30px;
+  margin: 0 0 18px;
+  border-bottom: 1px solid #e8eef6;
+}
+
+.sv-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: -1px;
+  padding: 0 0 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  font: inherit;
+  font-size: 14.5px;
+  font-weight: 500;
+  line-height: 1.2;
+  color: #5d6f8a;
+  cursor: pointer;
+}
+
+.sv-tab:hover { color: var(--text-body); }
+
+.sv-tab--on {
+  color: #1466d8;
+  font-weight: 600;
+  border-bottom-color: #1466d8;
+}
+
+.sv-tab__count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #f0f3f8;
+  font-size: 12px;
+  font-weight: 400;
+  color: #6b7c95;
+}
+
+/* Вкладки списка раздела: одна общая линия, которая переезжает под
+   выбранную. Своя линия у вкладки здесь не рисуется. */
+.sv-tabs--slide { position: relative; }
+.sv-tabs--slide .sv-tab--on { border-bottom-color: transparent; }
+
+.sv-tabs__ink {
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: #1466d8;
+  pointer-events: none;
+}
+
+.sv-tabs__ink--move {
+  transition:
+    transform 200ms cubic-bezier(0.2, 0, 0, 1),
+    width 200ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sv-tabs__ink--move { transition: none; }
+}
+
+/* Заготовка строк на время загрузки. */
+.sv-skeleton { display: flex; flex-direction: column; }
+
+.sv-skeleton__row {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) 120px;
+  align-items: center;
+  gap: 14px;
+  height: 64px;
+  padding: 0 16px;
+  border-bottom: 1px solid #eef2f7;
+}
+
+.sv-skeleton__lines { display: flex; flex-direction: column; gap: 8px; }
+
+.sv-skeleton__mark,
+.sv-skeleton__bar {
+  display: block;
+  border-radius: 6px;
+  background: linear-gradient(90deg, #eef3f9, #f7f9fc, #eef3f9);
+  background-size: 200% 100%;
+  animation: sv-skeleton 1.2s ease-in-out infinite;
+}
+
+.sv-skeleton__mark { width: 38px; height: 38px; border-radius: 10px; }
+.sv-skeleton__bar { height: 10px; width: 60%; }
+.sv-skeleton__bar--short { width: 35%; }
+.sv-skeleton__bar--tail { width: 100%; }
+
+@keyframes sv-skeleton { to { background-position: -200% 0; } }
+
+.sv-tab--on .sv-tab__count {
+  background: #e6effc;
+  color: #1466d8;
+}
+
+/* --- список шаблонов ------------------------------------------------------ */
+
+/* Внутренний блок списка: тонкая рамка без тени, лёгкий, а не плашка. */
+.sv-box {
+  padding: 16px 18px 4px;
+  border: 1px solid #e9eef6;
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+.sv-box__tools {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #edf1f7;
+}
+
+/* Поле почти белое, с мягкой голубой рамкой: серая заливка делала
+   его тяжелее самого списка. */
+.sv-find {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: 0 1 380px;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid #e1e9f4;
+  border-radius: 9px;
+  background: #ffffff;
+  color: #8a9ab2;
+}
+
+.sv-find:focus-within {
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 3px var(--focus-ring-soft);
+  background: #ffffff;
+}
+
+.sv-find input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  color: var(--text-body);
+}
+
+.sv-find input::placeholder { color: #9aa8bb; }
+
+/* Выбор состояния — своей мерки, а не во всю ширину, как общий. */
+.sv-box__tools .sv-status {
+  width: 168px;
+  flex: 0 0 auto;
+}
+
+.sv-box__tools .sv-status .app-select__trigger {
+  min-height: 38px;
+  height: 38px;
+  border-color: #e1e9f4;
+  border-radius: 9px;
+  background: #ffffff;
+  font-size: 14px;
+}
+
+.sv-box__bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 16px;
+  padding: 13px 0 10px;
+  border-bottom: 1px solid #edf1f7;
 }
 
-.sv-question__no {
+.sv-box__count {
+  font-size: 14px;
+  font-weight: 400;
+  color: #3d4f69;
+}
+
+.sv-sort { position: relative; }
+
+.sv-sort__button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 2px;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 13.5px;
+  color: #5d6f8a;
+  cursor: pointer;
+}
+
+.sv-sort__button:hover { color: var(--text-heading); }
+
+.sv-menu--sort { right: 0; min-width: 240px; }
+.sv-menu__on { color: #1466d8 !important; font-weight: 600; }
+
+.sv-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/*
+ * Строка шаблона.
+ *
+ * Колонки одинаковые у всех строк: число вопросов, состояние и дата
+ * стоят столбцами и сравниваются взглядом сверху вниз. Мерка у них
+ * постоянная — колонка «по содержимому» сдвигала бы строку от строки.
+ */
+.sv-row {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 112px 160px 214px 34px;
+  align-items: center;
+  column-gap: 22px;
+  min-height: 70px;
+  padding: 10px 0;
+  border-bottom: 1px solid #f0f3f8;
+  cursor: pointer;
+}
+
+.sv-row:last-child { border-bottom: 0; }
+.sv-row:hover .sv-row__name b { color: #1466d8; }
+.sv-row:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+
+.sv-row__mark {
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: var(--brand-soft, #eff4ff);
-  color: var(--brand, #2563eb);
-  font-size: 12px;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: #f0f5fd;
+  color: #3372d8;
+}
+
+.sv-row__name { min-width: 0; }
+
+.sv-row__name b {
+  display: block;
+  overflow: hidden;
+  font-size: 14.5px;
   font-weight: 600;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-heading);
 }
 
-.sv-question__order {
-  display: flex;
-  gap: 2px;
+.sv-row__name small {
+  display: block;
+  margin-top: 3px;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
 }
 
-/* Вторая стрелка — та же иконка, развёрнутая: отдельной в наборе нет. */
-.sv-question__order button:nth-child(1) svg {
-  transform: rotate(-90deg);
+.sv-row__count,
+.sv-row__when {
+  font-size: 13px;
+  font-weight: 400;
+  color: #5d6f8a;
+  white-space: nowrap;
 }
 
-.sv-question__order button:nth-child(2) svg {
-  transform: rotate(90deg);
+.sv-row .sv-state {
+  font-size: 13px;
+  font-weight: 400;
+  color: #5d6f8a;
 }
 
-.sv-question__row {
+.sv-row .sv-state__dot {
+  width: 8px;
+  height: 8px;
+}
+
+.sv-row .sv-state--off .sv-state__dot { background: #a9b4c4; }
+.sv-row__ver { font-style: normal; }
+
+.sv-row__menu {
+  position: relative;
+  justify-self: end;
+}
+
+/* --- списки рассылок и правил -------------------------------------------- */
+
+/* Строка отбора своим блоком — как на образце: поиск, два выбора и две
+   короткие сводки справа. */
+.sv-box--tools { padding: 14px 16px; }
+
+.sv-filters {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
 }
 
-.sv-question__req {
+.sv-filters .sv-find { flex: 1 1 180px; min-width: 160px; max-width: 280px; }
+.sv-filters__gap { flex: 1 1 auto; }
+
+.sv-filters .sv-status,
+.sv-box__tools .sv-status {
+  width: 160px;
+  flex: 0 0 auto;
+}
+
+.sv-box__tools .sv-status--wide { width: 190px; }
+
+.sv-filters .sv-status .app-select__trigger,
+.sv-period .app-select__trigger {
+  min-height: 38px;
+  height: 38px;
+  border-color: #e1e9f4;
+  border-radius: 9px;
+  background: #ffffff;
+  font-size: 14px;
+}
+
+/* Период — с календарём внутри поля, как на образце. */
+.sv-period {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  width: 190px;
+}
+
+.sv-period > svg {
+  position: absolute;
+  left: 12px;
+  z-index: 1;
+  color: #5b7aa8;
+  pointer-events: none;
+}
+
+.sv-period .app-select { width: 100%; }
+.sv-period .app-select__trigger { padding-left: 36px; }
+
+/* Короткая сводка: значок, подпись, число. */
+.sv-tally {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 6px 12px;
+  border: 1px solid #e9eef6;
+  border-radius: 11px;
+  background: #ffffff;
+}
+
+.sv-tally > svg { flex: 0 0 auto; color: #3372d8; }
+.sv-tally--warn > svg { color: #e0850f; }
+
+.sv-tally span {
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  line-height: 1.35;
+  color: #6b7c95;
+}
+
+.sv-tally b {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-heading);
+  white-space: nowrap;
+}
+
+/* Подпись справа в строке отбора. */
+.sv-lead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
   font-size: 13px;
+  color: #5d6f8a;
+}
+
+.sv-lead svg { flex: 0 0 auto; color: #3372d8; }
+
+/*
+ * Колонки списка — одна сетка на шапку и на строки: подписи колонок
+ * стоят ровно над значениями, а не «примерно над».
+ */
+.sv-grid {
+  display: grid;
+  align-items: center;
+  column-gap: 20px;
+}
+
+.sv-grid--campaign {
+  grid-template-columns: 44px minmax(0, 1.5fr) 120px minmax(170px, 1fr) 150px 130px 18px;
+}
+
+.sv-grid--rule {
+  grid-template-columns: 44px minmax(0, 1.3fr) minmax(0, 1.2fr) 190px 52px 30px 18px;
+}
+
+.sv-heads {
+  margin: 18px 0 8px;
+  padding: 0 18px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #6b7c95;
+}
+
+.sv-heads--inner {
+  margin: 0;
+  padding: 12px 0 10px;
+  border-bottom: 1px solid #edf1f7;
+}
+
+/* Первая подпись занимает и колонку значка: «Рассылка» стоит над
+   значком, как на образце, а не над названием. */
+.sv-heads__first { grid-column: 1 / span 2; }
+
+.sv-list {
+  margin: 0;
+  list-style: none;
+}
+
+.sv-box.sv-list { padding: 4px 18px; }
+.sv-list--flat { padding: 0; }
+
+.sv-line {
+  min-height: 70px;
+  padding: 10px 0;
+  border-bottom: 1px solid #f0f3f8;
+  cursor: pointer;
+}
+
+.sv-line:last-child { border-bottom: 0; }
+.sv-line:hover .sv-row__name b { color: #1466d8; }
+.sv-line:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+
+.sv-line__muted {
+  font-size: 13px;
+  color: #5d6f8a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sv-line .sv-state {
+  font-size: 13px;
+  color: #5d6f8a;
+}
+
+.sv-line .sv-state--off .sv-state__dot { background: #a9b4c4; }
+
+/* Во второй колонке правила название события не жирное: жирные только
+   названия самих правил. */
+.sv-row__name--plain b {
+  font-weight: 500;
+  color: var(--text-body);
+}
+
+.sv-go { color: #9aa8bb; justify-self: end; }
+
+/* Полоса ответов: «18 из 24», тонкая линия, доля. */
+.sv-meter {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.sv-meter__text {
+  font-size: 13px;
+  color: #3d4f69;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sv-meter__bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sv-meter__track {
+  flex: 1 1 auto;
+  height: 5px;
+  border-radius: 999px;
+  background: #e8eef6;
+  overflow: hidden;
+}
+
+.sv-meter__fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: #2f7ae5;
+}
+
+.sv-meter__share {
+  flex: 0 0 auto;
+  font-size: 12.5px;
+  color: #6b7c95;
+}
+
+/* Пояснение внутри блока — внизу, отделено воздухом. */
+.sv-note--inner { margin: 14px 0 14px; }
+
+/* Узкое окно: второстепенные колонки уходят, главное остаётся. */
+@media (max-width: 1180px) {
+  .sv-grid--campaign {
+    grid-template-columns: 44px minmax(0, 1.5fr) minmax(150px, 1fr) 130px 18px;
+  }
+  .sv-grid--rule {
+    grid-template-columns: 44px minmax(0, 1.3fr) minmax(0, 1.2fr) 52px 30px 18px;
+  }
+  .sv-col-people,
+  .sv-col-when { display: none; }
+}
+
+@media (max-width: 760px) {
+  .sv-grid--campaign {
+    grid-template-columns: 44px minmax(0, 1fr) 110px 18px;
+  }
+  .sv-grid--campaign .sv-meter { display: none; }
+  .sv-heads--inner,
+  .sv-heads { display: none; }
+  .sv-grid--rule {
+    grid-template-columns: 44px minmax(0, 1fr) 52px 30px;
+  }
+  .sv-grid--rule > :nth-child(3),
+  .sv-grid--rule > .sv-go { display: none; }
+  .sv-tally { flex: 1 1 100%; }
+}
+
+/* --- внутренние страницы: рамка --------------------------------------- */
+
+.sv-backlink {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: -2px 0 8px;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: #1466d8;
+  text-decoration: none;
+}
+
+.sv-backlink:hover { text-decoration: underline; }
+
+.sv-top--inner { margin-bottom: 16px; align-items: center; }
+.sv-top__main { min-width: 0; }
+.sv-top__meta { margin-top: 8px; }
+
+.sv-top__tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+/* Строка состояния под заголовком: точка, слово, тонкая черта, пояснение. */
+.sv-status-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  font-size: 13.5px;
+  color: #5d6f8a;
+}
+
+.sv-status-line > i {
+  width: 1px;
+  height: 14px;
+  background: #d9e2ee;
+}
+
+.sv-status-line .sv-state { font-size: 13.5px; font-weight: 500; }
+
+/* Кнопки модуля: контурная и главная. Своё имя, а не `.btn`: общая
+   кнопка системы несёт градиент, а модулю нужен ровный синий. */
+.sv-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 38px;
+  padding: 0 16px;
+  border: 1px solid #c3daf6;
+  border-radius: 9px;
+  background: #ffffff;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  color: #1466d8;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.sv-btn:hover:not(:disabled) { border-color: #8fbaf0; background: #f5f9ff; }
+
+.sv-btn--main {
+  border-color: #1466d8;
+  background: #1466d8;
+  color: #ffffff;
+}
+
+.sv-btn--main:hover:not(:disabled) { border-color: #0f57bd; background: #0f57bd; }
+
+.sv-btn--danger { border-color: #eab3af; color: #c2362f; }
+.sv-btn--danger:hover:not(:disabled) { border-color: #d98b85; background: #fdf4f3; }
+
+.sv-btn:disabled {
+  border-color: var(--disabled-border);
+  background: var(--disabled-bg);
+  color: var(--disabled-text);
+  cursor: default;
+}
+
+.sv-btn--icon { width: 38px; padding: 0; }
+a.sv-btn { text-decoration: none; }
+.sv-btn--wide { width: 100%; }
+.sv-btn--add { margin-top: 12px; }
+
+.sv-more { position: relative; }
+
+.sv-note--top { margin: 0 0 20px; }
+
+/* --- панели и две колонки ----------------------------------------------- */
+
+.sv-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  align-items: start;
+  gap: 16px;
+}
+
+.sv-side {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.sv-panel {
+  min-width: 0;
+  padding: 18px 20px;
+  border: 1px solid #e9eef6;
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+.sv-panel__head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.sv-panel__head--line {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid #edf1f7;
+}
+
+.sv-panel__title {
+  margin: 0 0 12px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-heading);
+}
+
+.sv-panel__head .sv-panel__title { margin: 0; }
+
+.sv-panel__count { font-size: 13px; color: #6b7c95; }
+
+.sv-panel__about {
+  margin: -6px 0 12px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: #5d6f8a;
+}
+
+/* --- поля ----------------------------------------------------------------- */
+
+.sv-fields { display: flex; flex-direction: column; gap: 14px; }
+
+.sv-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sv-field > span {
+  font-size: 13px;
+  font-weight: 500;
+  color: #3d4f69;
+}
+
+.sv-field > em {
+  font-style: normal;
+  font-size: 12.5px;
+  color: var(--red-600);
+}
+
+.sv-input {
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 1px solid #e1e9f4;
+  border-radius: 9px;
+  background: #ffffff;
+  font: inherit;
+  font-size: 14px;
+  color: var(--text-body);
+}
+
+.sv-input::placeholder { color: #9aa8bb; }
+
+.sv-input:focus {
+  outline: none;
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 3px var(--focus-ring-soft);
+}
+
+.sv-input:disabled { background: #f7f9fc; color: #6b7c95; }
+.sv-input--area { min-height: 64px; resize: vertical; line-height: 1.5; }
+
+.sv-error {
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: var(--red-600);
+}
+
+.sv-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: #1466d8;
+  cursor: pointer;
+}
+
+/* --- вопросы конструктора -------------------------------------------------- */
+
+.sv-qlist {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sv-qi {
+  border: 1px solid #e6ecf5;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.sv-qi--open { border-color: #c9dcf5; box-shadow: 0 2px 10px rgba(30, 90, 170, 0.06); }
+.sv-qi--drag { opacity: 0.5; }
+
+.sv-qi__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+.sv-qi__no {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #eef4fd;
+  font-size: 13px;
+  font-weight: 600;
+  color: #2f6fd6;
+}
+
+.sv-qi__grip {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  color: #a7b4c6;
+  cursor: grab;
+}
+
+.sv-qi__text { flex: 1 1 auto; }
+
+.sv-qi__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 0;
+  overflow: hidden;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-body);
+  cursor: pointer;
+}
+
+.sv-qi__kind {
+  flex: 0 0 auto;
+  font-size: 13px;
+  color: #6b7c95;
+}
+
+.sv-qi__fold { flex: 0 0 auto; color: #6b7c95; }
+.sv-qi--open .sv-qi__fold svg { transform: rotate(180deg); }
+
+.sv-qi__body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 14px 12px 52px;
+}
+
+.sv-qi__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 18px;
+}
+
+/* Общий выбор растянут на всю колонку; здесь рядом стоит переключатель. */
+.sv-qi__row .app-select { width: 240px; flex: 0 0 auto; }
+
+.sv-qi__sample {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px dashed #dde6f2;
+  border-radius: 9px;
+  font-size: 13.5px;
+  color: #9aa8bb;
+}
+
+.sv-qi__scale {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.sv-qi__scale span {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 32px;
+  border: 1px solid #e1e9f4;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #3d4f69;
+}
+
+.sv-qi__scale small { margin-left: 6px; font-size: 12.5px; color: #6b7c95; }
+
+.sv-qi__foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  padding-top: 8px;
+  border-top: 1px solid #f0f3f8;
+  color: #6b7c95;
+}
+
+.sv-option__mark {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid #b8c6d8;
+  border-radius: 50%;
+}
+
+.sv-option__mark--box { border-radius: 4px; }
+
+.sv-switch--small span:last-child { font-size: 13px; color: #5d6f8a; }
+
+/* --- «перед публикацией» ------------------------------------------------ */
+
+.sv-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sv-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: #5d6f8a;
+}
+
+.sv-check svg { flex: 0 0 auto; color: #a7b4c6; }
+.sv-check--done { color: var(--text-body); }
+.sv-check--done svg { color: #17915a; }
+
+/* --- вопросы опубликованного -------------------------------------------- */
+
+.sv-readlist {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sv-readlist li {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid #f0f3f8;
+}
+
+.sv-readlist li:last-child { border-bottom: 0; }
+
+.sv-readlist__no {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: #eef4fd;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #2f6fd6;
+}
+
+.sv-readlist__text {
+  min-width: 0;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--text-heading);
+}
+
+.sv-readlist__text small {
+  display: block;
+  margin-top: 2px;
+  font-size: 12.5px;
+  color: #6b7c95;
+}
+
+.sv-readlist__kind {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 4px 8px;
+  max-width: 220px;
+  font-size: 13px;
+  color: #5d6f8a;
+}
+
+.sv-readlist__kind svg { color: #7d8ca6; }
+
+.sv-readlist__kind em {
+  flex: 0 0 100%;
+  font-style: normal;
+  font-size: 12.5px;
+  text-align: right;
+  color: #6b7c95;
+}
+
+.sv-more-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 6px;
+  padding: 10px 0 2px;
+  border: 0;
+  border-top: 1px solid #f0f3f8;
+  background: none;
+  font: inherit;
+  font-size: 13.5px;
+  color: #5d6f8a;
+  cursor: pointer;
+}
+
+.sv-more-link:hover { color: #1466d8; }
+.sv-flip { transform: rotate(180deg); }
+
+/* --- правая колонка просмотра -------------------------------------------- */
+
+.sv-usage {
+  margin: 0 0 14px;
+  padding: 0;
+  list-style: none;
+}
+
+.sv-usage li {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 0;
+  border-bottom: 1px solid #f0f3f8;
+  font-size: 13.5px;
+  color: var(--text-body);
+}
+
+.sv-usage svg { color: #7d8ca6; }
+.sv-usage b { font-weight: 600; color: #1466d8; }
+
+.sv-facts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+}
+
+.sv-facts-list > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 13.5px;
+}
+
+.sv-facts-list dt { color: #6b7c95; }
+.sv-facts-list dd { margin: 0; text-align: right; color: var(--text-body); }
+
+.sv-facts-list--small { padding-top: 12px; border-top: 1px solid #f0f3f8; }
+
+.sv-uselist {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sv-uselist button {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 0;
+  border: 0;
+  border-bottom: 1px solid #f0f3f8;
+  background: none;
+  font: inherit;
+  text-align: left;
+  color: #7d8ca6;
+  cursor: pointer;
+}
+
+.sv-uselist b { display: block; font-size: 14px; font-weight: 600; color: var(--text-heading); }
+.sv-uselist small { font-size: 12.5px; color: #6b7c95; }
+
+@media (max-width: 1100px) {
+  .sv-cols { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* --- мастер рассылки ---------------------------------------------------- */
+
+/* Шаги — кружки с номерами на одной линии, подпись под кружком. */
+.sv-stepper {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0 0 20px;
+  padding: 0;
+  list-style: none;
+}
+
+.sv-stepper li { position: relative; }
+
+.sv-stepper li + li::before {
+  content: '';
+  position: absolute;
+  top: 17px;
+  right: 50%;
+  left: -50%;
+  height: 2px;
+  margin: 0 22px;
+  background: #e3eaf3;
+}
+
+.sv-stepper li.sv-stepper__on::before,
+.sv-stepper li.sv-stepper__done::before { background: #9ec4f2; }
+
+.sv-stepper button {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+}
+
+.sv-stepper button:disabled { cursor: default; }
+
+.sv-stepper__no {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 1.5px solid #d5dfec;
+  border-radius: 50%;
+  background: #ffffff;
+  font-size: 14px;
+  font-weight: 600;
+  color: #6b7c95;
+}
+
+.sv-stepper__label { font-size: 13.5px; font-weight: 500; color: #6b7c95; }
+
+.sv-stepper__on .sv-stepper__no {
+  border-color: #1466d8;
+  background: #1466d8;
+  color: #ffffff;
+}
+
+.sv-stepper__on .sv-stepper__label { color: #1466d8; font-weight: 600; }
+
+.sv-stepper__done .sv-stepper__no {
+  border-color: #9ec4f2;
+  background: #eef4fd;
+  color: #1466d8;
+}
+
+.sv-stepper__done .sv-stepper__label { color: #3d4f69; }
+
+.sv-find--wide { max-width: none; margin-bottom: 12px; }
+
+/* Выбор шаблона — строки-варианты с кружком. */
+.sv-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sv-choice {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid #e6ecf5;
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.sv-choice:hover { border-color: #c9dcf5; }
+
+.sv-choice--on {
+  border-color: #5b95e6;
+  background: #f5f9ff;
+  box-shadow: 0 0 0 1px #5b95e6;
+}
+
+.sv-choice input,
+.sv-kind input { accent-color: #1466d8; width: 18px; height: 18px; margin: 0; }
+
+.sv-choice__text { min-width: 0; }
+.sv-choice__text b { display: block; font-size: 14.5px; font-weight: 600; color: var(--text-heading); }
+
+.sv-choice__text small {
+  display: block;
+  margin-top: 3px;
+  font-size: 13px;
+  color: #6b7c95;
+}
+
+.sv-choice__meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  font-size: 13px;
+  color: #5d6f8a;
+  white-space: nowrap;
+}
+
+.sv-choice__meta em { font-style: normal; font-size: 12px; color: #17915a; }
+
+/* Круг получателей и «когда» — плитки-варианты в две колонки. */
+.sv-kinds,
+.sv-when {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0 0 14px;
+  padding: 0;
+  list-style: none;
+}
+
+.sv-kind {
+  display: grid;
+  grid-template-columns: 18px 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  height: 100%;
+  padding: 12px 14px;
+  border: 1px solid #e6ecf5;
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.sv-kind > svg { color: #5b7aa8; }
+.sv-kind b { display: block; font-size: 14px; font-weight: 600; color: var(--text-heading); }
+.sv-kind small { display: block; margin-top: 2px; font-size: 12.5px; color: #6b7c95; }
+.sv-kind:hover { border-color: #c9dcf5; }
+
+.sv-kind--on {
+  border-color: #5b95e6;
+  background: #f5f9ff;
+  box-shadow: 0 0 0 1px #5b95e6;
+}
+
+.sv-kind--on > svg { color: #1466d8; }
+
+/* Список для отметки: регионы, офисы, отделы, должности или люди. */
+.sv-picker {
+  border: 1px solid #e6ecf5;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.sv-picker__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #edf1f7;
+  background: #fbfcfe;
+}
+
+.sv-picker__head .sv-find { flex: 1 1 auto; max-width: 320px; }
+.sv-picker__count { font-size: 13px; color: #5d6f8a; white-space: nowrap; }
+
+.sv-picker__list {
+  max-height: 300px;
+  margin: 0;
+  padding: 4px 0;
+  overflow-y: auto;
+  list-style: none;
+  scrollbar-width: thin;
+}
+
+.sv-picker__list label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 14px;
+  cursor: pointer;
+}
+
+.sv-picker__list label:hover { background: #f7faff; }
+.sv-picker__list input { accent-color: #1466d8; width: 16px; height: 16px; margin: 0; }
+.sv-picker__list b { display: block; font-size: 14px; font-weight: 500; color: var(--text-body); }
+.sv-picker__list small { display: block; font-size: 12.5px; color: #6b7c95; }
+
+.sv-picker__none { padding: 16px 14px; font-size: 13.5px; color: #6b7c95; }
+
+/* Поля времени: дата и время рядом; напоминание, срок и повтор — сеткой. */
+.sv-fields--row {
+  display: grid;
+  grid-template-columns: 220px 140px;
+  align-items: end;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.sv-fields--row .sv-field__hint,
+.sv-fields--row .sv-error { grid-column: 1 / -1; margin: 0; }
+
+.sv-field__hint { font-size: 12.5px; color: #6b7c95; }
+
+.sv-fields--grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  padding-top: 16px;
+  border-top: 1px solid #edf1f7;
+}
+
+.sv-field > small { font-size: 12px; color: #6b7c95; }
+.sv-field .app-select { width: 100%; }
+.sv-field .date { width: 100%; }
+
+/* Проверка: строки «что — какое». */
+.sv-review-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+}
+
+.sv-review-list > div {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr);
+  gap: 16px;
+  padding: 14px 0;
+  border-bottom: 1px solid #f0f3f8;
+}
+
+.sv-review-list dt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13.5px;
+  color: #5d6f8a;
+}
+
+.sv-review-list dt svg { color: #7d8ca6; }
+.sv-review-list dd { margin: 0; }
+.sv-review-list b { display: block; font-size: 14.5px; font-weight: 600; color: var(--text-heading); }
+.sv-review-list small { display: block; margin-top: 3px; font-size: 13px; color: #6b7c95; }
+
+/* Правая колонка мастера. */
+.sv-big {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 12px;
+  font-size: 30px;
+  font-weight: 600;
+  color: var(--text-heading);
+}
+
+.sv-big span { font-size: 14px; font-weight: 400; color: #5d6f8a; }
+
+.sv-warns {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fff7eb;
+  list-style: none;
+}
+
+.sv-warns li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #8a5a10;
+}
+
+.sv-warns svg { flex: 0 0 auto; margin-top: 1px; color: #e0850f; }
+
+.sv-peeks {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sv-peeks li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid #f0f3f8;
+}
+
+.sv-peeks b { display: block; font-size: 13.5px; font-weight: 500; color: var(--text-body); }
+.sv-peeks small { display: block; font-size: 12px; color: #6b7c95; }
+.sv-peeks em { font-style: normal; font-size: 12px; color: #c27612; white-space: nowrap; }
+
+.sv-sendcard {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #f0f3f8;
+}
+
+.sv-sendcard__mark {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: #eef4fd;
+  color: #1466d8;
+}
+
+.sv-sendcard b { display: block; font-size: 15px; font-weight: 600; color: var(--text-heading); }
+.sv-sendcard small { font-size: 13px; color: #6b7c95; }
+
+.sv-panel__text {
+  margin: 14px 0 8px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: #3d4f69;
+}
+
+.sv-mini-q {
+  margin: 6px 0 0;
+  padding: 0 0 0 18px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #3d4f69;
+}
+
+.sv-mini-q li + li { margin-top: 4px; }
+
+@media (max-width: 900px) {
+  .sv-kinds,
+  .sv-when,
+  .sv-fields--grid { grid-template-columns: minmax(0, 1fr); }
+  .sv-review-list > div { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+}
+
+/* --- страница рассылки ------------------------------------------------- */
+
+.sv-lede {
+  margin: 0 0 8px;
+  font-size: 13.5px;
+  color: #5d6f8a;
+}
+
+.sv-panel__head--spread { justify-content: space-between; align-items: center; }
+
+.sv-find--small { flex: 0 1 240px; height: 36px; }
+
+/* Итоги: четыре карточки в ряд. */
+.sv-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.sv-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px 18px;
+  border: 1px solid #e9eef6;
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+.sv-kpi b { font-size: 22px; font-weight: 600; color: var(--text-heading); }
+.sv-kpi span { font-size: 13px; color: #5d6f8a; }
+
+.sv-cols--half { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+
+.sv-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #5d6f8a;
+}
+
+.sv-legend i { width: 9px; height: 9px; border-radius: 50%; background: #2f7ae5; }
+
+/* График ответов по дням: столбики с числом сверху и днём снизу. */
+.sv-chart {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  height: 160px;
+  margin: 4px 0 16px;
+  padding-bottom: 2px;
+  border-bottom: 1px solid #e8eef6;
+}
+
+.sv-chart__col {
+  display: grid;
+  grid-template-rows: 18px minmax(0, 1fr) 20px;
+  flex: 1 1 0;
+  min-width: 0;
+  text-align: center;
+}
+
+.sv-chart__n { font-size: 11.5px; color: #5d6f8a; }
+
+.sv-chart__bar {
+  align-self: end;
+  justify-self: center;
+  width: min(28px, 70%);
+  min-height: 2px;
+  border-radius: 5px 5px 0 0;
+  background: #2f7ae5;
+}
+
+.sv-chart__day {
+  padding-top: 4px;
+  font-size: 11.5px;
+  color: #6b7c95;
+  white-space: nowrap;
+}
+
+.sv-meter--wide { margin-top: 4px; }
+
+/* Последние ответы. */
+.sv-people-list { margin: 0; padding: 0; list-style: none; }
+
+.sv-people-list button {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto 16px;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 0;
+  border: 0;
+  border-bottom: 1px solid #f0f3f8;
+  background: none;
+  font: inherit;
+  text-align: left;
+  color: #9aa8bb;
+  cursor: pointer;
+}
+
+.sv-people-list__name { font-size: 13.5px; color: var(--text-body); }
+.sv-people-list__when { font-size: 13px; color: #5d6f8a; }
+
+/* Люди поимённо. */
+.sv-ptable { margin: 0; padding: 0; list-style: none; }
+
+.sv-ptable__head,
+.sv-ptable__line {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1.1fr) minmax(0, 1fr) 170px 130px;
+  align-items: center;
+  gap: 14px;
+}
+
+.sv-ptable--compact .sv-ptable__line {
+  grid-template-columns: minmax(0, 1fr) 128px 104px 96px;
+  gap: 10px;
+}
+
+.sv-ptable--compact .sv-ptable__muted { white-space: nowrap; }
+
+.sv-ptable__head {
+  padding: 0 0 10px;
+  border-bottom: 1px solid #edf1f7;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #6b7c95;
+}
+
+.sv-ptable__row { border-bottom: 1px solid #f0f3f8; }
+.sv-ptable__line { padding: 10px 0; }
+
+.sv-ptable__who {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.sv-ptable__who b {
+  overflow: hidden;
+  font-size: 13.5px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-body);
+}
+
+.sv-ptable__muted { font-size: 13px; color: #5d6f8a; }
+.sv-ptable__why { display: block; margin-top: 2px; font-size: 12px; color: #6b7c95; }
+.sv-ptable__act { justify-self: end; }
+.sv-ptable__told { font-size: 12.5px; color: #17915a; }
+.sv-ptable .sv-state { font-size: 13px; }
+
+.sv-answers {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 12px 40px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #f7faff;
+}
+
+.sv-answers dt { font-size: 12.5px; color: #6b7c95; }
+.sv-answers dd { margin: 2px 0 0; font-size: 13.5px; color: var(--text-body); }
+
+/* Ответы по вопросам. */
+.sv-qresults { display: flex; flex-direction: column; gap: 14px; }
+
+.sv-qresult__head {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.sv-qresult__head b { display: block; font-size: 14.5px; font-weight: 600; color: var(--text-heading); }
+.sv-qresult__head small { font-size: 12.5px; color: #6b7c95; }
+
+.sv-qresult__avg {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--text-heading);
+}
+
+.sv-qresult__avg small { font-size: 13px; font-weight: 400; color: #6b7c95; }
+
+.sv-dist { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
+
+.sv-dist li {
+  display: grid;
+  grid-template-columns: minmax(80px, 200px) minmax(0, 1fr) 90px;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.sv-dist__label { color: var(--text-body); }
+.sv-dist--scale li { grid-template-columns: 24px minmax(0, 1fr) 90px; }
+.sv-dist__n { text-align: right; color: #5d6f8a; }
+
+.sv-said { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
+
+.sv-said li {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #f7faff;
+}
+
+.sv-said b { font-size: 12.5px; font-weight: 600; color: #3d4f69; }
+.sv-said span { font-size: 13.5px; line-height: 1.5; color: var(--text-body); overflow-wrap: anywhere; }
+
+@media (max-width: 1180px) {
+  .sv-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sv-cols--half { grid-template-columns: minmax(0, 1fr); }
+  .sv-ptable__head,
+  .sv-ptable__line { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) 130px; }
+  .sv-ptable__head > :nth-child(2),
+  .sv-ptable__head > :nth-child(4),
+  .sv-ptable__line > .sv-ptable__muted { display: none; }
+}
+
+/* --- правило автоматизации ------------------------------------------- */
+
+/* Три колонки: разделы слева, форма, пояснение справа. */
+.sv-rulegrid {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr) 320px;
+  align-items: start;
+  gap: 16px;
+}
+
+.sv-vsteps {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 14px 10px;
+  border: 1px solid #e4ebf5;
+  border-radius: 14px;
+  background: #ffffff;
+  list-style: none;
+}
+
+.sv-vsteps a {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: #3d4f69;
+  text-decoration: none;
+}
+
+.sv-vsteps a:hover { background: #f3f7fd; color: #1466d8; }
+
+.sv-vsteps a span {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #eef4fd;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1466d8;
+}
+
+.sv-ruleform { display: flex; flex-direction: column; gap: 0; }
+
+.sv-rs {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 14px;
+  padding: 18px 0;
+  border-bottom: 1px solid #f0f3f8;
+  scroll-margin-top: 12px;
+}
+
+.sv-rs:first-child { padding-top: 2px; }
+.sv-rs:last-of-type { border-bottom: 0; }
+
+.sv-rs__no {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #1466d8;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.sv-rs__body { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.sv-rs__body .app-select { width: 100%; }
+
+.sv-rs__title {
+  margin: 4px 0 2px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-heading);
+}
+
+.sv-rs__note { margin: 0; font-size: 13px; line-height: 1.5; color: #6b7c95; }
+
+.sv-field--top { margin-top: 6px; }
+
+/* Сдвиг от события — сегменты. */
+.sv-seg2 {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-self: flex-start;
+  padding: 3px;
+  border: 1px solid #e0e8f3;
+  border-radius: 11px;
+  background: #f6f9fd;
+}
+
+.sv-seg2 button {
+  height: 34px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  font: inherit;
+  font-size: 13.5px;
+  color: #3d4f69;
+  cursor: pointer;
+}
+
+.sv-seg2 button.sv-seg2__on {
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(20, 50, 100, 0.12);
+  font-weight: 600;
+  color: #1466d8;
+}
+
+.sv-scope {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid #edf1f7;
+  border-radius: 12px;
+  background: #fbfcfe;
+}
+
+.sv-scope__title { margin: 0; font-size: 13px; font-weight: 600; color: #3d4f69; }
+
+.sv-scope__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.sv-scope__grid > * { min-width: 0; }
+.sv-scope small { font-size: 12px; color: #6b7c95; }
+
+/* «Как это будет работать» — шаги по вертикальной линии. */
+.sv-flow { position: relative; margin: 0; padding: 0; list-style: none; }
+
+.sv-flow li {
+  position: relative;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 12px;
+  padding-bottom: 18px;
+}
+
+.sv-flow li:last-child { padding-bottom: 0; }
+
+.sv-flow li + li::before {
+  content: '';
+  position: absolute;
+  top: -18px;
+  left: 17px;
+  height: 18px;
+  border-left: 2px dotted #c9dcf5;
+}
+
+.sv-flow__mark {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: #eef4fd;
+  color: #1466d8;
+}
+
+.sv-flow b { display: block; margin-top: 2px; font-size: 14px; font-weight: 600; color: var(--text-heading); }
+.sv-flow small { display: block; margin-top: 3px; font-size: 12.5px; line-height: 1.5; color: #6b7c95; }
+
+.sv-formfoot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+/* Карточка правила. */
+.sv-on-word { color: #17915a; font-weight: 500; }
+
+.sv-rulefacts { margin: 0; padding: 0; list-style: none; }
+
+.sv-rulefacts li {
+  display: grid;
+  grid-template-columns: 36px 110px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid #f0f3f8;
+}
+
+.sv-rulefacts li:last-child { border-bottom: 0; }
+
+.sv-rulefacts__mark {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: #eef4fd;
+  color: #1466d8;
+}
+
+.sv-rulefacts__label { font-size: 13px; color: #6b7c95; }
+.sv-rulefacts b { display: block; font-size: 14px; font-weight: 600; color: var(--text-heading); }
+.sv-rulefacts small { display: block; margin-top: 2px; font-size: 12.5px; color: #6b7c95; }
+
+.sv-tallies {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0 0 14px;
+  padding: 0;
+  list-style: none;
+}
+
+.sv-tallies li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 14px;
+  border: 1px solid #e9eef6;
+  border-radius: 12px;
+}
+
+.sv-tallies b { font-size: 22px; font-weight: 600; color: var(--text-heading); }
+.sv-tallies span { font-size: 12.5px; color: #5d6f8a; }
+
+.sv-htable { margin: 0; padding: 0; list-style: none; }
+
+.sv-htable__head,
+.sv-htable__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 0.8fr) minmax(0, 1fr) minmax(0, 1.2fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.sv-htable--wide .sv-htable__head,
+.sv-htable--wide .sv-htable__row {
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.7fr) minmax(0, 1fr) minmax(0, 0.9fr) minmax(0, 1.2fr);
+}
+
+.sv-htable__head {
+  padding-bottom: 10px;
+  border-bottom: 1px solid #edf1f7;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #6b7c95;
+}
+
+.sv-htable__row {
+  padding: 10px 0;
+  border-bottom: 1px solid #f0f3f8;
+  font-size: 13px;
+  color: #5d6f8a;
+}
+
+.sv-htable__who { font-size: 13.5px; font-weight: 500; color: var(--text-body); overflow-wrap: anywhere; }
+.sv-htable__why { color: #6b7c95; }
+.sv-htable .sv-state { font-size: 13px; }
+
+@media (max-width: 1280px) {
+  .sv-rulegrid { grid-template-columns: minmax(0, 1fr) 300px; }
+  .sv-vsteps { display: none; }
+}
+
+@media (max-width: 960px) {
+  .sv-rulegrid { grid-template-columns: minmax(0, 1fr); }
+  .sv-scope__grid { grid-template-columns: minmax(0, 1fr); }
+  .sv-htable__head { display: none; }
+  .sv-htable__row,
+  .sv-htable--wide .sv-htable__row { grid-template-columns: minmax(0, 1fr) auto; }
+  .sv-htable__row > :nth-child(2),
+  .sv-htable__row > :nth-child(3),
+  .sv-htable__row > :nth-child(5) { grid-column: 1 / -1; }
+  .sv-rulefacts li { grid-template-columns: 36px minmax(0, 1fr); }
+  .sv-rulefacts__label { display: none; }
+}
+
+/* --- пустые состояния списка --------------------------------------------- */
+
+.sv-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 36px 16px 34px;
+  text-align: center;
+}
+
+.sv-empty__mark {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  margin-bottom: 6px;
+  border-radius: 12px;
+  background: #f0f5fd;
+  color: #3372d8;
+}
+
+.sv-empty__title {
+  margin: 0;
+  font-size: 15.5px;
+  font-weight: 600;
+  color: var(--text-heading);
+}
+
+.sv-empty__about {
+  max-width: 440px;
+  margin: 0 0 10px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.sv-empty--found { padding: 34px 16px 30px; }
+
+/* Возврат к списку на внутренних страницах. */
+.sv-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 13px;
+  color: var(--action-text);
+  cursor: pointer;
+}
+
+.sv-back:hover { text-decoration: underline; }
+
+/* Шапка внутренних страниц — без фотографии, но той же геометрии. */
+.sv-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 18px;
+}
+
+.sv-head__title {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  color: var(--text-heading);
+}
+
+.sv-head__about {
+  margin: 6px 0 0;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.sv-head__tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+/* Белая панель. */
+.sv-card {
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  background: var(--surface-glass-dense);
+  box-shadow: 0 1px 2px rgba(10, 43, 99, 0.04);
+}
+
+.sv-card__pad { padding: 20px 22px; }
+
+.sv-card__title {
+  margin: 0 0 14px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-heading);
+}
+
+.sv-card__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.sv-card__bar .sv-card__title { margin-bottom: 0; }
+
+.sv-divider { height: 1px; background: var(--border-soft); }
+
+/*
+ * Главное действие модуля.
+ *
+ * В общем наборе `.btn--primary` не объявлен вовсе, а синяя кнопка там
+ * называется `.btn--dark` и залита градиентом. Модулю нужен ровный
+ * фирменный синий и одно имя на все семь экранов — объявляется здесь и
+ * действует только внутри модуля.
+ */
+.sv-page .btn--primary,
+.adm-ask .btn--primary {
+  border-color: var(--action-bg);
+  background: var(--action-bg);
+  color: var(--text-on-action);
+}
+
+.sv-page .btn--primary:hover:not(:disabled),
+.adm-ask .btn--primary:hover:not(:disabled) {
+  border-color: var(--action-bg-hover);
+  background: var(--action-bg-hover);
+}
+
+.sv-page .btn--primary:disabled,
+.adm-ask .btn--primary:disabled {
+  border-color: var(--disabled-border);
+  background: var(--disabled-bg);
+  color: var(--disabled-text);
+}
+
+/* --- состояния, значки, мелочи ------------------------------------------------ */
+
+.sv-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.sv-state__dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--steel-600);
+}
+
+.sv-state--ok .sv-state__dot { background: var(--green-600); }
+.sv-state--wait .sv-state__dot { background: var(--blue-600); }
+.sv-state--bad .sv-state__dot { background: var(--red-600); }
+
+.sv-state--ok { color: var(--green-600); }
+.sv-state--wait { color: var(--blue-700); }
+.sv-state--bad { color: var(--red-600); }
+.sv-state--off { color: var(--text-muted); }
+
+/* Светло-голубая подложка с тонкой синей иконкой. */
+.sv-mark {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: var(--blue-050);
+  color: var(--blue-600);
+}
+
+.sv-name__title {
+  display: block;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--text-heading);
+}
+
+.sv-name__sub {
+  display: block;
+  margin-top: 2px;
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+
+/* Светло-голубая строка пояснения под панелью. */
+.sv-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin: 16px 0 0;
+  padding: 12px 16px;
+  border-radius: 11px;
+  background: #f1f6fc;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: #3d4f69;
+}
+
+.sv-note svg { flex: 0 0 auto; color: #5b7aa8; }
+
+/* Та же строка, но внутри панели. */
+.sv-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 0 0 14px;
+  padding: 11px 14px;
+  border-radius: 11px;
+  background: var(--blue-050);
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-body);
+}
+
+.sv-hint svg { flex: 0 0 auto; margin-top: 2px; color: var(--blue-600); }
+
+.sv-hint--warn { background: var(--amber-050); }
+.sv-hint--warn svg { color: var(--amber-600); }
+
+/* --- строка отбора ------------------------------------------------------------ */
+
+/*
+ * Поиск и отборы слева, две сводные карточки справа — одной строкой.
+ * Поставленные друг под другом, они занимали бы главное место на
+ * экране, а главное здесь — сама таблица.
+ */
+.sv-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.sv-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  /* Поиск уступает место первым: сводки справа — утверждения, их
+     обрезать нельзя, а поле поиска читается и узким. */
+  flex: 1 1 200px;
+  max-width: 320px;
+  min-width: 160px;
+  height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--border-default);
+  border-radius: 11px;
+  background: var(--surface-glass-dense);
+  color: var(--text-muted);
+}
+
+.sv-search .input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  background: none;
+  padding: 0;
+  font-size: 14px;
+}
+
+.sv-search .input:focus { outline: none; }
+
+/*
+ * `.app-select` в общем наборе объявлен `width: 100%` — он рассчитан на
+ * поле формы во всю колонку. Здесь он стоит рядом с соседями, и
+ * растянутый выталкивает их на следующую строку.
+ */
+.sv-tools > .app-select {
+  flex: 0 0 auto;
+  width: 170px;
+}
+
+.sv-tools > .app-select .app-select__trigger {
+  min-height: 44px;
+  border-radius: 11px;
+}
+
+.sv-tools__reset { font-size: 13px; }
+.sv-tools__gap { flex: 1 1 auto; }
+
+/* Две небольшие сводные карточки. В белом листе места меньше, чем во
+   всю страницу, и мерка в 232 точки выталкивала вторую на новую строку. */
+.sv-tile {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 10px 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--surface-glass-dense);
+}
+
+.sv-tile__mark {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--blue-050);
+  color: var(--blue-600);
+}
+
+.sv-tile--warn .sv-tile__mark { background: var(--amber-050); color: var(--amber-600); }
+
+.sv-tile span { font-size: 13px; color: var(--text-muted); }
+.sv-tile b { display: block; font-size: 15px; font-weight: 600; color: var(--text-heading); }
+
+/* --- таблица ------------------------------------------------------------------ */
+
+.sv-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+}
+
+.sv-table thead th {
+  padding: 15px 18px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--surface-2);
+  text-align: left;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.sv-table thead th:first-child { border-top-left-radius: 14px; padding-left: 26px; }
+.sv-table thead th:last-child { border-top-right-radius: 14px; padding-right: 22px; }
+
+.sv-table tbody tr { cursor: pointer; }
+.sv-table tbody tr:hover { background: var(--hover-bg); }
+
+.sv-table tbody td {
+  height: 92px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 14px;
+  color: var(--text-body);
+  vertical-align: middle;
+}
+
+.sv-table tbody td:first-child { padding-left: 26px; }
+.sv-table tbody td:last-child { padding-right: 22px; }
+.sv-table tbody tr:last-child td { border-bottom: 0; }
+
+/* Первая ячейка: значок, название и пояснение. */
+.sv-cell {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+}
+
+.sv-cell__text { min-width: 0; }
+
+.sv-cell__title {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--text-heading);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sv-cell__about {
+  display: block;
+  margin-top: 2px;
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sv-cell__ver { margin-left: 4px; font-style: normal; color: var(--text-faint); }
+
+.sv-sub {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+/* Полоса прохождения в ячейке. */
+.sv-progress { display: flex; align-items: center; gap: 10px; }
+
+.sv-progress__text {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-heading);
+  font-variant-numeric: tabular-nums;
+}
+
+.sv-progress__track {
+  display: block;
+  flex: 1 1 auto;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.sv-progress__fill { display: block; height: 100%; border-radius: 999px; background: var(--blue-600); }
+
+.sv-progress__share {
+  flex: 0 0 auto;
+  font-size: 13px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.sv-go { color: var(--text-faint); }
+
+.sv-cellmenu { position: relative; display: inline-flex; }
+
+/* Меню второстепенных действий. */
+.sv-menu {
+  display: flex;
+  flex-direction: column;
+  min-width: 212px;
+  padding: 6px;
+  transform: translateX(calc(-100% + 36px));
+}
+
+.sv-menu button {
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  text-align: left;
+  font-size: 13px;
+  color: var(--text-body);
+  cursor: pointer;
+}
+
+.sv-menu button:hover { background: var(--hover-bg); }
+.sv-menu__bad { color: var(--red-600); }
+.sv-menu__bad:hover { background: var(--red-050); }
+
+/* Переключатель «включено / выключено». */
+.sv-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.sv-switch input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.sv-switch__track {
+  position: relative;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 21px;
+  border-radius: 999px;
+  background: var(--border-strong);
+  transition: background 120ms ease;
+}
+
+.sv-switch__track::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--white);
+  transition: transform 120ms ease;
+}
+
+.sv-switch input:checked + .sv-switch__track { background: var(--blue-600); }
+.sv-switch input:checked + .sv-switch__track::after { transform: translateX(17px); }
+.sv-switch input:focus-visible + .sv-switch__track {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.sv-switch--row { align-items: flex-start; }
+.sv-switch--row b { display: block; font-size: 14px; color: var(--text-heading); }
+.sv-switch--row i {
+  display: block;
+  font-size: 12px;
+  font-style: normal;
+  color: var(--text-muted);
+}
+
+/* --- пустое состояние --------------------------------------------------------- */
+
+.sv-blank {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 52px 24px 56px;
+  text-align: center;
+}
+
+.sv-blank__mark {
+  display: grid;
+  place-items: center;
+  width: 50px;
+  height: 50px;
+  margin-bottom: 4px;
+  border-radius: 50%;
+  background: var(--blue-050);
+  color: var(--blue-600);
+}
+
+.sv-blank__title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-heading);
+}
+
+.sv-blank__about {
+  max-width: 420px;
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* --- предпросмотр Telegram ---------------------------------------------------- */
+
+.sv-tg {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #dfe8f4;
+  border-radius: 16px;
+  background: #eaf2fb;
+}
+
+/* Шапка чата — фирменный синий бота: сотрудник видит опрос именно так. */
+.sv-tg__from {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: #1f5fb4;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.sv-tg__from b { display: block; font-size: 14px; font-weight: 600; color: #ffffff; }
+.sv-tg__from i { font-style: normal; }
+
+.sv-tg__avatar {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #ffffff;
+  color: #1f5fb4;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.sv-tg__chat { padding: 14px 14px 16px; }
+
+.sv-tg__bubble {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 330px;
+  padding: 12px 14px;
+  border-radius: 14px 14px 14px 4px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(20, 50, 90, 0.08);
+}
+
+.sv-tg__title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-heading);
+}
+
+.sv-tg__time {
+  align-self: flex-end;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.sv-tg__step {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.sv-tg__bar {
+  display: block;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--border-default);
+  overflow: hidden;
+}
+
+.sv-tg__bar i { display: block; height: 100%; background: var(--blue-600); }
+
+.sv-tg__q {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.sv-tg__scale { display: flex; justify-content: space-between; gap: 6px; }
+
+.sv-tg__scale span {
+  display: grid;
+  place-items: center;
+  flex: 1 1 0;
+  height: 30px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.sv-tg__ends {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.sv-tg__options { display: flex; flex-direction: column; gap: 5px; }
+
+.sv-tg__options span {
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  font-size: 12px;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.sv-tg__ghost {
+  margin: 0;
+  padding: 7px 10px;
+  border: 1px dashed var(--border-default);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.sv-tg__button {
+  padding: 9px;
+  border-radius: 9px;
+  background: var(--blue-600);
+  color: var(--white);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+}
+
+/* --- редактор шаблона --------------------------------------------------------- */
+
+.sv-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 55fr) minmax(190px, 20fr) minmax(230px, 25fr);
+  gap: 16px;
+  align-items: start;
+}
+
+/* Узкий навигатор по вопросам. */
+.sv-jump,
+.sv-plain {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sv-jump__item {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 9px;
+  background: none;
+  text-align: left;
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--text-body);
+  cursor: pointer;
+}
+
+.sv-jump__item:hover { background: var(--hover-bg); }
+
+.sv-jump__item--on {
+  background: var(--selection-bg);
+  color: var(--selection-text);
+  font-weight: 600;
+}
+
+.sv-jump__no { flex: 0 0 auto; color: var(--text-faint); }
+.sv-jump__item--on .sv-jump__no { color: inherit; }
+.sv-jump__text { min-width: 0; overflow-wrap: anywhere; }
+
+/* Один вопрос — компактный белый блок. */
+.sv-q {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--white);
+}
+
+.sv-q + .sv-q { margin-top: 10px; }
+
+.sv-q--on {
+  border-color: var(--blue-600);
+  box-shadow: 0 0 0 3px var(--focus-ring-soft);
+}
+
+.sv-q__top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sv-q__no {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  background: var(--blue-050);
+  color: var(--blue-600);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.sv-q__tools { display: flex; gap: 2px; margin-left: auto; }
+
+.sv-q__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.sv-q__row > .app-select { flex: 0 0 auto; width: 240px; }
+
+.sv-q__hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
 }
 
 .sv-options {
@@ -82,211 +2982,549 @@
   flex-direction: column;
   gap: 6px;
   margin: 0;
-  padding: 0 0 0 10px;
-  border-left: 2px solid var(--border-default);
+  padding: 0;
   list-style: none;
 }
 
-.sv-option {
+.sv-option { display: flex; align-items: center; gap: 6px; }
+.sv-option .input { flex: 1 1 auto; min-width: 0; }
+
+/* --- мастер рассылки ---------------------------------------------------------- */
+
+.sv-steps {
   display: flex;
   align-items: center;
-  gap: 6px;
-}
-
-.sv-option .input {
-  flex: 1;
-}
-
-/* --- именные ответы --------------------------------------------------------- */
-
-.sv-answers {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 12px;
-}
-
-.sv-filled {
-  display: flex;
-  flex-direction: column;
   gap: 10px;
-  padding: 14px;
-  border: 1px solid var(--border-default);
-  border-radius: 12px;
+  margin: 0 0 18px;
+  padding: 0;
+  list-style: none;
 }
 
-.sv-filled__head {
+.sv-step {
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  justify-content: space-between;
+  align-items: center;
   gap: 8px;
+  flex: 0 0 auto;
+  font-size: 14px;
+  color: var(--text-muted);
 }
 
-.sv-filled__name {
-  margin: 0;
-  font-size: 15px;
+.sv-step__line {
+  flex: 1 1 auto;
+  min-width: 24px;
+  height: 1px;
+  background: var(--border-default);
+}
+
+.sv-step__line--done { background: var(--blue-600); }
+
+.sv-step__no {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--border-default);
+  border-radius: 50%;
+  font-size: 12px;
   font-weight: 600;
 }
 
-.sv-filled__where {
-  margin: 2px 0 0;
-  font-size: 12px;
-  color: var(--text-muted);
+.sv-step--on { color: var(--action-text); font-weight: 600; }
+
+.sv-step--on .sv-step__no,
+.sv-step--done .sv-step__no {
+  border-color: var(--blue-600);
+  background: var(--blue-600);
+  color: var(--white);
 }
 
-.sv-filled__when {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-muted);
-  text-align: right;
-}
-
-.sv-filled__answers {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin: 0;
-  padding-top: 8px;
-  border-top: 1px solid var(--border-default);
-}
-
-.sv-filled__row {
+.sv-wizard {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 16px;
+  align-items: start;
 }
 
-.sv-filled__row dt {
-  font-size: 13px;
-  color: var(--text-muted);
-}
+.sv-form { display: flex; flex-direction: column; gap: 14px; }
 
-.sv-filled__row dd {
-  margin: 0;
-  font-size: 14px;
-  /* Свободный ответ переносится, а не растягивает строку в одну линию. */
-  overflow-wrap: anywhere;
-}
-
-/* --- сводка ------------------------------------------------------------------ */
-
-.sv-summary {
+.sv-foot {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: 14px;
-  padding: 12px;
+  margin-top: 16px;
+  padding: 14px 18px;
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  background: var(--surface-glass-dense);
 }
 
-.sv-stat {
+.sv-foot__gap { flex: 1 1 auto; }
+
+/* Выбор шаблона в мастере. */
+.sv-picks { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
+
+.sv-pick {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 14px;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
   border: 1px solid var(--border-default);
   border-radius: 12px;
+  background: none;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
 }
+
+.sv-pick > span:nth-child(2) { flex: 1 1 auto; min-width: 0; }
+.sv-pick:hover { border-color: var(--border-strong); background: var(--hover-bg); }
+.sv-pick--on { border-color: var(--blue-600); background: var(--blue-050); }
+.sv-pick--on > svg { color: var(--blue-600); }
+
+/* Пустой кружок у невыбранного: в наборе значков своего нет, а чужой
+   читается как действие, а не как «можно выбрать». */
+.sv-pick__dot {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+}
+
+/* Узкая боковая сводка мастера. */
+.sv-aside { display: flex; flex-direction: column; gap: 14px; }
+
+.sv-aside__big {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-heading);
+}
+
+.sv-aside__big span {
+  margin-left: 6px;
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.sv-split {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+
+.sv-split li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text-muted);
+}
+
+.sv-split b { font-weight: 500; color: var(--text-body); }
+
+/* Итоговая карточка четвёртого шага. */
+.sv-review { display: flex; flex-direction: column; margin: 0; }
+
+.sv-review > div {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 14px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.sv-review > div:first-child { padding-top: 0; }
+.sv-review > div:last-child { border-bottom: 0; padding-bottom: 0; }
+
+.sv-review dt { font-size: 13px; color: var(--text-muted); }
+.sv-review dd { margin: 0; }
+.sv-review dd b { display: block; font-size: 15px; color: var(--text-heading); }
+.sv-review dd i {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* Список сотрудников с отметками. */
+.sv-people { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+
+.sv-people li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 4px;
+  border-top: 1px solid var(--border-soft);
+  font-size: 13px;
+}
+
+.sv-people li:first-child { border-top: 0; }
+
+.sv-face {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--blue-050);
+  color: var(--blue-700);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.sv-people__name { flex: 1 1 auto; min-width: 0; color: var(--text-body); }
+.sv-people__where { flex: 0 0 auto; color: var(--text-muted); }
+
+/* Сегменты «Сотрудники / Офисы / Подразделения». */
+.sv-seg {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.sv-seg button {
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  font-size: 13px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.sv-seg .sv-seg__on {
+  background: var(--white);
+  color: var(--action-text);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(10, 43, 99, 0.08);
+}
+
+/* --- правило автоматизации ---------------------------------------------------- */
+
+.sv-rule {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 16px;
+  align-items: start;
+}
+
+.sv-rule__form { display: flex; flex-direction: column; gap: 22px; }
+
+.sv-rule__block { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 14px; }
+
+.sv-rule__block > div { display: flex; flex-direction: column; gap: 10px; }
+
+.sv-rule__no {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--blue-050);
+  color: var(--blue-600);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.sv-rule__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-heading);
+}
+
+.sv-rule__about { margin: -6px 0 0; font-size: 13px; color: var(--text-muted); }
+.sv-rule__note { margin: 0; font-size: 12px; color: var(--text-muted); }
+
+.sv-toggle { display: flex; gap: 4px; padding: 4px; border-radius: 10px; background: var(--surface-2); }
+
+.sv-toggle button {
+  flex: 1 1 0;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  font-size: 13px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.sv-toggle .sv-toggle__on {
+  background: var(--white);
+  color: var(--action-text);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(10, 43, 99, 0.08);
+}
+
+.sv-how { display: flex; flex-direction: column; gap: 16px; margin: 0; padding: 0; list-style: none; }
+
+.sv-how li { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 12px; }
+
+.sv-how__no {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--blue-050);
+  color: var(--blue-600);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.sv-how b { display: block; font-size: 13px; line-height: 1.4; color: var(--text-heading); }
+.sv-how i {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* --- результаты рассылки ------------------------------------------------------ */
+
+.sv-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  margin-bottom: 16px;
+}
+
+.sv-fact {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px;
+  border-left: 1px solid var(--border-soft);
+}
+
+.sv-fact:first-child { border-left: 0; }
+
+.sv-fact__mark {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: var(--blue-050);
+  color: var(--blue-600);
+}
+
+.sv-fact--ok .sv-fact__mark { background: var(--green-050); color: var(--green-600); }
+.sv-fact--warn .sv-fact__mark { background: var(--amber-050); color: var(--amber-600); }
+
+.sv-fact b { display: block; font-size: 20px; font-weight: 700; color: var(--text-heading); }
+.sv-fact span { font-size: 13px; color: var(--text-muted); }
+
+.sv-results {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 420px;
+  gap: 16px;
+  align-items: start;
+}
+
+.sv-stat { display: flex; flex-direction: column; gap: 10px; }
+.sv-stat + .sv-stat { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--border-soft); }
 
 .sv-stat__head {
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 8px;
+  gap: 14px;
 }
 
 .sv-stat__title {
   margin: 0;
   font-size: 14px;
   font-weight: 600;
+  line-height: 1.35;
+  color: var(--text-heading);
 }
 
-.sv-stat__count,
-.sv-stat__avg {
-  margin: 0;
-  font-size: 13px;
-  color: var(--text-muted);
-}
+.sv-stat__no { margin-right: 6px; color: var(--text-faint); }
+.sv-stat__count { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
 
-.sv-bars {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
+.sv-stat__avg { margin: 0; text-align: right; white-space: nowrap; }
+.sv-stat__avg b { display: block; font-size: 20px; font-weight: 700; color: var(--text-heading); }
+.sv-stat__avg i { font-style: normal; font-size: 12px; color: var(--text-muted); }
+
+.sv-bars { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
 
 .sv-bar {
   display: grid;
-  grid-template-columns: minmax(80px, 1fr) minmax(90px, 2fr) auto;
+  grid-template-columns: 22px minmax(90px, 1fr) 76px;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   font-size: 13px;
 }
 
-.sv-bar__label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+.sv-bar__label { color: var(--text-muted); }
 
 .sv-bar__track {
   height: 8px;
   border-radius: 999px;
-  background: var(--border-default);
+  background: var(--surface-2);
   overflow: hidden;
 }
 
-.sv-bar__fill {
-  display: block;
-  height: 100%;
-  border-radius: 999px;
-  background: var(--brand, #2563eb);
-}
+.sv-bar__fill { display: block; height: 100%; border-radius: 999px; background: var(--blue-600); }
 
 .sv-bar__value {
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
   white-space: nowrap;
+  text-align: right;
 }
 
-.sv-texts {
+.sv-quotes { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
+
+.sv-quote { padding: 12px 14px; border-radius: 10px; background: var(--surface-2); }
+.sv-quote p { margin: 0; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+
+.sv-quote footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.sv-quote footer b { color: var(--text-body); }
+
+/* Список сотрудников справа на результатах. */
+.sv-who { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+
+.sv-who > li { border-top: 1px solid var(--border-soft); }
+.sv-who > li:first-child { border-top: 0; }
+
+.sv-who__line {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 4px;
+  border: 0;
+  background: none;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+}
+
+button.sv-who__line { cursor: pointer; }
+button.sv-who__line:hover { background: var(--hover-bg); }
+
+.sv-who__name { flex: 1 1 auto; min-width: 0; }
+.sv-who__name b { display: block; font-size: 13px; font-weight: 500; color: var(--text-body); }
+.sv-who__name i {
+  display: block;
+  font-style: normal;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.sv-who__when { flex: 0 0 auto; font-size: 12px; color: var(--text-faint); white-space: nowrap; }
+
+.sv-said { padding: 0 4px 12px 46px; }
+
+.sv-said dl {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   margin: 0;
-  padding: 0;
-  list-style: none;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--surface-2);
 }
 
-.sv-texts li {
-  padding: 8px 10px;
-  border-radius: 9px;
-  background: var(--brand-soft, #eff4ff);
-  font-size: 13px;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
+.sv-said dl > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+.sv-said dt { font-size: 12px; color: var(--text-muted); }
+.sv-said dd { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
 
-@media (max-width: 720px) {
-  .sv-filled__row {
-    grid-template-columns: 1fr;
-    gap: 2px;
+/* --- узкие экраны ------------------------------------------------------------- */
+
+@media (max-width: 1240px) {
+  .sv-editor,
+  .sv-wizard,
+  .sv-rule,
+  .sv-results {
+    grid-template-columns: minmax(0, 1fr);
   }
+}
 
-  .sv-filled__when {
+@media (max-width: 860px) {
+  .sv-row__open { flex-wrap: wrap; row-gap: 8px; }
+
+  .sv-row__col,
+  .sv-row__side {
+    align-items: flex-start;
+    width: auto;
+    padding-left: 52px;
     text-align: left;
   }
 
-  .sv-bar {
-    grid-template-columns: 1fr auto;
-  }
-
-  .sv-bar__track {
-    grid-column: 1 / -1;
-  }
+  .sv-search { flex: 1 1 100%; }
+  .sv-filters > .app-select { width: 100%; }
+  .sv-said dl > div { grid-template-columns: 1fr; gap: 2px; }
+  .sv-facts { grid-template-columns: 1fr; }
+  .sv-fact { border-left: 0; border-top: 1px solid var(--border-soft); }
+  .sv-fact:first-child { border-top: 0; }
 }
+
+/* Выбор «сейчас или потом» — радиокнопки: два взаимоисключающих
+   способа видно сразу, а список прячет второй до нажатия. */
+.sv-radios { display: flex; flex-direction: column; gap: 8px; }
+
+.sv-radio {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.sv-radio:has(input:checked) {
+  border-color: var(--blue-600);
+  background: var(--blue-050);
+}
+
+.sv-radio input { margin-top: 2px; }
+.sv-radio b { display: block; font-size: 14px; color: var(--text-heading); }
+.sv-radio i {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  font-style: normal;
+  color: var(--text-muted);
+}
+
+/* Кнопка в шапке раздела крупнее обычной: она там одна и главная. */
+.btn--hero {
+  height: 46px;
+  padding: 0 22px;
+  border-radius: 11px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* Примечание под таблицей. */
+.sv-note { margin-top: 16px; }
+
+.sv-anon { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }

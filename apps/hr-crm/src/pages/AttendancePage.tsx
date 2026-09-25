@@ -1,63 +1,71 @@
 /**
- * Страница «Посещаемость».
+ * «Посещаемость»: один экран, четыре режима — за день, журнал отметок,
+ * неделя и период.
  *
- * Вёрстка повторяет эталон 1672×941 (`ChatGPT Image Sep 13, 2026,
- * 04_02_47 PM.png`): сверху панель «Сегодня», под ней таблица состава
- * смены, справа «Требует внимания» и день выбранного сотрудника. Размеры —
- * в `styles/attendance.css`, классы с префиксом `att-`.
+ * Лист, шапка, информационная полоса, вкладки и место под содержимое —
+ * постоянные: при смене режима они не пересоздаются и не меняют высоту.
+ * Меняется только то, что внутри, и линия под вкладкой переезжает.
+ * Каждый режим — свой набор данных; грузится только выбранный.
  *
- * Ни одна величина здесь не считается заново: присутствие, время в офисе,
- * опоздания и отсутствия считает сервер. Страница не называет «нет
- * отметки» прогулом и не считает опозданием отсутствие графика.
+ * Ни одна величина здесь не считается по своим правилам: присутствие,
+ * опоздания, рабочее время и отсутствия считает сервер. Отсутствием
+ * считается только подтверждённое — неподтверждённый больничный им не
+ * является. «Нет отметки» — не прогул, а вопрос, и день, который ещё не
+ * наступил, не может быть «без отметки».
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 
 import * as api from '../api/crm';
 import { messageFor } from '../api/errors';
 import { AppShell, initials } from '../components/AppShell';
 import { AppIcon, type AppIconName } from '../components/AppIcon';
-import {
-  PERIODS,
-  isPeriodKind,
-  lengthOf,
-  spanOf,
-  spanTitle,
-  type PeriodKind,
-  type Span,
-} from '../features/attendance/period';
+import { Dropdown } from '../components/AppSelect';
 import { DatePicker } from '../components/DatePicker';
-import { AppFilterButton, AppSegmentedControl, Dropdown } from '../components/AppSelect';
 import { DayCard } from '../components/DayCard';
-import { formatTime, longDate, today, useBlock, type Block } from '../features/dashboard/data';
+import { SlideTabs } from '../components/SlideTabs';
+import { longDate, today, useBlock, type Block } from '../features/dashboard/data';
 import { clock, clockOnDay } from '../features/time/zone';
 import '../styles/attendance.css';
-import { useStickyState } from '../features/shell/sticky';
 
-const PAGE = 16;
+type Mode = 'day' | 'log' | 'week' | 'period';
 
-type Tone = 'ok' | 'idle' | 'warn' | 'violet' | 'blue' | 'grey';
+const MODES: { key: Mode; title: string }[] = [
+  { key: 'day', title: 'За день' },
+  { key: 'log', title: 'Журнал отметок' },
+  { key: 'week', title: 'Неделя' },
+  { key: 'period', title: 'Период' },
+];
 
-/** Как строка называется и каким цветом. Опоздавший в офисе — «Опоздал». */
-function stateOf(row: api.PresenceRow): { title: string; tone: Tone } {
+const MONTHS = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+const WEEKDAYS = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
+
+/** Режим из адреса. Старые ссылки (`tab=log`, `period=week|month|range`) открывают свой режим. */
+function modeOf(params: URLSearchParams): Mode {
+  const tab = params.get('tab');
+  if (tab === 'log' || tab === 'week' || tab === 'period' || tab === 'day') return tab;
+  const period = params.get('period');
+  if (period === 'week') return 'week';
+  if (period === 'month' || period === 'range') return 'period';
+  return 'day';
+}
+
+type Tone = 'ok' | 'warn' | 'bad' | 'violet' | 'blue' | 'grey' | 'idle';
+
+/** Состояние строки словами и цветом — коротко, как говорят в отделе кадров. */
+function stateOf(row: api.PresenceRow, past: boolean): { title: string; tone: Tone } {
   const late = row.late_minutes ?? 0;
   switch (row.state) {
     case 'IN_OFFICE':
-      return late > 0 ? { title: `Опоздал на ${late} мин`, tone: 'warn' } : { title: 'В офисе', tone: 'ok' };
+      return late > 0 ? { title: `Опоздал на ${late} мин`, tone: 'warn' } : { title: past ? 'Не отметил уход' : 'В офисе', tone: past ? 'warn' : 'ok' };
     case 'LEFT':
-      return { title: 'Ушёл', tone: 'idle' };
+      return late > 0 ? { title: `Опоздал на ${late} мин`, tone: 'warn' } : { title: 'Смена завершена', tone: 'idle' };
     case 'LATE':
-      // Человек сам предупредил, что задерживается. Называть его «нет
-      // отметки» — значит стереть единственную разницу между тем, кто
-      // написал, и тем, кто пропал.
-      return { title: 'Опаздывает', tone: 'warn' };
+      // Предупредил, что задерживается: это не то же самое, что пропал.
+      return { title: 'Предупредил об опоздании', tone: 'warn' };
     case 'NOT_COME':
-      // Сказавший «не приду» тоже не отметился, но он предупредил, и
-      // кадровику это видно сразу, а не в карточке.
-      return row.notice_kind === 'ABSENT'
-        ? { title: 'Не придёт', tone: 'warn' }
-        : { title: 'Нет отметки', tone: 'warn' };
+      return row.notice_kind === 'ABSENT' ? { title: 'Предупредил: не придёт', tone: 'warn' } : { title: 'Нет отметки', tone: 'bad' };
     case 'VACATION':
       return { title: 'В отпуске', tone: 'violet' };
     case 'SICK_LEAVE':
@@ -69,90 +77,47 @@ function stateOf(row: api.PresenceRow): { title: string; tone: Tone } {
     case 'NO_SCHEDULE':
       return { title: 'Без графика', tone: 'grey' };
     default:
-      return { title: row.state, tone: 'grey' };
+      return { title: 'Неизвестно', tone: 'grey' };
   }
 }
 
-const STATUS_OPTIONS = [
-  { id: 'IN_OFFICE', name: 'В офисе' },
-  { id: 'LEFT', name: 'Ушли' },
-  { id: 'LATE', name: 'Опаздывают' },
-  { id: 'NOT_COME', name: 'Нет отметки' },
-  { id: 'VACATION', name: 'В отпуске' },
-  { id: 'SICK_LEAVE', name: 'На больничном' },
-  { id: 'OTHER_ABSENCE', name: 'Отсутствуют' },
-  { id: 'DAY_OFF', name: 'Выходной' },
-  { id: 'NO_SCHEDULE', name: 'Без графика' },
-];
-
 /**
- * Отбор таблицы. Один на чипы, плитки панели и «Требует внимания»:
- * нажатие в любом месте ставит одно и то же, и подсветка совпадает.
- * `state` понимает сервер; `flag` — признак строки, он считается по
- * уже полученным строкам (опоздавший бывает и в офисе, и ушедшим).
+ * Требует внимания HR. Одно правило на чип, счётчик и подсветку строки:
+ * нет отметки, опоздание, предупреждение, противоречивые отметки, отметка
+ * вне геозоны и незакрытая смена прошедшего дня.
  */
-type Quick = {
-  id: string;
-  title: string;
-  state?: string;
-  flag?: 'late' | 'open' | 'geo';
+function needsAttention(row: api.PresenceRow, past: boolean): boolean {
+  if (row.state === 'NOT_COME' || row.state === 'LATE') return true;
+  if ((row.late_minutes ?? 0) > 0) return true;
+  if (row.conflicting_marks || row.outside_geofence) return true;
+  return past && row.open_session_id !== null;
+}
+
+type Ctx = {
+  params: URLSearchParams;
+  patch: (changes: Record<string, string | null>) => void;
+  attempt: number;
+  offices: api.Office[];
+  departments: { id: string; name: string }[];
+  order: (span: { from: string; to: string }) => void;
+  openDay: (row: api.PresenceRow, day: string, zone: string) => void;
 };
 
-const QUICK: (Quick & { tone: string; count: (c: Counts) => number })[] = [
-  { id: 'all', title: 'Все', tone: 'blue', count: (c) => c.expected },
-  { id: 'now', title: 'Сейчас', state: 'IN_OFFICE', tone: 'green', count: (c) => c.here },
-  { id: 'none', title: 'Нет отметки', state: 'NOT_COME', tone: 'orange', count: (c) => c.none },
-  { id: 'late', title: 'Опоздали', flag: 'late', tone: 'orange', count: (c) => c.late },
-];
-
-type Counts = {
-  expected: number;
-  here: number;
-  came: number;
-  left: number;
-  none: number;
-  late: number;
-  open: number;
-  geo: number;
+type View = {
+  title: string;
+  sub: ReactNode;
+  tools: ReactNode;
+  strip: ReactNode;
+  body: ReactNode;
 };
 
 export function AttendancePage() {
-  /*
-   * Прав в интерфейсе нет: администратор один, и ему открыто всё.
-   * Проверку исполняет сервер — он и ответит отказом, если когда-нибудь
-   * появится учётная запись с урезанным доступом.
-   */
-  const can = (_code: string) => true;
-
   const [params, setParams] = useSearchParams();
-  const day = params.get('date') ?? today();
-  const tab = params.get('tab') === 'log' ? 'log' : 'day';
-  // Период живёт в адресе рядом с днём: ссылка на «неделю Каримова»
-  // должна открываться той же неделей, а не сегодняшним днём.
-  const rawPeriod = params.get('period');
-  const period: PeriodKind = isPeriodKind(rawPeriod) ? rawPeriod : 'day';
-  const span = spanOf(period, day, {
-    from: params.get('from') ?? undefined,
-    to: params.get('to') ?? undefined,
-  });
-  const search = params.get('search') ?? '';
-  const region = params.get('region_id') ?? '';
-  const office = params.get('office_id') ?? '';
-  const department = params.get('department_id') ?? '';
-  const state = params.get('state') ?? '';
-  const rawFlag = params.get('flag');
-  const flag = rawFlag === 'late' || rawFlag === 'open' || rawFlag === 'geo' ? rawFlag : '';
-  const page = Math.max(1, Number(params.get('page') ?? '1'));
-  const picked = params.get('employee') ?? '';
-
-  const [draft, setDraft] = useState(search);
-  const [updated, setUpdated] = useState<Date | null>(null);
+  const mode = modeOf(params);
   const [attempt, setAttempt] = useState(0);
-  const [fixing, setFixing] = useState(false);
-  useEffect(() => setDraft(search), [search]);
 
   const patch = useCallback(
-    (changes: Record<string, string | null>, keepPage = false) => {
+    (changes: Record<string, string | null>) => {
       setParams(
         (was) => {
           const next = new URLSearchParams(was);
@@ -160,7 +125,6 @@ export function AttendancePage() {
             if (value) next.set(key, value);
             else next.delete(key);
           }
-          if (!keepPage) next.delete('page');
           return next;
         },
         { replace: true },
@@ -169,1018 +133,1187 @@ export function AttendancePage() {
     [setParams],
   );
 
-  useEffect(() => {
-    if (draft === search) return;
-    const timer = setTimeout(() => patch({ search: draft || null }), 350);
-    return () => clearTimeout(timer);
-  }, [draft, search, patch]);
-
-  const scope = useMemo(
-    () => ({
-      date: day,
-      ...(office ? { office_id: office } : region ? { region_id: region } : {}),
-      ...(department ? { department_id: department } : {}),
-    }),
-    [day, office, region, department],
-  );
-  const wide = `${day}|${region}|${office}|${department}|${attempt}`;
-  const narrowed = Boolean(state || search);
-
-  // Показатели дня — у дашборда: он считает их по всему составу.
-  const [cards] = useBlock(
-    (signal) => api.dashboard(scope, signal).then((body) => {
-      setUpdated(new Date());
-      return body;
-    }),
-    wide,
-  );
-
-  // Полный состав дня: по нему строится динамика приходов и «вне геозоны».
-  const [base] = useBlock((signal) => api.presenceDay(scope, signal), wide, tab === 'day');
-  const [narrow] = useBlock(
-    (signal) => api.presenceDay(
-      { ...scope, ...(state ? { state } : {}), ...(search ? { search } : {}) },
-      signal,
-    ),
-    `${wide}|${state}|${search}`,
-    tab === 'day' && narrowed,
-  );
-  const shift = narrowed ? narrow : base;
-
   const [directory] = useBlock(
     (signal) =>
       Promise.all([
-        api.regions(signal),
         api.offices(signal),
         api.departmentsPage({ limit: '200', status: 'ACTIVE' }, signal),
-      ]).then(([regions, offices, departments]) => ({
-        regions: regions.items.filter((one) => one.status === 'ACTIVE'),
+      ]).then(([offices, departments]) => ({
         offices: offices.items.filter((one) => one.status === 'ACTIVE'),
-        departments: departments.items,
+        departments: departments.items.map((one) => ({ id: one.id, name: one.name })),
       })),
     'attendance-directory',
   );
 
-  // Офисы сужаются выбранным регионом: предлагать офис другого региона
-  // после того, как регион выбран, — значит показывать заведомо пустой
-  // результат и заставлять человека гадать, почему список пуст.
-  const officeOptions = useMemo(() => {
-    if (directory.state !== 'ready') return [];
-    return region
-      ? directory.data.offices.filter((one) => one.region_id === region)
-      : directory.data.offices;
-  }, [directory, region]);
+  // Выгрузка — в общую очередь отчётов; файл появится в «Отчётах».
+  const [ordered, setOrdered] = useState<string | null>(null);
+  useEffect(() => {
+    if (!ordered) return;
+    const timer = window.setTimeout(() => setOrdered(null), 6000);
+    return () => window.clearTimeout(timer);
+  }, [ordered]);
+  const office = params.get('office_id') ?? '';
+  const region = params.get('region_id') ?? '';
+  const department = params.get('department_id') ?? '';
+  const order = useCallback((span: { from: string; to: string }) => {
+    setOrdered(null);
+    api.orderExport({
+      kind: 'attendance', fmt: 'xlsx', date_from: span.from, date_to: span.to,
+      ...(office ? { office_id: office } : region ? { region_id: region } : {}),
+      ...(department ? { department_id: department } : {}),
+    })
+      .then(() => setOrdered('Выгрузка поставлена в очередь'))
+      .catch((error) => setOrdered(messageFor(error)));
+  }, [office, region, department]);
 
-  // Сводка за период. Грузится только когда период шире дня: за день
-  // всё уже посчитано карточками дашборда, и второй запрос показал бы
-  // те же числа, посчитанные другим способом.
-  const [summary] = useBlock(
-    (signal) => api.analyticsOverview(
-      {
-        date_from: span.from,
-        date_to: span.to,
-        ...(office ? { office_id: office } : region ? { region_id: region } : {}),
-      },
-      signal,
-    ),
-    `overview|${span.from}|${span.to}|${region}|${office}|${attempt}`,
-    tab === 'day' && period !== 'day',
-  );
+  // Карточка дня сотрудника с ручной отметкой — выдвижной панелью.
+  const [opened, setOpened] = useState<{ row: api.PresenceRow; day: string; zone: string } | null>(null);
 
-  const card = cards.state === 'ready'
-    ? Object.fromEntries(cards.data.cards.map((c) => [c.key, c.value]))
-    : {};
-  const everyone = base.state === 'ready' ? base.data.items : [];
-  const past = day < today();
-  const counts: Counts = {
-    expected: card['should_work_today'] ?? 0,
-    here: past ? (card['came'] ?? 0) : (card['in_office'] ?? 0),
-    came: card['came'] ?? 0,
-    left: card['left'] ?? 0,
-    none: card['not_come'] ?? 0,
-    late: card['late'] ?? 0,
-    open: card['open_sessions'] ?? 0,
-    geo: everyone.filter((row) => row.outside_geofence).length,
+  const ctx: Ctx = {
+    params,
+    patch,
+    attempt,
+    offices: directory.state === 'ready' ? directory.data.offices : [],
+    departments: directory.state === 'ready' ? directory.data.departments : [],
+    order,
+    openDay: (row, day, zone) => setOpened({ row, day, zone }),
   };
 
-  const found = shift.state === 'ready' ? shift.data.items : [];
-  const rows = flag === 'late' ? found.filter((row) => (row.late_minutes ?? 0) > 0)
-    : flag === 'open' ? found.filter((row) => row.open_session_id !== null)
-      : flag === 'geo' ? found.filter((row) => row.outside_geofence)
-        : found;
-  const pages = Math.max(1, Math.ceil(rows.length / PAGE));
-  const slice = rows.slice((page - 1) * PAGE, page * PAGE);
-  const chosenRow = rows.find((row) => row.employee_id === picked) ?? slice[0] ?? null;
-  const zone = shift.state === 'ready' ? shift.data.timezone : '';
-
-  const chosen = flag
-    ? flag
-    : state === 'IN_OFFICE' ? 'now' : state === 'NOT_COME' ? 'none' : state === 'LEFT' ? 'left' : state ? '' : 'all';
-  const choose = (item: Quick) =>
-    patch(chosen === item.id && item.id !== 'all'
-      ? { state: null, flag: null }
-      : { state: item.state ?? null, flag: item.flag ?? null });
-
-  // Выгрузка посещаемости за день — в общую очередь отчётов.
-  const [ordered, setOrdered] = useState<string | null>(null);
-  async function order() {
-    setOrdered(null);
-    try {
-      await api.orderExport({
-        kind: 'attendance', fmt: 'xlsx',
-        // Выгружается ровно то, что на экране: период, а не всегда день.
-        date_from: span.from, date_to: span.to,
-        ...(office ? { office_id: office } : region ? { region_id: region } : {}),
-        ...(department ? { department_id: department } : {}),
-      });
-      setOrdered('Выгрузка поставлена в очередь');
-    } catch (error) {
-      setOrdered(messageFor(error));
-    }
-  }
+  const views: Record<Mode, View> = {
+    day: useDayMode(mode === 'day', ctx),
+    log: useLogMode(mode === 'log', ctx),
+    week: useWeekMode(mode === 'week', ctx),
+    period: usePeriodMode(mode === 'period', ctx),
+  };
+  const view = views[mode];
 
   return (
     <AppShell breadcrumb="Посещаемость" section="attendance">
-      <div className="attp">
-        <header className="att-head">
-          <div>
-            <h1 className="att-head__title">Посещаемость</h1>
-            <p className="att-head__sub">{longDate(day)} <i>·</i> По данным отметок</p>
-          </div>
-          <div className="att-head__side">
-            <div className="att-head__tools">
-              <DatePicker label="Дата" value={day} now={today()} allowEmpty
-                onChange={(value) => patch({ date: value || null, employee: null })} />
-              {can('reports.export') && (
-                <button type="button" className="att-btn att-btn--light att-btn--export"
-                        onClick={() => void order()}>
-                  <AppIcon name="download" size={18} />
-                  Экспорт
-                </button>
-              )}
-              <button type="button" className="att-btn att-btn--light att-btn--icon" aria-label="Обновить"
-                      onClick={() => setAttempt((n) => n + 1)}>
+      <div className="at">
+        <section className="at-sheet">
+          <header className="at-head">
+            <div className="at-head__text">
+              <h1 className="at-head__title">{view.title}</h1>
+              <p className="at-head__sub">{view.sub}</p>
+            </div>
+            <div className="at-head__tools">
+              {view.tools}
+              <button type="button" className="at-icon" aria-label="Обновить" onClick={() => setAttempt((n) => n + 1)}>
                 <AppIcon name="refresh" size={18} />
               </button>
             </div>
-            <p className="att-head__updated">
-              {updated ? `Обновлено в ${formatTime(updated)}` : 'Загружаем…'}
-            </p>
-          </div>
-        </header>
-
-        {ordered && (
-          <p className="att-note" role="status">
-            {ordered} — <Link to="/reports">файл появится в отчётах</Link>
-          </p>
-        )}
-
-        <AppSegmentedControl className="att-tabs" role="tablist" label="Раздел посещаемости" value={tab}
-          options={[{ value: 'day', label: 'За день' }, { value: 'log', label: 'Журнал отметок' }]}
-          onChange={(value) => patch({ tab: value === 'day' ? null : value })} />
-
-        {tab === 'log' ? (
-          <Journal day={day} office={office} />
-        ) : (
-          <>
-            {/* Период стоит выше показателей: сначала человек решает,
-                за что смотрит, и только потом — на что именно. */}
-            <div className="att-period">
-              <AppSegmentedControl className="att-period__tabs" role="tablist"
-                label="Период" value={period}
-                options={PERIODS}
-                onChange={(value) => patch({
-                  period: value === 'day' ? null : value,
-                  // Границы произвольного периода живут только с ним:
-                  // оставленные от прошлого выбора, они сбивали бы
-                  // неделю и месяц незаметно.
-                  from: null, to: null,
-                })} />
-
-              {period === 'range' ? (
-                <span className="att-period__range">
-                  <input type="date" className="input input--time" value={span.from}
-                         aria-label="Начало периода" max={span.to}
-                         onChange={(event) => patch({ from: event.target.value })} />
-                  <span className="att-period__dash">—</span>
-                  <input type="date" className="input input--time" value={span.to}
-                         aria-label="Конец периода" min={span.from}
-                         onChange={(event) => patch({ to: event.target.value })} />
-                </span>
-              ) : (
-                <span className="att-period__title">{spanTitle(period, span)}</span>
-              )}
-            </div>
-
-            {period === 'day' ? (
-              <Today counts={counts} past={past} rows={everyone} zone={zone}
-                     chosen={chosen} onPick={choose} block={cards} />
-            ) : (
-              <PeriodSummary block={summary} span={span} period={period} />
+            {ordered && (
+              <p className="at-toast" role="status">
+                {ordered} — <Link to="/reports">файл появится в отчётах</Link>
+              </p>
             )}
+          </header>
 
-            <div className="att-grid">
+          <div className="at-strip">{view.strip}</div>
 
-              <section className="att-list" aria-label="Состав смены">
-                <div className="att-filters">
-                  <div className="att-chips" role="group" aria-label="Быстрый отбор">
-                    {QUICK.map((item) => <AppFilterButton key={item.id} className={`att-chip att-chip--${item.tone}`} active={chosen === item.id} count={item.count(counts)} onClick={() => choose(item)}>{item.title}</AppFilterButton>)}
-                  </div>
-                  <label className="att-search">
-                    <AppIcon name="search" size={16} />
-                    <input type="search" value={draft} placeholder="Поиск"
-                           aria-label="Поиск сотрудника"
-                           onChange={(event) => setDraft(event.target.value)} />
-                  </label>
-                  <Select label="Регион" empty="Все регионы" value={region}
-                          options={directory.state === 'ready' ? directory.data.regions : []}
-                          onChange={(value) => patch({
-                            region_id: value || null,
-                            // Офис другого региона после смены региона
-                            // показывал бы пустой список без объяснения.
-                            office_id: null,
-                          })} />
-                  <Select label="Офис" empty="Все офисы" value={office}
-                          options={officeOptions}
-                          onChange={(value) => patch({ office_id: value || null })} />
-                  <Select label="Отдел" empty="Все отделы" value={department}
-                          options={directory.state === 'ready' ? directory.data.departments : []}
-                          onChange={(value) => patch({ department_id: value || null })} />
-                  <Select label="Статус" empty="Все статусы" value={state} options={STATUS_OPTIONS}
-                          onChange={(value) => patch({ state: value || null, flag: null })} />
-                </div>
+          <SlideTabs
+            label="Режим посещаемости"
+            value={mode}
+            items={MODES}
+            onPick={(key) => patch({ tab: key === 'day' ? null : key, period: null, page: null, search: null, quick: null, kind: null, source: null, who: null, state: null })}
+            classes={{ list: 'at-tabs', tab: 'at-tab', on: 'at-tab--on', ink: 'at-tabs__ink' }}
+          />
 
-                <div className="att-table">
-                  <div className="att-table__head" role="row">
-                    <span>Сотрудник</span>
-                    <span>Офис / график</span>
-                    <span>Рабочий день</span>
-                    <span>В офисе</span>
-                    <span>Статус</span>
-                  </div>
-                  <Section block={shift} name="состав смены">
-                    {(data) => rows.length === 0 ? (
-                      <p className="att-empty">
-                        {state || flag || search || office || region || department
-                          ? 'По этим условиям никого нет.'
-                          : 'Нет отметок за выбранный период.'}
-                      </p>
-                    ) : (
-                      <>
-                        {data.truncated && (
-                          <p className="att-empty att-empty--bad">
-                            Показаны не все: состав больше одного ответа. Сузьте фильтры.
-                          </p>
-                        )}
-                        {slice.map((row) => (
-                          <Row key={row.employee_id} row={row} zone={data.timezone} day={day}
-                               on={row.employee_id === chosenRow?.employee_id}
-                               onPick={() => { setFixing(false); patch({ employee: row.employee_id }, true); }} />
-                        ))}
-                      </>
-                    )}
-                  </Section>
-                </div>
-
-                <footer className="att-pager">
-                  <p>{shift.state === 'ready' ? `Показано ${slice.length} из ${plural(rows.length)}` : ''}</p>
-                  <Pages page={page} pages={pages}
-                         onGo={(next) => patch({ page: next === 1 ? null : String(next) }, true)} />
-                </footer>
-              </section>
-
-              <div className="att-rail">
-                <Attention counts={counts} chosen={chosen} onPick={choose} />
-                {chosenRow && fixing ? (
-                  <div className="att-fix">
-                    <DayCard row={chosenRow} day={day} timezone={zone} canAdd={can('attendance.manual')}
-                             onClose={() => setFixing(false)}
-                             onChanged={() => { setFixing(false); setAttempt((n) => n + 1); }} />
-                  </div>
-                ) : (
-                  <Person row={chosenRow} day={day} zone={zone}
-                          canFix={can('attendance.manual')} onFix={() => setFixing(true)} />
-                )}
-              </div>
+          <div className="at-place">
+            <div key={mode} className="at-pane" role="tabpanel" aria-label={MODES.find((one) => one.key === mode)?.title}>
+              {view.body}
             </div>
-          </>
-        )}
+          </div>
+        </section>
       </div>
+
+      {opened && (
+        <div className="at-drawer" role="presentation">
+          <button type="button" className="at-drawer__scrim" aria-label="Закрыть" onClick={() => setOpened(null)} />
+          <div className="at-drawer__panel">
+            <DayCard row={opened.row} day={opened.day} timezone={opened.zone} canAdd
+                     onClose={() => setOpened(null)}
+                     onChanged={() => { setOpened(null); setAttempt((n) => n + 1); }} />
+          </div>
+        </div>
+      )}
     </AppShell>
   );
 }
 
-// --- панель «Сегодня» ----------------------------------------------------------
+// --- За день ------------------------------------------------------------------------
 
-const METRICS: (Quick & { icon: AppIconName; tone: string; count: (c: Counts) => number })[] = [
-  { id: 'left', title: 'Уже ушли', state: 'LEFT', icon: 'logout', tone: 'navy', count: (c) => c.left },
-  { id: 'none', title: 'Нет отметки', state: 'NOT_COME', icon: 'alert', tone: 'orange', count: (c) => c.none },
-  { id: 'late', title: 'Опоздали', flag: 'late', icon: 'clock', tone: 'orange', count: (c) => c.late },
-  { id: 'open', title: 'Незакрытые', flag: 'open', icon: 'doc', tone: 'blue', count: (c) => c.open },
-];
+const DAY_PAGE = 12;
 
-function Today({ counts, past, rows, zone, chosen, onPick, block }: {
-  counts: Counts;
-  past: boolean;
-  rows: api.PresenceRow[];
-  zone: string;
-  chosen: string;
-  onPick: (item: Quick) => void;
-  block: Block<unknown>;
-}) {
-  // Доля — от тех, кого ждали сегодня, а не от всей организации.
-  const share = counts.expected > 0 ? (counts.here / counts.expected) * 100 : 0;
-  return (
-    <section className="att-today" aria-label="Сегодня">
-      <div className="att-today__share">
-        <h2 className="att-today__title">{past ? 'Итоги дня' : 'Сегодня'}</h2>
-        <div className="att-today__ring">
-          <Donut share={share} />
-          <p className="att-today__sum">
-            {counts.here > 0 && <i className="att-today__live" aria-hidden="true" />}
-            <strong>{counts.here} из {counts.expected}</strong>
-            <span>{past ? 'пришли' : 'в офисе'}</span>
-            <small>{block.state === 'loading' ? 'Загружаем…' : past ? 'За выбранный день' : 'Сейчас в офисе'}</small>
-          </p>
-        </div>
-      </div>
+function useDayMode(active: boolean, ctx: Ctx): View {
+  const { params, patch, attempt } = ctx;
+  const day = params.get('date') ?? today();
+  const office = params.get('office_id') ?? '';
+  const region = params.get('region_id') ?? '';
+  const department = params.get('department_id') ?? '';
+  const state = params.get('state') ?? '';
+  const chosenQuick = params.get('quick');
+  const search = params.get('search') ?? '';
+  const page = Math.max(1, Number(params.get('page') ?? '1'));
+  const picked = params.get('employee') ?? '';
+  const past = day < today();
 
-      <Arrivals rows={rows} zone={zone} past={past} />
+  const scope = useMemo(() => ({
+    date: day,
+    ...(office ? { office_id: office } : region ? { region_id: region } : {}),
+    ...(department ? { department_id: department } : {}),
+  }), [day, office, region, department]);
+  const key = `${JSON.stringify(scope)}|${attempt}`;
 
-      <div className="att-metrics">
-        {METRICS.map((item) => (
-          <button key={item.id} type="button" aria-pressed={chosen === item.id}
-                  className={`att-metric att-metric--${item.tone}${chosen === item.id ? ' att-metric--on' : ''}`}
-                  onClick={() => onPick(item)}>
-            <AppIcon name={item.icon} size={20} />
-            <span>{item.title}</span>
-            <strong>{item.count(counts)}</strong>
-          </button>
-        ))}
-      </div>
-    </section>
+  const [cards] = useBlock((signal) => api.dashboard(scope, signal), key, active);
+  // Сдвиг явки к прошлому дню — посчитан сервером одним правилом.
+  const [shift] = useBlock(
+    (signal) => api.analyticsOverview({
+      date_from: day, date_to: day,
+      ...(office ? { office_id: office } : region ? { region_id: region } : {}),
+      ...(department ? { department_id: department } : {}),
+      people_limit: '1',
+    }, signal).then((body) => body.summary.difference_points).catch(() => null),
+    key,
+    active,
   );
-}
+  const [roster] = useBlock((signal) => api.presenceDay(scope, signal), key, active);
 
-function Donut({ share }: { share: number }) {
-  const radius = 42;
-  const length = 2 * Math.PI * radius;
-  const filled = (Math.min(Math.max(share, 0), 100) / 100) * length;
-  return (
-    <svg className="att-donut" viewBox="0 0 96 96" width={96} height={96}
-         role="img" aria-label={`В офисе ${share.toFixed(1)} процента`}>
-      <circle className="att-donut__track" cx="48" cy="48" r={radius} />
-      <circle className="att-donut__fill" cx="48" cy="48" r={radius}
-              strokeDasharray={`${filled} ${length}`} transform="rotate(-90 48 48)" />
-      <text className="att-donut__text" x="48" y="49">{share.toFixed(1).replace('.', ',')}%</text>
-    </svg>
-  );
-}
+  const [draft, setDraft] = useState(search);
+  useEffect(() => setDraft(search), [search]);
+  useEffect(() => {
+    if (draft === search) return;
+    const timer = window.setTimeout(() => patch({ search: draft || null, page: null }), 300);
+    return () => window.clearTimeout(timer);
+  }, [draft, search, patch]);
 
-/**
- * Динамика приходов: первый вход каждого человека по пятиминуткам.
- * Все входы подряд сместили бы картину к обеду — возвращение тоже вход.
- */
-function Arrivals({ rows, zone, past }: { rows: api.PresenceRow[]; zone: string; past: boolean }) {
-  const step = 5;
-  const from = 8 * 60;
-  const to = 11 * 60;
-  const values = rows
-    .map((row) => minutesOf(row.first_entry_at, zone))
-    .filter((one): one is number => one !== null && one >= from && one < to + step);
-  const buckets = Array.from({ length: (to - from) / step + 1 }, (_, at) => {
-    const start = from + at * step;
-    return values.filter((one) => one >= start && one < start + step).length;
-  });
-  const top = Math.max(1, ...buckets);
-  return (
-    <div className="att-arrivals">
-      <p className="att-arrivals__title">{past ? 'Динамика приходов' : 'Динамика приходов сегодня'}</p>
-      <div className="att-arrivals__bars" role="img"
-           aria-label={`Приходов с 08:00 до 11:00: ${values.length}`}>
-        {buckets.map((count, at) => (
-          <span key={at} style={{ height: `${Math.max((count / top) * 100, 4)}%` }}
-                title={`${hhmm(from + at * step)} · ${count}`} />
-        ))}
-      </div>
-      <div className="att-arrivals__axis">
-        {[0, 30, 60, 90, 120, 150, 180].map((shift) => <span key={shift}>{hhmm(from + shift)}</span>)}
-      </div>
-    </div>
-  );
-}
+  const card = cards.state === 'ready' ? Object.fromEntries(cards.data.cards.map((c) => [c.key, c.value])) : {};
+  const rows = roster.state === 'ready' ? roster.data.items : [];
+  // Человек, пришедший по ссылке из его карточки, открывается сам.
+  useEffect(() => {
+    if (!active || !picked || roster.state !== 'ready') return;
+    const row = roster.data.items.find((one) => one.employee_id === picked);
+    if (row) ctx.openDay(row, day, roster.data.timezone);
+    patch({ employee: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, picked, roster]);
 
-// --- таблица ---------------------------------------------------------------------
+  const attention = rows.filter((row) => needsAttention(row, past));
+  // По умолчанию — «Требуют внимания», но пустой таблицы вместо людей
+  // человек видеть не должен: если внимания никто не требует, — все.
+  const quick = chosenQuick ?? (roster.state === 'ready' && attention.length === 0 ? 'all' : 'attention');
+  const inOffice = rows.filter((row) => row.state === 'IN_OFFICE');
+  const needle = search.trim().toLowerCase();
+  const shown = (quick === 'attention' ? attention : quick === 'office' ? inOffice : rows)
+    .filter((row) => !state || row.state === state)
+    .filter((row) => !needle || row.full_name.toLowerCase().includes(needle));
+  const pages = Math.max(1, Math.ceil(shown.length / DAY_PAGE));
+  const slice = shown.slice((page - 1) * DAY_PAGE, page * DAY_PAGE);
 
-function Row({ row, zone, day, on, onPick }: {
-  row: api.PresenceRow;
-  zone: string;
-  day: string;
-  on: boolean;
-  onPick: () => void;
-}) {
-  const status = stateOf(row);
-  return (
-    <div className={on ? 'att-row att-row--on' : 'att-row'} role="row" tabIndex={0}
-         onClick={onPick}
-         onKeyDown={(event) => { if (event.key === 'Enter') onPick(); }}>
-      <span className="att-row__who">
-        <Face id={row.employee_id} name={row.full_name} className="att-row__face" />
-        <span className="att-row__text">
-          <b>{shortName(row.full_name)}</b>
-          <small>{row.department_name ?? row.office_name ?? '—'}</small>
-        </span>
-      </span>
-      <span className="att-row__text">
-        <span>{row.office_name ?? '—'}</span>
-        <small>{hours(row)}</small>
-      </span>
-      <DayLine row={row} zone={zone} day={day} />
-      <span className="att-row__time">{present(row, day) ? span(present(row, day)) : '—'}</span>
-      <span className={`att-status att-status--${status.tone}`}>{status.title}</span>
-      <AppIcon name="next" size={18} className="att-row__go" />
-    </div>
-  );
-}
+  const expected = card['should_work_today'] ?? 0;
+  const came = card['came'] ?? 0;
+  const share = expected > 0 ? Math.round((came / expected) * 100) : null;
+  const diff = shift.state === 'ready' ? shift.data : null;
 
-/**
- * Шкала рабочего дня: отрезки присутствия на отрезке графика.
- * Промежуток между посещениями не называется обедом — это просто
- * время вне офиса.
- */
-function DayLine({ row, zone, day, wide = false }: {
-  row: api.PresenceRow;
-  zone: string;
-  day: string;
-  wide?: boolean;
-}) {
-  if (row.state === 'VACATION' || row.state === 'SICK_LEAVE' || row.state === 'OTHER_ABSENCE') {
-    return (
-      <span className={`att-line att-line--absent${wide ? ' att-line--wide' : ''}`}>
-        <span className="att-line__hatch">{stateOf(row).title}</span>
-      </span>
-    );
-  }
-  if (row.intervals.length === 0) {
-    return (
-      <span className={`att-line${wide ? ' att-line--wide' : ''}`}>
-        <span className="att-line__track att-line__track--empty" />
-      </span>
-    );
-  }
-
-  const start = toMinutes(row.scheduled_start) ?? 9 * 60;
-  const end = toMinutes(row.scheduled_end) ?? 18 * 60;
-  const points = row.intervals.flatMap((one) => [
-    minutesOf(one.started_at, zone),
-    one.ended_at ? minutesOf(one.ended_at, zone) : nowMinutes(zone),
-  ]).filter((one): one is number => one !== null);
-  const low = Math.min(start - 20, ...points);
-  const high = Math.max(end + 20, ...points);
-  const at = (minute: number) => ((minute - low) / (high - low)) * 100;
-
-  const labels: { left: number; text: string }[] = [];
-  const late = (row.late_minutes ?? 0) > 0;
-  row.intervals.forEach((one, index) => {
-    const from = minutesOf(one.started_at, zone);
-    const to = one.ended_at ? minutesOf(one.ended_at, zone) : null;
-    if (from !== null) labels.push({ left: at(from), text: clockOnDay(one.started_at, zone, day) });
-    if (to !== null && index < row.intervals.length - 1) {
-      labels.push({ left: at(to), text: clock(one.ended_at, zone) });
-    } else if (to !== null) {
-      labels.push({ left: at(to), text: clock(one.ended_at, zone) });
-    } else {
-      labels.push({ left: 100, text: 'сейчас' });
-    }
-  });
-  // Подписи не налезают друг на друга: ближе 16 % ширины — пропуск.
-  const shown = labels.filter((one, index) =>
-    labels.slice(0, index).every((was) => Math.abs(was.left - one.left) > 16));
-
-  return (
-    <span className={`att-line${wide ? ' att-line--wide' : ''}`}>
-      <span className="att-line__track">
-        {row.intervals.map((one, index) => {
-          const from = minutesOf(one.started_at, zone);
-          const to = one.ended_at ? minutesOf(one.ended_at, zone) : nowMinutes(zone);
-          if (from === null || to === null) return null;
-          return (
-            <i key={index} className="att-line__part"
-               style={{ left: `${at(from)}%`, width: `${Math.max(at(to) - at(from), 1)}%` }} />
-          );
-        })}
-        {late && <i className="att-line__late" style={{ left: `${at(start)}%` }} />}
-        {row.open_session_id && <i className="att-line__now" />}
-      </span>
-      <span className="att-line__labels">
-        {shown.map((one) => (
-          <small key={`${one.left}-${one.text}`}
-                 style={{ left: `${Math.min(Math.max(one.left, 0), 100)}%` }}>{one.text}</small>
-        ))}
-      </span>
-    </span>
-  );
-}
-
-function Pages({ page, pages, onGo }: { page: number; pages: number; onGo: (next: number) => void }) {
-  const shown = Array.from({ length: Math.min(pages, 5) }, (_, at) => at + 1);
-  return (
-    <nav className="att-pages" aria-label="Страницы">
-      <button type="button" className="att-pages__arrow" aria-label="Предыдущая"
-              disabled={page <= 1} onClick={() => onGo(page - 1)}>
-        <AppIcon name="back" size={16} />
-      </button>
-      {shown.map((one) => (
-        <button key={one} type="button" aria-current={one === page ? 'page' : undefined}
-                className={one === page ? 'att-pages__one att-pages__one--on' : 'att-pages__one'}
-                onClick={() => onGo(one)}>
-          {one}
+  return {
+    title: 'Посещаемость',
+    sub: <>{longDate(day)} · По данным отметок</>,
+    tools: (
+      <>
+        <DatePicker label="Дата" value={day} now={today()} allowEmpty
+                    onChange={(value) => patch({ date: value || null, page: null })} />
+        <Dropdown label="Офис" empty="Все офисы" value={office}
+                  options={ctx.offices.map((one) => ({ id: one.id, name: one.name }))}
+                  onChange={(value) => patch({ office_id: value || null, region_id: null, page: null })} />
+        <button type="button" className="at-btn" onClick={() => ctx.order({ from: day, to: day })}>
+          <AppIcon name="download" size={18} /> Экспорт
         </button>
-      ))}
-      <button type="button" className="att-pages__next" aria-label="Следующая"
-              disabled={page >= pages} onClick={() => onGo(page + 1)}>
-        <AppIcon name="next" size={18} />
-      </button>
-    </nav>
-  );
-}
-
-// --- правая колонка --------------------------------------------------------------
-
-const ATTENTION: (Quick & { icon: AppIconName; tone: string; count: (c: Counts) => number })[] = [
-  { id: 'none', title: 'Нет отметки', state: 'NOT_COME', icon: 'alert', tone: 'orange', count: (c) => c.none },
-  { id: 'late', title: 'Опоздали', flag: 'late', icon: 'clock', tone: 'orange', count: (c) => c.late },
-  { id: 'open', title: 'Незакрытые', flag: 'open', icon: 'doc', tone: 'navy', count: (c) => c.open },
-  { id: 'geo', title: 'Вне геозоны', flag: 'geo', icon: 'pin', tone: 'navy', count: (c) => c.geo },
-];
-
-function Attention({ counts, chosen, onPick }: {
-  counts: Counts;
-  chosen: string;
-  onPick: (item: Quick) => void;
-}) {
-  const total = ATTENTION.reduce((sum, one) => sum + one.count(counts), 0);
-  return (
-    <section className="att-attention" aria-label="Требует внимания">
-      <h2 className="att-attention__title">
-        Требует внимания
-        <span className="att-attention__total">{total}</span>
-        <AppIcon name="next" size={18} className="att-attention__go" />
-      </h2>
-      {ATTENTION.map((item) => (
-        <button key={item.id} type="button" aria-pressed={chosen === item.id}
-                className={`att-attention__row att-attention__row--${item.tone}${chosen === item.id ? ' att-attention__row--on' : ''}`}
-                onClick={() => onPick(item)}>
-          <AppIcon name={item.icon} size={20} />
-          <span>{item.title}</span>
-          <b>{item.count(counts)}</b>
-          <AppIcon name="next" size={18} />
-        </button>
-      ))}
-    </section>
-  );
-}
-
-function Person({ row, day, zone, canFix, onFix }: {
-  row: api.PresenceRow | null;
-  day: string;
-  zone: string;
-  canFix: boolean;
-  onFix: () => void;
-}) {
-  const [events] = useBlock(
-    (signal) => row
-      ? api.events({
-        employee_id: row.employee_id, date_from: day, date_to: day,
-        verification_status: 'ACCEPTED', limit: '100',
-      }, signal)
-      : Promise.resolve({ items: [], has_more: false, next_cursor: null } as unknown as api.Cursored<api.EventRow>),
-    `events|${row?.employee_id ?? ''}|${day}`,
-  );
-
-  if (!row) {
-    return (
-      <section className="att-person">
-        <p className="att-empty">Выберите сотрудника, чтобы увидеть его день.</p>
-      </section>
-    );
-  }
-  const status = stateOf(row);
-  // Все события дня, а не первые три: у человека с обедом их четыре, и
-  // обрезанный список прячет как раз то, из-за чего карточку открыли.
-  // Длинный список прокручивается внутри себя.
-  const list = events.state === 'ready'
-    ? [...events.data.items].sort((a, b) => a.occurred_at.localeCompare(b.occurred_at))
-    : [];
-  // Отметок нет и время в офисе не набрано — показывать нечего, кроме
-  // самого факта. Пока события грузятся, пустым состоянием не мигаем.
-  const nothingYet = events.state === 'ready' && list.length === 0 && !present(row, day);
-
-  return (
-    <section className="att-person" aria-label="Выбранный сотрудник">
-      <div className="att-person__who">
-        <Face id={row.employee_id} name={row.full_name} className="att-person__face" />
-        <div>
-          <p className="att-person__name">{shortName(row.full_name)}</p>
-          <p className="att-person__number">{row.department_name ?? row.office_name ?? '—'}</p>
-          <span className={`att-status att-status--${status.tone}`}>{status.title}</span>
-        </div>
-      </div>
-
-      {/* Прокручивается середина карточки, а не панель целиком: «Открыть
-          карточку» и «Исправить отметку» должны оставаться на виду. */}
-      <div className="att-person__scroll">
-        <dl className="att-person__facts">
-          <dt><AppIcon name="building" size={18} />Офис</dt>
-          <dd>{row.office_name ?? '—'}</dd>
-          <dt><AppIcon name="users" size={18} />Отдел</dt>
-          <dd>{row.department_name ?? '—'}</dd>
-          <dt><AppIcon name="calendar" size={18} />График</dt>
-          <dd>{hours(row)}</dd>
-          {/* Опоздание показывается, только когда его есть с чем
-              сравнивать: `null` означает «графика нет» или «человек не
-              приходил», а не «пришёл вовремя». */}
-          {(row.late_minutes ?? 0) > 0 && (
-            <>
-              <dt><AppIcon name="clock" size={18} />Опоздание</dt>
-              <dd>{row.late_minutes} мин</dd>
-            </>
-          )}
-          {row.absence_name && (
-            <>
-              <dt><AppIcon name="doc" size={18} />Отсутствие</dt>
-              <dd>{row.absence_name}</dd>
-            </>
-          )}
-        </dl>
-
-        {/*
-          * День без единой отметки — это не пустая панель с прочерками.
-          * Прочерк на месте времени и пустая полоса графика выглядят как
-          * сбой загрузки; вместо них — прямая фраза о том, что человек
-          * ещё не отмечался. Офис, отдел и график при этом остаются: они
-          * известны и нужны тому, кто разбирается.
-          */}
-        {/* Что человек сам сказал про день. Стоит выше событий: если он
-            предупредил, это первое, что должен увидеть кадровик, —
-            иначе он открывает карточку, видит пустоту и звонит. */}
-        {row.notice_kind && (
-          <div className="att-person__notice">
-            <span className="att-person__noticeIcon" aria-hidden="true">
-              <AppIcon name="alert" size={18} />
-            </span>
-            <p className="att-person__noticeText">
-              <b>
-                {row.notice_kind === 'LATE'
-                  ? 'Сотрудник предупредил, что опаздывает'
-                  : 'Сотрудник предупредил, что не придёт'}
-              </b>
-              {row.notice_comment
-                ? <span>{row.notice_comment}</span>
-                : <span>Причину не назвал</span>}
-            </p>
-          </div>
-        )}
-
-        {nothingYet ? (
-          <div className="att-person__blank">
-            <span className="att-person__blankIcon" aria-hidden="true">
-              <AppIcon name="clock" size={20} />
-            </span>
-            <p className="att-person__blankTitle">Нет отметок за выбранный период</p>
-            <p className="att-person__blankText">
-              {day === today()
-                ? 'Сотрудник сегодня ещё не отмечал вход или выход.'
-                : 'В этот день сотрудник не отмечал ни входа, ни выхода.'}
-            </p>
-            <span className="att-status att-status--warn">
-              {stateOf(row).title}
-            </span>
-          </div>
-        ) : (
-          <>
-            <div className="att-person__day">
-              <p className="att-person__label">{day === today() ? 'Сегодня в офисе' : 'В офисе за день'}</p>
-              <p className="att-person__total">{present(row, day) ? span(present(row, day)) : '—'}</p>
-              <DayLine row={row} zone={zone} day={day} wide />
+      </>
+    ),
+    strip: (
+      <Guard block={cards} name="показатели дня" strip>
+        {() => (
+          <div className="at-facts">
+            <div className="at-fact at-fact--main">
+              <span className="at-fact__label">{past ? 'Явка за день' : 'Явка сегодня'}</span>
+              <span className="at-fact__line">
+                <b className="at-fact__big">{share === null ? '—' : `${share}%`}</b>
+                <span>{expected > 0 ? `${came} из ${expected} по графику` : 'По графику никого не ждали'}</span>
+              </span>
+              <span className="at-meter"><i style={{ width: `${share ?? 0}%` }} /></span>
+              {diff !== null && (
+                <small className={diff >= 0 ? 'at-delta at-delta--up' : 'at-delta at-delta--down'}>
+                  {diff >= 0 ? '+' : '−'}{Math.abs(diff).toLocaleString('ru-RU')} п.п. к вчера
+                </small>
+              )}
             </div>
-
-            <p className="att-person__label">{day === today() ? 'События сегодня' : 'События дня'}</p>
-            <ul className="att-events">
-              {events.state === 'loading' && <li className="att-events__none">Загружаем…</li>}
-              {list.map((one) => (
-                <li key={one.id} className={one.event_type === 'ENTRY' ? 'att-events__in' : 'att-events__out'}>
-                  <b>{clock(one.occurred_at, zone)}</b>
-                  <span>
-                    {one.event_type === 'ENTRY' ? 'Вход' : 'Выход'}
-                    {one.qr_point_name ? ` · ${one.qr_point_name}` : ''}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </>
+            <div className="at-fact">
+              <span className="at-fact__label">{past ? 'Статус дня' : 'Статус на сейчас'}</span>
+              <ul className="at-counts">
+                <li><i className="at-dot at-dot--ok" />{past ? 'Отметились' : 'В офисе'}<b>{past ? came : card['in_office'] ?? 0}</b></li>
+                <li><i className="at-dot at-dot--warn" />Опоздали<b>{card['late'] ?? 0}</b></li>
+                <li><i className="at-dot at-dot--bad" />Без отметки<b>{card['not_come'] ?? 0}</b></li>
+              </ul>
+            </div>
+            <div className="at-fact">
+              <span className="at-fact__label">{past ? 'Отсутствовали' : 'Сегодня отсутствуют'}</span>
+              <ul className="at-counts">
+                <li><i className="at-dot at-dot--violet" />В отпуске<b>{card['vacation'] ?? 0}</b></li>
+                <li><i className="at-dot at-dot--blue" />На больничном<b>{card['sick_leave'] ?? 0}</b></li>
+                <li><i className="at-dot at-dot--idle" />Завершили смену<b>{card['left'] ?? 0}</b></li>
+              </ul>
+              <small className="at-fact__note">Только подтверждённые отсутствия</small>
+            </div>
+          </div>
         )}
-      </div>
-
-      <div className="att-person__actions">
-        <Link className="att-btn att-btn--outline" to={`/employees/${row.employee_id}?tab=attendance`}>
-          <AppIcon name="doc" size={18} />
-          Открыть карточку
-        </Link>
-        {/* Исправление — это добавление ручной отметки с причиной, а не
-            правка существующей: форма открывается в карточке дня. */}
-        <button type="button" className="att-btn att-btn--blue" disabled={!canFix} onClick={onFix}>
-          <AppIcon name="pencil" size={18} />
-          Исправить отметку
-        </button>
-      </div>
-    </section>
-  );
-}
-
-// --- журнал отметок ------------------------------------------------------------
-
-/** Как отметка попала в систему. В журнале — словами, а не кодом. */
-const SOURCE: Record<string, string> = {
-  QR: 'QR-код',
-  MANUAL: 'Вручную',
-  IMPORT: 'Импорт',
-  SYSTEM: 'Система',
-  TERMINAL: 'Терминал',
-};
-
-/** Чем закончилась проверка отметки. */
-const VERDICT: Record<string, string> = {
-  ACCEPTED: 'Принята',
-  REJECTED: 'Отклонена',
-  PENDING: 'На проверке',
-};
-
-function Journal({ day, office }: { day: string; office: string }) {
-  const [cursor, setCursor] = useState('');
-  const [direction, setDirection] = useStickyState('attendance.log.direction', '');
-  const [onlyAccepted, setOnlyAccepted] = useStickyState('attendance.log.accepted', true);
-
-  const [log] = useBlock(
-    (signal) => api.events({
-      date_from: day, date_to: day, limit: '20',
-      ...(office ? { office_id: office } : {}),
-      ...(direction ? { event_type: direction } : {}),
-      // Успешные отметки и отклонённые попытки — разные вещи.
-      ...(onlyAccepted ? { verification_status: 'ACCEPTED' } : {}),
-      ...(cursor ? { cursor } : {}),
-    }, signal),
-    `log|${day}|${office}|${direction}|${onlyAccepted}|${cursor}`,
-  );
-
-  return (
-    <section className="att-list att-list--log">
-      <div className="att-filters">
-        <Select label="Направление" empty="Вход и выход" value={direction}
-                options={[{ id: 'ENTRY', name: 'Только входы' }, { id: 'EXIT', name: 'Только выходы' }]}
-                onChange={(value) => { setDirection(value); setCursor(''); }} />
-        <label className="att-check">
-          <input type="checkbox" checked={onlyAccepted}
-                 onChange={(event) => { setOnlyAccepted(event.target.checked); setCursor(''); }} />
-          Только успешные отметки
-        </label>
-      </div>
-      <Section block={log} name="журнал">
-        {(data) => data.items.length === 0 ? (
-          <p className="att-empty">За выбранный день отметок нет.</p>
-        ) : (
-          <table className="att-log table-cards">
-            <thead>
-              <tr><th>Время</th><th>Офис и точка</th><th>Направление</th><th>Источник</th><th>Состояние</th></tr>
-            </thead>
-            <tbody>
-              {data.items.map((one) => (
-                <tr key={one.id}>
-                  <td data-label="Время">{one.occurred_at.slice(11, 16)}</td>
-                  <td data-label="Офис и точка">{one.office_name ?? '—'}{one.qr_point_name ? ` · ${one.qr_point_name}` : ''}</td>
-                  <td data-label="Направление">{one.event_type === 'ENTRY' ? 'Вход' : 'Выход'}</td>
-                  <td data-label="Источник">{SOURCE[one.source] ?? one.source}</td>
-                  <td data-label="Состояние">{VERDICT[one.verification_status] ?? one.verification_status}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </Section>
-      <footer className="att-pager">
-        <p />
-        <div className="att-pages">
-          <button type="button" className="att-btn att-btn--light" disabled={!cursor} onClick={() => setCursor('')}>
-            В начало
-          </button>
-          <button type="button" className="att-btn att-btn--blue"
-                  disabled={log.state !== 'ready' || !log.data.has_more}
-                  onClick={() => log.state === 'ready' && setCursor(log.data.next_cursor ?? '')}>
-            Далее
-          </button>
+      </Guard>
+    ),
+    body: (
+      <>
+        <div className="at-filters">
+          <div className="at-chips" role="group" aria-label="Отбор сотрудников">
+            {([
+              ['attention', 'Требуют внимания', attention.length],
+              ['all', 'Все сотрудники', rows.length],
+              ['office', past ? 'Были в офисе' : 'Сейчас в офисе', inOffice.length],
+            ] as const).map(([keyName, title, count]) => (
+              <button key={keyName} type="button" aria-pressed={quick === keyName}
+                      className={quick === keyName ? 'at-chip at-chip--on' : 'at-chip'}
+                      onClick={() => patch({ quick: keyName, page: null })}>
+                {title}<span className="at-chip__n">{roster.state === 'ready' ? count : '·'}</span>
+              </button>
+            ))}
+            {state && (
+              <button type="button" className="at-chip at-chip--on" onClick={() => patch({ state: null })}
+                      aria-label="Снять отбор по статусу">
+                {STATE_TITLE[state] ?? state} <AppIcon name="close" size={16} />
+              </button>
+            )}
+          </div>
+          <label className="at-find">
+            <AppIcon name="search" size={16} />
+            <input type="search" value={draft} placeholder="Найти сотрудника" aria-label="Найти сотрудника"
+                   onChange={(event) => setDraft(event.target.value)} />
+          </label>
+          <Dropdown label="Отдел" empty="Все отделы" value={department} options={ctx.departments}
+                    onChange={(value) => patch({ department_id: value || null, page: null })} />
         </div>
-      </footer>
-    </section>
+
+        <div className="at-table at-table--day" role="table" aria-label="Сотрудники за день">
+          <div className="at-table__head" role="row">
+            <span role="columnheader">Сотрудник</span>
+            <span role="columnheader">Офис / отдел</span>
+            <span role="columnheader">График</span>
+            <span role="columnheader">Приход</span>
+            <span role="columnheader">Уход</span>
+            <span role="columnheader">Рабочее время</span>
+            <span role="columnheader">Статус</span>
+            <span role="columnheader" className="at-right">Действие</span>
+          </div>
+          <div className="at-table__body">
+            <Guard block={roster} name="сотрудников">
+              {(data) => (
+                <>
+                  {data.truncated && <p className="at-warn">Показаны не все сотрудники: состав больше одного ответа. Сузьте фильтры.</p>}
+                  {slice.length === 0 ? (
+                    <p className="at-empty">
+                      {quick === 'attention' && !needle && !state
+                        ? 'Сейчас никто не требует внимания.'
+                        : 'По этим условиям никого нет.'}
+                    </p>
+                  ) : slice.map((row) => {
+                    const look = stateOf(row, past);
+                    const hot = needsAttention(row, past);
+                    return (
+                      <div key={row.employee_id} role="row"
+                           className={`at-row${hot ? (row.state === 'NOT_COME' ? ' at-row--bad' : ' at-row--warn') : ''}`}>
+                        <span role="cell" className="at-who">
+                          <span className="at-face" aria-hidden="true">{initials(row.full_name)}</span>
+                          <b>{row.full_name}</b>
+                        </span>
+                        <span role="cell" className="at-muted">
+                          {[row.office_name, row.department_name].filter(Boolean).join(' · ') || '—'}
+                        </span>
+                        <span role="cell" className="at-muted">
+                          {row.scheduled_start && row.scheduled_end ? `${row.scheduled_start}–${row.scheduled_end}` : 'Не задан'}
+                        </span>
+                        <span role="cell" className={(row.late_minutes ?? 0) > 0 ? 'at-num at-num--warn' : 'at-num'}>
+                          {clockOnDay(row.first_entry_at, data.timezone, day)}
+                        </span>
+                        <span role="cell" className="at-num">{clockOnDay(row.last_exit_at, data.timezone, day)}</span>
+                        <span role="cell" className="at-num">{row.seconds > 0 ? duration(row.seconds) : '—'}</span>
+                        <span role="cell" className={`at-state at-state--${look.tone}`}>
+                          <i className={`at-dot at-dot--${look.tone}`} />
+                          <span className="at-state__text">
+                            {look.title}
+                            {/* Что человек сам написал — рядом со статусом, а
+                                не только в базе: кадровик решает, звонить ли. */}
+                            {row.notice_comment && <small>{row.notice_comment}</small>}
+                          </span>
+                        </span>
+                        <span role="cell" className="at-right">
+                          <button type="button" className="at-link" onClick={() => ctx.openDay(row, day, data.timezone)}>
+                            {hot ? 'Исправить' : 'Просмотр'}
+                          </button>
+                        </span>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+            </Guard>
+          </div>
+        </div>
+
+        <Footer
+          text={roster.state === 'ready' ? shownLine(page, DAY_PAGE, shown.length, 'сотрудник') : ''}
+          page={page} pages={pages} onGo={(next) => patch({ page: next === 1 ? null : String(next) })}
+        />
+      </>
+    ),
+  };
+}
+
+const STATE_TITLE: Record<string, string> = {
+  IN_OFFICE: 'В офисе', LEFT: 'Ушли', LATE: 'Предупредили об опоздании', NOT_COME: 'Нет отметки',
+  VACATION: 'В отпуске', SICK_LEAVE: 'На больничном', OTHER_ABSENCE: 'Отсутствуют',
+  DAY_OFF: 'Выходной', NO_SCHEDULE: 'Без графика',
+};
+
+// --- Журнал отметок -----------------------------------------------------------------
+
+const LOG_PAGE = 14;
+/** Потолок журнала за день: больше — сообщаем, что показаны не все. */
+const LOG_CAP = 3000;
+
+const SOURCE_TITLE: Record<string, string> = { QR: 'QR-код', MANUAL: 'Вручную HR', IMPORT: 'Импорт' };
+
+function useLogMode(active: boolean, ctx: Ctx): View {
+  const { params, patch, attempt } = ctx;
+  const day = params.get('date') ?? today();
+  const office = params.get('office_id') ?? '';
+  const kind = params.get('kind') ?? '';
+  const source = params.get('source') ?? '';
+  const search = params.get('search') ?? '';
+  const page = Math.max(1, Number(params.get('page') ?? '1'));
+  const key = `${day}|${office}|${attempt}`;
+
+  // Весь день целиком, страницами по 200: счётчики, активность по часам и
+  // поиск считаются по всему дню, а не по первой странице.
+  const [log] = useBlock(async (signal) => {
+    const items: api.EventRow[] = [];
+    let cursor = '';
+    let more = true;
+    while (more && items.length < LOG_CAP) {
+      const pageData = await api.events({
+        date_from: day, date_to: day, limit: '200',
+        ...(office ? { office_id: office } : {}),
+        ...(cursor ? { cursor } : {}),
+      }, signal);
+      items.push(...pageData.items);
+      more = pageData.has_more && Boolean(pageData.next_cursor);
+      cursor = pageData.next_cursor ?? '';
+    }
+    return { items, capped: more };
+  }, key, active);
+  // Состав дня — чтобы назвать вход опозданием так же, как его назвал сервер.
+  const [roster] = useBlock(
+    (signal) => api.presenceDay({ date: day, ...(office ? { office_id: office } : {}) }, signal),
+    key, active,
+  );
+
+  const [draft, setDraft] = useState(search);
+  useEffect(() => setDraft(search), [search]);
+  useEffect(() => {
+    if (draft === search) return;
+    const timer = window.setTimeout(() => patch({ search: draft || null, page: null }), 300);
+    return () => window.clearTimeout(timer);
+  }, [draft, search, patch]);
+
+  const all = log.state === 'ready' ? [...log.data.items].sort((a, b) => a.occurred_at.localeCompare(b.occurred_at)) : [];
+  const zone = roster.state === 'ready' ? roster.data.timezone : '';
+  const byEmployee = new Map((roster.state === 'ready' ? roster.data.items : []).map((row) => [row.employee_id, row]));
+  const review = (one: api.EventRow) => one.verification_status !== 'ACCEPTED' || one.inside_geofence === false;
+  const lateOf = (one: api.EventRow) => {
+    const row = byEmployee.get(one.employee?.id ?? one.employee_id);
+    return one.event_type === 'ENTRY' && row && (row.late_minutes ?? 0) > 0 && row.first_entry_at === one.occurred_at
+      ? row.late_minutes ?? 0 : 0;
+  };
+  const needle = search.trim().toLowerCase();
+  const shown = all
+    .filter((one) => !kind || (kind === 'MANUAL' ? one.source === 'MANUAL' : one.event_type === kind))
+    .filter((one) => !source || one.source === source)
+    .filter((one) => !needle || (one.employee?.full_name ?? '').toLowerCase().includes(needle));
+  const pages = Math.max(1, Math.ceil(shown.length / LOG_PAGE));
+  const slice = shown.slice((page - 1) * LOG_PAGE, page * LOG_PAGE);
+
+  const hours = Array.from({ length: 13 }, (_, i) => 8 + i);
+  const perHour = hours.map((hour) => all.filter((one) => hourIn(one.occurred_at, zone) === hour).length);
+  const peak = Math.max(1, ...perHour);
+  const isToday = day === today();
+
+  return {
+    title: 'Журнал отметок',
+    sub: <>События входа, выхода и ручных исправлений · {longDate(day)}</>,
+    tools: (
+      <>
+        <DatePicker label="Дата" value={day} now={today()} allowEmpty
+                    onChange={(value) => patch({ date: value || null, page: null })} />
+        <button type="button" className="at-btn" onClick={() => ctx.order({ from: day, to: day })}>
+          <AppIcon name="download" size={18} /> Экспорт
+        </button>
+      </>
+    ),
+    strip: (
+      <Guard block={log} name="журнал" strip>
+        {() => (
+          <div className="at-facts at-facts--three">
+            <Big icon="doc" value={all.length} title={plural(all.length, ['событие', 'события', 'событий'])} note={isToday ? 'за сегодня' : 'за день'} />
+            <Big icon="alert" tone="warn" value={all.filter(review).length} title="требуют проверки" note="отклонены или вне геозоны" />
+            <Big icon="pencil" value={all.filter((one) => one.source === 'MANUAL').length}
+                 title={plural(all.filter((one) => one.source === 'MANUAL').length, ['исправление HR', 'исправления HR', 'исправлений HR'])}
+                 note="внесены вручную" />
+          </div>
+        )}
+      </Guard>
+    ),
+    body: (
+      <>
+        <div className="at-filters">
+          <div className="at-chips" role="group" aria-label="Вид события">
+            {([['', 'Все события', 'blue'], ['ENTRY', 'Входы', 'ok'], ['EXIT', 'Выходы', 'blue'], ['MANUAL', 'Ручные исправления', 'violet']] as const).map(([value, title, tone]) => (
+              <button key={value} type="button" aria-pressed={kind === value}
+                      className={kind === value ? 'at-chip at-chip--on' : 'at-chip'}
+                      onClick={() => patch({ kind: value || null, page: null })}>
+                {value && <i className={`at-dot at-dot--${tone}`} />}{title}
+              </button>
+            ))}
+          </div>
+          <label className="at-find">
+            <AppIcon name="search" size={16} />
+            <input type="search" value={draft} placeholder="Найти сотрудника" aria-label="Найти сотрудника"
+                   onChange={(event) => setDraft(event.target.value)} />
+          </label>
+          <Dropdown label="Офис" empty="Все офисы" value={office}
+                    options={ctx.offices.map((one) => ({ id: one.id, name: one.name }))}
+                    onChange={(value) => patch({ office_id: value || null, page: null })} />
+          <Dropdown label="Источник" empty="Все источники" value={source}
+                    options={Object.entries(SOURCE_TITLE).map(([id, name]) => ({ id, name }))}
+                    onChange={(value) => patch({ source: value || null, page: null })} />
+        </div>
+
+        <div className="at-hours" aria-label={`Активность по часам: ${hours.map((h, i) => `${h}:00 — ${perHour[i]}`).join(', ')}`}>
+          <span className="at-hours__title">Активность по часам</span>
+          <div className="at-hours__bars">
+            {hours.map((hour, i) => (
+              <span key={hour} className="at-hours__col">
+                <i style={{ height: `${Math.round(((perHour[i] ?? 0) / peak) * 100)}%` }} title={`${hour}:00 — ${perHour[i]}`} />
+                <small>{String(hour).padStart(2, '0')}:00</small>
+              </span>
+            ))}
+          </div>
+        </div>
+
+        <div className="at-table at-table--log" role="table" aria-label="Журнал отметок">
+          <div className="at-table__head" role="row">
+            <span role="columnheader">Время</span>
+            <span role="columnheader">Сотрудник</span>
+            <span role="columnheader">Событие</span>
+            <span role="columnheader">Точка / офис</span>
+            <span role="columnheader">Источник</span>
+            <span role="columnheader">Результат</span>
+            <span role="columnheader" className="at-right">Действие</span>
+          </div>
+          <div className="at-table__body">
+            <Guard block={log} name="журнал">
+              {(data) => (
+                <>
+                  {data.capped && <p className="at-warn">Показаны первые {LOG_CAP} событий дня. Сузьте отбор по офису.</p>}
+                  {slice.length === 0 ? (
+                    <p className="at-empty">{all.length === 0 ? 'За этот день отметок нет.' : 'По этим условиям событий нет.'}</p>
+                  ) : slice.map((one) => {
+                    const late = lateOf(one);
+                    const bad = review(one);
+                    const manual = one.source === 'MANUAL';
+                    const row = byEmployee.get(one.employee?.id ?? one.employee_id);
+                    return (
+                      <div key={one.id} role="row" className={bad || late > 0 ? 'at-row at-row--warn' : 'at-row'}>
+                        <span role="cell" className="at-num">{clock(one.occurred_at, zone)}</span>
+                        <span role="cell" className="at-who">
+                          <span className="at-face" aria-hidden="true">{initials(one.employee?.full_name ?? '')}</span>
+                          <b>{one.employee?.full_name ?? 'Сотрудник'}</b>
+                        </span>
+                        <span role="cell" className="at-event">
+                          <AppIcon name={manual ? 'pencil' : one.event_type === 'ENTRY' ? 'next' : 'back'} size={16} />
+                          {manual ? `Ручное исправление · ${one.event_type === 'ENTRY' ? 'вход' : 'выход'}`
+                            : one.event_type === 'ENTRY' ? (late > 0 ? 'Вход с опозданием' : 'Вход') : 'Выход'}
+                        </span>
+                        <span role="cell" className="at-muted">
+                          {[one.office_name, one.qr_point_name].filter(Boolean).join(' · ') || '—'}
+                        </span>
+                        <span role="cell" className="at-muted">
+                          {manual ? `HR${one.author_name ? ` (${shortName(one.author_name)})` : ''}` : SOURCE_TITLE[one.source] ?? 'Другой источник'}
+                        </span>
+                        <span role="cell" className={`at-state at-state--${bad ? 'bad' : late > 0 ? 'warn' : 'ok'}`}>
+                          <i className={`at-dot at-dot--${bad ? 'bad' : late > 0 ? 'warn' : 'ok'}`} />
+                          {bad ? (one.verification_status !== 'ACCEPTED' ? 'Отклонено' : 'Вне геозоны')
+                            : late > 0 ? `Опоздание на ${late} мин` : manual ? 'Исправлено' : 'Принято'}
+                        </span>
+                        <span role="cell" className="at-right">
+                          {row ? (
+                            <button type="button" className="at-link" onClick={() => ctx.openDay(row, day, zone)}>День</button>
+                          ) : <span className="at-muted">—</span>}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+            </Guard>
+          </div>
+        </div>
+
+        <Footer text={log.state === 'ready' ? shownLine(page, LOG_PAGE, shown.length, 'событие') : ''}
+                page={page} pages={pages} onGo={(next) => patch({ page: next === 1 ? null : String(next) })} />
+      </>
+    ),
+  };
+}
+
+// --- Неделя -------------------------------------------------------------------------
+
+const WEEK_PAGE = 10;
+
+function useWeekMode(active: boolean, ctx: Ctx): View {
+  const { params, patch, attempt } = ctx;
+  const anchor = params.get('date') ?? today();
+  const office = params.get('office_id') ?? '';
+  const region = params.get('region_id') ?? '';
+  const department = params.get('department_id') ?? '';
+  const page = Math.max(1, Number(params.get('page') ?? '1'));
+  const monday = weekStart(anchor);
+  const days = Array.from({ length: 7 }, (_, i) => addDays(monday, i));
+  const sunday = days[6]!;
+  const place = {
+    ...(office ? { office_id: office } : region ? { region_id: region } : {}),
+    ...(department ? { department_id: department } : {}),
+  };
+  const key = `${monday}|${office}|${region}|${department}|${attempt}`;
+  const now = today();
+
+  // Ячейки — состояния, которые сервер отдал по каждому дню недели.
+  const [grid] = useBlock(
+    (signal) => Promise.all(days.map((d) => (d > now ? Promise.resolve(null) : api.presenceDay({ date: d, ...place }, signal)))),
+    key, active,
+  );
+  // Полоса и «Итого» — сводка сервера за неделю, со сравнением с прошлой.
+  const [summary] = useBlock(
+    (signal) => api.analyticsOverview({ date_from: monday, date_to: sunday, ...place, people_limit: '2000' }, signal),
+    key, active,
+  );
+
+  const pagesData = grid.state === 'ready' ? grid.data : [];
+  const people = new Map<string, { id: string; name: string; office: string | null; schedule: string | null }>();
+  for (const dayData of pagesData) {
+    for (const row of dayData?.items ?? []) {
+      if (!people.has(row.employee_id)) {
+        people.set(row.employee_id, {
+          id: row.employee_id, name: row.full_name, office: row.office_name,
+          schedule: row.scheduled_start && row.scheduled_end ? `${row.scheduled_start}–${row.scheduled_end}` : null,
+        });
+      } else if (!people.get(row.employee_id)!.schedule && row.scheduled_start && row.scheduled_end) {
+        people.get(row.employee_id)!.schedule = `${row.scheduled_start}–${row.scheduled_end}`;
+      }
+    }
+  }
+  const list = [...people.values()].sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+  const pages = Math.max(1, Math.ceil(list.length / WEEK_PAGE));
+  const slice = list.slice((page - 1) * WEEK_PAGE, page * WEEK_PAGE);
+  const totals = new Map((summary.state === 'ready' ? summary.data.employees : []).map((one) => [one.id, one]));
+  const zone = pagesData.find((one) => one)?.timezone ?? '';
+
+  const perDay = summary.state === 'ready' ? summary.data.days : [];
+
+  return {
+    title: 'Посещаемость',
+    sub: <>{rangeTitle(monday, sunday)} · Недельная сводка</>,
+    tools: (
+      <>
+        <span className="at-stepper">
+          <button type="button" aria-label="Прошлая неделя" onClick={() => patch({ date: addDays(monday, -7), page: null })}>
+            <AppIcon name="back" size={16} />
+          </button>
+          <span>{rangeTitle(monday, sunday)}</span>
+          <button type="button" aria-label="Следующая неделя" disabled={addDays(monday, 7) > now}
+                  onClick={() => patch({ date: addDays(monday, 7), page: null })}>
+            <AppIcon name="next" size={16} />
+          </button>
+        </span>
+        <button type="button" className="at-btn" onClick={() => ctx.order({ from: monday, to: sunday })}>
+          <AppIcon name="download" size={18} /> Экспорт
+        </button>
+      </>
+    ),
+    strip: (
+      <Guard block={summary} name="сводку недели" strip>
+        {(data) => (
+          <div className="at-facts at-facts--four">
+            <Share label="Явка за неделю" share={data.summary.attendance} diff={data.summary.difference_points} against="к прошлой неделе" />
+            <Big icon="clock" tone="warn" value={data.summary.late.numerator} title={plural(data.summary.late.numerator, ['опоздание', 'опоздания', 'опозданий'])} note="после допуска" />
+            <Big icon="alert" tone="bad" value={data.summary.missed_days} title={`${plural(data.summary.missed_days, ['день', 'дня', 'дней'])} без отметки`} note="по графику, но без входа" />
+            <Big icon="calendar" value={data.summary.vacation_days + data.summary.sick_leave_days + data.summary.other_absence_days}
+                 title="дней отсутствий" note={`${data.summary.vacation_days} отпуск · ${data.summary.sick_leave_days} больничный`} />
+          </div>
+        )}
+      </Guard>
+    ),
+    body: (
+      <>
+        <div className="at-daysline" aria-label="Явка по дням">
+          <span className="at-daysline__title">Явка по дням</span>
+          {days.map((d) => {
+            const row = perDay.find((one) => one.day === d);
+            const value = row?.percent ?? null;
+            return (
+              <span key={d} className="at-daysline__cell">
+                <small>{weekdayOf(d)}</small>
+                <b>{d > now ? '—' : value === null ? '—' : `${Math.round(value)}%`}</b>
+                <span className="at-meter at-meter--thin"><i style={{ width: `${value ?? 0}%` }} /></span>
+              </span>
+            );
+          })}
+        </div>
+
+        <div className="at-table at-table--week" role="table" aria-label="Неделя по сотрудникам">
+          <div className="at-table__head" role="row">
+            <span role="columnheader">Сотрудник</span>
+            <span role="columnheader">Офис / график</span>
+            {days.map((d) => (
+              <span key={d} role="columnheader" className={isWeekend(d) ? 'at-center at-weekend-head' : 'at-center'}>
+                {weekdayOf(d)} {Number(d.slice(8))}
+              </span>
+            ))}
+            <span role="columnheader" className="at-center">Итого</span>
+          </div>
+          <div className="at-table__body">
+            <Guard block={grid} name="неделю">
+              {(data) => (
+                <>
+                  {data.some((one) => one?.truncated) && <p className="at-warn">Показаны не все сотрудники: состав больше одного ответа. Сузьте фильтры.</p>}
+                  {slice.length === 0 ? <p className="at-empty">За эту неделю по выбранным условиям никого нет.</p> : slice.map((person) => {
+                    const total = totals.get(person.id);
+                    return (
+                      <div key={person.id} role="row" className="at-row">
+                        <span role="cell" className="at-who">
+                          <span className="at-face" aria-hidden="true">{initials(person.name)}</span>
+                          <b>{person.name}</b>
+                        </span>
+                        <span role="cell" className="at-muted at-two">
+                          <span>{person.office ?? '—'}</span>
+                          <small>{person.schedule ?? 'Без графика'}</small>
+                        </span>
+                        {days.map((d, i) => {
+                          const row = data[i]?.items.find((one) => one.employee_id === person.id);
+                          const cell = weekCell(row, d > now, zone, d);
+                          return (
+                            <span key={d} role="cell" className={`at-cell at-cell--${cell.tone}`} title={cell.hint}>
+                              {cell.text}
+                            </span>
+                          );
+                        })}
+                        <span role="cell" className="at-total">
+                          <b>{total?.attendance.percent === null || !total ? '—' : `${Math.round(total.attendance.percent)}%`}</b>
+                          <small>{total?.seconds ? duration(total.seconds) : '—'}</small>
+                        </span>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+            </Guard>
+          </div>
+        </div>
+
+        <Footer text={grid.state === 'ready' ? shownLine(page, WEEK_PAGE, list.length, 'сотрудник') : ''}
+                page={page} pages={pages} onGo={(next) => patch({ page: next === 1 ? null : String(next) })} />
+      </>
+    ),
+  };
+}
+
+/** Ячейка недели: время, опоздание, отсутствие или прочерк. */
+function weekCell(row: api.PresenceRow | undefined, future: boolean, zone: string, day: string): { text: string; tone: string; hint: string } {
+  if (future) return { text: '', tone: 'future', hint: 'День ещё не наступил' };
+  if (!row) return { text: '—', tone: 'off', hint: 'Не в составе на этот день' };
+  const late = row.late_minutes ?? 0;
+  switch (row.state) {
+    case 'IN_OFFICE':
+    case 'LEFT': {
+      const span = `${clockOnDay(row.first_entry_at, zone, day)}–${row.last_exit_at ? clockOnDay(row.last_exit_at, zone, day) : '…'}`;
+      return late > 0 ? { text: `Опозд. ${late} мин`, tone: 'warn', hint: span } : { text: span, tone: 'ok', hint: duration(row.seconds) };
+    }
+    case 'LATE':
+      return { text: 'Предупредил', tone: 'warn', hint: 'Предупредил об опоздании' };
+    case 'NOT_COME':
+      return { text: 'Нет отметки', tone: 'bad', hint: row.notice_kind === 'ABSENT' ? 'Предупредил, что не придёт' : 'По графику, но без входа' };
+    case 'VACATION':
+      return { text: 'Отпуск', tone: 'violet', hint: 'Подтверждённый отпуск' };
+    case 'SICK_LEAVE':
+      return { text: 'Бол.', tone: 'blue', hint: 'Подтверждённый больничный' };
+    case 'OTHER_ABSENCE':
+      return { text: 'Отсутств.', tone: 'violet', hint: row.absence_name ?? 'Подтверждённое отсутствие' };
+    case 'DAY_OFF':
+      return { text: '—', tone: 'off', hint: 'Выходной' };
+    default:
+      return { text: '—', tone: 'off', hint: 'Без графика' };
+  }
+}
+
+// --- Период -------------------------------------------------------------------------
+
+const PERIOD_PAGE = 10;
+
+function usePeriodMode(active: boolean, ctx: Ctx): View {
+  const { params, patch, attempt } = ctx;
+  const now = today();
+  const period = params.get('period');
+  const anchor = params.get('date') ?? now;
+  const monthStart = `${anchor.slice(0, 8)}01`;
+  const from = params.get('from') ?? (period === 'month' || !params.get('from') ? monthStart : anchor);
+  const to = params.get('to') ?? (period === 'month' ? monthEnd(anchor) : anchor);
+  const office = params.get('office_id') ?? '';
+  const region = params.get('region_id') ?? '';
+  const department = params.get('department_id') ?? '';
+  const view = params.get('who') === 'attention' ? 'attention' : 'all';
+  const search = params.get('search') ?? '';
+  const page = Math.max(1, Number(params.get('page') ?? '1'));
+  const place = {
+    ...(office ? { office_id: office } : region ? { region_id: region } : {}),
+    ...(department ? { department_id: department } : {}),
+  };
+  const key = `${from}|${to}|${office}|${region}|${department}|${attempt}`;
+
+  const [overview] = useBlock(
+    (signal) => api.analyticsOverview({ date_from: from, date_to: to, ...place, people_limit: '2000' }, signal),
+    key, active,
+  );
+
+  const [draft, setDraft] = useState(search);
+  useEffect(() => setDraft(search), [search]);
+  useEffect(() => {
+    if (draft === search) return;
+    const timer = window.setTimeout(() => patch({ search: draft || null, page: null }), 300);
+    return () => window.clearTimeout(timer);
+  }, [draft, search, patch]);
+
+  const people = overview.state === 'ready' ? overview.data.employees : [];
+  const troubled = (one: api.OverviewPerson) => one.missed_days > 0 || one.late_days > 0;
+  const needle = search.trim().toLowerCase();
+  const shown = people
+    .filter((one) => view === 'all' || troubled(one))
+    .filter((one) => !needle || one.name.toLowerCase().includes(needle))
+    .sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+  const pages = Math.max(1, Math.ceil(shown.length / PERIOD_PAGE));
+  const slice = shown.slice((page - 1) * PERIOD_PAGE, page * PERIOD_PAGE);
+
+  return {
+    title: 'Посещаемость',
+    sub: <>{rangeTitle(from, to)} · Сводка за период</>,
+    tools: (
+      <>
+        <span className="at-range">
+          <DatePicker label="Начало периода" value={from} now={now} max={to}
+                      onChange={(value) => patch({ from: value || null, period: null, page: null })} />
+          <span aria-hidden="true">—</span>
+          <DatePicker label="Конец периода" value={to} now={now} min={from} max={now}
+                      onChange={(value) => patch({ to: value || null, period: null, page: null })} />
+        </span>
+        <Dropdown label="Офис" empty="Все офисы" value={office}
+                  options={ctx.offices.map((one) => ({ id: one.id, name: one.name }))}
+                  onChange={(value) => patch({ office_id: value || null, region_id: null, page: null })} />
+        <Dropdown label="Отдел" empty="Все отделы" value={department} options={ctx.departments}
+                  onChange={(value) => patch({ department_id: value || null, page: null })} />
+        <button type="button" className="at-btn" onClick={() => ctx.order({ from, to })}>
+          <AppIcon name="download" size={18} /> Экспорт
+        </button>
+      </>
+    ),
+    strip: (
+      <Guard block={overview} name="сводку периода" strip>
+        {(data) => {
+          const s = data.summary;
+          const absences = s.vacation_days + s.sick_leave_days + s.other_absence_days;
+          return (
+            <div className="at-facts at-facts--four">
+              <Share label="Явка за период" share={s.attendance} diff={s.difference_points} against="к прошлому периоду" />
+              <Big icon="clock" value={s.average_seconds === null ? '—' : duration(s.average_seconds)} title="" note="среднее время в день" />
+              <Big icon="alert" tone="warn" value={s.late.numerator} title={plural(s.late.numerator, ['опоздание', 'опоздания', 'опозданий'])} note="за весь период" />
+              <Big icon="calendar" value={absences} title="дней отсутствий"
+                   note={`${s.vacation_days} отпуск · ${s.sick_leave_days} больничный`} />
+            </div>
+          );
+        }}
+      </Guard>
+    ),
+    body: (
+      <div className="at-split">
+        <section className="at-split__main" aria-label="Сотрудники за период">
+          <div className="at-filters">
+            <h2 className="at-part-title">Сотрудники за период</h2>
+            <label className="at-find">
+              <AppIcon name="search" size={16} />
+              <input type="search" value={draft} placeholder="Найти сотрудника" aria-label="Найти сотрудника"
+                     onChange={(event) => setDraft(event.target.value)} />
+            </label>
+            <div className="at-chips" role="group" aria-label="Отбор сотрудников">
+              {([['all', 'Все сотрудники', people.length], ['attention', 'Требуют внимания', people.filter(troubled).length]] as const).map(([value, title, count]) => (
+                <button key={value} type="button" aria-pressed={view === value}
+                        className={view === value ? 'at-chip at-chip--on' : 'at-chip'}
+                        onClick={() => patch({ who: value === 'all' ? null : value, page: null })}>
+                  {title}<span className="at-chip__n">{overview.state === 'ready' ? count : '·'}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="at-table at-table--period" role="table" aria-label="Сотрудники за период">
+            <div className="at-table__head" role="row">
+              <span role="columnheader">Сотрудник</span>
+              <span role="columnheader" className="at-center">Рабочих дней</span>
+              <span role="columnheader" className="at-center">Присутствовал</span>
+              <span role="columnheader">Явка</span>
+              <span role="columnheader" className="at-center">Отработано</span>
+              <span role="columnheader" className="at-center">Опоздания</span>
+              <span role="columnheader" className="at-center">Нет отметки</span>
+              <span role="columnheader" className="at-center">Отсутствия</span>
+              <span role="columnheader" />
+            </div>
+            <div className="at-table__body">
+              <Guard block={overview} name="сотрудников">
+                {() => slice.length === 0 ? <p className="at-empty">{people.length === 0 ? 'За период по графику никого не ждали.' : 'По этим условиям никого нет.'}</p> : slice.map((one) => {
+                  const percent = one.attendance.percent;
+                  const absent = (one.vacation_days ?? 0) + (one.sick_days ?? 0) + (one.other_days ?? 0);
+                  return (
+                    <Link key={one.id} role="row" className="at-row" to={`/employees/${one.id}?tab=attendance`}>
+                      <span role="cell" className="at-who">
+                        <span className="at-face" aria-hidden="true">{initials(one.name)}</span>
+                        <b>{one.name}</b>
+                      </span>
+                      <span role="cell" className="at-center at-num">{one.attendance.denominator}</span>
+                      <span role="cell" className="at-center at-num">{one.attendance.numerator}</span>
+                      <span role="cell" className="at-share">
+                        <span className="at-meter at-meter--thin"><i style={{ width: `${percent ?? 0}%` }} /></span>
+                        <b>{percent === null ? '—' : `${Math.round(percent)}%`}</b>
+                      </span>
+                      <span role="cell" className="at-center at-num">{one.seconds ? duration(one.seconds) : '—'}</span>
+                      <span role="cell" className={one.late_days > 0 ? 'at-center at-num at-num--warn' : 'at-center at-num'}>{one.late_days}</span>
+                      <span role="cell" className={one.missed_days > 0 ? 'at-center at-num at-num--bad' : 'at-center at-num'}>{one.missed_days}</span>
+                      <span role="cell" className="at-center at-num" title={absent ? `${one.vacation_days ?? 0} отпуск · ${one.sick_days ?? 0} больничный` : undefined}>{absent}</span>
+                      <AppIcon name="next" size={16} className="at-go" />
+                    </Link>
+                  );
+                })}
+              </Guard>
+            </div>
+          </div>
+          <Footer text={overview.state === 'ready' ? shownLine(page, PERIOD_PAGE, shown.length, 'сотрудник') : ''}
+                  page={page} pages={pages} onGo={(next) => patch({ page: next === 1 ? null : String(next) })} />
+        </section>
+
+        <aside className="at-split__side" aria-label="Аналитика периода">
+          <Guard block={overview} name="аналитику">
+            {(data) => (
+              <>
+                <section className="at-side-part">
+                  <h2 className="at-part-title">
+                    Динамика явки
+                    <b>{data.summary.attendance.percent === null ? '—' : `${Math.round(data.summary.attendance.percent)}%`}</b>
+                  </h2>
+                  <MiniLine days={data.days} />
+                </section>
+                <section className="at-side-part">
+                  <h2 className="at-part-title">Причины отсутствий</h2>
+                  <Bars rows={[
+                    ['Отпуск', data.summary.vacation_days, 'violet'],
+                    ['Больничный', data.summary.sick_leave_days, 'blue'],
+                    ['Прочее', data.summary.other_absence_days, 'grey'],
+                  ]} />
+                </section>
+                <section className="at-side-part">
+                  <h2 className="at-part-title">Требуют внимания</h2>
+                  <AttentionList people={data.employees} onOpen={(employee, day) => patch({ tab: null, date: day, employee, from: null, to: null, period: null, page: null })} />
+                </section>
+              </>
+            )}
+          </Guard>
+        </aside>
+      </div>
+    ),
+  };
+}
+
+function MiniLine({ days }: { days: api.OverviewDay[] }) {
+  // Нерабочие дни (без графика) линию не рвут — их просто нет на ней.
+  const points = days.filter((one) => !one.future && one.percent !== null);
+  if (points.length === 0) {
+    return <p className="at-empty at-empty--small">За период по графику никого не ждали.</p>;
+  }
+  const width = 280;
+  const height = 90;
+  const x = (i: number) => (points.length > 1 ? (i / (points.length - 1)) * (width - 8) + 4 : width / 2);
+  // Шкала — от чуть ниже минимума до 100: колебания явки видны, а не
+  // прижаты к верхнему краю.
+  const floor = Math.max(0, Math.floor((Math.min(...points.map((one) => one.percent ?? 0)) - 10) / 10) * 10);
+  const y = (v: number) => height - 6 - ((v - floor) / (100 - floor || 1)) * (height - 14);
+  const d = points.map((one, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(one.percent ?? 0).toFixed(1)}`).join(' ');
+  return (
+    <div className="at-mini">
+      <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" role="img"
+           aria-label={`Явка по дням: ${points.map((one) => `${one.day.slice(8)}.${one.day.slice(5, 7)} — ${Math.round(one.percent ?? 0)}%`).join(', ')}`}>
+        {[0.25, 0.5, 0.75].map((k) => {
+          const v = floor + (100 - floor) * k;
+          return <line key={k} x1={0} x2={width} y1={y(v)} y2={y(v)} className="at-mini__grid" />;
+        })}
+        <path d={d} className="at-mini__line" />
+      </svg>
+      <div className="at-mini__axis">
+        <span>{points[0] ? `${Number(points[0].day.slice(8))} ${MONTHS[Number(points[0].day.slice(5, 7)) - 1]}` : ''}</span>
+        <span>{points.length ? `${Number(points[points.length - 1]!.day.slice(8))} ${MONTHS[Number(points[points.length - 1]!.day.slice(5, 7)) - 1]}` : ''}</span>
+      </div>
+    </div>
   );
 }
 
-// --- мелочи ------------------------------------------------------------------------
+function Bars({ rows }: { rows: [string, number, string][] }) {
+  const top = Math.max(1, ...rows.map(([, n]) => n));
+  return (
+    <ul className="at-bars">
+      {rows.map(([title, n, tone]) => (
+        <li key={title}>
+          <span>{title}</span>
+          <span className="at-bars__track"><i className={`at-bars__fill at-bars__fill--${tone}`} style={{ width: `${(n / top) * 100}%` }} /></span>
+          <b>{n}</b>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function AttentionList({ people, onOpen }: { people: api.OverviewPerson[]; onOpen: (employee: string, day: string) => void }) {
+  const items = people.flatMap((one) => [
+    ...(one.missed_dates ?? []).map((day) => ({ id: one.id, name: one.name, day, text: 'Нет отметки', tone: 'bad' })),
+    ...(one.late_dates ?? []).map((late) => ({ id: one.id, name: one.name, day: late.day, text: `Опоздание ${late.minutes} мин`, tone: 'warn' })),
+  ]).sort((a, b) => b.day.localeCompare(a.day)).slice(0, 5);
+  if (items.length === 0) return <p className="at-empty at-empty--small">За период никто не требует внимания.</p>;
+  return (
+    <ul className="at-attention">
+      {items.map((one) => (
+        <li key={`${one.id}-${one.day}-${one.text}`}>
+          <button type="button" onClick={() => onOpen(one.id, one.day)}>
+            <span className="at-face at-face--sm" aria-hidden="true">{initials(one.name)}</span>
+            <span className="at-attention__text">
+              <b>{one.name}</b>
+              <small className={`at-state--${one.tone}`}><i className={`at-dot at-dot--${one.tone}`} />{one.text}</small>
+            </span>
+            <time dateTime={one.day}>{Number(one.day.slice(8))} {MONTHS[Number(one.day.slice(5, 7)) - 1]}</time>
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// --- общие части ----------------------------------------------------------------------
+
+function Big({ icon, value, title, note, tone }: {
+  icon: AppIconName;
+  value: number | string;
+  title: string;
+  note: string;
+  tone?: 'warn' | 'bad';
+}) {
+  const hot = tone && typeof value === 'number' && value > 0;
+  return (
+    <div className="at-fact at-fact--big">
+      <span className={hot ? `at-fact__icon at-fact__icon--${tone}` : 'at-fact__icon'} aria-hidden="true">
+        <AppIcon name={icon} size={20} />
+      </span>
+      <span className="at-fact__stack">
+        <span className="at-fact__line">
+          <b className={hot ? `at-fact__big at-fact__big--${tone}` : 'at-fact__big'}>{value}</b>
+          {title && <span className="at-fact__title">{title}</span>}
+        </span>
+        <small className="at-fact__note">{note}</small>
+      </span>
+    </div>
+  );
+}
+
+function Share({ label, share, diff, against }: { label: string; share: api.Share; diff: number | null; against: string }) {
+  return (
+    <div className="at-fact at-fact--main">
+      <span className="at-fact__label">{label}</span>
+      <span className="at-fact__line">
+        <b className="at-fact__big">{share.percent === null ? '—' : `${Math.round(share.percent)}%`}</b>
+        <span>{share.denominator > 0 ? `${share.numerator} из ${share.denominator} дней` : 'Рабочих дней не было'}</span>
+      </span>
+      <span className="at-meter"><i style={{ width: `${share.percent ?? 0}%` }} /></span>
+      {diff !== null && (
+        <small className={diff >= 0 ? 'at-delta at-delta--up' : 'at-delta at-delta--down'}>
+          {diff >= 0 ? '+' : '−'}{Math.abs(diff).toLocaleString('ru-RU')} п.п. {against}
+        </small>
+      )}
+    </div>
+  );
+}
+
+function Footer({ text, page, pages, onGo }: { text: string; page: number; pages: number; onGo: (next: number) => void }) {
+  const numbers = Array.from({ length: pages }, (_, i) => i + 1)
+    .filter((n) => n === 1 || n === pages || Math.abs(n - page) <= 2);
+  return (
+    <footer className="at-foot">
+      <span>{text}</span>
+      {pages > 1 && (
+        <nav className="at-pages" aria-label="Страницы">
+          <button type="button" aria-label="Назад" disabled={page <= 1} onClick={() => onGo(page - 1)}><AppIcon name="back" size={16} /></button>
+          {numbers.map((n, i) => (
+            <span key={n} className="at-pages__group">
+              {i > 0 && n - (numbers[i - 1] ?? n) > 1 && <span className="at-pages__gap">…</span>}
+              <button type="button" aria-current={n === page ? 'page' : undefined} className={n === page ? 'at-pages__on' : undefined}
+                      onClick={() => onGo(n)}>{n}</button>
+            </span>
+          ))}
+          <button type="button" aria-label="Вперёд" disabled={page >= pages} onClick={() => onGo(page + 1)}><AppIcon name="next" size={16} /></button>
+        </nav>
+      )}
+    </footer>
+  );
+}
 
 /**
- * Фото сотрудника или инициалы. Признака «фото есть» в строке состава
- * нет, поэтому снимок запрашивается, а отказ возвращает инициалы.
+ * Обёртка блока: загрузка — заготовкой строк, ошибка и отказ — словами.
+ * Ни одно из состояний не выглядит как ноль.
  */
-function Face({ id, name, className }: { id: string; name: string; className: string }) {
-  const [broken, setBroken] = useState(false);
-  if (broken) return <span className={`att-face att-face--none ${className}`}>{initials(name)}</span>;
-  return (
-    <img className={`att-face ${className}`} src={api.employeePhotoUrl(id)} alt=""
-         onError={() => setBroken(true)}
-         onLoad={(event) => { if (event.currentTarget.naturalWidth < 32) setBroken(true); }} />
-  );
-}
-
-function Select({ label, empty, value, options, onChange }: {
-  label: string;
-  empty: string;
-  value: string;
-  options: { id: string; name: string }[];
-  onChange: (value: string) => void;
-}) {
-  return <Dropdown label={label} empty={empty} value={value} options={options} onChange={onChange} />;
-}
-
-function Section<T>({ block, name, children }: {
+function Guard<T>({ block, name, children, strip }: {
   block: Block<T>;
   name: string;
-  children: (data: T) => React.ReactNode;
+  children: (data: T) => ReactNode;
+  strip?: boolean;
 }) {
-  if (block.state === 'loading') return <p className="att-empty">Загружаем {name}…</p>;
-  if (block.state === 'denied') return <p className="att-empty">Нет доступа к разделу «{name}».</p>;
-  if (block.state === 'error') {
-    return <p className="att-empty att-empty--bad">Не удалось загрузить {name}.</p>;
+  if (block.state === 'ready') return <>{children(block.data)}</>;
+  if (block.state === 'loading') {
+    return strip ? (
+      <div className="at-facts at-facts--ghost" aria-label={`Загружаем ${name}`}>
+        {[0, 1, 2].map((one) => <span key={one} className="at-ghost at-ghost--block" />)}
+      </div>
+    ) : (
+      <div className="at-skeleton" aria-label={`Загружаем ${name}`}>
+        {[0, 1, 2, 3, 4, 5].map((one) => (
+          <span key={one} className="at-skeleton__row">
+            <span className="at-ghost at-ghost--round" />
+            <span className="at-ghost" />
+            <span className="at-ghost at-ghost--short" />
+          </span>
+        ))}
+      </div>
+    );
   }
-  return <>{children(block.data)}</>;
+  const text = block.state === 'denied'
+    ? `Нет доступа: ${name}.`
+    : `Не удалось загрузить ${name}. Данные не показаны — это не ноль.`;
+  return <p className={strip ? 'at-empty at-empty--strip' : 'at-empty at-empty--bad'}>{text}</p>;
+}
+
+// --- мелочи ---------------------------------------------------------------------------
+
+/** «7 ч 42 мин»: длительность в карточке дня и в таблицах. */
+export function span(seconds: number): string {
+  return duration(seconds);
+}
+
+function duration(seconds: number): string {
+  const minutes = Math.round(seconds / 60);
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return h > 0 ? `${h} ч ${String(m).padStart(2, '0')} мин` : `${m} мин`;
+}
+
+function plural(n: number, forms: [string, string, string]): string {
+  const tail = Math.abs(n) % 100;
+  const last = tail % 10;
+  if (tail > 10 && tail < 20) return forms[2];
+  if (last === 1) return forms[0];
+  if (last >= 2 && last <= 4) return forms[1];
+  return forms[2];
+}
+
+/** «Показано 1–12 из 48 сотрудников». */
+function shownLine(page: number, size: number, total: number, word: 'сотрудник' | 'событие'): string {
+  if (total === 0) return '';
+  const first = (page - 1) * size + 1;
+  const last = Math.min(page * size, total);
+  const forms: [string, string, string] = word === 'сотрудник'
+    ? ['сотрудника', 'сотрудников', 'сотрудников']
+    : ['события', 'событий', 'событий'];
+  return `Показано ${first}–${last} из ${total} ${forms[total % 10 === 1 && total % 100 !== 11 ? 0 : 1]}`;
 }
 
 function shortName(full: string): string {
-  return full.split(' ').slice(0, 2).join(' ');
+  const [last, first] = full.split(/\s+/);
+  if (!last) return full;
+  return first ? `${last} ${first[0]}.` : last;
 }
 
-/**
- * Время в офисе. Число сервера — главное: он знает про несколько
- * посещений за день, и разница входа и выхода его не подменяет.
- *
- * Досчёт только в одном случае: сегодня, открытое посещение, а сервер
- * прислал ноль. Иначе человек, который сейчас в офисе, выглядел бы
- * пришедшим только что. У прошедшего дня открытое посещение до «сейчас»
- * не тянется — там это были бы сутки.
- */
-function present(row: api.PresenceRow, day: string): number {
-  if (row.seconds > 0 || day !== today()) return row.seconds;
-  return row.intervals.reduce((sum, one) => {
-    if (one.ended_at) return sum + one.seconds;
-    const started = new Date(one.started_at).getTime();
-    return Number.isNaN(started) ? sum : sum + Math.max(0, Math.round((Date.now() - started) / 1000));
-  }, 0);
+function parseDay(iso: string): Date {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(Date.UTC(y ?? 1970, (m ?? 1) - 1, d ?? 1));
 }
 
-function hours(row: api.PresenceRow): string {
-  return row.scheduled_start && row.scheduled_end
-    ? `${row.scheduled_start.slice(0, 5)} – ${row.scheduled_end.slice(0, 5)}`
-    : 'График не задан';
+function isoOf(date: Date): string {
+  return date.toISOString().slice(0, 10);
 }
 
-function toMinutes(time: string | null): number | null {
-  if (!time) return null;
-  const [h, m] = time.split(':').map(Number);
-  return h === undefined || m === undefined || Number.isNaN(h) || Number.isNaN(m) ? null : h * 60 + m;
+function addDays(iso: string, days: number): string {
+  const date = parseDay(iso);
+  date.setUTCDate(date.getUTCDate() + days);
+  return isoOf(date);
 }
 
-function hhmm(minutes: number): string {
-  return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+/** Неделя начинается с понедельника: рабочая неделя — понедельник–пятница. */
+function weekStart(iso: string): string {
+  const weekday = parseDay(iso).getUTCDay();
+  return addDays(iso, -((weekday + 6) % 7));
 }
 
-/** Минуты от полуночи в поясе офиса. */
-function minutesOf(at: string | null, zone: string): number | null {
-  if (!at) return null;
-  const date = new Date(at);
-  if (Number.isNaN(date.getTime())) return null;
-  return partsInZone(date, zone);
+function monthEnd(iso: string): string {
+  const date = parseDay(`${iso.slice(0, 8)}01`);
+  date.setUTCMonth(date.getUTCMonth() + 1);
+  date.setUTCDate(0);
+  const last = isoOf(date);
+  return last > today() ? today() : last;
 }
 
-function nowMinutes(zone: string): number {
-  return partsInZone(new Date(), zone) ?? 0;
+function weekdayOf(iso: string): string {
+  return WEEKDAYS[parseDay(iso).getUTCDay()]!;
 }
 
-function partsInZone(date: Date, zone: string): number | null {
-  const text = new Intl.DateTimeFormat('ru-RU', {
-    hour: '2-digit', minute: '2-digit', hour12: false, ...(zone ? { timeZone: zone } : {}),
-  }).format(date);
-  return toMinutes(text);
+function isWeekend(iso: string): boolean {
+  const weekday = parseDay(iso).getUTCDay();
+  return weekday === 0 || weekday === 6;
 }
 
-function plural(n: number): string {
-  const form = n % 10 === 1 && n % 100 !== 11 ? 'сотрудника'
-    : 'сотрудников';
-  return `${n} ${form}`;
-}
-
-/** «6 ч 18 мин». Используется и карточкой дня. */
-export function span(seconds: number): string {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.round((seconds % 3600) / 60);
-  return h ? `${h} ч ${m} мин` : `${m} мин`;
-}
-
-export { clock, clockOnDay };
-
-/**
- * Сводка за период: неделя, месяц или произвольные даты.
- *
- * Показывает пять чисел и ничего больше. Здесь намеренно нет графиков,
- * разрезов и сравнений — для них есть «Аналитика». Задача этого блока
- * другая: кадровик выбрал неделю и должен за секунду понять, как она
- * прошла, а не изучать её.
- *
- * Явка считается от тех, кого ждали, а не от всей организации: человек
- * в отпуске не «не пришёл», и делить на него значит занижать явку всей
- * компании за каждый отпуск.
- */
-function PeriodSummary({ block, span, period }: {
-  block: Block<api.Overview>;
-  span: Span;
-  period: PeriodKind;
-}) {
-  if (block.state === 'loading') {
-    return <p className="empty" role="status">Считаем период…</p>;
+/** «21–27 сентября 2026», «28 сентября – 4 октября 2026». */
+function rangeTitle(from: string, to: string): string {
+  const a = parseDay(from);
+  const b = parseDay(to);
+  if (from === to) return `${a.getUTCDate()} ${MONTHS[a.getUTCMonth()]} ${a.getUTCFullYear()}`;
+  if (a.getUTCMonth() === b.getUTCMonth() && a.getUTCFullYear() === b.getUTCFullYear()) {
+    return `${a.getUTCDate()}–${b.getUTCDate()} ${MONTHS[b.getUTCMonth()]} ${b.getUTCFullYear()}`;
   }
-  if (block.state === 'denied') {
-    return <p className="empty empty--bad">Период закрыт вашей областью доступа.</p>;
-  }
-  if (block.state === 'error') {
-    return <p className="empty empty--bad">Не удалось посчитать период.</p>;
-  }
-
-  const { summary } = block.data;
-  const days = lengthOf(span);
-  const attendance = summary.attendance.percent;
-  const moved = summary.difference_points;
-
-  return (
-    <section className="att-summary" aria-label="Итоги периода">
-      <div className="att-summary__cards">
-        <Metric
-          title="Явка"
-          value={attendance === null ? '—' : `${Math.round(attendance)}%`}
-          note={
-            attendance === null
-              ? 'Ждать было некого'
-              : `${summary.attendance.numerator} из ${summary.attendance.denominator}`
-          }
-          hint={
-            moved === null || moved === 0
-              ? undefined
-              : `${moved > 0 ? '+' : ''}${Math.round(moved)} п.п. к прошлому периоду`
-          }
-        />
-        <Metric title="Опоздания" value={String(summary.late.numerator)}
-                note={`из ${summary.late.denominator} приходов`} />
-        <Metric title="Не пришли" value={String(summary.missed_days)}
-                note={days === 1 ? 'за день' : `за ${days} дн.`} />
-        <Metric title="Отпуск" value={String(summary.vacation_days)} note="дней" />
-        <Metric title="Больничный" value={String(summary.sick_leave_days)} note="дней" />
-      </div>
-
-      {summary.open_sessions > 0 && (
-        <p className="att-note">
-          Незакрытых смен за период: <b>{summary.open_sessions}</b>. Человек
-          отметил вход и не отметил выход — время за такой день не посчитано.
-        </p>
-      )}
-
-      <p className="att-summary__more">
-        {period === 'month' ? 'Разрезы по офисам и дням недели' : 'Подробные разрезы'}
-        {' — в '}
-        <Link to={`/analytics?date_from=${span.from}&date_to=${span.to}`}>аналитике</Link>.
-      </p>
-    </section>
-  );
+  return `${a.getUTCDate()} ${MONTHS[a.getUTCMonth()]} – ${b.getUTCDate()} ${MONTHS[b.getUTCMonth()]} ${b.getUTCFullYear()}`;
 }
 
-/** Одно число с подписью. Без стрелок и цвета: это сводка, а не оценка. */
-function Metric({ title, value, note, hint }: {
-  title: string;
-  value: string;
-  note: string;
-  hint?: string | undefined;
-}) {
-  return (
-    <div className="att-metric">
-      <p className="att-metric__title">{title}</p>
-      <p className="att-metric__value">{value}</p>
-      <p className="att-metric__note">{note}</p>
-      {hint && <p className="att-metric__hint">{hint}</p>}
-    </div>
-  );
+/** Час события в поясе офиса — активность по часам. */
+function hourIn(at: string, zone: string): number {
+  const text = clock(at, zone);
+  return Number(text.slice(0, 2));
 }

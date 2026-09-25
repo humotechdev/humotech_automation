@@ -1,24 +1,25 @@
 /**
- * Очередь заявок: вкладки, фильтры, курсор, подробности и решения.
+ * Очередь заявок: вкладки, фильтры, выбор строки и предпросмотр.
  *
- * Главные обещания: состояние документа не смешивается со статусом
- * рассмотрения, рассмотренная заявка не выглядит доступной для решения,
- * отказ без причины не уходит, а повторное нажатие не отправляет второй
- * запрос.
+ * Главные обещания этой страницы: выбранная строка и панель справа
+ * говорят об одном и том же; панель берёт состояние у сервера, а не
+ * додумывает его; одобрить отсюда нельзя — за этим идут на страницу
+ * заявки; «нужны исправления» не выглядит отказом.
  */
 
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
 
 import { USER, crm, fakeNetwork, json, renderApp } from './helpers';
 
-const EMPLOYEE = { id: 'p-1', full_name: 'Рахимова Мадина', employee_number: 'HT-002' };
-const PLACE = { office_name: 'Самарканд', department_name: 'Отдел продаж' };
+const EMPLOYEE = { id: 'p-1', full_name: 'Muradov Azizbek', employee_number: 'HT-002' };
+const OTHER = { id: 'p-2', full_name: 'Рахимова Мадина', employee_number: 'HT-003' };
+const PLACE = { office_name: 'город Ташкент', department_name: 'Отдел продаж' };
 
 const SICK = {
   kind: 'absence',
   id: 'r-1',
-  created_at: '2026-09-05T09:12:00Z',
+  created_at: '2026-09-21T11:24:00Z',
   place: PLACE,
   absence: {
     id: 'r-1',
@@ -26,265 +27,209 @@ const SICK = {
     employee: EMPLOYEE,
     absence_type: { code: 'SICK_LEAVE', name: 'Больничный' },
     status: 'SUBMITTED',
-    first_day: '2026-09-04',
-    last_day: '2026-09-08',
-    submitted_at: '2026-09-05T09:12:00Z',
-    comment: 'Прикрепила справку за период отсутствия.',
+    stage: 'WAITING_DOCUMENTS',
+    missing_for_approval: ['certificate', 'application', 'period'],
+    first_day: null,
+    last_day: null,
+    submitted_at: '2026-09-21T11:24:00Z',
+    comment: null,
     review_comment: null,
     requires_document: true,
-    history: [
-      { at: '2026-09-05T09:12:00Z', action: 'CREATED', comment: null },
-      { at: '2026-09-05T09:18:00Z', action: 'DOCUMENT_ATTACHED', comment: null },
-    ],
+    history: [],
+    documents: [],
+  },
+};
+
+/** Справку вернули на замену: заявка жива и ждёт новую бумагу. */
+const NEEDS_FIX = {
+  ...SICK,
+  id: 'r-2',
+  absence: {
+    ...SICK.absence,
+    id: 'r-2',
+    employee: OTHER,
+    stage: 'NEEDS_FIX',
     documents: [
       {
         id: 'd-1',
         document_type: 'SICK_NOTE',
-        verification_status: 'PENDING',
-        verified_at: null,
+        verification_status: 'REJECTED',
+        verified_at: '2026-09-21T13:40:00Z',
+        verification_comment: 'В справке не видны даты периода.',
         file: {
-          id: 'f-1', name: 'spravka_04-09.pdf', mime_type: 'application/pdf',
-          size_bytes: 253952, uploaded_at: '2026-09-05T09:18:00Z', scan_status: 'CLEAN',
+          id: 'f-1', name: 'spravka.pdf', mime_type: 'application/pdf',
+          size_bytes: 253952, uploaded_at: '2026-09-21T11:25:00Z', scan_status: 'CLEAN',
         },
       },
     ],
   },
 };
 
-const WAITING = {
-  ...SICK,
-  id: 'r-2',
-  absence: { ...SICK.absence, id: 'r-2', employee: { ...EMPLOYEE, id: 'p-2' }, documents: [] },
-};
-
-const DECIDED = {
-  ...SICK,
+const LEAVE = {
+  kind: 'absence',
   id: 'r-3',
-  absence: { ...SICK.absence, id: 'r-3', status: 'APPROVED', documents: [] },
+  created_at: '2026-09-20T09:00:00Z',
+  place: PLACE,
+  absence: {
+    id: 'r-3',
+    kind: 'CREATE',
+    employee: OTHER,
+    absence_type: { code: 'ANNUAL_LEAVE', name: 'Ежегодный отпуск' },
+    status: 'SUBMITTED',
+    stage: 'PENDING',
+    missing_for_approval: [],
+    first_day: '2026-10-05',
+    last_day: '2026-10-16',
+    submitted_at: '2026-09-20T09:00:00Z',
+    comment: null,
+    review_comment: null,
+    requires_document: false,
+    history: [],
+    documents: [],
+  },
 };
 
-const COUNTS = { open: 16, all: 40, leave: 5, sick: 7, fixes: 4, cancel: 2 };
+const COUNTS = { open: 3, all: 3, leave: 1, sick: 2, fixes: 0, cancel: 0 };
 
-function network(handler: (path: string, method: string) => Response | null = () => null) {
-  return fakeNetwork((path, call) => {
-    const own = handler(path, call.method);
-    if (own) return own;
+function network(items: unknown[] = [SICK, NEEDS_FIX, LEAVE]) {
+  const byId: Record<string, unknown> = {
+    'r-1': SICK.absence, 'r-2': NEEDS_FIX.absence, 'r-3': LEAVE.absence,
+  };
+  return fakeNetwork((path) => {
     if (path.includes('/auth/')) return json(200, USER);
     if (path.includes('/requests/counts')) return json(200, COUNTS);
     if (path.includes('/requests')) {
-      return json(200, { items: [SICK, WAITING, DECIDED], next_cursor: 'c2', has_more: true });
+      return json(200, { items, next_cursor: null, has_more: false });
     }
+    const one = /\/absence-requests\/([^/?]+)$/.exec(path);
+    if (one) return json(200, byId[one[1] ?? ''] ?? {});
     return crm(path) ?? json(200, { items: [] });
   });
 }
 
-const listCalls = (calls: { url: string }[]) =>
-  calls.filter((c) => c.url.includes('/requests') && !c.url.includes('/requests/counts'));
+const panel = () => screen.getByRole('complementary', { name: 'Выбранная заявка' });
 
 describe('очередь', () => {
-  test('по умолчанию открыты заявки, которые ждут решения', async () => {
-    const calls = network();
-    renderApp('/requests');
-
-    await waitFor(() =>
-      expect(listCalls(calls).some((c) => c.url.includes('status=SUBMITTED%2CIN_REVIEW')
-        || c.url.includes('status=SUBMITTED,IN_REVIEW'))).toBe(true),
-    );
-    expect(screen.getByRole('tab', { name: /Требуют решения/ }).getAttribute('aria-selected')).toBe('true');
-  });
-
-  test('счётчики вкладок приходят с сервера, а не с показанной страницы', async () => {
-    // На странице три строки — вкладка обязана назвать 16 из счётчиков.
+  test('строки показывают человека, вид и дату подачи', async () => {
     network();
     renderApp('/requests');
 
-    const tab = await screen.findByRole('tab', { name: /Требуют решения/ });
-    await waitFor(() => expect(tab.textContent).toContain('16'));
-    expect(screen.getByRole('tab', { name: /Больничные/ }).textContent).toContain('7');
-  });
-
-  test('строка различает справку на проверке и её отсутствие', async () => {
-    // «Загружена» и «проверена» — разные вещи: документ не считается
-    // проверенным только потому, что он есть.
-    network();
-    renderApp('/requests');
-
-    expect((await screen.findAllByText('Справка на проверке')).length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Нет справки').length).toBeGreaterThan(0);
+    expect(await screen.findByText('Muradov Azizbek')).toBeTruthy();
+    expect(screen.getAllByText('город Ташкент').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Больничный').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Подана').length).toBeGreaterThan(0);
   });
 
   test('вкладка уходит фильтром на сервер, а не режет загруженную страницу', async () => {
     const calls = network();
     renderApp('/requests');
-    await screen.findAllByText('Справка на проверке');
+    await screen.findByText('Muradov Azizbek');
 
     fireEvent.click(screen.getByRole('tab', { name: /Больничные/ }));
 
     await waitFor(() =>
-      expect(listCalls(calls).some((c) => c.url.includes('type=SICK_LEAVE'))).toBe(true),
+      expect(calls.some((c) => c.url.includes('type=SICK_LEAVE'))).toBe(true),
     );
   });
 
-  test('страница листается курсором', async () => {
-    const calls = network();
-    renderApp('/requests');
-    await screen.findAllByText('Справка на проверке');
+  test('пустой отбор отвечает строкой, а не пустой таблицей с листалкой', async () => {
+    network([]);
+    renderApp('/requests?search=никого');
 
-    fireEvent.click(screen.getByRole('button', { name: /Далее/ }));
-
-    await waitFor(() => expect(calls.some((c) => c.url.includes('cursor=c2'))).toBe(true));
-  });
-
-  test('ошибка не превращается в пустую очередь', async () => {
-    network((path) =>
-      path.includes('/requests') && !path.includes('/requests/counts') ? json(500, { error: {} }) : null,
-    );
-    renderApp('/requests');
-
-    expect(await screen.findByText(/Не удалось загрузить очередь/)).toBeTruthy();
+    expect(await screen.findByText('По выбранным условиям заявок нет')).toBeTruthy();
+    expect(screen.getByText('Измените фильтры или сбросьте поиск.')).toBeTruthy();
+    // Ни шапки колонок, ни кнопок листания: обещать страницы, которых
+    // нет, — худшее, что может сделать пустой список.
+    expect(screen.queryByText('Сотрудник')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Далее/ })).toBeNull();
   });
 });
 
-describe('подробности', () => {
-  test('открываются рядом со списком, список остаётся виден', async () => {
+describe('предпросмотр', () => {
+  test('выбор строки меняет панель справа', async () => {
     network();
     renderApp('/requests');
-    fireEvent.click((await screen.findAllByText('Рахимова Мадина'))[0] as HTMLElement);
 
-    expect(await screen.findByRole('complementary', { name: 'Подробности заявки' })).toBeTruthy();
-    // Очередь никуда не делась: кадровик не теряет место, где остановился.
-    expect(screen.getByRole('tab', { name: 'Все' })).toBeTruthy();
+    await screen.findByText('Muradov Azizbek');
+    fireEvent.click(screen.getByText('Muradov Azizbek'));
+    await waitFor(() =>
+      expect(within(panel()).getByText('Ожидаем документы')).toBeTruthy(),
+    );
+
+    // Вторая строка — отпуск. В панели меняется всё: вид, человек и то,
+    // что по заявке надо проверить.
+    fireEvent.click(screen.getAllByText('Отпуск')[0]!);
+    await waitFor(() => expect(within(panel()).getByText('Период')).toBeTruthy());
   });
 
-  test('показывают имя и размер файла, офис и историю', async () => {
+  test('чек-лист берётся из данных сервера, а не собирается на клиенте', async () => {
     network();
     renderApp('/requests?request=r-1');
 
-    expect(await screen.findByText('spravka_04-09.pdf')).toBeTruthy();
-    expect(screen.getByText(/248 КБ/)).toBeTruthy();
-    expect(screen.getAllByText('Самарканд').length).toBeGreaterThan(0);
-    expect(screen.getByText('Справка загружена')).toBeTruthy();
-    expect(screen.getByText('Ожидает решения')).toBeTruthy();
+    await screen.findAllByText('Ожидаем документы');
+    const side = panel();
+    expect(within(side).getByText('Справка')).toBeTruthy();
+    expect(within(side).getByText('Не приложена')).toBeTruthy();
+    expect(within(side).getByText('Подписанное заявление')).toBeTruthy();
+    expect(within(side).getByText('Не подтверждено')).toBeTruthy();
+    expect(within(side).getByText('Фактические даты')).toBeTruthy();
+    expect(within(side).getByText('Не указаны')).toBeTruthy();
   });
 
-  test('рассмотренная заявка не предлагает решение заново', async () => {
+  test('«Одобрить» выключена, пока сервер называет незакрытые пункты', async () => {
+    network();
+    renderApp('/requests?request=r-1');
+
+    await screen.findAllByText('Ожидаем документы');
+    const side = panel();
+    const approve = within(side).getByRole('button', { name: /Одобрить/ });
+    expect((approve as HTMLButtonElement).disabled).toBe(true);
+    expect(
+      within(side).getByText(/Одобрение станет доступно после проверки/),
+    ).toBeTruthy();
+  });
+
+  test('у отпуска нет ни справки, ни заявления', async () => {
+    // Правила больничного к отпуску не применяются: бумаг у него нет,
+    // и спрашивать их — значит просить то, чего никто не ждёт.
     network();
     renderApp('/requests?request=r-3');
 
-    expect(await screen.findByText(/Заявка уже рассмотрена/)).toBeTruthy();
-    expect(screen.queryByRole('button', { name: /Одобрить/ })).toBeNull();
+    await screen.findAllByText('Период');
+    const side = panel();
+    expect(within(side).getByText('Отпуск')).toBeTruthy();
+    expect(within(side).queryByText('Справка')).toBeNull();
+    expect(within(side).queryByText('Подписанное заявление')).toBeNull();
   });
 
-  test('запрос документа не выдаёт себя за работающее действие', async () => {
+  test('«Нужны исправления» — не отклонение заявки', async () => {
+    // Заявка жива и остаётся в очереди: сотрудник должен заменить
+    // справку, а не подавать всё заново.
+    network();
+    renderApp('/requests?request=r-2');
+
+    await screen.findAllByText('Нужна новая версия');
+    const side = panel();
+    expect(within(side).getByText('Нужны исправления')).toBeTruthy();
+    expect(within(side).getByText('Нужна новая версия')).toBeTruthy();
+    expect(within(side).queryByText('Отклонён')).toBeNull();
+  });
+
+  test('«Открыть заявку» ведёт на страницу этой заявки', async () => {
     network();
     renderApp('/requests?request=r-1');
 
-    const ask = await screen.findByRole('button', { name: /Запросить документ/ });
-    expect(ask.hasAttribute('disabled')).toBe(true);
-  });
-});
+    await screen.findAllByText('Ожидаем документы');
+    const link = within(panel()).getByRole('link', { name: /Открыть заявку/ });
+    expect(link.getAttribute('href')).toBe('/requests/r-1');
 
-describe('решение по справке', () => {
-  test('принятая справка уходит на свой адрес, а не на адрес заявки', async () => {
-    // Это разные решения: одобренный больничный с отклонённой справкой —
-    // законное состояние, и путать их адресами нельзя.
-    const calls = network((path, method) =>
-      method === 'POST' && path.includes('/documents/d-1/accept')
-        ? json(200, { id: 'd-1', verification_status: 'VERIFIED',
-                      verification_comment: null })
-        : null,
-    );
-    renderApp('/requests?request=r-1');
+    fireEvent.click(link);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Принять справку' }));
-
+    // Отдельная страница, а не окно поверх очереди: у заявки свой
+    // заголовок и своя карточка сотрудника.
     await waitFor(() =>
-      expect(calls.filter((c) => c.url.includes('/documents/d-1/accept')))
-        .toHaveLength(1),
+      expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Больничный'),
     );
-    // Решение по самой заявке при этом не трогается.
-    expect(calls.filter((c) => c.url.endsWith('/approve'))).toHaveLength(0);
-  });
-
-  test('возврат справки без причины на сервер не уходит', async () => {
-    // Человек принесёт ту же бумагу второй раз и не поймёт, почему её
-    // опять не взяли.
-    const calls = network();
-    renderApp('/requests?request=r-1');
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Вернуть справку' }));
-    fireEvent.click(
-      await screen.findByRole('button', { name: 'Вернуть на доработку' }),
-    );
-
-    expect(await screen.findByRole('alert')).toBeTruthy();
-    expect(calls.filter((c) => c.url.includes('/documents/d-1/reject')))
-      .toHaveLength(0);
-  });
-
-  test('причина уходит вместе с возвратом', async () => {
-    const calls = network((path, method) =>
-      method === 'POST' && path.includes('/documents/d-1/reject')
-        ? json(200, { id: 'd-1', verification_status: 'REJECTED',
-                      verification_comment: 'Фото нечитаемое' })
-        : null,
-    );
-    renderApp('/requests?request=r-1');
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Вернуть справку' }));
-    fireEvent.change(
-      await screen.findByPlaceholderText(/Что не так со справкой/),
-      { target: { value: 'Фото нечитаемое' } },
-    );
-    fireEvent.click(screen.getByRole('button', { name: 'Вернуть на доработку' }));
-
-    await waitFor(() => {
-      const sent = calls.find((c) => c.url.includes('/documents/d-1/reject'));
-      expect(sent?.body).toEqual({ comment: 'Фото нечитаемое' });
-    });
-  });
-});
-
-describe('решение', () => {
-  test('повторное нажатие не отправляет второй запрос', async () => {
-    const calls = network((path, method) =>
-      method === 'POST' && path.includes('/approve') ? json(200, {}) : null,
-    );
-    renderApp('/requests?request=r-1');
-
-    const button = await screen.findByRole('button', { name: /Одобрить/ });
-    fireEvent.click(button);
-    fireEvent.click(button);
-
-    await waitFor(() =>
-      expect(calls.filter((c) => c.url.includes('/approve'))).toHaveLength(1),
-    );
-  });
-
-  test('отказ без причины не уходит на сервер', async () => {
-    // Без причины сотрудник подаст ту же заявку заново, и так по кругу.
-    const calls = network();
-    renderApp('/requests?request=r-1');
-
-    fireEvent.click(await screen.findByRole('button', { name: /Отклонить/ }));
-
-    expect(await screen.findByRole('alert')).toBeTruthy();
-    expect(calls.filter((c) => c.url.includes('/reject'))).toHaveLength(0);
-  });
-
-  test('при ошибке комментарий остаётся в поле', async () => {
-    network((path, method) =>
-      method === 'POST' && path.includes('/approve')
-        ? json(409, { error: { code: 'conflict', message: 'уже рассмотрена' } })
-        : null,
-    );
-    renderApp('/requests?request=r-1');
-
-    const field = await screen.findByLabelText('Комментарий HR');
-    fireEvent.change(field, { target: { value: 'Проверила справку' } });
-    fireEvent.click(screen.getByRole('button', { name: /Одобрить/ }));
-
-    await screen.findByRole('alert');
-    expect((field as HTMLInputElement).value).toBe('Проверила справку');
+    expect(screen.getByText('Материалы сотрудника')).toBeTruthy();
   });
 });

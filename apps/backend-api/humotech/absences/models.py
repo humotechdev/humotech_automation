@@ -7,7 +7,11 @@
 
 from __future__ import annotations
 
+from django.contrib.postgres.constraints import ExclusionConstraint
+from django.contrib.postgres.fields import DateRangeField, RangeOperators
 from django.db import models
+from django.db.models import DateField, F, Func, Q, Value
+from django.db.models.expressions import RawSQL
 
 from humotech.core.constraints import raw_check
 from humotech.core.enums import (
@@ -159,6 +163,35 @@ class AbsenceRequest(UUIDPrimaryKeyModel, OrganizationScopedModel, TimestampedMo
         return f"{self.request_kind} {self.employee_id} ({self.status})"
 
 
+def absence_range() -> Func:
+    """`daterange(start_date, end_date + 1, '[)')` — календарные сутки.
+
+    Отпуск и больничный — это дни, а не отрезок времени. Пока период
+    хранился моментами, пересечение зависело от того, в котором часу
+    заканчивается последний день: отсутствие до 18:00 и второе с 20:00
+    тех же суток формально не пересекались, хотя это один и тот же день
+    в табеле. Появлялось это не в теории — ровно так расставляет часы
+    демонстрационный посев.
+
+    Полуоткрытый `'[)'` с концом на СЛЕДУЮЩИЙ день — обычная запись
+    периода дат: конец не входит, и потому его не надо подгонять
+    микросекундами. 1–5 и 5–10 октября превращаются в
+    `[01.10, 06.10)` и `[05.10, 11.10)` и честно спорят за пятое;
+    1–5 и 6–10 не спорят ни за что.
+
+    `end_date + 1` записан как есть: Django складывает дату с числом
+    через интервал, а `date + interval` — уже не дата, и `daterange`
+    такую пару не примет.
+    """
+    return Func(
+        F("start_date"),
+        RawSQL("end_date + 1", [], output_field=DateField()),
+        Value("[)"),
+        function="daterange",
+        output_field=DateRangeField(),
+    )
+
+
 class EmployeeAbsence(UUIDPrimaryKeyModel, OrganizationScopedModel, TimestampedModel):
     """Подтверждённый период отсутствия — то, что учитывается в расчётах."""
 
@@ -183,8 +216,17 @@ class EmployeeAbsence(UUIDPrimaryKeyModel, OrganizationScopedModel, TimestampedM
         db_index=False,
         related_name="absences",
     )
+    # Моменты начала и конца. Остаются: по ним считается табель, они
+    # видны в карточке и в журнале. Пересечения по ним больше не
+    # считаются — для этого есть календарные даты ниже.
     start_at = models.DateTimeField()
     end_at = models.DateTimeField()
+    # Те же сутки, но как их называет человек и кадровый учёт. Отдельные
+    # колонки, а не вычисление на лету: перевод момента в дату зависит
+    # от пояса офиса, а пояс живёт в третьей таблице — в ограничение
+    # базы его не затащить.
+    start_date = models.DateField()
+    end_date = models.DateField()
     status = models.CharField(
         max_length=20, choices=choices(EMPLOYEE_ABSENCE_STATUSES)
     )
@@ -200,6 +242,35 @@ class EmployeeAbsence(UUIDPrimaryKeyModel, OrganizationScopedModel, TimestampedM
                 "status", EMPLOYEE_ABSENCE_STATUSES, "ck_employee_absences_status"
             ),
             raw_check("end_at >= start_at", "ck_employee_absences_end_after_start"),
+            raw_check(
+                "end_date >= start_date",
+                "ck_employee_absences_end_date_after_start_date",
+            ),
+            # У сотрудника не может быть двух живых отсутствий на одни
+            # сутки. Проверка в сервисе объясняет человеку, ЧТО он
+            # перекрывает, и без неё не обойтись, — но она живёт в коде,
+            # а таблицу правят ещё и миграции, импорт и чужой сервис.
+            # Последнее слово поэтому за базой.
+            #
+            # `CANCELLED` не в счёт: отменённое отсутствие сохраняет свой
+            # период, но никаких суток больше не занимает. `COMPLETED`
+            # считается наравне с живыми — закрытый больничный остаётся
+            # в табеле, и класть поверх него второй нельзя.
+            #
+            # Сравниваются календарные дни: час начала и час конца к
+            # спору за сутки отношения не имеют.
+            #
+            # Требует расширения btree_gist: без него gist-индекс не
+            # примет колонку uuid рядом с диапазоном.
+            ExclusionConstraint(
+                name="ex_employee_absences_overlap",
+                expressions=[
+                    ("employee_id", RangeOperators.EQUAL),
+                    (absence_range(), RangeOperators.OVERLAPS),
+                ],
+                condition=Q(status__in=("PLANNED", "ACTIVE", "COMPLETED")),
+                index_type="GIST",
+            ),
         ]
         indexes = [
             models.Index(

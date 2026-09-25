@@ -2099,3 +2099,389 @@ button.note-card {
   text-decoration: underline;
   cursor: pointer;
 }
+
+/* --- экран «Заявки» ---------------------------------------------------------
+ *
+ * Два действия строками, а не плитками: это список того, что здесь
+ * можно начать, и у каждого пункта есть пояснение. Плитки в ряд
+ * помещали в себя два слова и требовали нажать, чтобы понять разницу.
+ */
+
+.rq-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.rq-head h1 {
+  margin: 0;
+  font-size: var(--text-title);
+  font-weight: var(--weight-strong);
+  color: var(--text);
+}
+
+.rq-head p {
+  margin: 2px 0 0;
+  font-size: var(--text-small);
+  color: var(--text-muted);
+}
+
+.rq-head-history {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.rq-head-history:active {
+  background: var(--surface-sunken);
+}
+
+.rq-actions {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.rq-actions button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: none;
+  background: none;
+  font: inherit;
+  text-align: left;
+  color: var(--text);
+  cursor: pointer;
+}
+
+/* Разделитель между строками, но не под последней: линия в никуда
+   выглядит как оборванный список. */
+.rq-actions button + button {
+  border-top: 1px solid var(--border);
+}
+
+.rq-actions button:active {
+  background: var(--surface-sunken);
+}
+
+.rq-actions button > svg:first-child {
+  flex: 0 0 auto;
+  color: var(--navy);
+}
+
+.rq-actions button > svg:last-child {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+
+.rq-actions span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.rq-actions b {
+  font-size: var(--text-body);
+  font-weight: var(--weight-strong);
+}
+
+.rq-actions small {
+  font-size: var(--text-small);
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+
+/* --- вкладки ---------------------------------------------------------------- */
+
+.rq-tabs {
+  display: flex;
+  gap: var(--space-5);
+  border-bottom: 1px solid var(--border);
+}
+
+.rq-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) 0;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  background: none;
+  font: inherit;
+  font-size: var(--text-body);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.rq-tabs button[aria-selected='true'] {
+  border-bottom-color: var(--accent);
+  color: var(--text);
+  font-weight: var(--weight-medium);
+}
+
+/* Число активных — кружком: оно меняется, и без подложки читается как
+   часть слова. */
+.rq-tabs i {
+  display: grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-sunken);
+  font-size: var(--text-small);
+  font-style: normal;
+  color: var(--text-muted);
+}
+
+.rq-tabs button[aria-selected='true'] i {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* --- карточка заявки --------------------------------------------------------
+ *
+ * Цвет состояния вынесен на левую кромку, а не разлит по фону: заявок в
+ * списке несколько, и залитые карточки превращают экран в светофор, где
+ * ни одна не главная. Полоса же читается боковым зрением — видно, какая
+ * чего ждёт, не вчитываясь в подписи.
+ */
+
+.rq-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-4);
+  padding-left: calc(var(--space-4) + var(--space-1));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-raised);
+  /* Полоса рисуется псевдоэлементом, а не border-left: у границы не
+     скругляются углы по радиусу карточки, и сверху остаётся заусенец. */
+  overflow: hidden;
+}
+
+.rq-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--space-1);
+  background: var(--idle);
+}
+
+.rq-card--warning::before {
+  background: var(--warning);
+}
+.rq-card--navy::before {
+  background: var(--accent);
+}
+.rq-card--success::before {
+  background: var(--success);
+}
+.rq-card--danger::before {
+  background: var(--danger);
+}
+
+/* Шапка: слева период и вид, справа состояние. Переносится целиком —
+   на узком экране состояние уходит под период, а не обрезается. */
+.rq-card__top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+}
+
+.rq-card__when {
+  font-size: var(--text-small);
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+}
+
+.rq-card__state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-small);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
+/* Точка берёт цвет строки: состояние и кромка карточки обязаны
+   совпадать, иначе они спорят между собой. */
+.rq-card__state i {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: currentColor;
+  flex: none;
+}
+
+.rq-card--warning .rq-card__state {
+  color: var(--warning);
+}
+.rq-card--navy .rq-card__state {
+  color: var(--accent);
+}
+.rq-card--success .rq-card__state {
+  color: var(--success);
+}
+.rq-card--danger .rq-card__state {
+  color: var(--danger);
+}
+
+.rq-card__title {
+  margin: 2px 0 0;
+  font-size: var(--text-title);
+  font-weight: var(--weight-strong);
+  color: var(--text);
+}
+
+.rq-card__days {
+  margin: 0;
+  font-size: var(--text-body);
+  font-weight: var(--weight-medium);
+  color: var(--text);
+}
+
+.rq-card__note {
+  margin: 0;
+  font-size: var(--text-small);
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+.rq-card__done {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: 0;
+  font-size: var(--text-small);
+  color: var(--success);
+}
+
+/* Бумага дошла, но её ещё не смотрели. Зелёным это красить нельзя:
+   зелёный здесь значит «принято», и человек перестанет ждать. */
+.rq-card__done--wait {
+  color: var(--text-muted);
+}
+
+/* --- действия карточки -----------------------------------------------------
+ *
+ * Строками во всю ширину, а не кнопками в ряд: их бывает три, названия
+ * длинные, и в ряду они либо сжимаются до нечитаемого, либо переносятся
+ * по-разному в каждой карточке.
+ */
+
+.rq-card__acts {
+  display: flex;
+  flex-direction: column;
+  margin: var(--space-3) calc(var(--space-4) * -1) calc(var(--space-4) * -1);
+  border-top: 1px solid var(--border);
+}
+
+.rq-card__acts:empty {
+  display: none;
+}
+
+.rq-act {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--tap-target);
+  padding: var(--space-3) var(--space-4);
+  border: none;
+  background: none;
+  font: inherit;
+  text-align: left;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.rq-act + .rq-act {
+  border-top: 1px solid var(--border);
+}
+
+.rq-act:active {
+  background: var(--surface-sunken);
+}
+
+.rq-act > svg {
+  flex: 0 0 auto;
+  color: var(--navy);
+}
+
+.rq-act span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.rq-act b {
+  font-size: var(--text-body);
+  font-weight: var(--weight-medium);
+}
+
+.rq-act small {
+  font-size: var(--text-small);
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+
+/* Системное окно выбора файла открывает сам `label`. Элемент нужен
+   разметке, но показывать его нечего. */
+.rq-act input[type='file'] {
+  display: none;
+}
+
+.rq-act--danger,
+.rq-act--danger > svg {
+  color: var(--danger);
+}
+
+.rq-card .field-error {
+  margin: var(--space-2) 0 0;
+}
+
+/* --- пустое место ----------------------------------------------------------
+ *
+ * Здесь подложка под значком уместна: экран длинный и пустой, и без
+ * неё рисунок теряется посреди белого поля. В пустых состояниях
+ * страниц CRM её нет — там блок короткий и стоит вплотную к тексту.
+ */
+
+.state-icon {
+  display: grid;
+  place-items: center;
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--navy);
+}
+
+.state-icon-danger {
+  background: var(--danger-bg);
+  color: var(--danger);
+}

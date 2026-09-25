@@ -1,2349 +1,1092 @@
 /*
- * Страница «Обращения» по образцу 1672×941.
- * Всё под префиксом `qs-`: правки не задевают другие страницы.
+ * «Обращения». Префикс классов — `tk-`: файл подключает только эта страница.
+ *
+ * Одна белая поверхность с крупным скруглением; очередь, переписка и
+ * правая часть — зоны внутри неё, разделённые тонкими линиями, а не три
+ * отдельные карточки.
  */
 
-.qs {
-  --qs-ink: #13295a;
-  --qs-text: #22355c;
-  --qs-muted: #6b7c98;
-  --qs-line: #e3eaf3;
-  --qs-field: #d9e2ec;
-  --qs-blue: #1f6fe0;
-  --qs-blue-soft: #eaf2ff;
-  --qs-green: #1b9e5f;
-  --qs-green-soft: #e5f6ed;
-  --qs-orange: #d97a06;
-  --qs-orange-soft: #fff1dc;
-  --qs-red: #e0453f;
-  --qs-red-soft: #fdecea;
-  --qs-card: #ffffff;
-  --qs-radius: 14px;
+.tk {
+  --tk-ink: #112f5a;
+  --tk-text: #22355c;
+  --tk-muted: #66768f;
+  --tk-line: #dce6f1;
+  --tk-soft: #eaf3ff;
+  --tk-soft-2: #e3eefb;
+  --tk-blue: #195e96;
+  --tk-blue-hover: #144d7c;
+  --tk-green: #1b9e5f;
+  --tk-green-soft: #e6f6ee;
+  --tk-orange: #c26d06;
+  --tk-orange-soft: #fff3e0;
+  --tk-red: #d93d37;
+  --tk-red-soft: #fdeceb;
 
-  flex: 1;
+  flex: 1 1 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  font-family: 'Segoe UI', 'Open Sans', system-ui, sans-serif;
-  color: var(--qs-text);
+  /* Тот же мягкий Inter, что у меню и шапки: одна гарнитура на экране. */
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  font-size: 14px;
+  letter-spacing: -0.005em;
+  color: var(--tk-text);
 }
 
-.qs-sr {
-  position: absolute;
-  width: 1px;
-  height: 1px;
+/* Лист занимает остаток окна: колонки прокручиваются внутри себя, а не
+   всей страницей — иначе поле ответа уезжало бы вниз вместе с лентой. */
+.canvas:has(> .tk) {
+  flex: 1 1 0;
+}
+
+/* Меню выбора открываются в портале у body — тот же шрифт и там. */
+body.tk-type .app-select__menu,
+body.tk-type .app-popover {
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+}
+
+.tk-sheet {
+  flex: 1 1 0;
+  min-height: 560px;
+  display: flex;
+  flex-direction: column;
+  padding: 0 24px;
+  border: 1px solid var(--tk-line);
+  border-radius: 18px;
+  background: #ffffff;
   overflow: hidden;
-  clip: rect(0 0 0 0);
-  white-space: nowrap;
 }
 
-/* --- шапка ------------------------------------------------------------------ */
+/* --- шапка листа ---------------------------------------------------------- */
 
-.qs-head {
+.tk-head {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   gap: 16px;
-  flex: none;
-  margin: -8px 12px 0 5px;
+  min-height: 60px;
+  padding: 8px 0 4px;
 }
 
-.qs-head__title {
+.tk-head__title {
   margin: 0;
-  font-size: 33px;
-  line-height: 40px;
-  font-weight: 700;
-  color: var(--qs-ink);
+  font-size: 24px;
+  line-height: 30px;
+  font-weight: 650;
+  color: var(--tk-ink);
 }
 
-.qs-head__sub {
+.tk-head__sub {
   margin: 0;
-  font-size: 15.5px;
-  line-height: 22px;
-  color: #3e4f6d;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--tk-muted);
 }
 
-.qs-head__tools {
+.tk-head__tools {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-top: 4px;
+  gap: 10px;
 }
 
-.qs-select {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-}
+.tk-select { width: 190px; }
+.tk-select--wide { width: 230px; }
 
-.qs-select select {
-  appearance: none;
-  height: 42px;
-  min-width: 146px;
-  padding: 0 38px 0 18px;
-  border: 1px solid var(--qs-field);
-  border-radius: 10px;
-  background: var(--qs-card);
-  font: inherit;
-  font-size: 14px;
-  color: var(--qs-text);
-  cursor: pointer;
-}
+/* Значок перед значением фильтра — внутри самой кнопки выбора. */
+.tk-filter { position: relative; display: inline-flex; }
 
-.qs-select--wide select {
-  min-width: 188px;
-}
-
-.qs-select svg {
+.tk-filter > svg {
   position: absolute;
-  right: 14px;
+  top: 50%;
+  left: 12px;
+  z-index: 1;
+  transform: translateY(-50%);
+  color: #6b7c98;
   pointer-events: none;
-  color: var(--qs-muted);
 }
-.questions-select { flex: 0 1 180px; width: 180px; }
-.questions-select--wide { width: 220px; }
-.qs-more .app-select { min-width: 0; }
 
-.qs-icon-btn {
+.tk-filter .app-select__trigger { height: 42px; padding-left: 38px; border-color: var(--tk-line); border-radius: 9px; }
+
+.tk-icon {
   display: inline-grid;
   place-items: center;
-  width: 54px;
+  flex: 0 0 auto;
+  width: 42px;
   height: 42px;
-  border: 1px solid var(--qs-field);
-  border-radius: 10px;
-  background: var(--qs-card);
-  color: var(--qs-ink);
+  padding: 0;
+  border: 1px solid var(--tk-line);
+  border-radius: 9px;
+  background: #ffffff;
+  color: #3f5173;
   cursor: pointer;
 }
 
-.qs-icon-btn:hover {
-  border-color: #b9c7d8;
+.tk-icon:hover { border-color: #b9d0ec; color: var(--tk-blue); }
+.tk-icon:focus-visible { outline: 2px solid var(--tk-blue); outline-offset: 2px; }
+.tk-icon--spin svg { animation: tk-spin 0.9s linear infinite; }
+
+@keyframes tk-spin { to { transform: rotate(360deg); } }
+
+/* --- вкладки -------------------------------------------------------------- */
+
+.tk-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 0 -24px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--tk-line);
 }
 
-.qs-icon-btn--sm {
-  width: 34px;
-  height: 36px;
+.tk-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 48px;
+  margin-bottom: -1px;
+  padding: 0 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  color: #4d5f7d;
+  cursor: pointer;
 }
 
-.qs-icon-btn--spin svg {
-  animation: qs-spin 1s linear infinite;
+.tk-tab:hover { color: var(--tk-ink); }
+
+.tk-tab--on {
+  border-bottom-color: var(--tk-blue);
+  font-weight: 600;
+  color: var(--tk-blue);
 }
 
-@keyframes qs-spin {
-  to { transform: rotate(360deg); }
+.tk-tab__n {
+  min-width: 22px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #eef2f7;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  color: #4d5f7d;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .qs-icon-btn--spin svg { animation: none; }
+.tk-tab--on .tk-tab__n { background: var(--tk-soft-2); color: var(--tk-blue); }
+
+/* --- три зоны ------------------------------------------------------------- */
+
+.tk-work {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(270px, 25fr) minmax(0, 53fr) minmax(290px, 22fr);
+  margin: 0 -24px;
 }
 
-.qs-dots {
-  font-size: 20px;
+.tk-queue,
+.tk-talk,
+.tk-side {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.tk-queue { border-right: 1px solid #e2eaf3; }
+.tk-side { border-left: 1px solid #e2eaf3; background: #ffffff; }
+
+/* --- очередь -------------------------------------------------------------- */
+
+.tk-queue__tools {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 14px 14px;
+}
+
+.tk-find {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 42px;
+  padding: 0 14px;
+  border: 1px solid var(--tk-line);
+  border-radius: 9px;
+  color: #7d8ca6;
+}
+
+.tk-find:focus-within { border-color: #9fc0ea; }
+
+.tk-find input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: none;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--tk-text);
+}
+
+/* Фильтры не выходят за колонку: не хватило места — вторая строка. */
+.tk-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+.tk-chip {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 8px;
+  background: #eef2f7;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  white-space: nowrap;
+  color: #33466a;
+  cursor: pointer;
+}
+
+.tk-chip:hover { background: #e6ecf4; }
+
+.tk-chip--on,
+.tk-chip--on:hover {
+  background: var(--tk-blue);
+  font-weight: 500;
+  color: #ffffff;
+}
+
+.tk-chip__n {
+  display: inline-grid;
+  place-items: center;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #dfe6ef;
+  font-size: 11.5px;
+  font-weight: 600;
   line-height: 1;
 }
 
-/* --- вкладки ------------------------------------------------------------------ */
+.tk-chip--unanswered .tk-chip__n { background: var(--tk-red); color: #ffffff; }
+.tk-chip--urgent .tk-chip__n { background: #f6b33c; color: #5a3a00; }
 
-.qs-tabs {
-  display: flex;
-  gap: 4px;
-  flex: none;
-  margin: 12px 12px 10px 0;
-  border-bottom: 1px solid var(--qs-line);
-}
-
-.qs-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 12px 10px;
-  border: 0;
-  border-bottom: 3px solid transparent;
-  background: none;
-  font: inherit;
-  font-size: 14.5px;
-  color: #3e4f6d;
-  cursor: pointer;
-}
-
-.qs-tab--on {
-  border-bottom-color: var(--qs-blue);
-  color: var(--qs-blue);
-  font-weight: 600;
-}
-
-.qs-tab--static {
-  cursor: default;
-}
-
-.qs-tab__count {
-  min-width: 22px;
-  padding: 1px 7px;
-  border-radius: 10px;
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--qs-ink);
-  text-align: center;
-}
-
-.qs-tab--on .qs-tab__count {
-  background: var(--qs-blue-soft);
-  color: var(--qs-blue);
-}
-
-/* --- сетка -------------------------------------------------------------------- */
-
-.qs-grid {
-  flex: 1 1 0;
-  min-height: 560px;
-  display: grid;
-  grid-template-columns: 360px minmax(0, 1fr) 330px;
-  gap: 10px;
-  margin: 0 12px 12px 0;
-}
-
-/* At the reference desktop width the conversation is the primary surface;
-   keep its header compact and let the queue/context retain their readable
-   widths instead of producing a tall, sparse middle column. */
-@media (min-width: 1500px) {
-  .qs-talk__title { display: none; }
-  .qs-talk__head { padding-top: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--qs-line); }
-  .qs-thread { padding-top: 12px; }
-}
-
-@media (min-width: 1500px) and (max-width: 1750px) {
-  .qs-grid { grid-template-columns: 360px minmax(0, 1fr) 330px; }
-}
-
-.qs-card {
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  border: 1px solid var(--qs-line);
-  border-radius: var(--qs-radius);
-  background: var(--qs-card);
-  box-shadow: 0 1px 2px rgba(19, 41, 90, 0.05);
-}
-
-/* --- общие кнопки ------------------------------------------------------------- */
-
-.qs-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  height: 36px;
-  padding: 0 16px;
-  border: 1px solid var(--qs-field);
-  border-radius: 9px;
-  background: var(--qs-card);
-  font: inherit;
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--qs-ink);
-  text-decoration: none;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.qs-btn:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-
-.qs-btn--blue {
-  border-color: var(--qs-blue);
-  background: var(--qs-blue);
-  color: #fff;
-}
-
-.qs-btn--blue:hover:not(:disabled) {
-  background: #1a61c7;
-}
-
-.qs-btn--red {
-  border-color: var(--qs-red);
-  background: var(--qs-red);
-  color: #fff;
-}
-
-.qs-btn--sm {
-  height: 30px;
-  padding: 0 12px;
-  font-size: 13px;
-}
-
-.qs-btn--block {
-  width: 100%;
-  margin-top: 10px;
-}
-
-.qs-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0;
-  border: 0;
-  background: none;
-  font: inherit;
-  font-size: 13.5px;
-  color: var(--qs-blue);
-  text-decoration: none;
-  cursor: pointer;
-}
-
-.qs-link:disabled {
-  opacity: 0.55;
-}
-
-.qs-link--go {
-  margin-top: 8px;
-}
-
-.qs-input {
-  width: 100%;
-  height: 36px;
-  padding: 0 12px;
-  border: 1px solid var(--qs-field);
-  border-radius: 9px;
-  font: inherit;
-  font-size: 13.5px;
-  color: var(--qs-text);
-  box-sizing: border-box;
-}
-
-.qs-state {
-  margin: 0;
-  padding: 18px;
-  font-size: 13.5px;
-  color: var(--qs-muted);
-}
-
-.qs-state p {
-  margin: 0 0 10px;
-}
-
-.qs-state--center {
-  margin: auto;
-  text-align: center;
-}
-
-.qs-state--page {
-  padding: 40px;
-  font-size: 15px;
-}
-
-/* --- очередь ------------------------------------------------------------------ */
-
-.qs-queue__search {
-  position: relative;
-  display: flex;
-  align-items: center;
-  margin: 12px 12px 10px;
-}
-
-.qs-queue__search svg {
-  position: absolute;
-  left: 14px;
-  color: var(--qs-muted);
-}
-
-.qs-queue__search input {
-  width: 100%;
-  height: 42px;
-  padding: 0 12px 0 40px;
-  border: 1px solid var(--qs-field);
-  border-radius: 10px;
-  font: inherit;
-  font-size: 14px;
-  color: var(--qs-text);
-  box-sizing: border-box;
-}
-
-.qs-quick {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin: 0 12px 10px;
-}
-
-.qs-quick .qs-chip:not(.qs-chip--icon) {
-  padding: 0 7px;
-  font-size: 12px;
-}
-
-.qs-chip {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 32px;
-  padding: 0 8px;
-  border: 1px solid var(--qs-line);
-  border-radius: 9px;
-  background: var(--qs-card);
-  font: inherit;
-  font-size: 12.5px;
-  color: var(--qs-text);
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.qs-chip--on {
-  border-color: var(--qs-blue);
-  background: var(--qs-blue);
-  color: #fff;
-}
-
-.qs-chip__count {
-  min-width: 18px;
-  padding: 0 5px;
-  border-radius: 9px;
-  background: var(--qs-blue-soft);
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--qs-blue);
-  text-align: center;
-}
-
-.qs-chip--on .qs-chip__count {
-  background: rgba(255, 255, 255, 0.25);
-  color: #fff;
-}
-
-.qs-chip--icon {
-  margin-left: auto;
-  width: 34px;
-  padding: 0;
-  justify-content: center;
-}
-
-.qs-more {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
-  margin: 0 12px 10px;
-}
-
-.qs-more select {
-  min-width: 0;
-  height: 32px;
-  padding: 0 6px;
-  border: 1px solid var(--qs-field);
-  border-radius: 8px;
-  background: var(--qs-card);
-  font: inherit;
-  font-size: 12.5px;
-  color: var(--qs-text);
-}
-
-.qs-queue__list {
+.tk-list {
   flex: 1 1 0;
   min-height: 0;
   overflow-y: auto;
-  border-top: 1px solid var(--qs-line);
+  padding: 0;
+  border-top: 1px solid #e8eef5;
   transition: opacity 0.15s;
 }
 
-.qs-queue__list--busy {
-  opacity: 0.85;
-}
+.tk-list--busy { opacity: 0.85; }
+.tk-rows { margin: 0; padding: 0; list-style: none; }
+.tk-rows > li { border-bottom: 1px solid #e8eef5; }
 
-.qs-rows {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.qs-row {
-  position: relative;
+.tk-row {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 14px;
   width: 100%;
-  display: flex;
-  gap: 12px;
-  padding: 13px 12px 12px 14px;
+  padding: 16px 16px 14px;
   border: 0;
-  border-bottom: 1px solid var(--qs-line);
+  border-radius: 0;
   background: none;
   font: inherit;
-  color: inherit;
   text-align: left;
+  color: inherit;
   cursor: pointer;
 }
 
-.qs-row:hover {
-  background: #f6f9fd;
+.tk-row:hover { background: #f8fbff; }
+.tk-row--on, .tk-row--on:hover { background: var(--tk-soft); }
+.tk-row:focus-visible { outline: 2px solid var(--tk-blue); outline-offset: -2px; }
+
+.tk-row__main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.tk-row__top { display: flex; align-items: center; gap: 6px; min-width: 0; }
+
+.tk-row__name {
+  overflow: hidden;
+  font-size: 15.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--tk-ink);
 }
 
-.qs-row--on {
-  background: #edf4ff;
-  box-shadow: inset 3px 0 0 var(--qs-blue);
+.tk-row__time { margin-left: auto; flex: 0 0 auto; font-size: 13px; color: #7a8aa3; }
+
+.tk-row__topic,
+.tk-row__snip {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.qs-row--ghost {
-  cursor: default;
-}
+.tk-row__topic { font-size: 14.5px; color: #22355c; }
+.tk-row .tk-face { width: 48px; height: 48px; font-size: 16px; }
+.tk-row__snip { font-size: 13.5px; color: #7a8aa3; }
+.tk-row__snip b { font-weight: 600; color: #4d5f7d; }
+.tk-row__mid { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.tk-row__mid .tk-row__topic { flex: 1; min-width: 0; }
+.tk-row--unread .tk-row__topic { font-weight: 600; color: var(--tk-ink); }
 
-.qs-row__photo {
-  width: 44px;
-  height: 44px;
-  font-size: 15px;
-}
+.tk-dot { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: var(--tk-blue); }
 
-.qs-row__main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-/* Строка: текст сжимается с многоточием, флаги и время — никогда. */
-.qs-row__line {
+.tk-queue__foot {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-width: 0;
+  justify-content: space-between;
+  min-height: 48px;
+  margin: 0 16px 0 24px;
+  border-top: 1px solid #edf2f8;
+  font-size: 13px;
+  color: var(--tk-muted);
 }
 
-.qs-row__name,
-.qs-row__topic,
-.qs-row__snippet {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.tk-queue__foot em { font-style: normal; color: var(--tk-orange); }
+
+/* --- статусы и пометки ---------------------------------------------------- */
+
+.tk-status {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
   white-space: nowrap;
 }
 
-.qs-row__name {
-  font-size: 14.5px;
-  font-weight: 600;
-  color: var(--qs-ink);
+.tk-status--NEW { background: var(--tk-soft-2); color: var(--tk-blue); }
+.tk-status--IN_PROGRESS { background: #fdf0d8; color: #9a5b07; }
+.tk-status--WAITING_EMPLOYEE { background: #eef1f5; color: #5d6f8a; }
+.tk-status--CLOSED { background: var(--tk-green-soft); color: var(--tk-green); }
+.tk-status--lg { height: 34px; padding: 0 20px; border-radius: 8px; font-size: 14px; font-weight: 600; }
+
+.tk-flag {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 7px;
+  background: var(--tk-orange-soft);
+  font-size: 12px;
+  color: var(--tk-orange);
 }
 
-.qs-row--unread .qs-row__name {
-  font-weight: 700;
-}
+.tk-flag--urgent { background: var(--tk-red-soft); color: var(--tk-red); }
 
-.qs-row__time {
-  flex: none;
-  font-size: 12.5px;
-  color: var(--qs-muted);
-  font-variant-numeric: tabular-nums;
-}
+/* --- лица ----------------------------------------------------------------- */
 
-.qs-row__topic {
-  font-size: 13.5px;
-  color: var(--qs-text);
-}
-
-.qs-row__snippet {
-  font-size: 12.5px;
-  color: var(--qs-muted);
-}
-
-.qs-row__snippet b {
-  font-weight: 600;
-}
-
-.qs-row__meta {
-  overflow: hidden;
-  font-size: 12.5px;
-  color: var(--qs-muted);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.qs-row .qs-flag,
-.qs-row .qs-status {
-  flex: none;
-}
-
-.qs-dot {
-  flex: none;
-  width: 8px;
-  height: 8px;
+.tk-face {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 42px;
+  height: 42px;
   border-radius: 50%;
-  background: var(--qs-blue);
+  object-fit: cover;
+  font-size: 14px;
+  font-weight: 600;
+  color: #4a5f86;
 }
 
-.qs-flag {
+.tk-face--none { background: #e6eef8; color: #3f5f8c; }
+.tk-face--xs { width: 24px; height: 24px; font-size: 10px; }
+.tk-face--sm { width: 40px; height: 40px; font-size: 14px; }
+.tk-face--md { width: 48px; height: 48px; font-size: 16px; }
+.tk-face--lg { width: 52px; height: 52px; font-size: 16px; }
+
+/* --- переписка ------------------------------------------------------------ */
+
+.tk-talk__body { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+
+.tk-talk__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 24px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--tk-line);
+}
+
+.tk-talk__who { flex: 1; min-width: 0; }
+
+.tk-talk__name {
+  margin: 0;
+  overflow: hidden;
+  font-size: 17px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--tk-ink);
+}
+
+.tk-talk__where { margin: 2px 0 0; font-size: 13px; color: var(--tk-muted); }
+.tk-pop { position: relative; }
+.tk-talk__head .tk-icon { width: 42px; height: 42px; }
+
+.tk-notice {
+  margin: 10px 24px 0;
+  padding: 8px 12px;
+  border-radius: 9px;
+  background: var(--tk-green-soft);
+  font-size: 13px;
+  color: #17744a;
+}
+
+.tk-notice--bad { background: var(--tk-red-soft); color: #b3302b; }
+
+.tk-thread {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  padding: 14px 24px 18px;
+  scrollbar-gutter: stable;
+}
+
+.tk-thread__topic {
+  margin: 0;
+  font-size: 13px;
+  color: var(--tk-muted);
+}
+
+.tk-thread__topic span { font-weight: 600; color: #4d5f7d; }
+
+.tk-day {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12.5px;
+  color: var(--tk-muted);
+}
+
+.tk-day::before,
+.tk-day::after { content: ''; flex: 1; height: 1px; background: #e8eff7; }
+
+.tk-event {
+  align-self: center;
+  max-width: 90%;
+  margin: 0;
+  font-size: 12px;
+  text-align: center;
+  color: #8a99b1;
+}
+
+.tk-event--closed {
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: var(--tk-green-soft);
+  color: #17744a;
+}
+
+.tk-msg { display: flex; gap: 10px; max-width: 70%; }
+
+.tk-msg--theirs { align-self: flex-start; align-items: flex-end; }
+.tk-msg--mine { align-self: flex-end; flex-direction: column; align-items: flex-end; gap: 4px; }
+
+
+.tk-msg__who {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 12.5px;
+  color: #8a99b1;
+}
+
+.tk-msg__who b { font-weight: 500; color: #4d5f7d; }
+.tk-msg__who time { margin-left: 4px; }
+
+.tk-msg__bubble {
+  position: relative;
+  min-width: 0;
+  padding: 10px 16px;
+  border-radius: 12px;
+}
+
+.tk-msg--mine .tk-msg__bubble { background: #e7f0fb; border-bottom-right-radius: 4px; }
+
+.tk-msg--theirs .tk-msg__bubble { border-bottom-left-radius: 4px; }
+
+.tk-msg--theirs .tk-msg__bubble {
+  border: 1px solid #e1e8f0;
+  background: #ffffff;
+}
+
+.tk-msg__text {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--tk-text);
+}
+
+/* Распорка в конце текста — место под время в последней строке. */
+.tk-msg__pad { display: inline-block; width: 62px; height: 1px; }
+
+.tk-msg__time {
+  position: absolute;
+  right: 12px;
+  bottom: 8px;
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 8px;
-  border-radius: 10px;
-  font-size: 11.5px;
-  font-weight: 600;
-  white-space: nowrap;
+  font-size: 12px;
+  line-height: 1;
+  color: #7a8aa3;
 }
 
-.qs-flag svg {
-  width: 14px;
-  height: 14px;
-}
+.tk-delivery { display: inline-flex; align-items: center; color: #8a99b1; }
+.tk-delivery--READ,
+.tk-msg__time .tk-delivery { color: var(--tk-blue); }
+.tk-delivery--bad { color: var(--tk-red); }
 
-.qs-flag--red {
-  background: var(--qs-red-soft);
-  color: var(--qs-red);
-}
-
-.qs-flag--wait {
-  padding-left: 0;
-  color: var(--qs-red);
-}
-
-.qs-flag--wait::before {
-  content: '';
-  width: 7px;
-  height: 7px;
-  margin-right: 3px;
-  border-radius: 50%;
-  background: var(--qs-red);
-}
-
-.qs-flag--urgent {
-  background: var(--qs-orange-soft);
-  color: var(--qs-orange);
-}
-
-.qs-flag--high {
-  background: #fff6e8;
-  color: #b56a07;
-}
-
-.qs-queue__foot {
+.tk-file {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
-  min-height: 52px;
-  padding: 0 14px;
-  border-top: 1px solid var(--qs-line);
+  margin-top: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--tk-line);
+  border-radius: 10px;
+  background: #ffffff;
   font-size: 13px;
-  color: var(--qs-muted);
+  text-decoration: none;
+  color: var(--tk-text);
 }
 
-.qs-stale {
-  font-style: normal;
-  color: var(--qs-orange);
-}
+.tk-file:hover { border-color: #9fc0ea; }
+.tk-file__name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tk-file__size { color: var(--tk-muted); }
 
-/* --- фото и заглушки ------------------------------------------------------------ */
+/* --- поле ответа ---------------------------------------------------------- */
 
-.qs-photo {
-  flex: none;
-  display: inline-grid;
-  place-items: center;
-  border-radius: 50%;
-  object-fit: cover;
-  background: #e6eef9;
-  font-weight: 600;
-  color: #36588f;
-}
-
-.qs-photo--md {
-  width: 46px;
-  height: 46px;
-  font-size: 15px;
-}
-
-.qs-photo--lg {
-  width: 56px;
-  height: 56px;
-  font-size: 18px;
-}
-
-.qs-ghost {
-  display: block;
-  border-radius: 6px;
-  background: linear-gradient(90deg, #eef3f9 0%, #f7f9fc 50%, #eef3f9 100%);
-  background-size: 200% 100%;
-  animation: qs-shimmer 1.4s ease-in-out infinite;
-}
-
-@keyframes qs-shimmer {
-  from { background-position: 100% 0; }
-  to { background-position: -100% 0; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .qs-ghost { animation: none; }
-}
-
-.qs-ghost--round {
-  width: 44px;
-  height: 44px;
-  flex: none;
-  border-radius: 50%;
-}
-
-.qs-ghost--big {
-  width: 56px;
-  height: 56px;
-}
-
-.qs-ghost--line {
-  height: 12px;
-  margin: 4px 0;
-}
-
-.qs-ghost--short {
-  width: 60%;
-}
-
-.qs-ghost--block {
-  height: 120px;
-  margin-top: 14px;
-}
-
-/* --- переписка ------------------------------------------------------------------ */
-
-.qs-talk__body,
-.qs-talk__loading {
-  flex: 1;
-  min-height: 0;
+.tk-compose {
   display: flex;
   flex-direction: column;
-}
-
-.qs-talk__head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 14px 8px 16px;
-}
-
-.qs-talk__who {
-  flex: 1 1 200px;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.qs-talk__where {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.qs-talk__name {
-  margin: 0;
-  overflow: hidden;
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--qs-ink);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.qs-talk__where {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 2px 0 0;
-  font-size: 13.5px;
-  color: var(--qs-muted);
-  white-space: nowrap;
-}
-
-.qs-talk__where .qs-badge {
-  flex: none;
-  margin-left: 2px;
-}
-
-.qs-talk__assign {
-  min-width: 128px;
-  justify-content: center;
-}
-
-.qs-talk__assign span {
-  margin-left: 3px;
-  font-size: 17px;
-  line-height: 1;
-}
-
-.qs-tg::before {
-  content: '';
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  margin-right: 6px;
-  border-radius: 50%;
-  vertical-align: middle;
-  background: var(--qs-green);
-}
-
-.qs-tg--off {
-  color: var(--qs-red);
-}
-
-.qs-tg--off::before {
-  background: var(--qs-red);
-}
-
-.qs-talk__topic {
-  margin: 2px 0 0;
-  font-size: 13.5px;
-  color: var(--qs-muted);
-}
-
-.qs-deadline {
-  flex: none;
-  display: flex;
-  align-items: center;
   gap: 8px;
-  margin-left: auto;
-  font-size: 13px;
-  color: var(--qs-green);
-  white-space: nowrap;
+  margin: 0 24px;
+  padding: 12px 0 14px;
+  border-top: 1px solid var(--tk-line);
 }
 
-.qs-deadline span {
-  display: flex;
-  gap: 6px;
-}
+.tk-compose__row { display: flex; align-items: flex-end; gap: 10px; }
 
-.qs-deadline b {
-  font-weight: 500;
-}
-
-.qs-deadline small {
-  font-size: 12.5px;
-}
-
-.qs-deadline--late {
-  color: var(--qs-red);
-}
-
-.qs-deadline--wait {
-  color: var(--qs-orange);
-}
-
-.qs-deadline--none {
-  display: none;
-}
-
-.qs-talk__actions {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-left: 8px;
-}
-
-.qs-pop {
-  position: relative;
-}
-
-.qs-menu {
-  position: absolute;
-  z-index: 20;
-  top: calc(100% + 6px);
-  left: 0;
-  min-width: 230px;
-  max-height: 360px;
-  margin: 0;
-  padding: 6px;
-  overflow-y: auto;
-  list-style: none;
-  border: 1px solid var(--qs-line);
-  border-radius: 10px;
-  background: var(--qs-card);
-  box-shadow: 0 10px 30px rgba(19, 41, 90, 0.14);
-}
-
-.qs-menu--right {
-  left: auto;
-  right: 0;
-}
-
-.qs-menu button {
-  width: 100%;
-  padding: 8px 10px;
-  border: 0;
-  border-radius: 7px;
-  background: none;
-  font: inherit;
-  font-size: 13.5px;
-  color: var(--qs-text);
-  text-align: left;
+.tk-attach {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--tk-line);
+  border-radius: 9px;
+  background: #ffffff;
+  color: #3f5173;
   cursor: pointer;
 }
 
-.qs-menu button:hover:not(:disabled) {
-  background: #f1f6fd;
-}
+.tk-attach:hover:not(:disabled) { border-color: #9fc0ea; }
+.tk-attach:disabled { color: #b3c0d2; cursor: default; }
 
-.qs-menu button[aria-checked='true'] {
-  color: var(--qs-blue);
-  font-weight: 600;
-}
-
-.qs-menu button:disabled {
-  cursor: default;
-}
-
-.qs-menu__group {
-  padding: 4px 0;
-  border-top: 1px solid var(--qs-line);
-}
-
-.qs-menu__label {
-  display: block;
-  padding: 4px 10px;
-  font-size: 11.5px;
-  color: var(--qs-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.qs-menu__group select {
-  width: calc(100% - 20px);
-  margin: 2px 10px 4px;
-  height: 32px;
-  border: 1px solid var(--qs-field);
-  border-radius: 7px;
-  font: inherit;
-  font-size: 13px;
-}
-
-.qs-menu__note {
-  padding: 8px 10px;
-  font-size: 13px;
-  color: var(--qs-muted);
-}
-
-.qs-menu .qs-menu__danger {
-  color: var(--qs-red);
-}
-
-.qs-talk__title {
-  padding: 0 16px 10px;
-  border-bottom: 1px solid var(--qs-line);
-}
-
-.qs-talk__title h2 {
-  margin: 0 0 8px;
-  font-size: 17px;
-  font-weight: 600;
-  color: var(--qs-ink);
-}
-
-.qs-talk__number {
-  font-weight: 500;
-  color: var(--qs-muted);
-}
-
-.qs-talk__chips {
+.tk-compose__box {
+  position: relative;
+  flex: 1;
+  min-width: 0;
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
 }
 
-.qs-pill {
-  padding: 3px 10px;
-  border-radius: 8px;
-  background: #eef3fa;
-  font-size: 12.5px;
-  color: #3e4f6d;
-}
-
-.qs-pill--URGENT {
-  background: var(--qs-orange-soft);
-  color: var(--qs-orange);
-  font-weight: 600;
-}
-
-.qs-pill--HIGH {
-  background: #fff6e8;
-  color: #b56a07;
-}
-
-.qs-pill--quiet {
-  background: none;
-  color: var(--qs-muted);
-}
-
-.qs-status {
-  padding: 3px 9px;
-  border-radius: 8px;
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.qs-status--NEW {
-  background: var(--qs-blue-soft);
-  color: var(--qs-blue);
-}
-
-.qs-status--IN_PROGRESS {
-  background: #eef0ff;
-  color: #4b50c9;
-}
-
-.qs-status--WAITING_EMPLOYEE {
-  background: var(--qs-orange-soft);
-  color: var(--qs-orange);
-}
-
-.qs-status--CLOSED {
-  background: var(--qs-green-soft);
-  color: var(--qs-green);
-}
-
-.qs-notice {
-  margin: 8px 16px 0;
-  padding: 8px 12px;
+.tk-compose__field {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  max-height: 132px;
+  padding: 11px 44px 11px 16px;
+  border: 1px solid var(--tk-line);
   border-radius: 9px;
-  background: var(--qs-green-soft);
-  font-size: 13px;
-  color: #17744a;
+  outline: 0;
+  resize: none;
+  font: inherit;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--tk-text);
 }
 
-.qs-notice--error {
-  background: var(--qs-red-soft);
-  color: #b5302b;
-}
+.tk-compose__field:focus { border-color: #9fc0ea; }
+.tk-compose__field::placeholder { color: #98a6bb; }
 
-.qs-close {
-  margin: 8px 16px 0;
-  padding: 12px;
-  border: 1px solid #f3c9c6;
-  border-radius: 10px;
-  background: #fffafa;
-}
-
-.qs-close fieldset {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 14px;
-  margin: 0 0 8px;
-  padding: 0;
+.tk-send {
+  flex: 0 0 auto;
+  min-width: 118px;
+  height: 44px;
+  padding: 0 24px;
   border: 0;
-}
-
-.qs-close legend {
-  margin-bottom: 6px;
-  font-size: 13px;
+  border-radius: 9px;
+  background: var(--tk-blue);
+  font: inherit;
+  font-size: 15px;
   font-weight: 600;
-  color: var(--qs-ink);
+  color: #ffffff;
+  cursor: pointer;
 }
 
-.qs-radio {
+.tk-send:hover:not(:disabled) { background: var(--tk-blue-hover); }
+/* Пустое поле: та же глубокая кнопка, чуть приглушённая — не серая. */
+.tk-send:disabled { background: #4f7fab; cursor: default; }
+
+.tk-compose__file { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+
+.tk-attached {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  max-width: 100%;
+  padding: 5px 6px 5px 10px;
+  border-radius: 9px;
+  background: var(--tk-soft);
   font-size: 13px;
+  color: var(--tk-text);
 }
 
-.qs-close__buttons {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 8px;
+.tk-attached span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tk-attached small { color: var(--tk-muted); }
+
+.tk-attached button {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: #6b7c98;
+  cursor: pointer;
 }
 
-/* лента */
+.tk-emoji {
+  position: absolute;
+  right: 8px;
+  bottom: 7px;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: #6b7c98;
+  cursor: pointer;
+}
 
-.qs-thread {
+.tk-emoji:hover:not(:disabled) { color: var(--tk-blue); }
+.tk-emoji:disabled { cursor: default; opacity: 0.35; }
+
+.tk-emoji-menu { display: grid; grid-template-columns: repeat(4, 36px); min-width: 0; }
+.tk-emoji-menu button { justify-content: center; padding: 6px; font-size: 18px; }
+
+.tk-compose__error { font-size: 13px; color: var(--tk-red); }
+
+.tk-compose--off p {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px dashed var(--tk-line);
+  border-radius: 11px;
+  background: #fafcff;
+  font-size: 13.5px;
+  color: var(--tk-muted);
+}
+
+/* --- правая зона ---------------------------------------------------------- */
+
+.tk-side__body {
   flex: 1 1 0;
   min-height: 0;
   overflow-y: auto;
-  padding: 6px 22px 14px 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  padding: 14px 20px 18px;
 }
 
-.qs-day {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 4px 0 2px;
-  font-size: 12.5px;
-  color: var(--qs-muted);
-}
+.tk-side__close { display: none; }
 
-.qs-day::before,
-.qs-day::after {
-  content: '';
-  flex: 1;
-  height: 1px;
-  background: var(--qs-line);
-}
+.tk-part { padding-bottom: 16px; }
+.tk-part + .tk-part { padding-top: 16px; border-top: 1px solid var(--tk-line); }
 
-.qs-day span {
-  padding: 3px 12px;
-  border-radius: 12px;
-  background: #eef3fa;
-}
-
-.qs-event {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  margin: 0;
-  font-size: 12.5px;
-  color: var(--qs-muted);
-  text-align: center;
-}
-
-.qs-event svg {
-  flex: none;
-}
-
-.qs-msg {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  max-width: 78%;
-}
-
-.qs-msg__photo {
-  width: 36px;
-  height: 36px;
-  font-size: 13px;
-}
-
-.qs-msg__hr-avatar {
-  flex: none;
-  display: grid;
-  width: 44px;
-  height: 44px;
-  place-items: center;
-  border-radius: 50%;
-  background: #dcecff;
-  color: var(--qs-blue);
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.qs-msg__body {
-  min-width: 0;
-}
-
-.qs-msg__text {
-  margin: 0;
-  padding: 10px 14px;
-  border-radius: 12px;
-  background: #f1f5fa;
-  font-size: 14px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.qs-msg__meta {
-  margin: 4px 0 0 2px;
-  font-size: 12px;
-  color: var(--qs-muted);
-}
-
-.qs-msg--hr {
-  align-self: flex-end;
-  flex-direction: row-reverse;
-}
-
-.qs-msg--hr .qs-msg__body {
-  max-width: calc(100% - 54px);
-}
-
-.qs-msg--hr .qs-msg__text {
-  background: var(--qs-blue-soft);
-  color: #17325f;
-}
-
-.qs-msg--hr .qs-msg__meta,
-.qs-msg__author {
-  text-align: right;
-}
-
-.qs-msg__author {
-  margin: 0 2px 3px;
-  font-size: 12.5px;
+.tk-part__title {
+  margin: 0 0 14px;
+  font-size: 15px;
   font-weight: 600;
-  color: var(--qs-ink);
+  color: var(--tk-ink);
 }
 
-.qs-delivery--DELIVERED,
-.qs-delivery--READ {
-  color: var(--qs-green);
-}
+.tk-person { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
 
-.qs-delivery--FAILED {
-  color: var(--qs-red);
-}
-
-.qs-closed {
-  margin: 4px 0 0;
-  padding: 8px 12px;
-  border-radius: 9px;
-  background: var(--qs-green-soft);
-  font-size: 13px;
-  color: #17744a;
-  text-align: center;
-}
-
-/* черновик */
-
-.qs-draft {
-  margin: 4px 26px 2px 26px;
-  padding: 12px 14px;
-  border: 1px solid #d8e5f7;
-  border-radius: 12px;
-  background: #fbfdff;
-  box-shadow: 0 2px 10px rgba(31, 111, 224, 0.06);
-}
-
-.qs-draft--warn {
-  border-color: #f2d6a8;
-  background: #fffcf6;
-}
-
-.qs-draft--empty {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  font-size: 13px;
-  color: var(--qs-muted);
-}
-
-.qs-draft--empty p {
-  margin: 0;
-}
-
-.qs-draft__head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-  font-size: 14px;
-  color: var(--qs-ink);
-}
-
-.qs-draft__head .qs-link {
-  margin-left: auto;
-  font-size: 12.5px;
-}
-
-.qs-draft__spark {
-  color: var(--qs-blue);
-  font-size: 16px;
-}
-
-.qs-level {
-  padding: 2px 9px;
-  border-radius: 10px;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.qs-level--high {
-  background: var(--qs-green-soft);
-  color: var(--qs-green);
-}
-
-.qs-level--mid {
-  background: var(--qs-blue-soft);
-  color: var(--qs-blue);
-}
-
-.qs-level--low {
-  background: var(--qs-orange-soft);
-  color: var(--qs-orange);
-}
-
-.qs-draft__warn {
-  margin: 0 0 8px;
-  padding: 7px 10px;
-  border-radius: 8px;
-  background: var(--qs-orange-soft);
-  font-size: 13px;
-  color: #8a4e04;
-}
-
-.qs-draft__muted {
-  margin: 0;
-  font-size: 13px;
-  color: var(--qs-muted);
-}
-
-.qs-draft__text {
-  margin: 0;
-  padding: 10px 12px;
-  border-radius: 9px;
-  background: #f1f5fa;
-  font-size: 14px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-}
-
-.qs-draft__source {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 8px 0 0;
-  font-size: 12.5px;
-  color: var(--qs-muted);
-}
-
-.qs-draft__sources {
-  margin: 0;
-  padding-left: 18px;
-  font-size: 13px;
-}
-
-.qs-draft__sources a {
-  color: var(--qs-blue);
-}
-
-.qs-draft__buttons {
-  display: flex;
-  gap: 10px;
-  margin-top: 10px;
-}
-
-/* связанные действия */
-
-.qs-related {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  padding: 8px 16px;
-}
-
-/* ответ */
-
-.qs-composer {
-  flex: none;
-  margin: 0 8px 8px;
-  padding: 8px 10px;
-  border: 1px solid var(--qs-line);
-  border-radius: 12px;
-  background: var(--qs-card);
-}
-
-.qs-composer--off {
-  font-size: 13px;
-  color: var(--qs-muted);
-}
-
-.qs-composer__label {
+.tk-person__name {
   display: block;
-  margin: 0 0 6px 2px;
-  font-size: 13px;
-  color: var(--qs-muted);
-}
-
-.qs-composer .qs-notice {
-  margin: 0 0 6px;
-}
-
-.qs-composer textarea {
-  width: 100%;
-  min-height: 58px;
-  max-height: 180px;
-  padding: 8px 10px;
-  border: 1px solid var(--qs-field);
-  border-radius: 9px;
-  font: inherit;
-  font-size: 14px;
-  line-height: 1.45;
-  color: var(--qs-text);
-  resize: vertical;
-  box-sizing: border-box;
-}
-
-.qs-composer__bar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 6px;
-}
-
-.qs-composer__tools {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.qs-composer__foot {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  margin-top: 4px;
-  padding: 0 2px;
-}
-
-.qs-composer__foot .qs-composer__hint {
-  margin-left: auto;
-}
-
-.qs-tool {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 30px;
-  padding: 0 8px;
-  white-space: nowrap;
-  border: 0;
-  border-radius: 7px;
-  background: none;
-  font: inherit;
-  font-size: 13px;
-  color: #3e4f6d;
-  cursor: pointer;
-}
-
-.qs-tool:hover:not(:disabled) {
-  background: #f1f6fd;
-}
-
-.qs-tool:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.qs-check {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  white-space: nowrap;
-}
-
-.qs-send {
-  flex: none;
-  height: 38px;
-  padding: 0 20px;
-}
-
-.qs-composer__hint {
-  font-size: 11.5px;
-  color: var(--qs-muted);
-  white-space: nowrap;
-}
-
-.qs-pop--up .qs-picker,
-.qs-pop--up .qs-emoji {
-  position: absolute;
-  z-index: 20;
-  bottom: calc(100% + 6px);
-  left: 0;
-  border: 1px solid var(--qs-line);
-  border-radius: 10px;
-  background: var(--qs-card);
-  box-shadow: 0 10px 30px rgba(19, 41, 90, 0.14);
-}
-
-.qs-picker {
-  width: 340px;
-  max-height: 320px;
-  padding: 8px;
-  overflow-y: auto;
-}
-
-.qs-picker__title,
-.qs-picker__note {
-  margin: 2px 4px 6px;
-  font-size: 12.5px;
-  color: var(--qs-muted);
-}
-
-.qs-picker ul {
-  margin: 6px 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.qs-picker li button {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 7px 8px;
-  border: 0;
-  border-radius: 7px;
-  background: none;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.qs-picker li button:hover:not(:disabled) {
-  background: #f1f6fd;
-}
-
-.qs-picker li b {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--qs-ink);
-}
-
-.qs-picker li span {
-  overflow: hidden;
-  font-size: 12.5px;
-  color: var(--qs-muted);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.qs-emoji {
-  display: grid;
-  grid-template-columns: repeat(8, 32px);
-  gap: 2px;
-  padding: 6px;
-}
-
-.qs-emoji button {
-  width: 32px;
-  height: 32px;
-  border: 0;
-  border-radius: 7px;
-  background: none;
-  font-size: 18px;
-  cursor: pointer;
-}
-
-.qs-emoji button:hover {
-  background: #f1f6fd;
-}
-
-/* --- контекст ------------------------------------------------------------------ */
-
-.qs-side {
-  overflow-y: auto;
-}
-
-.qs-side__ghost {
-  padding: 16px;
-}
-
-.qs-side__body {
-  display: flex;
-  flex-direction: column;
-}
-
-.qs-side__block {
-  padding: 14px 16px;
-  border-bottom: 1px solid var(--qs-line);
-}
-
-.qs-side__block--last {
-  border-bottom: 0;
-}
-
-.qs-side__title {
-  margin: 0 0 10px;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--qs-ink);
-}
-
-.qs-side__title--row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 2px 8px;
-}
-
-.qs-side__count {
-  white-space: nowrap;
-  font-size: 12.5px;
-  font-weight: 400;
-  color: var(--qs-muted);
-}
-
-.qs-side__muted {
   margin: 0;
-  font-size: 13px;
-  color: var(--qs-muted);
-}
-
-.qs-person {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 10px;
-}
-
-.qs-person__name {
-  margin: 0;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
-  color: var(--qs-ink);
-}
-
-.qs-person__number {
-  margin: 2px 0 4px;
-  font-size: 13px;
-  color: var(--qs-muted);
-}
-
-.qs-badge {
-  display: inline-block;
-  padding: 2px 9px;
-  border-radius: 10px;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.qs-badge--ok {
-  background: var(--qs-green-soft);
-  color: var(--qs-green);
-}
-
-.qs-badge--warn {
-  background: var(--qs-orange-soft);
-  color: var(--qs-orange);
-}
-
-.qs-badge--off {
-  background: #eef1f5;
-  color: var(--qs-muted);
-}
-
-.qs-facts {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.qs-fact {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 13.5px;
-  color: var(--qs-text);
-}
-
-.qs-fact svg {
-  flex: none;
-  color: #4d6384;
-}
-
-.qs-fact--empty {
-  color: var(--qs-muted);
-}
-
-.qs-linked {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 0 0 8px;
-  font-size: 13px;
-  color: var(--qs-text);
   text-decoration: none;
+  color: var(--tk-ink);
 }
 
-a.qs-linked:hover .qs-linked__text span {
-  color: var(--qs-blue);
+a.tk-person__name:hover { color: var(--tk-blue); }
+.tk-person__role { margin: 2px 0 0; font-size: 14px; color: var(--tk-muted); }
+
+.tk-facts { display: flex; flex-direction: column; gap: 14px; margin: 0; padding: 0; list-style: none; }
+
+.tk-fact {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  font-size: 14.5px;
+  color: #22355c;
 }
 
-.qs-linked svg {
-  flex: none;
-  color: #4d6384;
-}
+.tk-fact > svg { color: #3f5173; }
+.tk-fact > span { overflow-wrap: anywhere; }
 
-.qs-linked__text {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.qs-linked__text span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.qs-linked__text b {
-  font-weight: 600;
-  color: var(--qs-ink);
-}
-
-.qs-linked--static > b {
-  font-weight: 600;
-  color: var(--qs-ink);
-}
-
-.qs-req {
-  flex: none;
-  padding: 2px 8px;
-  border-radius: 9px;
-  background: #eef3fa;
+.tk-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--tk-soft-2);
   font-size: 12px;
-  color: #3e4f6d;
+  font-weight: 600;
+  color: var(--tk-blue);
 }
 
-.qs-req--SUBMITTED,
-.qs-req--IN_REVIEW {
-  background: var(--qs-orange-soft);
-  color: var(--qs-orange);
+.tk-today::after {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-left: 8px;
+  border-radius: 50%;
+  background: #b3c0d2;
+  vertical-align: 1px;
+}
+.tk-today--ok::after { background: var(--tk-green); }
+.tk-today--wait::after { background: #e0850f; }
+.tk-today--bad::after { background: var(--tk-red); }
+
+.tk-control { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.tk-control__label { font-size: 14px; color: #4d5f7d; }
+
+.tk-state-dot { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: var(--tk-blue); }
+.tk-state-dot--IN_PROGRESS { background: #e0850f; }
+.tk-state-dot--WAITING_EMPLOYEE { background: #8a99b1; }
+.tk-state-dot--CLOSED { background: var(--tk-green); }
+
+.tk-articles { display: flex; flex-direction: column; gap: 12px; margin: 0; padding: 0; list-style: none; }
+
+.tk-articles li {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
 }
 
-.qs-req--APPROVED {
-  background: var(--qs-green-soft);
-  color: var(--qs-green);
-}
+.tk-articles svg { margin-top: 2px; color: var(--tk-blue); }
+.tk-articles b { display: block; overflow: hidden; font-size: 14.5px; font-weight: 500; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; color: var(--tk-ink); }
+.tk-articles small { display: block; margin-top: 2px; overflow: hidden; font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; color: #7a8aa3; }
+.tk-articles__use { margin-top: 12px; font-size: 13px; text-align: left; }
 
-.qs-req--REJECTED {
-  background: var(--qs-red-soft);
-  color: var(--qs-red);
-}
+.tk-choice { display: block; min-width: 0; }
 
-.qs-history {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.qs-history button {
-  width: 100%;
+.tk-choice__button {
   display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 42px;
+  padding: 0 14px;
+  border: 1px solid var(--tk-line);
+  border-radius: 9px;
+  background: #ffffff;
+  font: inherit;
+  font-size: 14.5px;
+  color: #22355c;
+  cursor: pointer;
+}
+
+.tk-choice__text { flex: 1; min-width: 0; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.tk-choice__button:hover:not(:disabled) { border-color: #9fc0ea; }
+.tk-choice__button:disabled { background: #fafcff; color: var(--tk-muted); cursor: default; }
+
+.tk-menu {
+  min-width: 200px;
+  padding: 6px;
+  border: 1px solid var(--tk-line);
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 10px 28px rgba(19, 41, 90, 0.12);
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+}
+
+.tk-menu button {
+  display: flex;
+  align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  color: #22355c;
+  cursor: pointer;
+}
+
+.tk-menu button:hover:not(:disabled) { background: #f3f8fe; }
+.tk-menu button:disabled { color: #a5b2c5; cursor: default; }
+.tk-menu button[aria-checked='true'],
+.tk-menu button[aria-selected='true'] { color: #1466d8; }
+.tk-menu__group + .tk-menu__group { margin-top: 4px; padding-top: 4px; border-top: 1px solid #edf2f8; }
+
+.tk-menu__label {
+  display: block;
+  padding: 6px 10px 2px;
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #8a99b1;
+}
+
+.tk-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
   padding: 6px 0;
   border: 0;
   background: none;
   font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.qs-history__topic {
-  font-size: 13.5px;
-  color: var(--qs-text);
-}
-
-.qs-history button:hover .qs-history__topic {
-  color: var(--qs-blue);
-}
-
-.qs-history__side {
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 3px;
-  font-size: 12px;
-  color: var(--qs-muted);
-}
-
-.qs-materials {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-/* Строка материала больше не ссылка: раздела «База знаний» у кадровика
-   нет, и вести отсюда некуда. Синим она тоже не красится — синий здесь
-   обещал бы переход. */
-.qs-materials__row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 13.5px;
-  color: var(--qs-ink, inherit);
-}
-
-.qs-materials small {
-  margin-left: 28px;
-  font-size: 12px;
-  color: var(--qs-orange);
-}
-
-/* --- ширина экрана ---------------------------------------------------------------- */
-
-@media (max-width: 1400px) {
-  .qs-grid {
-    grid-template-columns: 330px minmax(0, 1fr) 280px;
-  }
-
-  .qs-composer__bar {
-    flex-wrap: wrap;
-  }
-}
-
-@media (max-width: 1180px) {
-  .qs-grid {
-    grid-template-columns: 320px minmax(0, 1fr);
-    grid-template-rows: minmax(560px, 1fr) auto;
-  }
-
-  .qs-side {
-    grid-column: 1 / -1;
-    overflow: visible;
-  }
-
-  .qs-head {
-    flex-wrap: wrap;
-  }
-}
-
-@media (max-width: 860px) {
-  .qs-grid {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto;
-  }
-
-  .qs-queue {
-    max-height: 520px;
-  }
-
-  .qs-talk {
-    min-height: 640px;
-  }
-
-  .qs-head__tools {
-    flex-wrap: wrap;
-  }
-
-  .qs-talk__head {
-    flex-wrap: wrap;
-  }
-
-  .qs-msg {
-    max-width: 92%;
-  }
-}
-
-/* Нижняя панель ответа: инструменты и «Отправить» в одной строке, пока
-   помещаются. Раньше строка не переносилась, и кнопка отправки ложилась
-   поверх «Шаблонов» и «Базы знаний». */
-.qs-composer__bar {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px 10px;
-}
-
-.qs-composer__tools {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  flex: 1 1 auto;
-}
-
-.qs-composer__bar .qs-send {
-  flex: none;
-  margin-left: auto;
-}
-
-.qs-composer__foot {
-  flex-wrap: wrap;
-  gap: 6px 14px;
-}
-
-/* Подписи инструментов не режутся и не переносятся внутри кнопки. */
-.qs-tool {
-  white-space: nowrap;
-  flex: none;
-}
-
-/* --- центральная колонка: это мессенджер ------------------------------------
- *
- * Правило простое: переписка занимает всё, что не заняли тонкая шапка и
- * поле ответа. Раньше высоту делили поровну шапка, полоса связанных
- * действий, предупреждение о Telegram, поле ответа, строка инструментов
- * и строка флажков — самой переписке оставалась половина колонки.
- *
- * Высоты заданы через flex, а не числами: при изменении окна растёт и
- * сжимается только лента сообщений.
- */
-.qs-talk {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  height: 100%;
-}
-
-.qs-talk__head {
-  flex: 0 0 auto;
-  min-height: 56px;
-  padding-top: 8px;
-  padding-bottom: 8px;
-}
-
-/* Лента сообщений — единственное, что растягивается. Свой скролл,
-   прижата к низу: последнее сообщение видно сразу. */
-.qs-thread {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
-}
-
-.qs-composer {
-  flex: 0 0 auto;
-  max-height: 220px;
-  gap: 8px;
-}
-
-/* Поле ответа — от 96 до 120: выше оно отнимает высоту у переписки,
-   ниже в него не помещается ответ из двух предложений. */
-.qs-composer textarea {
-  min-height: 96px;
-  max-height: 120px;
-  resize: vertical;
-}
-
-/* Шапка чата: имя, офис, состояние и метка Telegram в одну строку с
-   переносом — метка не должна обрезаться на середине слова. */
-.qs-talk__head {
-  gap: 10px;
-}
-
-.qs-talk__who {
-  min-width: 0;
-  flex: 1 1 auto;
-}
-
-.qs-talk__where {
-  flex-wrap: wrap;
-  row-gap: 2px;
-  min-width: 0;
-}
-
-.qs-tg {
-  flex: none;
-  white-space: nowrap;
-}
-
-.qs-talk__actions {
-  flex: none;
-}
-
-/* Панель действий под полем ответа — одна строка: «Ответ от AI»,
-   «Другой вариант», «Прикрепить», «Шаблоны» и «Отправить» справа. */
-.qs-composer__bar {
-  flex-wrap: nowrap;
-}
-
-.qs-composer__tools {
-  flex-wrap: wrap;
-  overflow: hidden;
-}
-
-/* Нижняя строка ответа — как в утверждённом виде: слева инструменты
-   («Прикрепить», «Шаблоны», «Эмодзи»), справа пара кнопок — «Ответ от
-   AI» и «Отправить». Ничего не переносится: инструменты сжимаются,
-   кнопки — никогда. */
-.qs-composer__bar {
-  display: flex;
-  align-items: center;
-  flex-wrap: nowrap;
-  gap: 10px;
-}
-
-.qs-composer__tools {
-  flex: 1 1 auto;
-  min-width: 0;
-  flex-wrap: nowrap;
-  gap: 4px;
-  overflow: hidden;
-}
-
-.qs-composer__send {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex: none;
-  margin-left: auto;
-}
-
-.qs-composer__bar .qs-tool {
-  padding: 0 8px;
-  font-size: 12.5px;
-  gap: 6px;
-  white-space: nowrap;
-}
-
-.qs-composer__bar .qs-tool svg {
-  width: 16px;
-  height: 16px;
-}
-
-/* Поле ответа и ссылка «Другой вариант» в его правом верхнем углу. */
-.qs-composer__field {
-  position: relative;
-  display: flex;
-}
-
-.qs-composer__field textarea {
-  width: 100%;
-  padding-right: 148px;
-}
-
-.qs-again {
-  position: absolute;
-  top: 8px;
-  right: 10px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
-  border: 0;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.9);
-  color: var(--action-text, #0878ef);
-  font: inherit;
-  font-size: 12.5px;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.qs-again:hover:not(:disabled) {
-  background: #eef5ff;
-}
-
-.qs-again:disabled {
-  color: #8aa0bd;
-  cursor: default;
-}
-
-/* Инструмент без подписи — квадратная кнопка по размеру значка. */
-.qs-composer__bar .qs-tool--icon {
-  padding: 0 8px;
-  font-size: 15px;
-}
-
-/* --- «Обращения»: плотная рабочая страница -----------------------------------
- *
- * Требование было такое: при масштабе браузера 100 % страница должна
- * вмещать столько же, сколько сейчас вмещает при 80 %. Масштабированием
- * этого добиваться нельзя — `zoom` и `transform` не уменьшают размеры,
- * а врут о них: интерфейс остаётся крупным, просто нарисован мельче.
- *
- * Поэтому уменьшены сами величины. Все они собраны здесь, в переменных
- * страницы, а не разбросаны по правилам: изменить плотность целиком
- * можно одной правкой, и ни одна страница, кроме этой, не затронута.
- *
- * Нижняя граница текста — 13 px. Ниже читать таблицу фамилий и
- * переписку уже тяжело, и экономия высоты не стоит этого.
- */
-
-.qs {
-  --qs-gap: 10px;
-  --qs-pad: 12px;
-  --qs-row: 34px;
-  --qs-font: 13.5px;
-  --qs-small: 12.5px;
-}
-
-/* Страница ровно в высоту рабочей области: прокручиваются три колонки
-   по отдельности, а не документ целиком. */
-.canvas:has(> .qs) {
-  flex: 1 1 0;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.qs {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-/* Заголовок и вкладки не уезжают при прокрутке: они вне колонок. */
-.qs-head {
-  flex: none;
-  margin: -4px 10px 0 4px;
-}
-
-.qs-head__title {
-  font-size: 26px;
-  line-height: 32px;
-}
-
-.qs-head__sub {
-  font-size: 13.5px;
-  line-height: 19px;
-}
-
-.qs-tabs {
-  flex: none;
-}
-
-/* Три колонки: список, чат, контекст. Ширины в заданных пределах, чат
-   забирает остаток и остаётся главным. */
-.qs-grid {
-  flex: 1 1 auto;
-  min-height: 0;
-  height: 100%;
-  grid-template-columns: clamp(300px, 22vw, 340px) minmax(0, 1fr) clamp(320px, 23vw, 360px);
-  gap: var(--qs-gap);
-  margin: 0 10px 10px 0;
-}
-
-.qs-queue,
-.qs-talk,
-.qs-side {
-  min-height: 0;
-  min-width: 0;
-}
-
-/* Каждая колонка прокручивается у себя. */
-.qs-queue__list,
-.qs-side {
-  overflow-y: auto;
-  scrollbar-gutter: stable;
-}
-
-/* --- левая колонка ---------------------------------------------------------- */
-
-.qs-queue__search {
-  margin: 10px 10px 8px;
-}
-
-.qs-queue__search input {
-  height: 36px;
-  font-size: var(--qs-font);
-}
-
-.qs-queue__filters,
-.qs-queue__chips {
-  padding: 0 10px 8px;
-  gap: 6px;
-}
-
-.qs-row {
-  padding: 9px 10px;
-  gap: 9px;
-}
-
-.qs-row__name {
-  font-size: var(--qs-font);
-}
-
-.qs-row__topic,
-.qs-row__snippet {
-  font-size: var(--qs-small);
-}
-
-.qs-row__meta,
-.qs-row__time {
-  font-size: 11.5px;
-}
-
-.qs-row__photo {
-  width: 34px;
-  height: 34px;
-}
-
-/* --- центр: чат ------------------------------------------------------------- */
-
-.qs-talk__head {
-  min-height: 52px;
-  max-height: 56px;
-  padding: 6px 12px;
-  gap: 10px;
-}
-
-.qs-talk__name {
-  font-size: 15px;
-  line-height: 20px;
-}
-
-.qs-talk__where {
-  font-size: var(--qs-small);
-}
-
-.qs-thread {
-  padding: 10px 12px;
-  gap: 8px;
-}
-
-/* Пузырь сообщения: читаемая ширина и небольшие поля. */
-.qs-msg {
-  max-width: 72%;
-}
-
-.qs-msg__body {
-  padding: 8px 11px;
-  font-size: var(--qs-font);
-  line-height: 1.4;
-}
-
-.qs-msg__time,
-.qs-day {
-  font-size: 11.5px;
-}
-
-.qs-composer {
-  padding: 10px 12px;
-  gap: 6px;
-  max-height: 200px;
-}
-
-.qs-composer__label {
-  font-size: 11.5px;
-}
-
-.qs-composer textarea {
-  min-height: 92px;
-  max-height: 116px;
-  padding: 9px 11px;
-  font-size: var(--qs-font);
-}
-
-.qs-composer__bar .qs-tool {
-  height: 30px;
-  font-size: 12px;
-}
-
-.qs-composer__send .qs-btn {
-  height: 34px;
-  font-size: 13px;
-}
-
-/* --- правая колонка --------------------------------------------------------- */
-
-.qs-side {
-  padding: 10px 12px;
-  gap: 10px;
-}
-
-.qs-side h2,
-.qs-side h3 {
   font-size: 14px;
-  line-height: 19px;
+  font-weight: 600;
+  color: var(--tk-blue);
+  cursor: pointer;
 }
 
-.qs-side p,
-.qs-side li,
-.qs-side dd,
-.qs-side dt {
-  font-size: var(--qs-small);
-  line-height: 1.4;
+.tk-action:hover:not(:disabled) { color: var(--tk-blue-hover); }
+.tk-action:disabled { color: #a5b2c5; cursor: default; }
+
+.tk-closed { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 6px; }
+
+.tk-closed__state {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--tk-green);
 }
 
-/* Длинное значение переносится и не выходит за край колонки. */
-.qs-side,
-.qs-side * {
-  min-width: 0;
-}
+.tk-closed .tk-action { margin-top: 0; }
 
-.qs-side p,
-.qs-side li {
-  overflow-wrap: break-word;
-}
+/* --- состояния ------------------------------------------------------------ */
 
-/* Невысокое окно: поле ответа ужимается, чтобы переписке осталась
-   большая часть колонки. На 1080 этого не требуется — там ленте и так
-   достаётся около трёх четвертей. */
-@media (max-height: 900px) {
-  .qs-composer textarea {
-    min-height: 72px;
-    max-height: 92px;
-  }
-
-  .qs-composer {
-    padding: 8px 12px;
-    max-height: 170px;
-  }
-
-  .qs-thread {
-    padding: 8px 12px;
-  }
-}
-
-/* Переписка прижата к низу: короткий разговор стоит над полем ответа,
-   а не висит у шапки с пустотой во весь экран. При длинной ленте отступ
-   схлопывается сам, и прокрутка работает как обычно. */
-.qs-thread {
+.tk-empty {
   display: flex;
   flex-direction: column;
-}
-
-.qs-thread > *:first-child {
-  margin-top: auto;
-}
-
-/* Кнопка эмодзи не должна прятаться за переполнением строки. */
-.qs-composer__tools .qs-pop {
-  flex: none;
-}
-
-/* Шапка чата — всегда одна строка: аватар, имя, офис, состояние, метка
-   Telegram и «⋯». Тема вопроса и чипы отсюда убраны: тема стоит в
-   строке списка слева и в правой колонке, а здесь они разгоняли шапку
-   до полутора сотен пикселей и отнимали высоту у переписки. */
-.qs-talk__title,
-.qs-talk__chips {
-  display: none;
-}
-
-/* Узкая центральная колонка: у инструментов остаются значки, подписи
-   уходят. Обрезанное «Г» вместо «Прикрепить» — хуже, чем значок. */
-.qs-talk {
-  container-type: inline-size;
-  container-name: qs-talk;
-}
-
-@container qs-talk (max-width: 560px) {
-  .qs-composer__bar .qs-tool {
-    font-size: 0;
-    gap: 0;
-    padding: 0 9px;
-  }
-
-  .qs-composer__bar .qs-tool svg {
-    width: 18px;
-    height: 18px;
-  }
-
-  .qs-composer__bar .qs-tool--icon {
-    font-size: 15px;
-  }
-}
-
-/* Инструменты не прячутся переполнением: лучше ужать их до значков
-   (это делает контейнерный запрос выше), чем срезать кнопку целиком. */
-.qs-composer__tools {
-  overflow: visible;
-}
-
-/* «Закрыть после отправки» — рядом с кнопкой отправки.
-
-   Чекбокс, а не второй ряд кнопок: это уточнение к отправке, а не
-   отдельное действие, и выносить его в ряд с «Отправить» значило бы
-   предлагать выбор там, где его нет. */
-.qs-after {
-  display: inline-flex;
-  gap: 6px;
   align-items: center;
-  font-size: 13px;
-  color: var(--muted, #6b7280);
-  white-space: nowrap;
+  gap: 8px;
+  padding: 28px 16px;
+  font-size: 13.5px;
+  text-align: center;
+  color: var(--tk-muted);
 }
 
-@media (max-width: 720px) {
-  /* На телефоне строка отправки переносится: подпись целиком не
-     помещается рядом с двумя кнопками. */
-  .qs-composer__send {
-    flex-wrap: wrap;
+.tk-empty p { margin: 0; }
+.tk-empty svg { color: #9fb2cc; }
+.tk-empty--center { flex: 1; justify-content: center; }
+.tk-empty--queue { padding-top: 48px; }
+.tk-muted { margin: 0; font-size: 13px; color: var(--tk-muted); }
+
+.tk-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--tk-blue);
+  cursor: pointer;
+}
+
+.tk-link:hover { color: var(--tk-blue-hover); }
+
+.tk-ghost {
+  display: block;
+  height: 12px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, #eef3f9, #f7f9fc, #eef3f9);
+  background-size: 200% 100%;
+  animation: tk-ghost 1.2s ease-in-out infinite;
+}
+
+.tk-ghost--short { width: 60%; }
+.tk-ghost--round { width: 42px; height: 42px; border-radius: 50%; }
+.tk-row--ghost { cursor: default; }
+.tk-row--ghost .tk-row__main { gap: 8px; padding-top: 6px; }
+.tk-ghost-block { display: flex; align-items: center; gap: 12px; }
+.tk-ghost-block .tk-ghost:last-child { flex: 1; }
+
+@keyframes tk-ghost { to { background-position: -200% 0; } }
+
+/* --- закрытие ------------------------------------------------------------- */
+
+.tk-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(19, 41, 90, 0.28);
+}
+
+.tk-modal__card {
+  width: min(440px, 100%);
+  padding: 22px 24px;
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 20px 48px rgba(19, 41, 90, 0.2);
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  color: #22355c;
+}
+
+.tk-modal__card h2 { margin: 0 0 4px; font-size: 18px; font-weight: 600; color: #13295a; }
+.tk-modal__card fieldset { margin: 16px 0 12px; padding: 0; border: 0; }
+.tk-modal__card legend { margin-bottom: 8px; font-size: 13px; font-weight: 600; color: #4d5f7d; }
+
+.tk-radio {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.tk-radio input { width: 16px; height: 16px; margin: 0; accent-color: #1466d8; }
+
+.tk-input {
+  width: 100%;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid #dbe7f3;
+  border-radius: 10px;
+  font: inherit;
+  font-size: 14px;
+  color: #22355c;
+}
+
+.tk-input:focus { outline: 0; border-color: #9fc0ea; }
+
+.tk-modal__buttons { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+
+.tk-btn {
+  height: 40px;
+  padding: 0 16px;
+  border: 1px solid #dbe7f3;
+  border-radius: 10px;
+  background: #ffffff;
+  font: inherit;
+  font-size: 14px;
+  color: #22355c;
+  cursor: pointer;
+}
+
+.tk-btn--main { border-color: #1466d8; background: #1466d8; font-weight: 600; color: #ffffff; }
+.tk-btn--main:disabled { border-color: #c9d6e6; background: #c9d6e6; cursor: default; }
+
+/* --- узкие экраны --------------------------------------------------------- */
+
+.tk-only-narrow,
+.tk-only-small,
+.tk-scrim { display: none; }
+
+/* Правая зона уезжает в выдвижную панель: очереди и переписке нужна
+   ширина, а контекст смотрят по требованию. */
+@media (max-width: 1279px) {
+  .tk-work { grid-template-columns: minmax(250px, 32fr) minmax(0, 68fr); }
+  .tk-only-narrow { display: inline-grid; }
+
+  .tk-side {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 5;
+    width: min(360px, 92%);
+    border-left: 1px solid var(--tk-line);
+    box-shadow: -12px 0 28px rgba(19, 41, 90, 0.1);
+    transform: translateX(105%);
+    transition: transform 0.2s ease;
+    visibility: hidden;
   }
 
-  .qs-after {
-    flex: 1 1 100%;
-    white-space: normal;
+  .tk-side--open { transform: none; visibility: visible; }
+
+  .tk-side__close {
+    display: inline-grid;
+    position: absolute;
+    top: 12px;
+    right: 14px;
+    width: 34px;
+    height: 34px;
   }
+
+  .tk-scrim {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 4;
+    border: 0;
+    background: rgba(19, 41, 90, 0.12);
+  }
+}
+
+/* Совсем узко — очередь или переписка, по очереди. */
+@media (max-width: 860px) {
+  .tk-sheet { padding: 0 16px; border-radius: 16px; }
+  .tk-tabs { margin: 0 -16px; padding: 0 4px; }
+  .tk-head { flex-direction: column; }
+  .tk-head__tools { width: 100%; flex-wrap: wrap; }
+  .tk-select, .tk-select--wide { flex: 1 1 150px; width: auto; }
+  .tk-tabs { gap: 16px; overflow-x: auto; }
+  .tk-tab { flex: 0 0 auto; }
+  .tk-work { grid-template-columns: minmax(0, 1fr); margin: 0 -16px; }
+  .tk-queue { border-right: 0; }
+  .tk-queue__tools { padding: 14px 16px 10px; }
+  .tk-list { padding: 0 8px; }
+  .tk-queue__foot { margin: 0 16px; }
+  .tk-talk { display: none; }
+  .tk-work--picked .tk-queue { display: none; }
+  .tk-work--picked .tk-talk { display: flex; }
+  .tk-only-small { display: inline-grid; }
+  .tk-talk__head, .tk-compose { margin: 0 16px; }
+  .tk-thread { padding: 12px 16px; }
+  .tk-msg { max-width: 92%; }
 }

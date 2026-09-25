@@ -75,7 +75,7 @@ function network(
 async function openCard(person: Record<string, unknown> = TRAINEE, own?: never) {
   const calls = network(person, own);
   renderApp(`/employees/${person['id']}`);
-  await screen.findByText('Мурадов Азизбек');
+  await screen.findByRole('heading', { name: 'Мурадов Азизбек' });
   return calls;
 }
 
@@ -132,7 +132,7 @@ describe('решение по стажировке', () => {
         ? json(200, STAFF)
         : null) as never);
     renderApp(`/employees/${TRAINEE.id}`);
-    await screen.findByText('Мурадов Азизбек');
+    await screen.findByRole('heading', { name: 'Мурадов Азизбек' });
 
     fireEvent.click(screen.getByRole('button', { name: 'Принять в штат' }));
     const box = await screen.findByRole('dialog', { name: 'Принять в штат' });
@@ -151,7 +151,7 @@ describe('решение по стажировке', () => {
         ? json(200, STAFF)
         : null) as never);
     renderApp(`/employees/${TRAINEE.id}`);
-    await screen.findByText('Мурадов Азизбек');
+    await screen.findByRole('heading', { name: 'Мурадов Азизбек' });
 
     fireEvent.click(screen.getByRole('button', { name: 'Принять в штат' }));
     const box = await screen.findByRole('dialog', { name: 'Принять в штат' });
@@ -171,7 +171,7 @@ describe('решение по стажировке', () => {
         ? json(200, { ...TRAINEE, employment_status: 'TERMINATED' })
         : null) as never);
     renderApp(`/employees/${TRAINEE.id}`);
-    await screen.findByText('Мурадов Азизбек');
+    await screen.findByRole('heading', { name: 'Мурадов Азизбек' });
 
     fireEvent.click(screen.getByRole('button', { name: 'Завершить стажировку' }));
     const box = await screen.findByRole('dialog', { name: 'Завершить стажировку' });

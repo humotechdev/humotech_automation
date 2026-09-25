@@ -463,3 +463,137 @@ class TestContext:
         assert body["history"]["total"] == 2
         assert body["history"]["closed"] == 1
         assert [one["topic"] for one in body["history"]["recent"]] == ["Старый"]
+
+
+# --- «в работу» без передачи -------------------------------------------------
+
+
+class TestStart:
+    def test_start_keeps_the_assignee(self, hr, make_user, organization, employee):
+        colleague = make_user(organization, permissions=ANSWER)
+        question = ask(employee, assigned_to_user=colleague)
+
+        body = hr.post(f"{URL}/{question.id}/start/").json()
+
+        # Выбрать статус — не значит забрать чужое обращение себе.
+        assert body["status"] == "IN_PROGRESS"
+        assert body["assignee"]["id"] == str(colleague.id)
+        started = [m for m in body["messages"] if m["event"] == "STARTED"]
+        assert len(started) == 1
+        assert started[0]["author"]["id"] == str(hr.user.id)
+        assert AuditLog.objects.filter(entity_id=question.id, action="question.start").exists()
+
+    def test_waiting_question_goes_back_to_work(self, hr, employee):
+        question = ask(employee, status="WAITING_EMPLOYEE")
+
+        body = hr.post(f"{URL}/{question.id}/start/").json()
+
+        assert body["status"] == "IN_PROGRESS"
+        assert body["actions"]["start"] is False
+
+    def test_closed_question_is_reopened_not_started(self, hr, employee):
+        question = ask(employee, status="CLOSED", closed_at=timezone.now())
+
+        response = hr.post(f"{URL}/{question.id}/start/")
+
+        assert response.status_code == 409
+
+
+# --- файл к ответу -----------------------------------------------------------
+
+
+def blank(name="Бланк заявления.pdf"):
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    return SimpleUploadedFile(name, b"%PDF-1.4\nblank form", content_type="application/pdf")
+
+
+class TestReplyFile:
+    def test_file_without_text_is_a_reply(self, hr, employee, linked_account):
+        question = ask(employee)
+
+        response = hr.post(
+            f"{URL}/{question.id}/reply/",
+            {"file": blank(), "client_request_id": "file-1"}, format="multipart",
+        )
+
+        assert response.status_code == 200, response.content
+        reply = [m for m in response.json()["messages"] if m["kind"] == "HR"]
+        assert reply[0]["body"] == ""
+        assert reply[0]["attachment"]["name"] == "Бланк заявления.pdf"
+        # Бот забирает файл по сообщению, а не по обращению.
+        notification = Notification.objects.get()
+        assert notification.notification_type == "question.reply.file"
+        assert str(notification.related_entity_id) == reply[0]["id"]
+        assert notification.body.startswith(f"💬 Ответ HR по обращению №{question.number}")
+
+    def test_empty_reply_without_file_is_refused(self, hr, employee, linked_account):
+        question = ask(employee)
+
+        response = hr.post(f"{URL}/{question.id}/reply/", {"text": "  "}, format="json")
+
+        assert response.status_code == 400
+        assert not Notification.objects.exists()
+
+    def test_hr_downloads_the_file(self, hr, employee, linked_account):
+        question = ask(employee)
+        body = hr.post(
+            f"{URL}/{question.id}/reply/",
+            {"text": "Заполните бланк", "file": blank()}, format="multipart",
+        ).json()
+        message = next(m for m in body["messages"] if m["kind"] == "HR")
+
+        response = hr.get(f"{URL}/{question.id}/messages/{message['id']}/file/")
+
+        assert response.status_code == 200
+        assert b"".join(response.streaming_content).startswith(b"%PDF")
+
+    def test_bot_gets_only_the_employees_own_file(
+        self, hr, bot_client, employee, other_employee, linked_account,
+    ):
+        mine = ask(employee)
+        body = hr.post(
+            f"{URL}/{mine.id}/reply/", {"file": blank()}, format="multipart",
+        ).json()
+        message = next(m for m in body["messages"] if m["kind"] == "HR")
+
+        own = bot_client.get(
+            f"{API}/me/questions/replies/{message['id']}/file", **bot_headers(),
+        )
+        assert own.status_code == 200
+        assert "filename*=UTF-8''" in own["Content-Disposition"]
+
+        theirs = ask(other_employee)
+        other = hr.post(
+            f"{URL}/{theirs.id}/reply/", {"file": blank()}, format="multipart",
+        )
+        # У другого сотрудника нет Telegram — ответ не ушёл, файла нет.
+        assert other.status_code == 409
+
+
+# --- где сотрудник сегодня ---------------------------------------------------
+
+
+class TestToday:
+    def test_without_attendance_right_there_is_no_answer(self, hr, employee):
+        question = ask(employee)
+
+        body = hr.get(f"{URL}/{question.id}/context/").json()
+
+        assert body["today"] is None
+
+    def test_with_attendance_right_the_state_comes_from_attendance(
+        self, api_client, make_user, organization, employee,
+    ):
+        from humotech.attendance.hr import PRESENCE_STATES
+
+        question = ask(employee)
+        api_client.force_authenticate(
+            user=make_user(organization, permissions=ANSWER + ("attendance.read",)),
+        )
+
+        today = api_client.get(f"{URL}/{question.id}/context/").json()["today"]
+
+        assert today is not None
+        assert today["state"] in PRESENCE_STATES
+        assert today["first_entry_at"] is None

@@ -127,6 +127,37 @@ class ProgressRowSerializer(serializers.Serializer):
     last_reminder_at = serializers.DateTimeField(allow_null=True)
     invitation_status = serializers.CharField(allow_null=True)
     invitation_expires_at = serializers.DateTimeField(allow_null=True)
+    enrolled_at = serializers.DateTimeField()
+    due_date = serializers.DateField(allow_null=True, help_text="Пусто — срок не назначен")
+    overdue = serializers.BooleanField()
+    reasons = serializers.ListField(
+        child=serializers.ChoiceField(choices=["overdue", "declined", "renewal", "silent"]),
+        help_text="Почему требует внимания; пусто — не требует",
+    )
+    group = serializers.ChoiceField(choices=["done", "attention", "waiting", "not_started", "in_progress"])
+    materials = serializers.ListField(child=serializers.DictField())
+
+
+class RemindManySerializer(serializers.Serializer):
+    employee_ids = serializers.ListField(child=serializers.UUIDField(), min_length=1, max_length=500)
+
+
+class DueSerializer(serializers.Serializer):
+    due_date = serializers.DateField(allow_null=True)
+
+
+class CategoryWriteSerializer(serializers.Serializer):
+    title = serializers.CharField(max_length=255)
+    description = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    owner_employee_id = serializers.UUIDField(required=False, allow_null=True)
+    position = serializers.IntegerField(required=False, min_value=1)
+
+
+class CategoryPatchSerializer(serializers.Serializer):
+    title = serializers.CharField(max_length=255, required=False)
+    description = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    owner_employee_id = serializers.UUIDField(required=False, allow_null=True)
+    position = serializers.IntegerField(required=False, min_value=1)
 
 
 class TimelineEventSerializer(serializers.Serializer):
@@ -174,6 +205,7 @@ class DocumentWriteSerializer(serializers.Serializer):
                                         allow_null=True)
     is_mandatory = serializers.BooleanField(required=False, default=True)
     position = serializers.IntegerField(required=False, min_value=1)
+    category_id = serializers.UUIDField(required=False, allow_null=True)
 
 
 class DocumentPatchSerializer(serializers.Serializer):
@@ -182,6 +214,7 @@ class DocumentPatchSerializer(serializers.Serializer):
                                         allow_null=True)
     is_mandatory = serializers.BooleanField(required=False)
     position = serializers.IntegerField(required=False, min_value=1)
+    category_id = serializers.UUIDField(required=False, allow_null=True)
 
 
 class VersionWriteSerializer(serializers.Serializer):
@@ -221,6 +254,15 @@ class DocumentSerializer(serializers.Serializer):
     archived_at = serializers.DateTimeField(allow_null=True)
     current_version = VersionSerializer(allow_null=True)
     versions = VersionSerializer(many=True)
+    category = serializers.DictField(allow_null=True)
+    assigned = serializers.IntegerField(help_text="Участникам программы; у черновика — 0")
+    confirmed = serializers.IntegerField(help_text="Согласились с действующей редакцией")
+    declined = serializers.IntegerField()
+    renewal_pending = serializers.IntegerField(help_text="Соглашались с прежней, с новой — ещё нет")
+    nearest_due = serializers.DateField(allow_null=True)
+    created_by = serializers.CharField(allow_null=True)
+    changed_at = serializers.DateTimeField()
+    changed_by = serializers.CharField(allow_null=True)
 
 
 class PendingEmployeeSerializer(serializers.Serializer):

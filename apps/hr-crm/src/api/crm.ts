@@ -97,6 +97,7 @@ export type OverviewDay = {
   vacation: number;
   sick_leave: number;
   other_absence: number;
+  trip?: number;
   average_seconds: number | null;
 };
 
@@ -118,6 +119,16 @@ export type OverviewPerson = {
   /** Минуты сверх допуска, а не вся разница со временем начала смены. */
   late_minutes: number;
   missed_days: number;
+  /** Отработано — только по дням с закрытыми посещениями. */
+  seconds?: number;
+  /** Подтверждённые отсутствия по видам, в днях. */
+  vacation_days?: number;
+  sick_days?: number;
+  other_days?: number;
+  office_id?: string | null;
+  /** Последние дни без отметки и опоздания — к какому дню идти разбираться. */
+  missed_dates?: string[];
+  late_dates?: { day: string; minutes: number }[];
 };
 
 export type ArrivalBucket = {
@@ -151,12 +162,18 @@ export type Overview = {
     vacation_days: number;
     sick_leave_days: number;
     other_absence_days: number;
+    /** Командировки — отдельно от «прочих»: это работа, а не отсутствие по личной причине. */
+    trip_days?: number;
   };
   days: OverviewDay[];
   previous_days: { day: string; attended: number; expected: number; percent: number | null }[];
   offices: OverviewOffice[];
   /** Та же явка уровнем выше: регионы собраны из своих офисов. */
   regions: OverviewOffice[];
+  /** Та же явка по отделам, должностям и руководителям — для «Сравнить по». */
+  departments?: OverviewGroup[];
+  positions?: OverviewGroup[];
+  heads?: OverviewGroup[];
   /** Худшая явка сверху: страницу открывают, чтобы найти проблему. */
   employees: OverviewPerson[];
   arrivals: {
@@ -186,6 +203,8 @@ export type OverviewQuery = {
   department_id?: string;
   employee_id?: string;
   weekday?: string;
+  /** Сколько сотрудников вернуть: по умолчанию 50, не больше 2000. */
+  people_limit?: string;
 };
 
 // --- движение сотрудников --------------------------------------------------
@@ -223,6 +242,101 @@ export const analyticsMovement = (
 
 export const analyticsOverview = (params: OverviewQuery, signal?: AbortSignal) =>
   request<Overview>(`/analytics/overview${query(params)}`, signal ? { signal } : {});
+
+export type OverviewGroup = {
+  id: string;
+  name: string;
+  attendance: Share;
+  previous_attendance: Share;
+  difference_points: number | null;
+};
+
+// --- люди за период: команда и стажировки ----------------------------------
+
+export type PeopleScope = {
+  date_from: string;
+  date_to: string;
+  region_id?: string;
+  office_id?: string;
+  department_id?: string;
+};
+
+export type TeamPerson = {
+  id: string;
+  name: string;
+  employee_number: string | null;
+  status: string;
+  hire_date: string;
+  office: string | null;
+  department: string | null;
+  position: string | null;
+};
+
+export type TeamReport = {
+  period: { first: string; last: string; days: number };
+  previous_period: { first: string; last: string };
+  summary: {
+    /** Численность на конец периода и накануне его начала. */
+    headcount: number;
+    headcount_start: number;
+    previous_headcount_start: number;
+    hired: number;
+    previous_hired: number;
+    /** Переведены в штат после стажировки — по журналу. */
+    promoted: number;
+    previous_promoted: number;
+    left: number;
+    previous_left: number;
+    probation_failed: number;
+  };
+  series: { day: string; headcount: number }[];
+  by_department: { id: string | null; name: string; hired: number; left: number; difference: number }[];
+  departments: { id: string | null; name: string; headcount: number; previous_headcount: number }[];
+  offices: { id: string | null; name: string; headcount: number; previous_headcount: number }[];
+  hires: TeamPerson[];
+  departures: (TeamPerson & { termination_date: string; reason: string | null })[];
+  transfers: {
+    id: string; name: string; date: string;
+    from_office: string; to_office: string;
+    from_department: string | null; to_department: string | null;
+  }[];
+};
+
+export type Trainee = TeamPerson & {
+  probation_from: string;
+  probation_to: string | null;
+  /** Дней до решения; отрицательное — срок прошёл. */
+  days_left: number | null;
+  days_total: number | null;
+  /** Наставник на время стажировки. */
+  mentor?: { id: string; name: string } | null;
+};
+
+export type ProbationReport = {
+  period: { first: string; last: string; days: number };
+  previous_period: { first: string; last: string };
+  summary: {
+    active: number;
+    due: number;
+    overdue: number;
+    started: number;
+    promoted: number;
+    failed: number;
+    previous_started: number;
+    previous_promoted: number;
+    previous_failed: number;
+    conversion_percent: number | null;
+    previous_conversion_percent: number | null;
+  };
+  due_days: number;
+  trainees: Trainee[];
+};
+
+export const analyticsTeam = (params: PeopleScope, signal?: AbortSignal) =>
+  request<TeamReport>(`/analytics/team${query(params)}`, signal ? { signal } : {});
+
+export const analyticsProbation = (params: PeopleScope, signal?: AbortSignal) =>
+  request<ProbationReport>(`/analytics/probation${query(params)}`, signal ? { signal } : {});
 
 // --- справочники -----------------------------------------------------------
 
@@ -280,7 +394,10 @@ export type AbsenceRequestRow = {
   reviewed_at?: string | null;
   /** Нужна ли справка по этому типу отсутствия. */
   requires_document?: boolean;
-  documents?: { id: string; verification_status: string }[];
+  /** Бумаги заявки. Тип объявлен ниже — у объявлений типов порядок
+   *  значения не имеет, а два разных описания одного списка
+   *  однажды разойдутся. */
+  documents?: DocumentRow[];
 };
 
 export const pendingAbsences = (signal?: AbortSignal) =>
@@ -471,6 +588,7 @@ export type EmployeeEdit = {
   /** Срок стажировки. Обе даты необязательны и по отдельности тоже. */
   probation_from?: string | null;
   probation_to?: string | null;
+  mentor_employee_id?: string | null;
 };
 
 export const updateEmployee = (id: string, body: EmployeeEdit) =>
@@ -611,6 +729,14 @@ export type RequestStep = {
   at: string;
   /** `CREATED`, `SUBMITTED`, `APPROVED`, `DOCUMENT_ATTACHED` и так далее. */
   action: string;
+  /**
+   * Кто это сделал. `null` — шаг сделала система.
+   *
+   * Без имени история отвечает «что произошло», но не «с кого
+   * спрашивать», а спор о больничном — это всегда спор о чьём-то
+   * решении.
+   */
+  actor?: string | null;
   comment: string | null;
 };
 
@@ -627,10 +753,48 @@ export type AbsenceRow = AbsenceRequestRow & {
    * дорогами.
    */
   application_received_at?: string | null;
+  /**
+   * Состояние словами человека — то же, что видит сотрудник в приложении.
+   *
+   * `WAITING_DOCUMENTS`, `HR_REVIEW`, `NEEDS_FIX`, `PENDING`,
+   * `APPROVED`, `REJECTED`, `CANCELLED`. Кадровик и человек должны
+   * называть состояние одинаково, иначе разговор начинается с
+   * выяснения, кто что имел в виду.
+   */
+  stage?: string;
+  /**
+   * Чего не хватает до подтверждения: `certificate`, `application`,
+   * `period`. Пустой список значит «можно подтверждать».
+   *
+   * Считает сервер, и он же откажет. Список здесь нужен не вместо
+   * проверки, а чтобы кадровик увидел причину до нажатия, а не после.
+   */
+  missing_for_approval?: string[];
   /** Что написал сам сотрудник. Диагноза здесь быть не должно. */
   comment: string | null;
   review_comment: string | null;
   history?: RequestStep[];
+  /**
+   * Остаток отпуска против периода заявки.
+   *
+   * Приходит только в ответе по одной заявке: в очереди его не
+   * считают. У больничного пусто — он остаток не тратит.
+   */
+  leave_balance?: {
+    year: number;
+    /** Рабочих дней в периоде: суббота отпуск не тратит. */
+    needed_days: number;
+    /** Пусто — остаток на год не начислен, сравнивать не с чем. */
+    available_days: number | null;
+    enough: boolean;
+  } | null;
+  /** Чужое отсутствие на те же дни, если оно есть. */
+  overlap?: {
+    kind: string;
+    absence_type_name: string;
+    first_day: string;
+    last_day: string;
+  } | null;
 };
 
 export type CorrectionRow = {
@@ -685,6 +849,19 @@ export const queue = (params: QueueQuery, signal?: AbortSignal) =>
 export const queueCounts = (params: QueueQuery, signal?: AbortSignal) =>
   request<Record<string, number>>(
     `/requests/counts${query({ ...params, status: undefined, type: undefined, kind: undefined, request_kind: undefined, cursor: undefined, limit: undefined })}`,
+    signal ? { signal } : {},
+  );
+
+/**
+ * Одна заявка целиком — для её отдельной страницы.
+ *
+ * Не поиск по очереди: очередь отдаёт страницу строк под текущими
+ * фильтрами, а по ссылке открывают конкретную заявку, и она может в
+ * эту страницу не попасть вовсе.
+ */
+export const absenceRequest = (id: string, signal?: AbortSignal) =>
+  request<AbsenceRow>(
+    `/absence-requests/${id}`,
     signal ? { signal } : {},
   );
 
@@ -744,10 +921,25 @@ export const markApplicationReceived = (id: string, received = true) =>
   );
 
 /** Решение по заявке на отсутствие. `decision` — часть адреса, как у backend. */
-export const decideAbsence = (id: string, decision: 'approve' | 'reject', comment: string) =>
+export const decideAbsence = (
+  id: string,
+  decision: 'approve' | 'reject',
+  comment: string,
+  /**
+   * Утвердить больничный, хотя в его дни есть отметки входа и выхода.
+   *
+   * Без флага сервер отказывает: молча списать отработанный день в
+   * больничный нельзя. Флаг ставится только после того, как кадровик
+   * увидел конфликт и написал причину.
+   */
+  overrideMarks = false,
+) =>
   request<unknown>(`/absence-requests/${id}/${decision}`, {
     method: 'POST',
-    body: comment ? { comment } : {},
+    body: {
+      ...(comment ? { comment } : {}),
+      ...(overrideMarks ? { override_marks: true } : {}),
+    },
   });
 
 export const decideCorrection = (
@@ -831,6 +1023,9 @@ export const presenceDay = (
 export type EventRow = {
   id: string;
   employee_id: string;
+  employee?: { id: string; full_name: string; employee_number: string | null };
+  /** Кто внёс ручную отметку; у отметки по QR — пусто. */
+  author_name?: string | null;
   office_id: string | null;
   office_name: string | null;
   qr_point_id: string | null;
@@ -1134,6 +1329,8 @@ export type QuestionMessage = {
     read_at: string | null;
     error: string | null;
   } | null;
+  /** Файл к ответу HR: сотрудник получил его документом. */
+  attachment?: { name: string; mime_type: string; size_bytes: number } | null;
 };
 
 export type KnowledgeRef = {
@@ -1158,7 +1355,7 @@ export type QuestionDraft = {
 };
 
 export type QuestionActions = Record<
-  'take' | 'assign' | 'priority' | 'category' | 'wait' | 'close' | 'reopen' | 'reply' | 'draft',
+  'take' | 'assign' | 'priority' | 'category' | 'wait' | 'start' | 'close' | 'reopen' | 'reply' | 'draft',
   boolean
 >;
 
@@ -1233,6 +1430,13 @@ export type QuestionContext = {
     recent: { id: string; number: number; topic: string; status: QuestionStatus; created_at: string }[];
   };
   materials: KnowledgeRef[] | null;
+  /** Где человек сегодня — расчётом посещаемости. `null` — нет права. */
+  today?: {
+    day: string;
+    state: string | null;
+    first_entry_at: string | null;
+    last_exit_at: string | null;
+  } | null;
 };
 
 export type ReplyAfter = 'KEEP' | 'WAIT' | 'CLOSE';
@@ -1272,6 +1476,8 @@ export const setQuestionPriority = (id: string, priority: QuestionPriority) =>
 export const setQuestionCategory = (id: string, category: QuestionCategory) =>
   questionAction(id, 'category', { category });
 export const waitForEmployee = (id: string) => questionAction(id, 'wait');
+/** В работу, не меняя ответственного. */
+export const startQuestion = (id: string) => questionAction(id, 'start');
 export const closeQuestion = (id: string, reason: string) =>
   questionAction(id, 'close', { reason });
 export const reopenQuestion = (id: string) => questionAction(id, 'reopen');
@@ -1285,6 +1491,26 @@ export const replyQuestion = (
   id: string,
   body: { text: string; after: ReplyAfter; client_request_id: string; close_reason?: string },
 ) => questionAction(id, 'reply', body);
+
+/**
+ * Ответ с файлом. Текст необязателен: файл без слов — тоже ответ.
+ * Ключ повтора тот же, что и у текстового ответа.
+ */
+export const replyQuestionWithFile = (
+  id: string,
+  body: { text: string; after: ReplyAfter; client_request_id: string; file: File },
+) => {
+  const form = new FormData();
+  form.append('text', body.text);
+  form.append('after', body.after);
+  form.append('client_request_id', body.client_request_id);
+  form.append('file', body.file);
+  return upload<Question>(`${QUESTIONS}/${id}/reply/`, form);
+};
+
+/** Файл из переписки — открыть в новой вкладке с cookie сессии. */
+export const questionFileUrl = (id: string, messageId: string) =>
+  apiUrl(`${QUESTIONS}/${id}/messages/${messageId}/file/`);
 
 // --- аналитика: доли с числителем и знаменателем ---------------------------
 
@@ -2900,11 +3126,30 @@ export type SurveyQuestion = {
   options: string[] | null;
 };
 
+export type SurveyTemplateStatus = 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
+
 export type SurveyTemplate = {
   id: string;
   title: string;
   description: string | null;
+  /**
+   * Черновик правят свободно; опубликованный — только новой
+   * редакцией: по нему уже спрашивали людей, и переписанный вопрос
+   * сделал бы прежние ответы ответами на другой вопрос.
+   */
+  status: SurveyTemplateStatus;
+  version: number;
+  published_at: string | null;
   questions: SurveyQuestion[];
+  /** Сколько раз по шаблону спрашивали. */
+  campaigns_count?: number;
+  /**
+   * Когда шаблон убрали в архив. Архив — не редакция, а отметка «убран
+   * из работы»: архивным бывает и черновик, и опубликованный.
+   */
+  archived_at?: string | null;
+  /** Кто завёл шаблон. */
+  author_name?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -2917,7 +3162,7 @@ export type SurveyQuestionDraft = {
 };
 
 export const surveyTemplates = (
-  params: { search?: string; limit?: string } = {},
+  params: { search?: string; status?: string; limit?: string } = {},
   signal?: AbortSignal,
 ) =>
   request<Cursored<SurveyTemplate>>(
@@ -2949,27 +3194,62 @@ export const copySurveyTemplate = (id: string) =>
 export const archiveSurveyTemplate = (id: string) =>
   request<SurveyTemplate>(`/surveys/templates/${id}/archive/`, { method: 'POST' });
 
-export type SurveyAudienceKind = 'EMPLOYEES' | 'DEPARTMENT' | 'OFFICE' | 'ALL';
+/**
+ * Удалить черновик, по которому ни разу не спрашивали.
+ *
+ * Шаблон с рассылками сервер не удалит: без него прежние ответы теряют
+ * вопросы. Такой убирают архивом.
+ */
+export const deleteSurveyTemplate = (id: string) =>
+  request<null>(`/surveys/templates/${id}/`, { method: 'DELETE' });
+
+/** Опубликовать: по шаблону можно рассылать и автоматически. */
+export const publishSurveyTemplate = (id: string) =>
+  request<SurveyTemplate>(`/surveys/templates/${id}/publish/`, { method: 'POST' });
+
+/** Новая редакция: правка опубликованного на месте закрыта. */
+export const newSurveyTemplateVersion = (id: string) =>
+  request<SurveyTemplate>(`/surveys/templates/${id}/new-version/`, {
+    method: 'POST',
+  });
+
+export type SurveyAudienceKind =
+  | 'EMPLOYEES' | 'DEPARTMENT' | 'OFFICE' | 'REGION' | 'POSITION' | 'ALL';
 
 export type SurveyCampaign = {
   id: string;
   template_id: string;
   template_title: string;
+  /** Описание шаблона — подпись под названием рассылки. */
+  template_description?: string | null;
+  template_question_count?: number;
   title: string;
   status: 'DRAFT' | 'SCHEDULED' | 'ACTIVE' | 'FINISHED' | 'CANCELLED';
   audience_kind: SurveyAudienceKind;
   audience_ids: string[] | null;
   scheduled_at: string | null;
   repeat_months: number | null;
+  /** Когда напомнить незакончившим и когда закрыть приём. */
+  remind_at: string | null;
+  /** Когда напоминание уже ушло. */
+  reminded_at?: string | null;
+  due_at: string | null;
   next_send_at: string | null;
   sent_at: string | null;
+  /** Редакция шаблона на момент отправки и правило-родитель. */
+  template_version: number | null;
+  automation_id: string | null;
   total?: number;
   done?: number;
+  /** Сколько человек в утверждённом круге запланированной рассылки. */
+  planned?: number | null;
+  /** Анонимный: ответы по людям не показываются никому, только сводка. */
+  is_anonymous?: boolean;
   created_at: string;
 };
 
 export const surveyCampaigns = (
-  params: { status?: string; limit?: string } = {},
+  params: { status?: string; limit?: string; cursor?: string } = {},
   signal?: AbortSignal,
 ) =>
   request<Cursored<SurveyCampaign>>(
@@ -2987,8 +3267,58 @@ export const createSurveyCampaign = (body: {
   audience_ids?: string[];
   scheduled_at?: string | null;
   repeat_months?: number | null;
+  remind_at?: string | null;
+  due_at?: string | null;
   send_now?: boolean;
+  is_anonymous?: boolean;
 }) => request<SurveyCampaign>('/surveys/campaigns/', { method: 'POST', body });
+
+/** Правка запланированной рассылки — до её отправки. */
+export const updateSurveyCampaign = (id: string, body: {
+  title?: string;
+  audience_kind?: SurveyAudienceKind;
+  audience_ids?: string[];
+  scheduled_at?: string;
+  remind_at?: string | null;
+  due_at?: string | null;
+}) => request<SurveyCampaign>(`/surveys/campaigns/${id}/`, { method: 'PATCH', body });
+
+export type SurveyAudiencePreview = {
+  total: number;
+  /** Скольким опрос дойдёт: у кого есть Telegram. */
+  reachable: number;
+  no_telegram: number;
+  /** Выбраны руками, но уже не работают. */
+  not_employed: number;
+  people: Array<{
+    id: string;
+    full_name: string;
+    office: string | null;
+    department: string | null;
+    telegram: boolean;
+  }>;
+};
+
+/** Кого спросят и до кого опрос не дойдёт — до отправки. */
+export const previewSurveyAudience = (
+  body: { audience_kind: SurveyAudienceKind; audience_ids?: string[] },
+  signal?: AbortSignal,
+) => request<SurveyAudiencePreview>('/surveys/campaigns/preview/', {
+  method: 'POST',
+  body,
+  ...(signal ? { signal } : {}),
+});
+
+/** Напомнить тем, кто ещё не ответил. Раз в сутки на человека. */
+export const remindSurveyCampaign = (id: string, recipientIds?: string[]) =>
+  request<{ reminded: number; already: number }>(
+    `/surveys/campaigns/${id}/remind/`,
+    { method: 'POST', body: recipientIds?.length ? { recipient_ids: recipientIds } : {} },
+  );
+
+/** Ответы таблицей: CSV с фамилиями, открывается в Excel. */
+export const surveyExportUrl = (id: string) =>
+  apiUrl(`/surveys/campaigns/${id}/export/`);
 
 export const sendSurveyCampaign = (id: string) =>
   request<SurveyCampaign>(`/surveys/campaigns/${id}/send/`, { method: 'POST' });
@@ -2996,14 +3326,26 @@ export const sendSurveyCampaign = (id: string) =>
 export const cancelSurveyCampaign = (id: string) =>
   request<SurveyCampaign>(`/surveys/campaigns/${id}/cancel/`, { method: 'POST' });
 
+export type SurveyRecipientStatus =
+  | 'PENDING'
+  | 'SENT'
+  | 'STARTED'
+  | 'COMPLETED'
+  | 'SKIPPED'
+  | 'EXPIRED';
+
 export type SurveyRecipient = {
   id: string;
   employee_id: string;
   full_name: string;
-  status: 'PENDING' | 'SENT' | 'STARTED' | 'COMPLETED';
+  status: SurveyRecipientStatus;
   sent_at: string | null;
   started_at: string | null;
   completed_at: string | null;
+  /** Почему пропустили: без причины «Пропущен» оставляет гадать. */
+  skip_reason: string | null;
+  office_name?: string | null;
+  department_name?: string | null;
 };
 
 export const surveyRecipients = (
@@ -3027,19 +3369,28 @@ export type SurveyFilledAnswer = {
 
 /** Пройденный опрос конкретного человека. Имя — по замыслу, не по недосмотру. */
 export type SurveyFilled = SurveyRecipient & {
-  office_name: string | null;
-  department_name: string | null;
   answers: SurveyFilledAnswer[];
 };
 
 export const surveyAnswers = (id: string, signal?: AbortSignal) =>
-  request<Items<SurveyFilled>>(
+  request<Items<SurveyFilled> & { anonymous?: boolean }>(
     `/surveys/campaigns/${id}/answers/`,
     signal ? { signal } : {},
   );
 
+export type SurveyProgress = {
+  total: number;
+  /** Скольким опрос вообще мог дойти: без пропущенных. */
+  reachable: number;
+  sent: number;
+  started: number;
+  completed: number;
+  skipped: number;
+  expired: number;
+};
+
 export type SurveySummary = {
-  progress: { total: number; sent: number; started: number; completed: number };
+  progress: SurveyProgress;
   questions: Array<{
     id: string;
     text: string;
@@ -3058,6 +3409,110 @@ export const surveySummary = (id: string, signal?: AbortSignal) =>
     `/surveys/campaigns/${id}/summary/`,
     signal ? { signal } : {},
   );
+
+/**
+ * Автоматизации — третья сущность рядом с шаблоном и рассылкой.
+ * Шаблон — что спрашивают, рассылка — кого спросили в тот день,
+ * автоматизация — почему спросят завтра.
+ */
+
+export type SurveyTriggerKind =
+  | 'PROBATION_END'
+  | 'FIRST_DAY'
+  | 'DAYS_AFTER_HIRE'
+  | 'BIRTHDAY'
+  | 'SCHEDULE';
+
+export type SurveyAutomationScope = {
+  office_ids?: string[];
+  department_ids?: string[];
+  position_ids?: string[];
+};
+
+export type SurveyAutomation = {
+  id: string;
+  title: string;
+  template_id: string;
+  template_title: string;
+  trigger_kind: SurveyTriggerKind;
+  /** Сдвиг от события в днях: 0 — в день события. */
+  offset_days: number;
+  send_hour: number;
+  send_minute: number;
+  repeat_months: number | null;
+  scope: SurveyAutomationScope | null;
+  is_active: boolean;
+  last_run_at: string | null;
+  /** У правила по событию пусто: дата зависит от того, кого наймут. */
+  next_run_at: string | null;
+  created_at: string;
+};
+
+export type SurveyAutomationDraft = {
+  title?: string;
+  template_id: string;
+  trigger_kind: SurveyTriggerKind;
+  offset_days?: number;
+  send_hour?: number;
+  send_minute?: number;
+  repeat_months?: number | null;
+  scope?: SurveyAutomationScope | null;
+  is_active?: boolean;
+};
+
+export const surveyAutomations = (signal?: AbortSignal) =>
+  request<Items<SurveyAutomation>>(
+    '/surveys/automations/',
+    signal ? { signal } : {},
+  );
+
+export const surveyAutomation = (id: string, signal?: AbortSignal) =>
+  request<SurveyAutomation>(`/surveys/automations/${id}/`, signal ? { signal } : {});
+
+export type SurveyAutomationHistory = {
+  items: Array<{
+    id: string;
+    campaign_id: string;
+    employee_id: string;
+    full_name: string;
+    event_kind: SurveyTriggerKind;
+    /** День события — не день отправки. */
+    event_day: string | null;
+    fired_at: string | null;
+    status: SurveyRecipientStatus;
+    skip_reason: string | null;
+    completed_at: string | null;
+  }>;
+  /** За последние 30 дней. */
+  stats: { fired: number; sent: number; completed: number; skipped: number };
+};
+
+export const surveyAutomationHistory = (id: string, signal?: AbortSignal) =>
+  request<SurveyAutomationHistory>(
+    `/surveys/automations/${id}/history/`,
+    signal ? { signal } : {},
+  );
+
+export const createSurveyAutomation = (body: SurveyAutomationDraft) =>
+  request<SurveyAutomation>('/surveys/automations/', { method: 'POST', body });
+
+export const updateSurveyAutomation = (
+  id: string,
+  body: Partial<SurveyAutomationDraft>,
+) => request<SurveyAutomation>(`/surveys/automations/${id}/`, {
+  method: 'PATCH',
+  body,
+});
+
+/** Пауза, а не удаление: у правила остаётся история отправок. */
+export const toggleSurveyAutomation = (id: string, active: boolean) =>
+  request<SurveyAutomation>(
+    `/surveys/automations/${id}/${active ? 'enable' : 'disable'}/`,
+    { method: 'POST' },
+  );
+
+export const deleteSurveyAutomation = (id: string) =>
+  request<void>(`/surveys/automations/${id}/`, { method: 'DELETE' });
 
 // --- первичное ознакомление ------------------------------------------------
 //
@@ -3099,6 +3554,36 @@ export type OnboardingRow = {
   last_reminder_at: string | null;
   invitation_status: string | null;
   invitation_expires_at: string | null;
+  /** Когда включили в программу. */
+  enrolled_at?: string;
+  /** До какого дня пройти. `null` — срок не назначен, и просрочки нет. */
+  due_date?: string | null;
+  overdue?: boolean;
+  /** Почему требует внимания. Одно правило с сервера на чип, счётчик и колонку. */
+  reasons?: OnboardingReason[];
+  group?: OnboardingGroup;
+  /** Обязательные документы глазами этого человека. */
+  materials?: OnboardingMaterial[];
+};
+
+export type OnboardingReason = 'overdue' | 'declined' | 'renewal' | 'silent';
+
+/** Группы списка: каждый человек ровно в одной, поэтому счётчики складываются во «все». */
+export type OnboardingGroup = 'done' | 'attention' | 'waiting' | 'not_started' | 'in_progress';
+
+export type OnboardingMaterial = {
+  document_id: string;
+  title: string;
+  version: string | null;
+  /** accepted — подтвердил; renewal — подтверждал прежнюю редакцию, новую ещё нет. */
+  state: 'accepted' | 'declined' | 'pending' | 'renewal';
+  decided_at: string | null;
+};
+
+export type OnboardingScope = { search?: string; office_id?: string; department_id?: string };
+
+export type OnboardingCounts = Record<string, number> & {
+  groups?: Record<OnboardingGroup | 'all' | 'overdue', number>;
 };
 
 export type OnboardingEvent = {
@@ -3111,7 +3596,7 @@ export type OnboardingEvent = {
 export type OnboardingCard = OnboardingRow & { timeline: OnboardingEvent[] };
 
 export const onboardingProgress = (
-  params: { status?: string; search?: string; office_id?: string; limit?: string } = {},
+  params: OnboardingScope & { status?: string; group?: OnboardingGroup; limit?: string; cursor?: string } = {},
   signal?: AbortSignal,
 ) =>
   request<Cursored<OnboardingRow>>(
@@ -3119,14 +3604,30 @@ export const onboardingProgress = (
     signal ? { signal } : {},
   );
 
-export const onboardingCounts = (signal?: AbortSignal) =>
-  request<Record<string, number>>('/onboarding/counts', signal ? { signal } : {});
+export const onboardingCounts = (signal?: AbortSignal, params: OnboardingScope = {}) =>
+  request<OnboardingCounts>(`/onboarding/counts${query(params)}`, signal ? { signal } : {});
 
-export const onboardingExport = (signal?: AbortSignal) =>
+/** Выгрузка — с теми же отборами, что и список на экране. */
+export const onboardingExport = (signal?: AbortSignal, params: OnboardingScope & { group?: OnboardingGroup } = {}) =>
   request<{ items: Record<string, string | number | null>[]; total: number }>(
-    '/onboarding/export',
+    `/onboarding/export${query(params)}`,
     signal ? { signal } : {},
   );
+
+export type RemindOutcome = 'sent' | 'no_telegram' | 'already_today' | 'completed' | 'not_enrolled';
+
+/** «Напомнить всем» — итог по каждому, а не общее «отправлено». */
+export const remindOnboardingMany = (employeeIds: string[]) =>
+  request<{ items: { employee_id: string; outcome: RemindOutcome }[] }>('/onboarding/remind', {
+    method: 'POST',
+    body: { employee_ids: employeeIds },
+  });
+
+export const setOnboardingDue = (id: string, dueDate: string | null) =>
+  request<{ due_date: string | null }>(`/employees/${id}/onboarding/due`, {
+    method: 'POST',
+    body: { due_date: dueDate },
+  });
 
 export const employeeOnboarding = (id: string, signal?: AbortSignal) =>
   request<OnboardingCard>(`/employees/${id}/onboarding`, signal ? { signal } : {});
@@ -3224,7 +3725,48 @@ export type PolicyDocument = {
   archived_at: string | null;
   current_version: PolicyVersion | null;
   versions: PolicyVersion[];
+  category?: { id: string; title: string } | null;
+  /** Участникам программы; у черновика — 0: он никого не обязывает. */
+  assigned?: number;
+  /** Согласились с действующей редакцией. */
+  confirmed?: number;
+  declined?: number;
+  /** Соглашались с прежней редакцией, с новой — ещё нет. */
+  renewal_pending?: number;
+  /** Самый ранний срок среди тех, кто ещё не подтвердил. */
+  nearest_due?: string | null;
+  created_by?: string | null;
+  changed_at?: string;
+  changed_by?: string | null;
 };
+
+/** Раздел материалов: группировка для кадровика и порядка. */
+export type PolicyCategory = {
+  id: string;
+  title: string;
+  description: string | null;
+  position: number;
+  owner: { id: string; full_name: string; position_name: string | null } | null;
+  documents_count: number;
+  documents: { id: string; title: string }[];
+  changed_at: string;
+  changed_by: string | null;
+};
+
+export const policyCategories = (signal?: AbortSignal) =>
+  request<{ items: PolicyCategory[] }>('/onboarding/categories/', signal ? { signal } : {});
+
+export const createPolicyCategory = (body: {
+  title: string; description?: string | null; owner_employee_id?: string | null;
+}) => request<PolicyCategory>('/onboarding/categories/', { method: 'POST', body });
+
+export const updatePolicyCategory = (id: string, body: {
+  title?: string; description?: string | null; owner_employee_id?: string | null;
+}) => request<PolicyCategory>(`/onboarding/categories/${id}/`, { method: 'PATCH', body });
+
+/** Убрать раздел. Сервер откажет, пока в нём есть материалы. */
+export const archivePolicyCategory = (id: string) =>
+  request<{ id: string }>(`/onboarding/categories/${id}/archive/`, { method: 'POST' });
 
 export const policyDocuments = (signal?: AbortSignal) =>
   request<{ items: PolicyDocument[] }>(
@@ -3238,11 +3780,12 @@ export const createPolicyDocument = (body: {
   description?: string;
   is_mandatory?: boolean;
   position?: number;
+  category_id?: string | null;
 }) => request<PolicyDocument>('/onboarding/documents/', { method: 'POST', body });
 
 export const updatePolicyDocument = (
   id: string,
-  body: { title?: string; description?: string; is_mandatory?: boolean; position?: number },
+  body: { title?: string; description?: string; is_mandatory?: boolean; position?: number; category_id?: string | null },
 ) => request<PolicyDocument>(`/onboarding/documents/${id}/`, { method: 'PATCH', body });
 
 export const archivePolicyDocument = (id: string) =>

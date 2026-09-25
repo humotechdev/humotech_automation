@@ -54,6 +54,22 @@ PRESENCE = {
 
 # --- статусы заявок --------------------------------------------------------
 
+# Состояние заявки словами человека. Считает его сервер и присылает
+# полем `stage` — бот только называет. Собирать подпись по `status`
+# здесь значило бы, что чат, кабинет и кадровая система по-разному
+# отвечают на вопрос «подтверждён ли больничный».
+REQUEST_STAGE = {
+    "WAITING_DOCUMENTS": "ожидаем документы",
+    "HR_REVIEW": "на проверке HR",
+    "NEEDS_FIX": "нужны исправления",
+    "PENDING": "на согласовании",
+    "APPROVED": "подтверждён",
+    "REJECTED": "отклонён",
+    "CANCELLED": "отменён",
+}
+
+# Запасной словарь на случай, если сервер стадию не прислал: бот
+# переживает старый backend, но не молчит о состоянии заявки.
 REQUEST_STATUS = {
     "DRAFT": "черновик",
     "SUBMITTED": "ожидает решения",
@@ -286,11 +302,18 @@ def requests(body: dict) -> str:
     lines = ["<b>Мои заявки</b>", ""]
     for row in rows:
         kind = row["absence_type"]["name"]
-        status = REQUEST_STATUS.get(row["status"], row["status"].lower())
-        lines.append(
-            f"<b>{kind}</b>: {_date(row['first_day'])} — {_date(row['last_day'])}"
+        stage = REQUEST_STAGE.get(row.get("stage") or "") or REQUEST_STATUS.get(
+            row["status"], row["status"].lower()
         )
-        lines.append(f"  {status}, рабочих дней: {row['working_days']}")
+        if row.get("first_day"):
+            period = f"{_date(row['first_day'])} — {_date(row['last_day'])}"
+        else:
+            # Больничный подают в первый день болезни, не зная, когда
+            # выйдешь. Прочерк вместо периода честнее выдуманных дат:
+            # настоящие проставит кадровик по справке.
+            period = "период уточняется"
+        lines.append(f"<b>{kind}</b>: {period}")
+        lines.append(f"  {stage}, рабочих дней: {row['working_days']}")
         if row.get("extension_pending"):
             lines.append("  продление ждёт решения")
         if row.get("review_comment"):

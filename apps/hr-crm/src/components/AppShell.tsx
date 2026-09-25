@@ -11,6 +11,7 @@
  */
 
 import {
+  Fragment,
   createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState,
   type ReactNode,
 } from 'react';
@@ -147,6 +148,14 @@ export function AppShell({ children, badges, breadcrumb, section = 'home' }: Pro
   );
 }
 
+/**
+ * Разделы в мягком наборе (Inter).
+ *
+ * Переход идёт по разделу целиком — меню, шапка и страница вместе:
+ * два шрифта на одном экране читаются как два разных продукта.
+ */
+const SOFT_SECTIONS = new Set(['surveys']);
+
 function ShellFrame({ children, meta, remember = false }: {
   children: ReactNode;
   meta: Meta;
@@ -193,8 +202,21 @@ function ShellFrame({ children, meta, remember = false }: {
   const work = useRef<HTMLDivElement>(null);
   useScrollMemory(work, remember ? place.pathname : '', remember);
 
+  // Окна и выпадающие списки рисуются поверх страницы, в `body`, и
+  // шрифт каркаса до них не доходит — без этого меню раздела было бы
+  // узким шрифтом посреди широкого.
+  const soft = SOFT_SECTIONS.has(section);
+  useEffect(() => {
+    document.body.classList.toggle('soft-type', soft);
+    return () => document.body.classList.remove('soft-type');
+  }, [soft]);
+
   return (
-    <div className={menu ? 'shell shell--menu' : 'shell'}>
+    <div className={[
+      'shell',
+      menu ? 'shell--menu' : '',
+      SOFT_SECTIONS.has(section) ? 'shell--soft' : '',
+    ].filter(Boolean).join(' ')}>
       {/* Декоративная подложка. Снимок подставляется, если он лежит в
           `src/assets/office-backdrop.*`; без файла остаётся светлая
           заливка с мягкими бликами. Оба слоя вне потока и недоступны
@@ -238,22 +260,22 @@ function ShellFrame({ children, meta, remember = false }: {
         <header className="topbar">
           {/* Кнопка меню видна только там, где меню выезжает: на широком
               экране разделы и так на виду. */}
-          <button
-            type="button"
-            className="tool tool--menu"
-            aria-label="Разделы"
-            aria-expanded={menu}
-            onClick={() => setMenu((was) => !was)}
-          >
-            <AppIcon name="list" size={ICON_SIZE.title} />
-          </button>
-          <p className="crumbs">
-            <span>Рабочее пространство</span>
-            <span className="crumbs__sep">/</span>
-            <span className="crumbs__here">{breadcrumb}</span>
-          </p>
-          <div className="topbar__tools">
+          <div className="topbar__left">
+            <button
+              type="button"
+              className="tool tool--menu"
+              aria-label="Разделы"
+              aria-expanded={menu}
+              onClick={() => setMenu((was) => !was)}
+            >
+              <AppIcon name="list" size={ICON_SIZE.title} />
+            </button>
+            <Crumbs path={breadcrumb} />
+          </div>
+          <div className="topbar__find">
             <GlobalEmployeeSearch />
+          </div>
+          <div className="topbar__tools">
             <NotificationBell />
             <Language />
           </div>
@@ -313,6 +335,32 @@ function Group({ title, items, badges, active, remember }: {
   );
 }
 
+/**
+ * Путь до текущей страницы.
+ *
+ * «Главная» — не название группы разделов, а сама страница, и она
+ * ссылка: путь, по которому нельзя перейти, — просто подпись.
+ * Остальные ступени приходят строкой вида «Опросы / Рассылки» и
+ * ссылками не становятся: промежуточных маршрутов у них может не быть,
+ * а ссылка в никуда хуже текста.
+ */
+function Crumbs({ path }: { path: string }) {
+  const steps = path.split('/').map((one) => one.trim()).filter(Boolean);
+  return (
+    <p className="crumbs">
+      <Link className="crumbs__home" to="/">Главная</Link>
+      {steps.map((step, at) => (
+        <Fragment key={`${step}-${at}`}>
+          <AppIcon name="next" size={16} className="crumbs__sep" />
+          <span className={at === steps.length - 1 ? 'crumbs__here' : undefined}>
+            {step}
+          </span>
+        </Fragment>
+      ))}
+    </p>
+  );
+}
+
 function Language() {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
@@ -340,6 +388,7 @@ function Language() {
         aria-label="Язык интерфейса: русский"
         onClick={() => setOpen((was) => !was)}
       >
+        <AppIcon name="globe" size={18} />
         RU
         <AppIcon name="chevron" size={16} />
       </button>

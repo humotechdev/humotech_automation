@@ -22,9 +22,14 @@ import {
   type AbsenceOptions,
   type AbsenceRequest,
 } from '../api';
-import { REQUEST_STATUS, isoToday, period } from '../format';
+import { calendarDaysText, dayLabel, isoToday, period } from '../format';
 import { haptic } from '../telegram';
-import { DateRangePicker, Field, FileUploadField } from '../ui/fields';
+import {
+  DateRangePicker,
+  Field,
+  FileUploadField,
+  checkCertificate,
+} from '../ui/fields';
 import {
   AfterSubmitNote,
   CertificateRow,
@@ -35,20 +40,18 @@ import {
 } from '../ui/sick-fields';
 import {
   CheckIcon,
+  ChevronRightIcon,
+  ClipIcon,
+  CloseIcon,
+  DocumentIcon,
+  HistoryIcon,
   MedicalIcon,
   PlaneIcon,
   RequestsIcon,
   SendIcon,
 } from '../ui/icons';
 import { BottomSheet, ConfirmationDialog } from '../ui/overlays';
-import {
-  Card,
-  PrimaryButton,
-  SecondaryButton,
-  SectionHeader,
-  StatusBadge,
-  type Tone,
-} from '../ui/primitives';
+import { PrimaryButton, type Tone } from '../ui/primitives';
 import { EmptyState, ErrorState, LoadingScreen } from '../ui/states';
 
 export type AbsenceKind = 'SICK_LEAVE' | 'ANNUAL_LEAVE';
@@ -67,17 +70,15 @@ const TERMS_TEXT = [
   'Фактические даты больничного кадровик проставит по справке.',
 ].join(' ');
 
-/** Заявки, по которым ещё возможны действия. Остальное — история. */
+/**
+ * Заявки, по которым ещё возможны действия. Остальное — история.
+ *
+ * Делим по состоянию ЗАЯВКИ, а не отсутствия. Подтверждённый больничный
+ * — решённое дело: приложить к нему нечего, отменить нельзя, и висеть
+ * он должен там, где смотрят прошлое. Что он при этом ещё идёт, видно
+ * на главной и в календаре, а не в списке заявок.
+ */
 const ACTIVE_STATUSES = ['DRAFT', 'SUBMITTED', 'IN_REVIEW'];
-
-const TONE: Record<string, Tone> = {
-  SUBMITTED: 'warning',
-  IN_REVIEW: 'warning',
-  APPROVED: 'success',
-  REJECTED: 'danger',
-  CANCELLED: 'neutral',
-  DRAFT: 'neutral',
-};
 
 export function Requests({
   openForm,
@@ -94,6 +95,14 @@ export function Requests({
   const [tab, setTab] = useState<'active' | 'history'>('active');
   const [form, setForm] = useState<AbsenceKind | null>(openForm ?? null);
   const [cancelling, setCancelling] = useState<AbsenceRequest | null>(null);
+  /**
+   * Какая заявка раскрыта целиком.
+   *
+   * Хранится номер, а не сама заявка: после того как человек приложит
+   * справку, список перечитывается, и объект, снятый со старого списка,
+   * показывал бы вчерашнее состояние.
+   */
+  const [opened, setOpened] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [attempt, setAttempt] = useState(0);
 
@@ -145,57 +154,95 @@ export function Requests({
   const active = (requests ?? []).filter((row) =>
     ACTIVE_STATUSES.includes(row.status),
   );
+  // Незакрытый больничный у человека может быть только один, и сервер
+  // второго не создаст. Показывать при этом форму — обещать то, чего
+  // не будет: вместо неё человека надо вернуть к его же заявке.
+  const openSick = active.find(
+    (row) => row.kind === 'CREATE' && row.absence_type.requires_document,
+  );
   const past = (requests ?? []).filter(
     (row) => !ACTIVE_STATUSES.includes(row.status),
   );
   const shown = tab === 'active' ? active : past;
+  const sheet = (requests ?? []).find((row) => row.id === opened) ?? null;
 
   return (
     <>
-      <SectionHeader title="Заявки" />
-
-      <div className="quick-actions">
+      <header className="rq-head">
+        <div>
+          <h1>Заявки</h1>
+          <p>Больничные и отпуска</p>
+        </div>
+        {/* Кнопка ведёт на ту же вкладку «История», что и переключатель
+            ниже: сверху её ищут те, кто пришёл именно за прошлым, и
+            путь к нему не должен зависеть от того, куда человек
+            посмотрел первым. */}
         <button
           type="button"
-          className="quick-action"
-          onClick={() => setForm('SICK_LEAVE')}
+          className="rq-head-history"
+          aria-label="История заявок"
+          onClick={() => setTab('history')}
         >
-          <MedicalIcon size={22} />
-          <span>Оформить больничный</span>
+          <HistoryIcon size={22} />
         </button>
+      </header>
+
+      {/* Два действия одной карточкой, строками: это не равноправные
+          плитки, а список того, что здесь можно начать. Подпись под
+          каждым объясняет, чем они отличаются, — без неё «больничный»
+          и «отпуск» выглядят одинаково, пока не нажмёшь. */}
+      <div className="rq-actions">
         <button
           type="button"
-          className="quick-action"
-          onClick={() => setForm('ANNUAL_LEAVE')}
+          onClick={() =>
+            openSick ? setOpened(openSick.id) : setForm('SICK_LEAVE')
+          }
         >
-          <PlaneIcon size={22} />
-          <span>Запросить отпуск</span>
+          <MedicalIcon size={26} />
+          <span>
+            <b>
+              {openSick ? 'Открыть текущий больничный' : 'Оформить больничный'}
+            </b>
+            <small>
+              {openSick
+                ? `${STAGE[openSick.stage]?.title ?? 'В работе'} — приложите справку или отмените заявку`
+                : 'Создать заявку и загрузить справку позже'}
+            </small>
+          </span>
+          <ChevronRightIcon size={20} />
+        </button>
+        <button type="button" onClick={() => setForm('ANNUAL_LEAVE')}>
+          <PlaneIcon size={26} />
+          <span>
+            <b>Запросить отпуск</b>
+            <small>
+              {balance !== null
+                ? `Доступно ${balance} дн. — выбрать даты и отправить`
+                : 'Выбрать даты и отправить на согласование'}
+            </small>
+          </span>
+          <ChevronRightIcon size={20} />
         </button>
       </div>
 
-      {balance !== null && (
-        <Card>
-          <div className="section-header">
-            <h3>Остаток отпуска</h3>
-            <span className="metric-value">{balance} дн.</span>
-          </div>
-          <p className="muted">
-            Доступно к запросу. Подтверждённые дни уже вычтены.
-          </p>
-        </Card>
-      )}
-
-      <div className="segmented" role="group" aria-label="Какие заявки показать">
+      {/* Вкладки, а не сегментированный переключатель: разделов два и
+          они неравноценны — активные смотрят каждый день, историю
+          изредка. Число стоит только у активных: в истории оно растёт
+          без конца и ни на что не влияет. */}
+      <div className="rq-tabs" role="tablist" aria-label="Какие заявки показать">
         <button
           type="button"
-          aria-pressed={tab === 'active'}
+          role="tab"
+          aria-selected={tab === 'active'}
           onClick={() => setTab('active')}
         >
-          Активные{active.length ? ` (${active.length})` : ''}
+          Активные
+          <i>{active.length}</i>
         </button>
         <button
           type="button"
-          aria-pressed={tab === 'history'}
+          role="tab"
+          aria-selected={tab === 'history'}
           onClick={() => setTab('history')}
         >
           История
@@ -210,10 +257,12 @@ export function Requests({
       {requests && shown.length === 0 && (
         <EmptyState
           icon={<RequestsIcon size={28} />}
-          title={tab === 'active' ? 'Активных заявок нет' : 'История пуста'}
+          title={
+            tab === 'active' ? 'Сейчас нет активных заявок' : 'История пуста'
+          }
           description={
             tab === 'active'
-              ? 'Оформите больничный или запросите отпуск кнопками выше.'
+              ? 'Создайте больничный или запрос на отпуск — здесь появится статус.'
               : 'Здесь появятся рассмотренные и отменённые заявки.'
           }
         />
@@ -224,8 +273,29 @@ export function Requests({
           key={row.id}
           request={row}
           onCancel={() => setCancelling(row)}
+          onChanged={() => void reload()}
+          lateDocuments={options?.policy.document_can_be_added_later}
         />
       ))}
+
+      {/* Заявка целиком — той же формой, что и её создание: те же
+          поля в том же порядке, только заполненные и закрытые на
+          правку. Менять поданную заявку нельзя — её уже читает
+          кадровик; исправляют её справкой и отменой. */}
+      <AbsenceForm
+        kind={sheet ? 'SICK_LEAVE' : null}
+        existing={sheet}
+        options={options}
+        balance={balance}
+        fullName={fullName}
+        onClose={() => setOpened(null)}
+        onCreated={() => setOpened(null)}
+        onChanged={() => void reload()}
+        onCancelRequest={() => {
+          setOpened(null);
+          if (sheet) setCancelling(sheet);
+        }}
+      />
 
       <AbsenceForm
         kind={form}
@@ -254,15 +324,181 @@ export function Requests({
   );
 }
 
+/**
+ * Состояние заявки: подпись и цвет.
+ *
+ * Стадию считает сервер и присылает готовой — клиент её только
+ * называет. Собирать её здесь значило бы, что приложение и кадровая
+ * система по-разному отвечают на вопрос «подтверждён ли больничный»,
+ * а подтверждение — это строка в табеле и деньги.
+ */
+const STAGE: Record<string, { title: string; tone: Tone }> = {
+  WAITING_DOCUMENTS: { title: 'Ожидаем документы', tone: 'warning' },
+  HR_REVIEW: { title: 'На проверке HR', tone: 'navy' },
+  NEEDS_FIX: { title: 'Нужны исправления', tone: 'danger' },
+  PENDING: { title: 'На согласовании', tone: 'navy' },
+  APPROVED: { title: 'Подтверждён', tone: 'success' },
+  REJECTED: { title: 'Отклонён', tone: 'danger' },
+  CANCELLED: { title: 'Отменён', tone: 'neutral' },
+};
+
+/**
+ * Пояснение под заголовком: чего ждут и от кого.
+ *
+ * Без него «Ожидаем документы» и «На проверке HR» выглядят одинаково
+ * — как «что-то происходит», — и человек не понимает, нужно ли ему
+ * что-то делать.
+ */
+function noteOf(request: AbsenceRequest): string | null {
+  if (request.stage === 'NEEDS_FIX') {
+    // Причина — от кадровика и дословно: пересказ своими словами
+    // однажды смягчит «нечитаемое фото» до «нужен другой документ»,
+    // и придёт то же фото.
+    return request.certificate_comment
+      ? `Справку не приняли. Комментарий HR: ${request.certificate_comment}`
+      : 'Справку не приняли — приложите другую.';
+  }
+  if (request.review_comment) return `Отдел кадров: ${request.review_comment}`;
+  if (request.stage === 'CANCELLED' || request.stage === 'REJECTED') return null;
+  if (request.stage === 'WAITING_DOCUMENTS') {
+    return 'Приложите справку и отправьте подписанное заявление на почту HR.';
+  }
+  if (request.stage === 'HR_REVIEW') {
+    return !request.first_day || !request.last_day
+      ? 'Отдел кадров проверит документы и проставит период по справке.'
+      : 'Отдел кадров проверяет документы.';
+  }
+  if (request.stage === 'APPROVED') return null;
+  return 'Руководитель ещё не принял решение.';
+}
+
 export function RequestCard({
   request,
   onCancel,
+  onChanged,
+  lateDocuments = true,
 }: {
   request: AbsenceRequest;
   onCancel: () => void;
+  /** Справку приложили — список надо перечитать. */
+  onChanged: () => void;
+  /**
+   * Разрешает ли организация донести справку после одобрения.
+   *
+   * По умолчанию да — столько же, сколько на сервере. Правила приходят
+   * отдельным запросом, и пока он не вернулся, карточка не должна
+   * прятать действие, которое на самом деле работает.
+   */
+  lateDocuments?: boolean;
+}) {
+  const state = STAGE[request.stage] ?? STAGE.PENDING;
+  const note = noteOf(request);
+
+  // В шапке — период заявки, а если его ещё нет, день подачи: строка
+  // «·» без даты слева выглядит как потерянные данные.
+  const when =
+    request.first_day && request.last_day
+      ? request.first_day === request.last_day
+        ? dayLabel(request.first_day)
+        : `${dayLabel(request.first_day)} — ${dayLabel(request.last_day)}`
+      : request.submitted_at
+        ? dayLabel(request.submitted_at.slice(0, 10))
+        : null;
+
+  return (
+    <article className={`rq-card rq-card--${state.tone}`}>
+      <p className="rq-card__top">
+        <span className="rq-card__when">
+          {when && `${when} · `}
+          {request.absence_type.name.toUpperCase()}
+        </span>
+        <span className="rq-card__state">
+          <i aria-hidden="true" />
+          {state.title}
+        </span>
+      </p>
+
+      <h3 className="rq-card__title">{request.absence_type.name}</h3>
+
+      {request.first_day && request.last_day && (
+        <p className="rq-card__days">
+          {calendarDaysText(request.first_day, request.last_day)}
+        </p>
+      )}
+      {note && <p className="rq-card__note">{note}</p>}
+      {request.extension_pending && (
+        <p className="rq-card__note">Продление ждёт решения.</p>
+      )}
+      {request.certificate_status === 'VERIFIED' && (
+        <p className="rq-card__done">
+          <CheckIcon size={16} />
+          Справка принята
+        </p>
+      )}
+      {request.certificate_status === 'PENDING' && (
+        <p className="rq-card__done rq-card__done--wait">
+          <CheckIcon size={16} />
+          Справка приложена, ждёт проверки
+        </p>
+      )}
+
+      <RequestActions
+        request={request}
+        onCancel={onCancel}
+        onChanged={onChanged}
+        lateDocuments={lateDocuments}
+      />
+    </article>
+  );
+}
+
+/**
+ * Что человек может сделать с заявкой.
+ *
+ * Отдельно от карточки: те же действия показывают и в раскрытой
+ * заявке, а написанные дважды они однажды разойдутся — в одном месте
+ * появится кнопка, которой в другом не будет.
+ */
+export function RequestActions({
+  request,
+  onCancel,
+  onChanged,
+  lateDocuments = true,
+}: {
+  request: AbsenceRequest;
+  onCancel: () => void;
+  /** Справку приложили — список надо перечитать. */
+  onChanged: () => void;
+  /** Разрешает ли организация донести справку после одобрения. */
+  lateDocuments?: boolean;
 }) {
   const [getting, setGetting] = useState(false);
+  const [showing, setShowing] = useState(false);
+  const [sending, setSending] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
+  /** Какую бумагу только что отправили: строка под кнопкой. */
+  const [sent, setSent] = useState<'application' | 'certificate' | null>(null);
+
+  // Пока справку не приняли, её ждут — даже если одна бумага уже
+  // лежит. Считать по количеству документов значило бы закрыть
+  // человеку дорогу ровно там, где кадровик попросил принести другую.
+  //
+  // Справку спрашивают только у исходной заявки: продление и отмена
+  // подтверждаются по ней же, и своих бумаг у них нет.
+  const needsPaper =
+    request.kind === 'CREATE' &&
+    request.absence_type.requires_document &&
+    request.certificate_status !== 'VERIFIED';
+  const open = ACTIVE_STATUSES.includes(request.status);
+  // Отменённая и отклонённая заявка ничего больше не требует. Бланк для
+  // неё не печатают: подписанное заявление по отказанной заявке — это
+  // бумага, которая потом всплывёт в переписке как действующая.
+  const closed = request.stage === 'CANCELLED' || request.stage === 'REJECTED';
+
+  // Справку доносят и после решения: больничный подтверждают по трём
+  // пунктам сразу, а бумага приходит своим ходом. Запрет организации
+  // касается только уже подтверждённой заявки.
+  const canAttach = needsPaper && !closed && (open || lateDocuments);
 
   /**
    * Показать заявление.
@@ -275,86 +511,156 @@ export function RequestCard({
    * Другого способа в вебвью Telegram нет: панели вложений у мини-
    * приложения не существует, а `openLink` умеет только обычные адреса.
    */
-  async function openApplication() {
-    if (getting) return;
-    setGetting(true);
+  /**
+   * Попросить бота прислать бумагу в чат.
+   *
+   * Не скачивание: вебвью Telegram не даёт сохранить файл, и нажатие
+   * «скачать» заканчивалось ничем. Бот присылает сообщением — оттуда
+   * бумагу и пересылают, и печатают, и она остаётся в переписке.
+   */
+  async function sendPaper(paper: 'application' | 'certificate') {
+    if (getting || showing) return;
+    const mark = paper === 'application' ? setGetting : setShowing;
+    mark(true);
     setFailed(null);
-    const answer = await api.absenceApplication(request.id);
-    setGetting(false);
-
+    setSent(null);
+    const answer = await api.sendAbsencePaper(request.id, paper);
+    mark(false);
     if (!answer.ok) {
       setFailed(answer.message);
       return;
     }
-    if (typeof URL?.createObjectURL !== 'function') {
-      setFailed('Это приложение не умеет открывать файлы. Попросите бланк в отделе кадров.');
+    haptic('success');
+    setSent(paper);
+  }
+
+  /**
+   * Приложить справку прямо из карточки.
+   *
+   * Заявку подают в первый день болезни, а справку выдают при выписке —
+   * между ними неделя. Возвращать человека в форму создания незачем:
+   * заявка уже есть, не хватает только файла.
+   */
+  async function attach(file: File) {
+    if (sending) return;
+    const complaint = checkCertificate(file);
+    if (complaint) {
+      setFailed(complaint);
       return;
     }
-
-    const url = URL.createObjectURL(answer.value);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `zayavlenie-${request.id.slice(0, 8)}.pdf`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    // Адрес держит файл в памяти вкладки, пока его не отозвать. Секунда
-    // — с запасом на то, чтобы браузер успел начать сохранение.
-    setTimeout(() => URL.revokeObjectURL?.(url), 1000);
+    setSending(true);
+    setFailed(null);
+    const answer = await api.attachAbsenceDocument(request.id, file);
+    setSending(false);
+    if (!answer.ok) {
+      setFailed(answer.message);
+      return;
+    }
+    haptic('success');
+    onChanged();
   }
 
   return (
-    <Card>
-      <div className="section-header">
-        <h3>{request.absence_type.name}</h3>
-        <StatusBadge tone={TONE[request.status] ?? 'neutral'} dot>
-          {REQUEST_STATUS[request.status] ?? request.status.toLowerCase()}
-        </StatusBadge>
-      </div>
-
-      <p className="metric-value">
-        {request.first_day && request.last_day
-          ? period(request.first_day, request.last_day)
-          : '—'}
+    <>
+    {failed && (
+      <p className="field-error" role="alert">
+        {failed}
       </p>
+    )}
 
-      <div className="stack-tight">
-        <p className="muted">Рабочих дней: {request.working_days}</p>
-        {request.submitted_at && (
-          <p className="muted">
-            Подана {new Date(request.submitted_at).toLocaleDateString('ru-RU')}
-          </p>
-        )}
-        {request.documents > 0 && (
-          <p className="muted">
-            Справка приложена ({request.documents})
-          </p>
-        )}
-        {request.absence_type.requires_document && request.documents === 0 && (
-          <StatusBadge tone="warning">Нужна справка</StatusBadge>
-        )}
-        {request.extension_pending && (
-          <StatusBadge tone="navy">Продление ждёт решения</StatusBadge>
-        )}
-        {request.review_comment && (
-          <p className="muted">Отдел кадров: {request.review_comment}</p>
-        )}
-      </div>
+    <div className="rq-card__acts">
+      {/* Справка первой строкой, пока её ждут: это единственное, что
+          сейчас нужно от человека. */}
+      {canAttach && (
+        <label className="rq-act">
+          <ClipIcon size={20} />
+          <span>
+            <b>
+              {sending
+                ? 'Прикрепляем…'
+                : request.stage === 'NEEDS_FIX'
+                  ? 'Приложить другую справку'
+                  : 'Прикрепить справку'}
+            </b>
+            <small>
+              {request.stage === 'NEEDS_FIX'
+                ? 'Прежнюю не приняли'
+                : 'Можно сделать позже'}
+            </small>
+          </span>
+          {/* Системное окно открывает сам `label`, без единой строки
+              JavaScript между касанием и вызовом: WebView считает
+              пользовательским действием только само нажатие. */}
+          <input
+            type="file"
+            accept="image/*,application/pdf"
+            disabled={sending}
+            onChange={(event) => {
+              const picked = event.target.files?.[0] ?? null;
+              // Сбрасываем до обработки: иначе второй выбор того же
+              // файла не даст события и человек решит, что сломалось.
+              event.target.value = '';
+              if (picked) void attach(picked);
+            }}
+          />
+        </label>
+      )}
+
+      {/* Приложенная справка. Она остаётся нужной и после решения:
+          по ней сверяют период, её же просят прислать повторно. */}
+      {request.certificate_status !== null && (
+        <button
+          type="button"
+          className="rq-act"
+          onClick={() => void sendPaper('certificate')}
+        >
+          <ClipIcon size={20} />
+          <span>
+            <b>{showing ? 'Отправляем…' : 'Прислать справку в чат'}</b>
+            <small>
+              {sent === 'certificate'
+                ? 'Отправили — посмотрите чат с ботом'
+                : request.certificate_status === 'VERIFIED'
+                  ? 'Принята кадровиком'
+                  : request.certificate_status === 'REJECTED'
+                    ? 'Не принята — нужна другая'
+                    : 'Ждёт проверки'}
+            </small>
+          </span>
+        </button>
+      )}
 
       {/* Бланк для печати. Оформляют заявку в телефоне, а подписывают
           бумагу: набирать её заново в Word после того, как всё уже
           введено, — лишняя работа, в которой ещё и ошибаются. */}
-      <SecondaryButton onClick={() => void openApplication()} wide>
-        {getting ? 'Готовим заявление…' : 'Заявление для печати'}
-      </SecondaryButton>
-      {failed && <p className="field-error" role="alert">{failed}</p>}
+      {!closed && (
+        <button
+          type="button"
+          className="rq-act"
+          onClick={() => void sendPaper('application')}
+        >
+          <DocumentIcon size={20} />
+          <span>
+            <b>{getting ? 'Отправляем…' : 'Прислать заявление в чат'}</b>
+            <small>
+              {sent === 'application'
+                ? 'Отправили — посмотрите чат с ботом'
+                : 'Распечатать и подписать'}
+            </small>
+          </span>
+        </button>
+      )}
 
       {request.can_cancel && (
-        <SecondaryButton onClick={onCancel} wide>
-          Отменить заявку
-        </SecondaryButton>
+        <button type="button" className="rq-act rq-act--danger" onClick={onCancel}>
+          <CloseIcon size={20} />
+          <span>
+            <b>Отменить заявку</b>
+          </span>
+        </button>
       )}
-    </Card>
+    </div>
+    </>
   );
 }
 
@@ -373,6 +679,9 @@ export function AbsenceForm({
   fullName,
   onClose,
   onCreated,
+  existing = null,
+  onChanged,
+  onCancelRequest,
 }: {
   kind: AbsenceKind | null;
   options: AbsenceOptions | null;
@@ -380,6 +689,18 @@ export function AbsenceForm({
   fullName: string;
   onClose: () => void;
   onCreated: () => void;
+  /**
+   * Уже поданная заявка.
+   *
+   * Та же форма показывает и её — с теми же полями в том же порядке,
+   * только заполненными и закрытыми на правку. Отдельный экран для
+   * просмотра означал бы две разметки об одном и том же, которые
+   * однажды разойдутся.
+   */
+  existing?: AbsenceRequest | null;
+  /** Справку приложили — список надо перечитать. */
+  onChanged?: () => void;
+  onCancelRequest?: () => void;
 }) {
   const sick = kind === 'SICK_LEAVE';
   // У больничного даты пустые: человек заболел и не знает, когда
@@ -404,6 +725,18 @@ export function AbsenceForm({
 
   useEffect(() => {
     if (!kind) return;
+    if (existing) {
+      // Поля берутся из самой заявки: человек смотрит на то, что
+      // отправил, а не на пустой бланк с её названием.
+      setFirst(existing.first_day ?? '');
+      setLast(existing.last_day ?? '');
+      setComment(existing.comment ?? '');
+      setFile(null);
+      setAgreed(false);
+      setError(null);
+      setCreated(null);
+      return;
+    }
     const start = kind === 'SICK_LEAVE' ? '' : isoToday();
     setFirst(start);
     setLast(start);
@@ -412,7 +745,7 @@ export function AbsenceForm({
     setAgreed(false);
     setError(null);
     setCreated(null);
-  }, [kind]);
+  }, [kind, existing]);
 
   if (!kind) return null;
 
@@ -499,13 +832,22 @@ export function AbsenceForm({
           <div className="sick-form">
             <OnBehalfRow fullName={fullName} />
 
+            {existing && (
+              <p className={`rq-card__state rq-card__state--${
+                (STAGE[existing.stage] ?? STAGE.PENDING).tone
+              }`}>
+                <i aria-hidden="true" />
+                {(STAGE[existing.stage] ?? STAGE.PENDING).title}
+              </p>
+            )}
+
             <OptionalDateRange
               first={first}
               last={last}
               onFirst={setFirst}
               onLast={setLast}
-              disabled={busy}
-              {...(first && last && last < first
+              disabled={busy || Boolean(existing)}
+              {...(!existing && first && last && last < first
                 ? { error: 'Конец периода раньше начала' }
                 : {})}
             />
@@ -519,27 +861,47 @@ export function AbsenceForm({
                 placeholder="Напишите, если есть важная информация"
                 onChange={(event) => setComment(event.target.value)}
                 maxLength={2000}
-                disabled={busy}
+                disabled={busy || Boolean(existing)}
               />
-              <p className="sick-note">Диагноз указывать не нужно.</p>
+              {!existing && (
+                <p className="sick-note">Диагноз указывать не нужно.</p>
+              )}
             </div>
 
-            <CertificateRow
-              file={file}
-              onFile={setFile}
-              {...(options?.policy.allowed_document_types
-                ? { allowedTypes: options.policy.allowed_document_types }
-                : {})}
-              {...(options?.policy.max_document_bytes
-                ? { maxBytes: options.policy.max_document_bytes }
-                : {})}
-              disabled={busy}
-            />
+            {/* Справку у поданной заявки не выбирают заново: её
+                прикладывают и открывают действиями ниже, и второй
+                выбор файла здесь означал бы, что он куда-то денется. */}
+            {!existing && (
+              <CertificateRow
+                file={file}
+                onFile={setFile}
+                {...(options?.policy.allowed_document_types
+                  ? { allowedTypes: options.policy.allowed_document_types }
+                  : {})}
+                {...(options?.policy.max_document_bytes
+                  ? { maxBytes: options.policy.max_document_bytes }
+                  : {})}
+                disabled={busy}
+              />
+            )}
 
-            <AfterSubmitNote icon={<SendIcon size={22} />} title="После отправки">
-              В Telegram придёт готовый шаблон заявления. Распечатайте его,
-              подпишите и отправьте на электронную почту HR.
-            </AfterSubmitNote>
+            {!existing && (
+              <AfterSubmitNote icon={<SendIcon size={22} />} title="После отправки">
+                В Telegram придёт готовый шаблон заявления. Распечатайте его,
+                подпишите и отправьте на электронную почту HR.
+              </AfterSubmitNote>
+            )}
+
+            {existing && (
+              <RequestActions
+                request={existing}
+                onCancel={() => onCancelRequest?.()}
+                onChanged={() => onChanged?.()}
+                {...(options?.policy.document_can_be_added_later !== undefined
+                  ? { lateDocuments: options.policy.document_can_be_added_later }
+                  : {})}
+              />
+            )}
 
             {error && (
               <p className="field-error" role="alert">
@@ -549,22 +911,26 @@ export function AbsenceForm({
           </div>
 
           {/* Согласие и кнопка прижаты к низу: до них дотягиваются
-              большим пальцем, а список полей над ними прокручивается. */}
-          <div className="sick-footer">
-            <TermsCheckbox
-              checked={agreed}
-              onChange={setAgreed}
-              onTerms={() => setTerms(true)}
-              disabled={busy}
-            />
-            <PrimaryButton
-              onClick={() => void send()}
-              disabled={busy || !agreed || (Boolean(first && last) && last < first)}
-              wide
-            >
-              {busy ? 'Создаём…' : 'Создать заявку'}
-            </PrimaryButton>
-          </div>
+              большим пальцем, а список полей над ними прокручивается.
+              У поданной заявки подвала нет вовсе: соглашаться не с чем,
+              и «создать» второй раз — это вторая заявка. */}
+          {!existing && (
+            <div className="sick-footer">
+              <TermsCheckbox
+                checked={agreed}
+                onChange={setAgreed}
+                onTerms={() => setTerms(true)}
+                disabled={busy}
+              />
+              <PrimaryButton
+                onClick={() => void send()}
+                disabled={busy || !agreed || (Boolean(first && last) && last < first)}
+                wide
+              >
+                {busy ? 'Создаём…' : 'Создать заявку'}
+              </PrimaryButton>
+            </div>
+          )}
         </BottomSheet>
 
         <ConfirmationDialog

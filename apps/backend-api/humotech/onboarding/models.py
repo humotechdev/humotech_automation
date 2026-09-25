@@ -211,6 +211,11 @@ class EmployeeOnboarding(
     info_completed_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
     last_reminder_at = models.DateTimeField(null=True, blank=True)
+    #: До какого дня нужно пройти ознакомление. Ставится при включении в
+    #: программу и меняется кадровиком. Пусто — срок не назначен, и
+    #: тогда человек не может быть «просрочен»: у тех, кого включили до
+    #: появления сроков, дату задним числом никто не выдумывает.
+    due_date = models.DateField(null=True, blank=True)
     #: Идентификатор сообщения бота с текущей карточкой — его правят,
     #: а не плодят новые.
     chat_message_id = models.BigIntegerField(null=True, blank=True)
@@ -304,6 +309,54 @@ class EmployeeSectionAcknowledgement(
         return f"{self.onboarding_id} / {self.section_id} v{self.section_version}"
 
 
+class PolicyCategory(
+    UUIDPrimaryKeyModel, OrganizationScopedModel, TimestampedModel, ArchivableModel
+):
+    """Раздел материалов: «Охрана труда», «HR и культура».
+
+    Группировка для кадровика и для порядка — на то, с чем человек
+    согласился, раздел не влияет. Поэтому его можно переименовать или
+    убрать в архив в любой момент: история подтверждений привязана к
+    редакции документа, а не к разделу.
+    """
+
+    title = models.CharField(max_length=255)
+    description = models.TextField(null=True, blank=True)
+    #: Кто отвечает за материалы раздела — к кому идти с вопросом.
+    owner_employee = models.ForeignKey(
+        "employees.Employee",
+        on_delete=models.PROTECT,
+        db_column="owner_employee_id",
+        db_index=False,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    position = models.IntegerField(db_default=1)
+    created_by_user = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,
+        db_column="created_by_user_id",
+        db_index=False,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+
+    class Meta:
+        db_table = "policy_categories"
+        verbose_name = "раздел материалов"
+        verbose_name_plural = "разделы материалов"
+        indexes = [
+            models.Index(
+                fields=["organization"], name="ix_policy_categories_org_id"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return self.title
+
+
 class PolicyDocument(
     UUIDPrimaryKeyModel, OrganizationScopedModel, TimestampedModel, ArchivableModel
 ):
@@ -322,6 +375,16 @@ class PolicyDocument(
     #: Необязательный документ показывается, но доступа не закрывает.
     is_mandatory = models.BooleanField(db_default=True)
     position = models.IntegerField(db_default=1)
+    #: Раздел для порядка и поиска. Пусто — «без раздела».
+    category = models.ForeignKey(
+        PolicyCategory,
+        on_delete=models.PROTECT,
+        db_column="category_id",
+        db_index=False,
+        null=True,
+        blank=True,
+        related_name="documents",
+    )
     created_by_user = models.ForeignKey(
         "accounts.User",
         on_delete=models.SET_NULL,

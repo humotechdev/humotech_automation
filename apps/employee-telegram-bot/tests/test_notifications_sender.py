@@ -191,3 +191,65 @@ class TestSurveyButton:
             "type": "survey.invite",
             "attachment": None,
         }
+
+
+class TestReplyFile:
+    """Файл к ответу HR: документом, с подписью, и не молча без него."""
+
+    class Bot:
+        def __init__(self):
+            self.sent = []
+
+        async def send_document(self, chat_id, document, caption=None, reply_markup=None):
+            self.sent.append(("document", document.filename, caption))
+
+        async def send_message(self, chat_id, text, reply_markup=None):
+            self.sent.append(("message", None, text))
+
+    class Files:
+        def __init__(self, fail=False):
+            self.fail = fail
+
+        async def question_reply_file(self, telegram_id, message_id):
+            if self.fail:
+                from src.api.errors import ApiError
+
+                raise ApiError(404, "not_found", "нет")
+            return b"%PDF", "Бланк.pdf"
+
+    def deliver(self, bot, files, text):
+        from src.notifications.sender import TelegramSender
+
+        return asyncio.run(TelegramSender(bot, files).deliver(
+            chat_id=1, text=text, notification_type="question.reply.file",
+            entity_id="message-1", attachment="question_file", telegram_user_id=7,
+        ))
+
+    def test_короткий_ответ_уходит_подписью_к_файлу(self):
+        bot = self.Bot()
+
+        outcome = self.deliver(bot, self.Files(), "💬 Ответ HR по обращению №5\n\nВот бланк")
+
+        assert outcome.sent is True
+        assert bot.sent == [("document", "Бланк.pdf", "💬 Ответ HR по обращению №5\n\nВот бланк")]
+
+    def test_длинный_ответ_не_теряется_из_за_предела_подписи(self):
+        bot = self.Bot()
+        text = "💬 Ответ HR по обращению №5\n\n" + "а" * 2000
+
+        self.deliver(bot, self.Files(), text)
+
+        # Текст целиком — сообщением, файл — следом с первой строкой: по
+        # ней бот узнаёт ответ HR, если человек ответит прямо на файл.
+        assert bot.sent == [
+            ("message", None, text),
+            ("document", "Бланк.pdf", "💬 Ответ HR по обращению №5"),
+        ]
+
+    def test_без_файла_ответ_не_считается_доставленным(self):
+        bot = self.Bot()
+
+        outcome = self.deliver(bot, self.Files(fail=True), "💬 Ответ HR по обращению №5")
+
+        assert outcome.sent is False
+        assert bot.sent == []

@@ -84,6 +84,13 @@ async def ask_send(
     F.text,
     F.reply_to_message.text.startswith(REPLY_PREFIX),
 )
+# Ответ HR с файлом приходит документом: номер обращения у него в
+# подписи, а не в тексте. Ответ на такой файл — тот же ответ HR.
+@router.message(
+    StateFilter(None),
+    F.text,
+    F.reply_to_message.caption.startswith(REPLY_PREFIX),
+)
 async def reply_to_hr(
     message: Message, employee, denial, client: SelfServiceClient
 ) -> None:

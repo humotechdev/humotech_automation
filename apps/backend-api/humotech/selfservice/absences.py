@@ -15,11 +15,12 @@ from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import serializers, status
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
-from django.http import HttpResponse
+from django.http import FileResponse, HttpResponse
 from rest_framework.response import Response
 
 from humotech.absences.services import MINUTES_PER_WORKING_DAY, AbsenceService
 from humotech.core.api import validated
+from humotech.core.errors import ValidationFailed
 from humotech.selfservice.views import EmployeeSelfView
 
 
@@ -69,6 +70,9 @@ class AbsenceRequestSerializer(serializers.Serializer):
     kind = serializers.CharField()
     absence_type = AbsenceTypeSerializer()
     status = serializers.CharField()
+    stage = serializers.CharField()
+    certificate_status = serializers.CharField(allow_null=True)
+    certificate_comment = serializers.CharField(allow_null=True)
     extension_pending = serializers.BooleanField(
         help_text=(
             "Производное состояние, которого нет в схеме отдельным "
@@ -169,6 +173,20 @@ def request_json(view) -> dict:
             "deducts_leave_balance": request.absence_type.deducts_leave_balance,
         },
         "status": request.status,
+        # Состояние словами человека: «ожидаем документы», «на проверке
+        # HR», «нужны исправления». Считается на сервере и приходит
+        # готовым — иначе каждый клиент собирал бы его по-своему и
+        # однажды назвал бы неподтверждённый больничный подтверждённым.
+        "stage": view.stage,
+        # Судьба справки: PENDING, VERIFIED, REJECTED или null. По ней
+        # приложение решает, показывать ли «Прикрепить справку»: после
+        # отказа кадровика бумагу нужно принести заново, а счётчик
+        # документов об этом не знает.
+        "certificate_status": view.certificate_status,
+        # Что кадровик сказал о справке. Уходит человеку дословно и
+        # остаётся на карточке: сообщение в чате теряется в переписке
+        # к следующему дню, а заявка лежит перед глазами.
+        "certificate_comment": view.certificate_comment,
         # Производное состояние, которого нет в схеме отдельным статусом:
         # продление — это дочерняя заявка, а не поле у родительской.
         "extension_pending": view.extension_pending,
@@ -350,6 +368,21 @@ class AbsenceDocumentView(EmployeeSelfView):
         view = AbsenceService().attach_document(self.context, request_id, document)
         return Response(request_json(view), status=status.HTTP_201_CREATED)
 
+    @extend_schema(
+        operation_id="me_absence_document",
+        summary="Приложенная справка",
+        responses={(200, "application/octet-stream"): OpenApiTypes.BINARY},
+    )
+    def get(self, request, request_id):
+        stream, meta = AbsenceService().own_document(self.context, request_id)
+        answer = FileResponse(stream, content_type=meta.mime_type)
+        # `inline`: чаще справку просто смотрят на экране, а не
+        # сохраняют — снимок из камеры открывается прямо в вебвью.
+        answer["Content-Disposition"] = (
+            f'inline; filename="certificate-{request_id}"'
+        )
+        return answer
+
 
 @extend_schema(tags=["Личный кабинет"])
 class AbsenceApplicationView(EmployeeSelfView):
@@ -374,6 +407,41 @@ class AbsenceApplicationView(EmployeeSelfView):
             f'inline; filename="application-{request_id}.pdf"'
         )
         return answer
+
+
+@extend_schema(tags=["Личный кабинет"])
+class AbsencePaperView(EmployeeSelfView):
+    """Прислать бумагу по заявке в чат.
+
+    Кабинет не отдаёт файл сам: вебвью Telegram не даёт сохранить его, и
+    нажатие «скачать» заканчивается ничем. Бумагу присылает бот
+    сообщением — оттуда её и пересылают, и печатают, и она остаётся в
+    переписке.
+    """
+
+    @extend_schema(
+        operation_id="me_absence_send_paper",
+        summary="Прислать бумагу в чат",
+        parameters=[
+            OpenApiParameter(
+                "request_id", OpenApiTypes.UUID, location=OpenApiParameter.PATH
+            ),
+            OpenApiParameter(
+                "paper", OpenApiTypes.STR, location=OpenApiParameter.PATH,
+                description="application — заявление, certificate — справка",
+            ),
+        ],
+        request=None,
+        responses={202: None},
+    )
+    def post(self, request, request_id, paper):
+        if paper not in ("application", "certificate"):
+            raise ValidationFailed(
+                "Такой бумаги по заявке не бывает",
+                details={"field": "paper"},
+            )
+        AbsenceService().send_paper(self.context, request_id, what=paper)
+        return Response(status=status.HTTP_202_ACCEPTED)
 
 
 @extend_schema(tags=["Личный кабинет"])

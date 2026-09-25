@@ -225,6 +225,18 @@ class QuestionMessage(UUIDPrimaryKeyModel, OrganizationScopedModel, CreatedAtMod
         blank=True,
         related_name="+",
     )
+    #: Файл к ответу HR: сотрудник получает его документом в Telegram.
+    #: Тело у такого сообщения может быть пустой строкой, но не NULL —
+    #: ограничение ленты различает сообщения и события по телу.
+    attachment = models.ForeignKey(
+        "files.File",
+        on_delete=models.PROTECT,
+        db_column="attachment_file_id",
+        db_index=False,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
     telegram_message_id = models.BigIntegerField(null=True, blank=True)
     #: Ключ повтора от клиента: повторное нажатие «Отправить» не даёт
     #: второго сообщения человеку.

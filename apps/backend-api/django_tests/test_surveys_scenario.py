@@ -189,8 +189,12 @@ def test_hr_asks_an_office_and_reads_the_answers_by_name(
     summary = hr_client.get(f"{API}/surveys/campaigns/{campaign['id']}/summary/")
     assert summary.status_code == 200, summary.content
     body = summary.json()
+    # Пропущенные считаются отдельно и не входят в достижимых:
+    # «прошли 6 из 10» при двух, до кого опрос не дошёл, занижает
+    # результат и ставит кадровику не тот вопрос.
     assert body["progress"] == {
-        "total": 1, "sent": 1, "started": 1, "completed": 1,
+        "total": 1, "reachable": 1, "sent": 1, "started": 1,
+        "completed": 1, "skipped": 0, "expired": 0,
     }
     scale = next(one for one in body["questions"] if one["kind"] == "SCALE")
     assert scale["average"] == 5.0

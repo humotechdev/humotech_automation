@@ -8,12 +8,16 @@
 
 from __future__ import annotations
 
+from urllib.parse import quote
+
+from django.http import FileResponse
+from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema
 from rest_framework import serializers, status
 from rest_framework.response import Response
 
 from humotech.core.api import validated
-from humotech.questions.inbox import InboxService
+from humotech.questions.inbox import InboxService, employee_reply_file
 from humotech.selfservice.views import EmployeeSelfView
 
 
@@ -64,3 +68,22 @@ class QuestionMessageView(EmployeeSelfView):
             },
             status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         )
+
+
+@extend_schema(tags=["Личный кабинет"])
+class ReplyFileView(EmployeeSelfView):
+    """Файл из ответа HR — боту, чтобы отправить его сотруднику документом."""
+
+    @extend_schema(
+        operation_id="me_question_reply_file",
+        summary="Файл из ответа HR",
+        responses={(200, "application/octet-stream"): OpenApiTypes.BINARY},
+    )
+    def get(self, request, message_id):
+        stream, meta = employee_reply_file(self.context, message_id)
+        answer = FileResponse(stream, content_type=meta.mime_type)
+        # Имя по RFC 5987: бот берёт его для подписи файла в чате.
+        answer["Content-Disposition"] = (
+            "inline; filename*=UTF-8''" + quote(meta.original_filename or "file")
+        )
+        return answer

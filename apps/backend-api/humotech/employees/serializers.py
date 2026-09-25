@@ -193,6 +193,9 @@ class EmployeeCardSerializer(serializers.Serializer):
                                            allow_null=True)
     probation_to = serializers.DateField(source="employee.probation_to",
                                          allow_null=True)
+    mentor = serializers.SerializerMethodField(
+        help_text="Наставник на время стажировки: id и имя; пусто — не назначен",
+    )
     termination_date = serializers.DateField(source="employee.termination_date",
                                              allow_null=True)
     preferred_language = serializers.CharField(
@@ -258,6 +261,13 @@ class EmployeeCardSerializer(serializers.Serializer):
             }
         ).data
 
+    def get_mentor(self, obj) -> dict | None:
+        mentor = getattr(obj.employee, "mentor_employee", None)
+        if mentor is None:
+            return None
+        name = " ".join(one for one in [mentor.last_name, mentor.first_name] if one)
+        return {"id": str(mentor.id), "full_name": name}
+
 
 class EmployeeCreateSerializer(serializers.Serializer):
     employee_number = serializers.CharField(max_length=100)
@@ -317,6 +327,7 @@ class EmployeeUpdateSerializer(serializers.Serializer):
     # Срок стажировки: обе даты необязательны и по отдельности тоже.
     probation_from = serializers.DateField(required=False, allow_null=True)
     probation_to = serializers.DateField(required=False, allow_null=True)
+    mentor_employee_id = serializers.UUIDField(required=False, allow_null=True)
 
 
 class AssignmentChangeSerializer(serializers.Serializer):

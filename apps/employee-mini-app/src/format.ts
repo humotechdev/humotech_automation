@@ -29,14 +29,36 @@ export const PRESENCE: Record<string, string> = {
   WORKDAY_MISSED: 'Рабочий день без отметок',
 };
 
-export const REQUEST_STATUS: Record<string, string> = {
-  DRAFT: 'черновик',
-  SUBMITTED: 'ожидает решения',
-  IN_REVIEW: 'на рассмотрении',
-  APPROVED: 'подтверждена',
-  REJECTED: 'отклонена',
-  CANCELLED: 'отменена',
-};
+/**
+ * Длина периода в календарных днях, конец включён.
+ *
+ * Считается здесь, а не на сервере, и это не нарушение правила «клиент
+ * ничего не считает»: рабочие дни зависят от графика и праздников —
+ * их считает сервер, — а календарные это просто длина отрезка, и
+ * второго мнения у неё быть не может.
+ */
+export function calendarDays(first: string, last: string): number {
+  const from = new Date(first);
+  const to = new Date(last);
+  const days = Math.round((to.getTime() - from.getTime()) / 86400000) + 1;
+  return days > 0 ? days : 0;
+}
+
+/** «30 календарных дней» — с правильным окончанием. */
+export function calendarDaysText(first: string, last: string): string {
+  const count = calendarDays(first, last);
+  const tail = count % 10;
+  const tens = count % 100;
+  const word =
+    tens >= 11 && tens <= 14
+      ? 'календарных дней'
+      : tail === 1
+        ? 'календарный день'
+        : tail >= 2 && tail <= 4
+          ? 'календарных дня'
+          : 'календарных дней';
+  return `${count} ${word}`;
+}
 
 /** Секунды в «8 ч 30 мин». Единственная арифметика на клиенте. */
 export function duration(seconds: number): string {

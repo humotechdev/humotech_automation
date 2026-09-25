@@ -242,6 +242,32 @@ export interface AbsenceRequest {
     deducts_leave_balance: boolean;
   };
   status: string;
+  /**
+   * Состояние словами человека, посчитанное сервером.
+   *
+   * Не то же, что `status`. `status` отвечает на вопрос «рассмотрена
+   * ли», а человек спрашивает другое: чего ждут и от кого. Разница
+   * видна на больничном: подтвердить его можно только после справки,
+   * заявления и фактических дат, и до тех пор он «ожидаем документы»
+   * или «на проверке HR», а не «на согласовании».
+   */
+  stage:
+    | 'WAITING_DOCUMENTS'
+    | 'HR_REVIEW'
+    | 'NEEDS_FIX'
+    | 'PENDING'
+    | 'APPROVED'
+    | 'REJECTED'
+    | 'CANCELLED';
+  /** Судьба справки. `null` — её ещё не приносили. */
+  certificate_status: 'PENDING' | 'VERIFIED' | 'REJECTED' | null;
+  /**
+   * Что кадровик сказал о непринятой справке — дословно.
+   *
+   * Та же причина приходит сообщением в чат, но сообщение теряется в
+   * переписке к следующему дню, а заявка лежит перед глазами.
+   */
+  certificate_comment: string | null;
   extension_pending: boolean;
   first_day: string | null;
   last_day: string | null;
@@ -265,6 +291,8 @@ export interface AbsenceOptions {
   policy: {
     require_hr_approval: boolean;
     document_required: boolean;
+    /** Можно ли донести справку после того, как заявку одобрили. */
+    document_can_be_added_later: boolean;
     employee_may_cancel_pending: boolean;
     cancelling_approved_requires_hr: boolean;
     extensions_allowed: boolean;
@@ -422,6 +450,16 @@ export const api = {
    */
   absenceApplication: (id: string) =>
     fetchFile(`/me/absences/${id}/application`),
+  /**
+   * Прислать бумагу по заявке в чат.
+   *
+   * Сохранить файл прямо здесь нельзя: вебвью Telegram не отдаёт blob,
+   * и нажатие «скачать» заканчивается ничем. Поэтому бумагу присылает
+   * бот сообщением — оттуда её и пересылают, и печатают, и она
+   * остаётся в переписке.
+   */
+  sendAbsencePaper: (id: string, paper: 'application' | 'certificate') =>
+    call<null>(`/me/absences/${id}/papers/${paper}`, { method: 'POST' }),
   absences: () =>
     call<{ requests: AbsenceRequest[]; total: number }>('/me/absences'),
   absenceOptions: () => call<AbsenceOptions>('/me/absences/options'),
@@ -429,6 +467,20 @@ export const api = {
     call<AbsenceRequest>('/me/absences', { method: 'POST', form }),
   cancelAbsence: (id: string) =>
     call<AbsenceRequest>(`/me/absences/${id}`, { method: 'DELETE' }),
+  /**
+   * Приложить справку к уже созданной заявке.
+   *
+   * Тот же адрес, что и при создании: справку выдают в день выписки, а
+   * заявку подают в первый день болезни, и между ними проходит неделя.
+   */
+  attachAbsenceDocument: (id: string, file: File) => {
+    const form = new FormData();
+    form.append('document', file);
+    return call<AbsenceRequest>(`/me/absences/${id}/document`, {
+      method: 'POST',
+      form,
+    });
+  },
   /**
    * Лента уведомлений. Отдельный запрос, а не часть профиля: она
    * обновляется по своим поводам и не должна ронять весь экран, если

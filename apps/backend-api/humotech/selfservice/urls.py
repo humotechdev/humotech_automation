@@ -13,6 +13,7 @@ from humotech.selfservice.absences import (
     AbsenceApplicationView,
     AbsenceDetailView,
     AbsenceDocumentView,
+    AbsencePaperView,
     AbsenceExtendView,
     AbsenceListView,
     AbsenceOptionsView,
@@ -23,7 +24,7 @@ from humotech.selfservice.notifications import (
     NotificationReadView,
 )
 from humotech.selfservice.ask import AskView, EscalateView
-from humotech.selfservice.questions import QuestionMessageView
+from humotech.selfservice.questions import QuestionMessageView, ReplyFileView
 from humotech.selfservice.surveys import SurveyListView, SurveyView
 from humotech.onboarding.self_views import (
     OnboardingAcknowledgeView,
@@ -70,6 +71,11 @@ urlpatterns = [
     # обращение: сохранённый бланк разошёлся бы с продлением.
     path("absences/<uuid:request_id>/application", AbsenceApplicationView.as_view(),
          name="self-absence-application"),
+    path(
+        "absences/<uuid:request_id>/papers/<str:paper>",
+        AbsencePaperView.as_view(),
+        name="me-absence-paper",
+    ),
     path("absences/<uuid:request_id>/document", AbsenceDocumentView.as_view(),
          name="self-absence-document"),
     path("leave-balance", LeaveBalanceView.as_view(), name="self-leave-balance"),
@@ -80,6 +86,9 @@ urlpatterns = [
     # Вопрос в HR. Сообщение ложится в обращение по правилам очереди.
     path("questions/messages", QuestionMessageView.as_view(),
          name="self-question-message"),
+    # Файл из ответа HR: бот отправляет его сотруднику документом.
+    path("questions/replies/<uuid:message_id>/file", ReplyFileView.as_view(),
+         name="self-question-reply-file"),
     # Первичное ознакомление. Эти адреса — единственные, что открыты до
     # его завершения: гейт закрывает рабочие функции, а не дорогу к их
     # открытию.

@@ -1,1994 +1,739 @@
 /*
- * Страница «Посещаемость» — размеры сняты с эталона 1672×941.
- * Всё под префиксом `att-`: правки не задевают другие страницы. Корень —
- * `.attp`, а не `.att`: `.att` и `.att-side` уже заняты вкладкой
- * посещаемости в карточке сотрудника, и её правила перебивали эти.
+ * «Посещаемость». Префикс классов — `at-`: файл подключает только эта
+ * страница.
+ *
+ * Один белый лист постоянной высоты: шапка, информационная полоса,
+ * вкладки и место под режим. Зоны делятся тонкими серо-голубыми линиями,
+ * а не отдельными карточками. Цвет статуса — маленькая точка и текст:
+ * зелёный — присутствует, янтарный — опоздание или внимание, красный —
+ * нет отметки, сиреневый — отпуск, голубой — подтверждённый больничный.
  */
 
-.attp {
-  --att-ink: #13295a;
-  --att-text: #22355c;
-  --att-muted: #6b7c98;
-  --att-line: #e1e8f1;
-  --att-field: #d9e2ec;
-  --att-blue: #1673ee;
-  --att-green: #1f9d6a;
-  --att-orange: #ee8414;
+.at {
+  --at-ink: #12316b;
+  --at-text: #22355c;
+  --at-muted: #6b7f9e;
+  --at-line: #e2e9f3;
+  --at-edge: #dbe5f1;
+  --at-soft: #f5f8fc;
+  --at-blue: #0875e8;
+  --at-blue-hover: #0664c8;
+  --at-blue-soft: #eaf3ff;
+  --at-green: #1d9a5b;
+  --at-amber: #c77700;
+  --at-amber-soft: #fff6e8;
+  --at-red: #d6453d;
+  --at-red-soft: #fdf0ef;
+  --at-violet: #7c55d8;
+  --at-violet-soft: #f3effd;
+  --at-sky: #3a8bd6;
+  --at-sky-soft: #eaf4fd;
 
-  flex: 1;
+  flex: 1 1 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  /* Общее правило раздвигало блоки страницы на 16 точек: отступы здесь
-     заданы у каждого блока отдельно, по эталону. */
-  gap: 0;
-  font-family: 'Segoe UI', 'Open Sans', system-ui, sans-serif;
-  color: var(--att-text);
-}
-
-/* --- шапка ------------------------------------------------------------------ */
-
-.att-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  height: 64px;
-  flex: none;
-  padding-left: 5px;
-}
-
-.att-head__title {
-  margin: 0;
-  font-size: 33px;
-  line-height: 38px;
-  font-weight: 700;
-  color: var(--att-ink);
-}
-
-.att-head__sub {
-  margin: 2px 0 0;
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
   font-size: 14px;
-  line-height: 20px;
-  color: #4d5f7d;
+  letter-spacing: -0.005em;
+  color: var(--at-text);
 }
 
-.att-head__sub i {
-  margin: 0 5px;
-  font-style: normal;
+.canvas:has(> .at) { flex: 1 1 0; }
+
+/* Меню, календарь и карточка дня рисуются у body — тот же шрифт и там. */
+body:has(.at) .app-select__menu,
+body:has(.at) .cal,
+.at-drawer {
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
 }
 
-.att-head__side {
+/* --- лист ----------------------------------------------------------------- */
+
+.at-sheet {
+  flex: 1 1 0;
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
-  margin-top: 1px;
+  min-height: 600px;
+  padding: 0 24px;
+  border: 1px solid var(--at-edge);
+  border-radius: 16px;
+  background: #ffffff;
+  overflow: hidden;
 }
 
-.att-head__tools {
-  display: flex;
-  gap: 12px;
-}
-
-.att-head__updated {
-  margin: 7px 0 0;
-  font-size: 13px;
-  color: var(--att-muted);
-}
-
-.att-date {
+/* Шапка одной высоты во всех режимах: смена режима не сдвигает лист. */
+.at-head {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 10px;
-  width: 170px;
-  height: 40px;
-  padding: 0 12px 0 14px;
-  border: 1px solid var(--att-field);
-  border-radius: 8px;
-  background: #ffffff;
-  color: #3b4d6c;
+  justify-content: space-between;
+  gap: 16px;
+  height: 72px;
+  flex: 0 0 auto;
 }
 
-.att-date input {
-  flex: 1;
-  min-width: 0;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  font: inherit;
-  font-size: 14px;
-  color: var(--att-ink);
+.at-head__text { min-width: 0; }
+
+.at-head__title {
+  margin: 0;
+  font-size: 24px;
+  line-height: 30px;
+  font-weight: 650;
+  color: var(--at-ink);
 }
 
-/* --- кнопки ----------------------------------------------------------------- */
+.at-head__sub {
+  margin: 2px 0 0;
+  overflow: hidden;
+  font-size: 13.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--at-muted);
+}
 
-.att-btn {
+.at-head__tools { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
+.at-head__tools > * { flex: 0 0 auto; }
+.at-head__tools .app-select { width: 170px; min-width: 0; }
+.at-head__tools .app-select__trigger,
+.at-filters .app-select__trigger { height: 40px; border-color: var(--at-edge); border-radius: 10px; }
+.at-head__tools .date__field { min-width: 168px; height: 40px; border-color: var(--at-edge); border-radius: 10px; background: #ffffff; }
+.at-range { display: inline-flex; align-items: center; gap: 6px; color: var(--at-muted); }
+.at-range .date__field { min-width: 140px; }
+
+.at-icon,
+.at-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 9px;
+  gap: 8px;
   height: 40px;
-  padding: 0 16px;
-  border: 1px solid transparent;
-  border-radius: 8px;
+  border: 1px solid var(--at-edge);
+  border-radius: 10px;
+  background: #ffffff;
   font: inherit;
   font-size: 14px;
-  font-weight: 600;
-  text-decoration: none;
-  white-space: nowrap;
+  font-weight: 500;
+  color: var(--at-ink);
   cursor: pointer;
 }
 
-.att-btn--light {
-  border-color: var(--att-field);
-  background: #ffffff;
-  color: #1466d8;
-}
+.at-icon { width: 40px; padding: 0; color: #3f5173; }
+.at-btn { padding: 0 14px; }
+.at-icon:hover, .at-btn:hover { border-color: #b3cbea; color: var(--at-blue); }
 
-.att-btn--export {
-  width: 106px;
-}
-
-.att-btn--icon {
-  width: 42px;
-  padding: 0;
-}
-
-.att-btn--blue {
-  border-color: #0d69e8;
-  background: linear-gradient(180deg, #1a7df3 0%, #0d69e8 100%);
-  color: #ffffff;
-  box-shadow: 0 3px 10px rgba(13, 105, 232, 0.2);
-}
-
-.att-btn--outline {
-  border-color: #3a86ea;
-  background: #ffffff;
-  color: #1466d8;
-}
-
-.att-btn:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-
-.att-note {
-  margin: 0 0 6px;
-  font-size: 13px;
-}
-
-/* --- вкладки ---------------------------------------------------------------- */
-
-/* Вкладки — по ширине своих подписей. Раньше стояла ширина 1028: на
-   любом экране получалась длинная пустая полоса с двумя словами в
-   начале, а на узком она ещё и тянула страницу вбок. */
-.att-tabs {
-  display: flex;
-  gap: 2px;
-  height: 44px;
-  width: fit-content;
-  max-width: 100%;
-  margin: 10px 8px 16px 5px;
-  padding: 3px;
-  flex: none;
-  align-self: flex-start;
-  border: 1px solid var(--att-line);
-  border-radius: 12px;
-  background: rgba(255,255,255,.72);
-}
-
-.att-tab {
-  position: relative;
-  flex: 0 0 auto;
-  min-width: 96px;
-  padding: 0 18px;
-  border-radius: 9px;
-  border: 0;
-  background: transparent;
-  font: inherit;
-  font-size: 14.5px;
-  color: #4d5f7d;
-  cursor: pointer;
-}
-
-.att-tab--on {
-  background: #ffffff;
-  color: #1466d8;
-  font-weight: 600;
-  box-shadow: 0 1px 3px rgba(30,64,120,.08);
-}
-
-.att-tab--on::after {
-  content: '';
+.at-toast {
   position: absolute;
-  left: 0;
   right: 0;
-  bottom: 1px;
-  height: 2px;
-  border-radius: 2px;
-  background: var(--att-blue);
-}
-
-/* --- сетка ------------------------------------------------------------------ */
-
-/* Рабочая часть — два столбца в один ряд: слева состав смены, справа
-   «Требует внимания» и выбранный сотрудник. «Сегодня» стоит выше сетки,
-   во всю ширину: в столбце она отнимала высоту у таблицы. */
-.att-grid {
-  flex: 0 1 auto;
-  min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 440px;
-  gap: 16px;
-  margin: 0 8px 0 5px;
-}
-
-.att-today,
-.att-list,
-.att-attention,
-.att-person {
-  border: 1px solid rgba(221, 229, 239, 0.9);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 6px 24px rgba(30, 64, 120, 0.06);
-}
-
-.att-rail {
-  grid-column: 2;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 11px;
-}
-
-/* --- «Сегодня» ---------------------------------------------------------------- */
-
-.att-today {
-  flex: none;
-  display: grid;
-  grid-template-columns: 250px minmax(0, 334px) minmax(0, 1fr);
-  align-items: stretch;
-  margin: 0 8px 12px 5px;
-  padding: 0 0 0 16px;
-}
-
-.att-today__title {
-  margin: 14px 0 0;
-  font-size: 19px;
-  line-height: 24px;
-  font-weight: 700;
-  color: var(--att-ink);
-}
-
-.att-today__ring {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  margin-top: 8px;
-}
-
-.att-donut {
-  flex: none;
-}
-
-.att-donut__track,
-.att-donut__fill {
-  fill: none;
-  stroke-width: 10;
-}
-
-.att-donut__track { stroke: #e3eaf2; }
-
-.att-donut__fill {
-  stroke: var(--att-green);
-  stroke-linecap: round;
-}
-
-.att-donut__text {
-  fill: var(--att-ink);
-  font-size: 19px;
-  font-weight: 700;
-  text-anchor: middle;
-  dominant-baseline: central;
-}
-
-.att-today__sum {
-  position: relative;
-  display: flex;
-  flex-direction: column;
+  bottom: -6px;
+  z-index: 3;
   margin: 0;
-  padding-top: 8px;
-}
-
-.att-today__live {
-  position: absolute;
-  top: 0;
-  left: 4px;
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
-  background: var(--att-green);
-}
-
-.att-today__sum strong {
-  font-size: 24px;
-  line-height: 30px;
-  font-weight: 700;
-  color: var(--att-ink);
-  white-space: nowrap;
-}
-
-.att-today__sum span {
-  font-size: 15px;
-  line-height: 20px;
-  color: var(--att-ink);
-}
-
-.att-today__sum small {
-  margin-top: 2px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: var(--at-blue-soft);
   font-size: 13px;
-  color: var(--att-muted);
-  white-space: nowrap;
+  color: var(--at-ink);
 }
 
-.att-arrivals {
-  margin: 22px 0;
-  padding: 9px 18px 0;
-  border-left: 1px solid var(--att-line);
-  border-right: 1px solid var(--att-line);
-  min-width: 0;
-}
+.at-toast a { color: var(--at-blue); }
 
-.att-arrivals__title {
-  margin: 0;
-  font-size: 13px;
-  color: var(--att-ink);
-}
-
-.att-arrivals__bars {
-  display: flex;
-  align-items: flex-end;
-  gap: 2px;
-  height: 58px;
-  margin-top: 10px;
-  border-bottom: 1px dashed #cfdae8;
-}
-
-.att-arrivals__bars span {
-  flex: 1;
-  border-radius: 2px 2px 0 0;
-  background: #8fc0f5;
-}
-
-.att-arrivals__axis {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 7px;
-  font-size: 11.5px;
-  color: var(--att-muted);
-}
-
-.att-metrics {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  margin: 22px 0;
-}
-
-.att-metric {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-  min-width: 0;
-  padding: 4px 0 0 16px;
-  border: 0;
-  border-left: 1px solid var(--att-line);
-  background: transparent;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.att-metric:first-child {
-  border-left: 0;
-}
-
-.att-metric svg {
-  width: 26px;
-  height: 26px;
-}
-
-.att-metric span {
-  margin-top: 2px;
-  font-size: 13.5px;
-  color: #4d5f7d;
-  white-space: nowrap;
-}
-
-.att-metric strong {
-  font-size: 24px;
-  line-height: 28px;
-  font-weight: 700;
-}
-
-.att-metric--navy { color: var(--att-ink); }
-.att-metric--orange { color: var(--att-orange); }
-.att-metric--blue { color: var(--att-blue); }
-
-.att-metric--on span {
-  color: var(--att-ink);
-  font-weight: 600;
-}
-
-/* --- таблица ---------------------------------------------------------------- */
-
-.att-list {
-  grid-column: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  padding: 10px 10px 8px;
-}
-
-.att-list--log {
-  flex: 1;
-}
-
-.att-filters {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  height: 36px;
-  flex: none;
-}
-
-.att-chips {
-  display: flex;
-  gap: 10px;
-  margin-right: 21px;
-}
-
-.att-chip {
+.at-stepper {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  height: 32px;
-  padding: 0 10px 0 13px;
-  border: 1px solid var(--att-line);
-  border-radius: 8px;
-  background: #ffffff;
-  font: inherit;
+  height: 40px;
+  border: 1px solid var(--at-edge);
+  border-radius: 10px;
   font-size: 14px;
-  color: var(--att-ink);
-  cursor: pointer;
-  white-space: nowrap;
+  font-weight: 500;
+  color: var(--at-ink);
 }
 
-.att-chip__count {
-  min-width: 22px;
-  padding: 1px 7px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 600;
-  text-align: center;
-}
+.at-stepper span { padding: 0 12px; white-space: nowrap; }
 
-.att-chip--blue .att-chip__count { background: #e4efff; color: #1466d8; }
-.att-chip--green .att-chip__count { background: #e3f5ec; color: #1b7e4c; }
-.att-chip--orange .att-chip__count { background: #fff0de; color: #c0660a; }
-
-.att-chip--on {
-  border-color: var(--att-blue);
-  background: var(--att-blue);
-  color: #ffffff;
-}
-
-.att-chip--on .att-chip__count {
-  background: rgba(255, 255, 255, 0.24);
-  color: #ffffff;
-}
-
-.att-search {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  width: 181px;
-  height: 36px;
-  padding: 0 12px;
-  border: 1px solid var(--att-field);
-  border-radius: 8px;
-  background: #ffffff;
-  color: #50627f;
-}
-
-.att-search input {
-  flex: 1;
-  min-width: 0;
+.at-stepper button {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 38px;
   border: 0;
-  outline: 0;
-  background: transparent;
-  font: inherit;
-  font-size: 13px;
+  background: none;
+  color: #3f5173;
+  cursor: pointer;
 }
 
-.att-select {
+.at-stepper button:disabled { color: #c3cedd; cursor: default; }
+
+/* --- информационная полоса -------------------------------------------------- */
+
+.at-strip { flex: 0 0 auto; height: 116px; }
+
+.at-facts {
+  display: grid;
+  grid-template-columns: 1.25fr 1fr 1fr;
+  height: 100%;
+  border: 1px solid var(--at-line);
+  border-radius: 14px;
+  background: var(--at-soft);
+}
+
+.at-facts--three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.at-facts--four { grid-template-columns: 1.25fr repeat(3, minmax(0, 1fr)); }
+.at-facts--ghost { gap: 14px; padding: 16px; background: #ffffff; }
+
+.at-fact {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 20px;
+}
+
+.at-fact + .at-fact { border-left: 1px solid var(--at-line); }
+.at-fact__label { font-size: 13px; font-weight: 600; color: var(--at-ink); }
+.at-fact__line { display: flex; align-items: baseline; gap: 10px; min-width: 0; font-size: 14px; color: var(--at-ink); }
+
+.at-fact__big {
+  font-size: 28px;
+  line-height: 32px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--at-ink);
+}
+
+.at-fact__big--warn { color: var(--at-amber); }
+.at-fact__big--bad { color: var(--at-red); }
+.at-fact__title { font-size: 14.5px; font-weight: 500; color: var(--at-ink); }
+.at-fact__note { font-size: 12.5px; color: var(--at-muted); }
+.at-fact--big { flex-direction: row; align-items: center; justify-content: flex-start; gap: 14px; }
+.at-fact__stack { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+
+.at-fact__icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: #ffffff;
+  color: var(--at-blue);
+}
+
+.at-fact__icon--warn { color: var(--at-amber); }
+.at-fact__icon--bad { color: var(--at-red); }
+
+.at-meter {
+  display: block;
+  height: 6px;
+  border-radius: 999px;
+  background: #e4ebf4;
+  overflow: hidden;
+}
+
+.at-meter i { display: block; height: 100%; border-radius: inherit; background: var(--at-green); }
+.at-meter--thin { height: 4px; }
+.at-meter--thin i { background: var(--at-blue); }
+
+.at-delta { font-size: 12.5px; font-weight: 500; }
+.at-delta--up { color: var(--at-green); }
+.at-delta--down { color: var(--at-red); }
+
+.at-counts { display: flex; flex-direction: column; gap: 1px; margin: 0; padding: 0; list-style: none; }
+
+.at-counts li {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  color: var(--at-text);
+}
+
+.at-counts b { font-weight: 650; color: var(--at-ink); }
+
+/* --- вкладки ------------------------------------------------------------------ */
+
+.at-tabs {
   position: relative;
   display: flex;
-  width: 142px;
-  height: 36px;
-  border: 1px solid var(--att-field);
-  border-radius: 8px;
-  background: #ffffff;
+  gap: 28px;
+  flex: 0 0 auto;
+  margin-top: 8px;
+  border-bottom: 1px solid var(--at-line);
 }
 
-.att-select select {
-  width: 100%;
-  padding: 0 28px 0 12px;
+.at-tab {
+  height: 44px;
+  padding: 0 2px;
   border: 0;
-  outline: 0;
-  background: transparent;
-  appearance: none;
+  background: none;
   font: inherit;
-  font-size: 13px;
-  color: var(--att-ink);
+  font-size: 14.5px;
+  font-weight: 500;
+  color: #5d7090;
   cursor: pointer;
 }
 
-.att-select__arrow {
+.at-tab:hover { color: var(--at-ink); }
+.at-tab--on { font-weight: 650; color: var(--at-blue); }
+
+.at-tabs__ink {
   position: absolute;
-  top: 9px;
-  right: 10px;
-  color: #3b4d6c;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--at-blue);
   pointer-events: none;
 }
 
-.att-check {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
+.at-tabs__ink--move {
+  transition:
+    transform 200ms cubic-bezier(0.2, 0, 0, 1),
+    width 200ms cubic-bezier(0.2, 0, 0, 1);
 }
 
-.att-table {
-  flex: 0 1 auto;
+/* --- место под режим ------------------------------------------------------------ */
+
+.at-place { position: relative; flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+
+.at-pane {
+  flex: 1 1 0;
   min-height: 0;
-  margin: 12px -10px 0;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  animation: at-in 140ms ease-out;
 }
 
-.att-table__head,
-.att-row {
-  display: grid;
-  grid-template-columns: 210px 178px 300px 110px minmax(0, 1fr) 30px;
+@keyframes at-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .at-pane { animation: none; }
+  .at-tabs__ink--move { transition: none; }
+}
+
+/* --- фильтры -------------------------------------------------------------------- */
+
+.at-filters {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  padding: 0 0 0 16px;
+  gap: 10px;
+  flex: 0 0 auto;
+  padding: 14px 0 12px;
 }
 
-/* Прокручивается тело таблицы, поэтому шапка прибита к верху своего
-   окна прокрутки: без непрозрачного фона и слоя строки проступали бы
-   сквозь неё (у `.att-row` есть `position: relative`). */
-.att-table__head {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  height: 30px;
+.at-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-right: auto; }
+/* Выборы в строке фильтров — своей ширины, а не во всю строку. */
+.at-filters .app-select { flex: 0 0 190px; width: 190px; min-width: 0; }
+
+.at-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--at-edge);
+  border-radius: 10px;
   background: #ffffff;
-  font-size: 13px;
-  color: #4d5f7d;
-  border-bottom: 1px solid var(--att-line);
-}
-
-.att-row {
-  position: relative;
-  height: 52px;
-  border-bottom: 1px solid #edf1f6;
+  font: inherit;
+  font-size: 13.5px;
+  color: #33466a;
   cursor: pointer;
 }
 
-.att-row:hover {
-  background: #f8fbff;
-}
+.at-chip:hover { border-color: #b3cbea; }
+.at-chip--on, .at-chip--on:hover { border-color: var(--at-blue); background: var(--at-blue); color: #ffffff; }
 
-.att-row--on {
-  background: #f1f7ff;
-}
-
-.att-row--on::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: 4px;
-  background: var(--att-blue);
-}
-
-.att-row__who {
-  display: flex;
-  align-items: center;
-  gap: 17px;
-  min-width: 0;
-}
-
-.att-face {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-  object-fit: cover;
+.at-chip__n {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
   border-radius: 999px;
-  background: #e6effa;
-  color: #1c4c93;
-  font-weight: 600;
-}
-
-.att-row__face {
-  width: 44px;
-  height: 44px;
-  font-size: 15px;
-}
-
-.att-row__text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.att-row__text b,
-.att-row__text span {
-  font-size: 14px;
-  line-height: 19px;
-  color: var(--att-ink);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.att-row__text b {
-  font-weight: 600;
-}
-
-.att-row__text small {
-  font-size: 13px;
-  line-height: 18px;
-  color: var(--att-muted);
-  white-space: nowrap;
-}
-
-.att-row__time {
-  font-size: 14px;
-  color: var(--att-ink);
-  white-space: nowrap;
-}
-
-.att-row__go {
-  color: #1466d8;
-}
-
-/* --- шкала дня ---------------------------------------------------------------- */
-
-.att-line {
-  position: relative;
-  display: block;
-  width: 264px;
-  height: 34px;
-}
-
-.att-line--wide {
-  width: 100%;
-  height: 36px;
-}
-
-.att-line__track {
-  position: absolute;
-  top: 8px;
-  left: 0;
-  right: 0;
-  height: 8px;
-  border-radius: 999px;
-  background: #dfe6ef;
-}
-
-.att-line__track--empty {
-  background: repeating-linear-gradient(-45deg, #e9eef5 0 4px, #f6f8fb 4px 8px);
-  border: 1px solid #e3e9f1;
-}
-
-.att-line__part {
-  position: absolute;
-  top: 0;
-  height: 100%;
-  border-radius: 999px;
-  background: var(--att-green);
-}
-
-.att-line__late {
-  position: absolute;
-  top: -2px;
-  width: 10px;
-  height: 12px;
-  margin-left: -5px;
-  border-radius: 999px;
-  background: var(--att-orange);
-}
-
-.att-line__now {
-  position: absolute;
-  top: -3px;
-  right: -6px;
-  width: 14px;
-  height: 14px;
-  border: 3px solid var(--att-blue);
-  border-radius: 999px;
-  background: #ffffff;
-}
-
-.att-line__labels small {
-  position: absolute;
-  top: 18px;
+  background: #eef2f8;
   font-size: 12px;
-  line-height: 16px;
-  color: var(--att-ink);
-  transform: translateX(-50%);
-  white-space: nowrap;
-}
-
-.att-line__labels small:first-child {
-  transform: translateX(-20%);
-}
-
-/* Последняя подпись («сейчас» или уход) — под концом шкалы, внутри неё. */
-.att-line__labels small:last-child:not(:first-child) {
-  transform: translateX(-100%);
-}
-
-.att-line--absent .att-line__hatch {
-  position: absolute;
-  top: 2px;
-  left: 0;
-  right: 0;
-  height: 22px;
-  border-radius: 6px;
-  background: repeating-linear-gradient(-45deg, #e3dcfb 0 5px, #f1edfd 5px 10px);
-  font-size: 13px;
-  line-height: 22px;
   font-weight: 600;
-  color: #6b46d6;
-  text-align: center;
+  color: #45587a;
 }
 
-/* --- плашки состояния --------------------------------------------------------- */
+.at-chip--on .at-chip__n { background: rgba(255, 255, 255, 0.22); color: #ffffff; }
 
-.att-status {
-  display: inline-flex;
+.at-find {
+  display: flex;
   align-items: center;
   gap: 8px;
-  justify-self: start;
-  height: 26px;
-  padding: 0 12px 0 10px;
-  border-radius: 6px;
+  width: 240px;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--at-edge);
+  border-radius: 10px;
+  color: #8295b1;
+}
+
+.at-find:focus-within { border-color: #9cc1ef; }
+
+.at-find input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  color: var(--at-text);
+}
+
+.at-part-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 auto 0 0;
+  font-size: 16px;
+  font-weight: 650;
+  color: var(--at-ink);
+}
+
+.at-part-title b { font-size: 20px; font-weight: 700; color: var(--at-blue); }
+
+/* --- таблица -------------------------------------------------------------------- */
+
+.at-table { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+
+.at-table__head,
+.at-row {
+  display: grid;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px;
+}
+
+.at-table__head {
+  flex: 0 0 auto;
+  height: 38px;
+  border-radius: 10px;
+  background: var(--at-soft);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #56698a;
+}
+
+.at-table__body {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #d5dfec transparent;
+}
+
+.at-row {
+  min-height: 48px;
+  border-bottom: 1px solid #edf2f8;
   font-size: 13.5px;
-  font-weight: 500;
+  text-decoration: none;
+  color: var(--at-text);
+}
+
+a.at-row:hover { background: #f8fbff; }
+.at-row--warn { background: var(--at-amber-soft); }
+.at-row--bad { background: var(--at-red-soft); }
+
+.at-table--day .at-table__head,
+.at-table--day .at-row {
+  grid-template-columns: minmax(180px, 1.5fr) minmax(140px, 1.2fr) 110px 70px 70px 104px minmax(150px, 1.1fr) 90px;
+}
+
+.at-table--log .at-table__head,
+.at-table--log .at-row {
+  grid-template-columns: 64px minmax(170px, 1.3fr) minmax(170px, 1.2fr) minmax(150px, 1.1fr) 140px minmax(150px, 1fr) 70px;
+}
+
+.at-table--week .at-table__head,
+.at-table--week .at-row {
+  grid-template-columns: minmax(170px, 1.4fr) minmax(130px, 1fr) repeat(7, minmax(84px, 0.8fr)) 96px;
+  gap: 6px;
+}
+
+.at-table--period .at-table__head,
+.at-table--period .at-row {
+  grid-template-columns: minmax(170px, 1.6fr) 72px 104px minmax(110px, 1fr) 100px 80px 86px 80px 16px;
+  gap: 8px;
+}
+
+.at-who { display: flex; align-items: center; gap: 10px; min-width: 0; }
+
+.at-who b {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--at-ink);
 }
 
-.att-status::before {
-  content: '';
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
+.at-face {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--at-blue-soft);
+  font-size: 11.5px;
+  font-weight: 650;
+  color: #2d5a9a;
 }
 
-.att-status--ok { background: #e6f6ee; color: #1b7e4c; }
-.att-status--ok::before { background: #1fa45f; }
-.att-status--idle { background: #eef2f7; color: #4f5f78; }
-.att-status--idle::before { background: #5c6f95; }
-.att-status--warn { background: #fff0e0; color: #c0660a; }
-.att-status--warn::before { background: #f08a1d; }
-.att-status--violet { background: #f0ebfd; color: #6b46d6; }
-.att-status--violet::before { background: #7c5ce6; }
-.att-status--blue { background: #e7f0ff; color: #1b5fc9; }
-.att-status--blue::before { background: #2f7ae5; }
-.att-status--grey { background: #eef2f7; color: #52627a; }
-.att-status--grey::before { background: #8391a8; }
+.at-face--sm { width: 30px; height: 30px; }
+.at-muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--at-muted); }
+.at-two { display: flex; flex-direction: column; gap: 1px; }
+.at-two small { font-size: 12px; color: #8295b1; }
+.at-num { font-variant-numeric: tabular-nums; color: var(--at-ink); }
+.at-num--warn { color: var(--at-amber); font-weight: 600; }
+.at-num--bad { color: var(--at-red); font-weight: 600; }
+.at-right { justify-self: end; text-align: right; }
+.at-center { text-align: center; }
+.at-event { display: flex; align-items: center; gap: 8px; color: var(--at-ink); }
+.at-event svg { color: var(--at-green); }
+.at-go { color: #9cadc4; }
 
-.att-empty {
-  margin: 20px 16px;
-  font-size: 13px;
-  color: var(--att-muted);
+.at-state { display: flex; align-items: center; gap: 8px; font-weight: 500; }
+.at-state__text { display: flex; flex-direction: column; min-width: 0; }
+.at-state__text small { overflow: hidden; font-size: 12px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; color: var(--at-muted); }
+.at-state--ok { color: var(--at-green); }
+.at-state--warn { color: var(--at-amber); }
+.at-state--bad { color: var(--at-red); }
+.at-state--violet { color: var(--at-violet); }
+.at-state--blue { color: var(--at-sky); }
+.at-state--grey, .at-state--idle { color: #6b7f9e; }
+
+.at-dot { display: inline-block; flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: #b3c0d2; }
+.at-dot--ok { background: var(--at-green); }
+.at-dot--warn { background: #f0a020; }
+.at-dot--bad { background: var(--at-red); }
+.at-dot--violet { background: var(--at-violet); }
+.at-dot--blue { background: var(--at-sky); }
+.at-dot--idle { background: #5d7ba5; }
+.at-dot--grey { background: #b3c0d2; }
+
+.at-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  text-decoration: none;
+  color: var(--at-blue);
+  cursor: pointer;
 }
 
-.att-empty--bad {
-  color: #b42318;
+.at-link:hover { color: var(--at-blue-hover); text-decoration: underline; }
+
+/* Ячейки недели: цвет — смысл дня, текст — подробность. */
+.at-cell {
+  display: grid;
+  place-items: center;
+  height: 34px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--at-ink);
 }
 
-/* --- пагинация -------------------------------------------------------------- */
+.at-cell--ok { background: #f3faf6; color: #1f6b44; }
+.at-cell--warn { background: var(--at-amber-soft); color: #9a5b00; }
+.at-cell--bad { background: var(--at-red-soft); color: var(--at-red); }
+.at-cell--violet { background: var(--at-violet-soft); color: var(--at-violet); }
+.at-cell--blue { background: var(--at-sky-soft); color: #2d6fae; }
 
-.att-pager {
+.at-cell--off {
+  background: repeating-linear-gradient(135deg, #f5f7fa 0 6px, #eef1f6 6px 7px);
+  color: #9aa9be;
+}
+
+.at-cell--future { background: #fafbfd; }
+.at-weekend-head { color: #8a9ab3; }
+.at-total { display: flex; flex-direction: column; align-items: center; gap: 1px; }
+.at-total b { font-size: 14px; font-weight: 650; color: var(--at-ink); }
+.at-total small { font-size: 12px; color: var(--at-muted); }
+
+.at-share { display: grid; grid-template-columns: minmax(0, 1fr) 40px; align-items: center; gap: 8px; }
+.at-share b { font-weight: 600; color: var(--at-ink); }
+
+/* Явка по дням недели — тонкая полоса над матрицей. */
+.at-daysline {
+  display: grid;
+  grid-template-columns: 130px repeat(7, minmax(0, 1fr));
+  align-items: center;
+  gap: 14px;
+  flex: 0 0 auto;
+  padding: 14px 4px 12px;
+}
+
+.at-daysline__title { font-size: 13px; font-weight: 600; color: var(--at-ink); }
+.at-daysline__cell { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 2px 8px; }
+.at-daysline__cell small { font-size: 12px; color: var(--at-muted); }
+.at-daysline__cell b { font-size: 13.5px; font-weight: 650; text-align: right; color: var(--at-ink); }
+.at-daysline__cell .at-meter { grid-column: 1 / -1; }
+
+/* Активность по часам в журнале. */
+.at-hours { display: grid; grid-template-columns: 150px minmax(0, 1fr); align-items: end; gap: 14px; flex: 0 0 auto; padding-bottom: 12px; }
+.at-hours__title { align-self: center; font-size: 13px; font-weight: 600; color: var(--at-ink); }
+.at-hours__bars { display: grid; grid-template-columns: repeat(13, minmax(0, 1fr)); gap: 6px; height: 56px; }
+.at-hours__col { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 4px; min-width: 0; }
+.at-hours__col i { display: block; width: 70%; min-height: 2px; border-radius: 3px 3px 0 0; background: #9cc4f2; }
+.at-hours__col small { font-size: 11px; color: #8295b1; }
+
+/* Период: таблица и аналитическая колонка внутри одного листа. */
+.at-split { flex: 1 1 0; min-height: 0; display: grid; grid-template-columns: minmax(0, 70fr) minmax(280px, 30fr); }
+.at-split__main { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding-right: 20px; border-right: 1px solid var(--at-line); }
+.at-split__side { min-height: 0; overflow-y: auto; padding: 14px 0 14px 20px; }
+.at-side-part { padding-bottom: 14px; }
+.at-side-part + .at-side-part { padding-top: 14px; border-top: 1px solid var(--at-line); }
+.at-side-part .at-part-title { margin-bottom: 10px; font-size: 15px; }
+
+.at-mini svg { display: block; width: 100%; height: 90px; }
+.at-mini__grid { stroke: #edf2f8; }
+.at-mini__line { fill: none; stroke: var(--at-blue); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.at-mini__axis { display: flex; justify-content: space-between; font-size: 11.5px; color: #8295b1; }
+
+.at-bars { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.at-bars li { display: grid; grid-template-columns: 90px minmax(0, 1fr) 24px; align-items: center; gap: 10px; font-size: 13.5px; }
+.at-bars__track { height: 8px; border-radius: 999px; background: #eef2f8; overflow: hidden; }
+.at-bars__fill { display: block; height: 100%; border-radius: inherit; }
+.at-bars__fill--violet { background: #a98be8; }
+.at-bars__fill--blue { background: #7fb3e8; }
+.at-bars__fill--grey { background: #b3c0d2; }
+.at-bars b { text-align: right; color: var(--at-ink); }
+
+.at-attention { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+
+.at-attention button {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 4px;
+  border: 0;
+  border-bottom: 1px solid #edf2f8;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.at-attention button:hover { background: #f8fbff; }
+.at-attention__text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.at-attention__text b { overflow: hidden; font-size: 13.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; color: var(--at-ink); }
+.at-attention__text small { display: flex; align-items: center; gap: 6px; font-size: 12.5px; }
+.at-attention time { font-size: 12.5px; color: var(--at-muted); }
+
+/* --- низ ------------------------------------------------------------------------- */
+
+.at-foot {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 44px;
-  margin-top: 8px;
-  padding: 0 12px 0 6px;
-  flex: none;
-}
-
-.att-pager p {
-  margin: 0;
-  font-size: 13px;
-  color: #4d5f7d;
-}
-
-.att-pages {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.att-pages__arrow,
-.att-pages__one,
-.att-pages__next {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 34px;
-  border: 1px solid transparent;
-  border-radius: 7px;
-  background: transparent;
-  font: inherit;
-  font-size: 14px;
-  color: #3b4d6c;
-  cursor: pointer;
-}
-
-.att-pages__arrow {
-  width: 32px;
-  margin-right: 4px;
-  border-color: var(--att-field);
-  background: #ffffff;
-}
-
-.att-pages__one {
-  min-width: 30px;
-}
-
-.att-pages__one--on {
-  background: var(--att-blue);
-  color: #ffffff;
-  font-weight: 600;
-}
-
-.att-pages__next {
-  width: 32px;
-  margin-left: 20px;
-  color: #1466d8;
-}
-
-.att-pages button:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-
-/* --- «Требует внимания» ------------------------------------------------------- */
-
-.att-attention {
-  flex: none;
-  padding: 14px 18px 10px;
-}
-
-.att-attention__title {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 0 0 8px;
-  font-size: 18px;
-  line-height: 24px;
-  font-weight: 700;
-  color: var(--att-ink);
-}
-
-.att-attention__total {
-  padding: 1px 10px;
-  border-radius: 999px;
-  background: #e8f0fb;
-  font-size: 13px;
-  font-weight: 600;
-  color: #1c4c93;
-}
-
-.att-attention__go {
-  margin-left: auto;
-  color: #34507f;
-}
-
-.att-attention__row {
-  display: grid;
-  grid-template-columns: 30px 1fr auto 24px;
-  align-items: center;
   gap: 12px;
-  width: 100%;
-  height: 43px;
-  padding: 0 0 0 2px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.att-attention__row svg:first-child {
-  width: 24px;
-  height: 24px;
-}
-
-.att-attention__row span {
-  font-size: 15px;
-  color: var(--att-ink);
-}
-
-.att-attention__row b {
-  min-width: 26px;
-  padding: 2px 8px;
-  border-radius: 6px;
-  font-size: 13px;
-  font-weight: 600;
-  text-align: center;
-}
-
-.att-attention__row svg:last-child {
-  color: #34507f;
-}
-
-.att-attention__row--orange svg:first-child { color: var(--att-orange); }
-.att-attention__row--orange b { background: #fff0de; color: #c0660a; }
-.att-attention__row--navy svg:first-child { color: #34507f; }
-.att-attention__row--navy b { background: #eaf0f7; color: #34507f; }
-
-.att-attention__row:hover,
-.att-attention__row--on {
-  background: #f3f8ff;
-}
-
-/* --- выбранный сотрудник -------------------------------------------------------- */
-
-.att-person,
-.att-fix {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-}
-
-.att-person {
-  display: flex;
-  flex-direction: column;
-  padding: 14px 14px 14px 16px;
-}
-
-.att-person__who {
-  display: flex;
-  gap: 14px;
-}
-
-.att-person__face {
-  width: 74px;
-  height: 74px;
-  font-size: 22px;
-}
-
-.att-person__who p {
-  margin: 0;
-}
-
-.att-person__name {
-  font-size: 16px;
-  line-height: 22px;
-  font-weight: 700;
-  color: var(--att-ink);
-}
-
-.att-person__number {
-  margin-bottom: 4px !important;
-  font-size: 13px;
-  line-height: 20px;
-  color: var(--att-muted);
-}
-
-.att-person__facts {
-  display: grid;
-  grid-template-columns: 117px minmax(0, 1fr);
-  row-gap: 4px;
-  margin: 12px 0 0;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--att-line);
-}
-
-.att-person__facts dt {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 14px;
-  color: var(--att-muted);
-}
-
-.att-person__facts dt svg {
-  color: #4d6d9c;
-}
-
-.att-person__facts dd {
-  margin: 0;
-  font-size: 15px;
-  color: var(--att-ink);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.att-person__day {
-  margin-top: 10px;
-}
-
-.att-person__label {
-  margin: 0;
-  font-size: 13px;
-  color: var(--att-muted);
-}
-
-.att-person__total {
-  margin: 2px 0 10px;
-  font-size: 21px;
-  line-height: 26px;
-  font-weight: 700;
-  color: var(--att-ink);
-}
-
-.att-events {
-  margin: 8px 0 0;
-  padding: 0;
-  list-style: none;
-  /* Все события дня, а не первые три: у человека с обедом их четыре.
-     Список прокручивается внутри себя, чтобы карточка не растягивалась
-     на весь экран и кнопки под ней оставались видны. */
-  max-height: 210px;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
-}
-
-.att-events li {
-  position: relative;
-  display: flex;
-  gap: 18px;
-  height: 24px;
-  padding-left: 30px;
-  align-items: center;
-  font-size: 13px;
-  color: #4d5f7d;
-}
-
-.att-events li::before {
-  content: '';
-  position: absolute;
-  left: 3px;
-  width: 12px;
-  height: 12px;
-  border-radius: 999px;
-  background: var(--att-green);
-}
-
-.att-events__out::before {
-  background: #9fb3cf !important;
-}
-
-.att-events li b {
-  font-size: 14px;
-  color: var(--att-ink);
-}
-
-.att-events__none::before {
-  display: none;
-}
-
-.att-events .att-events__none {
-  padding-left: 0;
-}
-
-.att-person__actions {
-  display: grid;
-  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
-  gap: 12px;
-  margin-top: auto;
-  padding-top: 12px;
-}
-
-/* Обе подписи целиком: при 158 + остаток «Исправить отметку» не
-   помещалась и обрезалась краем панели. */
-.att-person__actions .att-btn {
-  height: 46px;
-  gap: 7px;
-  padding: 0 10px;
-  font-size: 13.5px;
-}
-
-.att-log {
-  width: 100%;
-  margin-top: 12px;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-
-.att-log th,
-.att-log td {
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--att-line);
-  text-align: left;
-}
-
-.att-log th {
-  color: var(--att-muted);
-  font-weight: 600;
-}
-
-/* Журнал отметок — обычный контент страницы, а не вложенное окно со своим
-   обрезанным скроллом. Так таблица продолжает блок вниз и читается целиком. */
-.attp:has(.att-list--log) {
-  min-height: auto;
-}
-
-.canvas:has(> .attp:has(.att-list--log)) {
-  overflow: visible;
-}
-
-.attp:has(.att-list--log) .att-grid {
-  flex: none;
-  align-items: start;
-}
-
-.attp:has(.att-list--log) .att-list--log,
-.attp:has(.att-list--log) .att-list--log .att-table {
-  overflow: visible;
-}
-
-.att-list--log .att-filters {
-  margin-bottom: 6px;
-}
-
-.att-list--log .att-log tbody tr:hover {
-  background: #f8fbff;
-}
-
-/* At a normal laptop viewport the right rail consumes a meaningful share of
-   the page. Let the summary and table redistribute their columns instead of
-   drawing the status column underneath that rail. */
-@media (max-width: 1600px) {
-  .att-today {
-    grid-template-columns: minmax(200px, .75fr) minmax(210px, .9fr) minmax(340px, 1.35fr);
-  }
-
-  .att-metric span {
-    white-space: normal;
-    line-height: 1.15;
-  }
-
-  .att-table__head,
-  .att-row {
-    grid-template-columns: minmax(168px, 1fr) minmax(120px, .78fr) minmax(190px, 1.3fr) 74px minmax(94px, .8fr) 18px;
-    padding-right: 10px;
-  }
-}
-
-/* Fit the first page of attendance (including statuses and pager) in the
-   ordinary 864px CSS viewport produced by a 1080p display at 125% scaling. */
-@media (max-height: 900px) {
-  .att-list { padding-top: 8px; padding-bottom: 6px; }
-  .att-filters { height: 34px; }
-  .att-table { margin-top: 8px; }
-  .att-table__head { height: 26px; }
-}
-
-/* --- узкие экраны ----------------------------------------------------------
- *
- * Строка отбора собрана из шести чипов и двух списков и на широком
- * экране помещается в одну линию высотой 36. На 1024 она в эту линию не
- * влезает: `height: 36px` вместе с `flex: none` не даёт ей перенестись,
- * и хвост строки выезжает из панели поверх правой карточки.
- *
- * Поэтому ниже 1280 строка перестаёт быть строкой фиксированной высоты
- * и переносится по мере надобности. Порядок и вид чипов не меняются.
- */
-@media (max-width: 1600px) {
-  .att-filters {
-    height: auto;
-    flex-wrap: nowrap;
-    gap: 7px;
-    overflow: visible;
-  }
-
-  .att-chips {
-    flex-wrap: nowrap;
-    gap: 6px;
-    margin-right: 0;
-    flex: 0 1 auto;
-  }
-
-  .att-chip { padding-left: 9px; padding-right: 8px; gap: 6px; }
-  .att-search { width: 170px; flex: 0 1 170px; }
-  .att-select,
-  .att-filters > .app-select { width: 122px; flex: 0 0 122px; min-width: 0; }
-  .att-filters > .app-select .app-select__trigger { min-width: 0; padding-left: 10px; padding-right: 26px; }
-}
-
-/* Таблица дня на узком экране: второстепенные колонки уходят, важные
-   остаются. Прятать фамилию и офис нельзя — ради них таблицу и
-   открывают. */
-@media (max-width: 1100px) {
-  .att-table__head span:nth-child(n + 5),
-  .att-row > :nth-child(n + 5) {
-    display: none;
-  }
-
-  .att-table__head,
-  .att-row {
-    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1.2fr) 96px;
-  }
-}
-
-/* --- узкая ширина: одна колонка ---------------------------------------------
- *
- * Правый столбец задан жёстко — 367 px. Ниже 1100 левому остаётся около
- * четырёхсот, а таблице дня нужно больше шестисот: строки уезжали под
- * правую панель, и та оказывалась поверх фамилий. Поэтому колонки
- * складываются: сначала список во всю ширину, под ним — «Требует
- * внимания» и карточка сотрудника.
- */
-@media (max-width: 1100px) {
-  .att-grid {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto;
-    margin: 0;
-  }
-
-  .att-rail {
-    grid-column: 1;
-    grid-row: auto;
-  }
-
-  .att-today {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-/* Пустое состояние дня без отметок: заполненный аккуратный блок вместо
-   прочерка и пустой полосы графика. */
-.att-person__blank {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  margin: 14px 0 16px;
-  padding: 16px 14px;
-  border: 1px solid var(--att-line);
-  border-radius: 10px;
-  background: #f7fafd;
-}
-
-.att-person__blankIcon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  background: #e8f0fb;
-  color: #2f6fd0;
-}
-
-.att-person__blankTitle {
-  margin: 4px 0 0;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--att-ink);
-}
-
-.att-person__blankText {
-  margin: 0;
-  font-size: 13px;
-  color: #53647f;
-}
-
-/* Кнопки панели всегда целиком: делят ширину и переносятся, а не
-   обрезаются. */
-.att-person__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.att-person__actions > * {
-  flex: 1 1 150px;
-  min-width: 0;
-  justify-content: center;
-}
-
-/* Страница в высоту экрана: таблица дня и правая колонка прокручиваются
-   каждая у себя, заголовок, вкладки и отбор остаются на виду.
- *
- * Только на экране выше 780: на 720 после шапки, заголовка, вкладок и
- * карточки «Сегодня» таблице оставалось девяносто пикселей — одна
- * строка с половиной. Там честнее отдать прокрутку всей странице. */
-@media (min-height: 780px) {
-.canvas:has(> .attp) {
-  flex: 1 1 0;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.attp {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.att-grid {
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
-.att-list,
-.att-rail {
-  min-height: 0;
-}
-
-.att-list {
-  overflow: hidden;
-}
-
-.att-table {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
-}
-
-/* Правая колонка целиком не прокручивается: «Требует внимания»
-   остаётся сверху, прокручивается середина карточки сотрудника. */
-.att-rail {
-  overflow: hidden;
-}
-
-.att-person {
-  overflow: hidden;
-}
-
-/* Карточка дня — форма с полями, её удобнее листать целиком. */
-.att-fix {
-  overflow-y: auto;
-  scrollbar-gutter: stable;
-}
-}
-
-/* --- «Посещаемость»: плотная рабочая страница ---------------------------------
- *
- * Та же задача, что решена на «Обращениях» и «Сотрудниках»: при
- * масштабе браузера 100 % страница должна вмещать столько же, сколько
- * сейчас вмещает при 80 %. Уменьшены сами величины, а не картинка:
- * `zoom` и `transform` оставили бы интерфейс крупным, просто
- * нарисованным мельче.
- *
- * Правила лежат в конце файла, потому что перебивают размеры,
- * снятые с эталона 1672×941 выше. Те, что касаются рабочей части,
- * привязаны к `.att-grid`: «Журнал отметок» рисует свой `.att-list`
- * вне сетки, и плотность дня его не задевает.
- *
- * Нижняя граница текста — 12,5 px: ниже фамилии и время в таблице
- * читать тяжело, и экономия высоты этого не стоит.
- */
-
-/* --- шапка страницы --------------------------------------------------------- */
-
-.att-head__title {
-  font-size: 26px;
-  line-height: 32px;
-}
-
-.att-head__sub {
-  font-size: 12.5px;
-  line-height: 18px;
-}
-
-.att-head__updated {
-  font-size: 12px;
-}
-
-.att-head__tools .att-btn {
-  height: 36px;
-  font-size: 13.5px;
-}
-
-/* Высота — по кнопке внутри, а не числом. При жёстких 36 белая кнопка
-   выбранной вкладки (32 плюс рамка и отступы) не помещалась в полосу и
-   торчала из неё. */
-.att-tabs {
-  height: auto;
-  align-items: center;
-  gap: 2px;
-  margin: 6px 8px 10px 5px;
-  padding: 3px;
-}
-
-.att-tabs .app-segmented__button {
-  min-height: 30px;
-  min-width: 84px;
-  padding: 0 14px;
-  font-size: 13.5px;
-}
-
-/* --- «Сегодня»: одна низкая карточка ----------------------------------------- */
-
-.att-today {
-  margin-bottom: 10px;
-  padding-left: 14px;
-}
-
-/* Четырём показателям хватает по сотне пикселей: подпись короткая, число
-   одно. Остаток ширины уходит графику приходов — на нём время читается
-   только тогда, когда столбцам есть где стоять. На узком экране
-   карточка складывается в столбец правилом выше, его не перебиваем. */
-@media (min-width: 1101px) {
-  .att-today {
-    grid-template-columns: 220px minmax(0, 1.3fr) minmax(360px, 1fr);
-  }
-}
-
-.att-today__title {
-  margin-top: 10px;
-  font-size: 16.5px;
-  line-height: 22px;
-}
-
-.att-today__ring {
-  gap: 12px;
-  margin-top: 4px;
-}
-
-.att-donut {
-  width: 76px;
-  height: 76px;
-}
-
-.att-donut__text {
-  font-size: 17px;
-}
-
-.att-today__sum {
-  padding-top: 4px;
-}
-
-.att-today__live {
-  width: 8px;
-  height: 8px;
-}
-
-.att-today__sum strong {
-  font-size: 20px;
-  line-height: 25px;
-}
-
-.att-today__sum span {
-  font-size: 13.5px;
-  line-height: 18px;
-}
-
-.att-today__sum small {
-  font-size: 12px;
-}
-
-.att-arrivals {
-  margin: 14px 0;
-  padding: 6px 14px 0;
-}
-
-.att-arrivals__title {
-  font-size: 12.5px;
-}
-
-.att-arrivals__bars {
-  height: 42px;
-  margin-top: 6px;
-}
-
-.att-arrivals__axis {
-  margin-top: 4px;
-  font-size: 11px;
-}
-
-.att-metrics {
-  margin: 14px 0;
-}
-
-.att-metric {
-  gap: 2px;
-  padding: 2px 0 0 12px;
-}
-
-.att-metric svg {
-  width: 22px;
-  height: 22px;
-}
-
-.att-metric strong {
-  font-size: 20px;
-  line-height: 24px;
-}
-
-.att-metric span {
-  margin-top: 0;
-  font-size: 12.5px;
-}
-
-/* --- левая панель: отбор одной строкой --------------------------------------- */
-
-.att-grid .att-list {
-  padding: 8px 8px 6px;
-}
-
-/* Четыре быстрых отбора, поиск и два списка — в одну строку без
-   прокрутки. Уступает поиск: подсказка в поле читается и укороченной, а
-   счётчики на чипах и выбранный офис обрезать нельзя. */
-.att-grid .att-filters {
-  flex-wrap: nowrap;
-  gap: 6px;
-  height: auto;
-  min-width: 0;
-}
-
-.att-grid .att-chips {
-  flex: none;
-  gap: 5px;
-  margin-right: 2px;
-}
-
-.att-chip {
-  height: 30px;
-  padding: 0 7px 0 9px;
-  gap: 5px;
-  font-size: 12.5px;
-}
-
-.att-chip__count {
-  padding: 0 5px;
-  font-size: 11.5px;
-}
-
-.att-grid .att-search {
-  flex: 1 1 130px;
-  gap: 6px;
-  width: auto;
-  min-width: 84px;
-  height: 32px;
-  padding: 0 9px;
-}
-
-.att-search input {
-  min-width: 0;
-  font-size: 13px;
-}
-
-.att-grid .att-select,
-.att-grid .att-filters > .app-select {
-  flex: 0 0 112px;
-  width: 112px;
-  min-width: 0;
-  height: 32px;
-}
-
-/* «Все статусы» длиннее «Все офисы» — список статусов чуть шире. */
-.att-grid .att-filters > .app-select:last-child {
-  flex-basis: 126px;
-  width: 126px;
-}
-
-.att-grid .att-filters > .app-select .app-select__trigger {
-  gap: 4px;
-  padding: 0 8px 0 9px;
-}
-
-.att-select select,
-.att-filters > .app-select .app-select__trigger {
-  min-height: 32px;
-  font-size: 13px;
-}
-
-/* На панели уже 760 строка не помещается даже со сжатым поиском: тогда
-   поиск и списки переходят на вторую строку целиком, а не вылезают за
-   край. Считаем по ширине самой панели — она зависит от правой колонки
-   и бокового меню, а не только от окна. */
-.att-grid .att-list {
-  container: att-list / inline-size;
-}
-
-@container att-list (max-width: 760px) {
-  .att-grid .att-filters {
-    flex-wrap: wrap;
-    row-gap: 6px;
-  }
-
-  .att-grid .att-chips {
-    flex: 1 0 100%;
-  }
-}
-
-/* --- таблица дня -------------------------------------------------------------
- *
- * Правый столбец стал шире (440 вместо 367), поэтому доли колонок
- * заданы заново: сжимаются «Офис / график» и полоса рабочего дня, а
- * статус и стрелка сохраняют свою ширину — их обрезать нельзя.
- */
-
-.att-grid .att-table {
-  margin: 8px -8px 0;
-}
-
-.att-grid .att-table__head,
-.att-grid .att-row {
-  grid-template-columns:
-    minmax(150px, 1.15fr) minmax(100px, 0.7fr) minmax(160px, 1.15fr) 62px minmax(112px, 0.8fr) 16px;
-  gap: 8px;
-  padding: 0 8px 0 12px;
-}
-
-/* Длинная фамилия или название отдела сжимают свою ячейку, а не
-   выталкивают соседнюю. */
-.att-grid .att-table__head > *,
-.att-grid .att-row > * {
-  min-width: 0;
-}
-
-.att-grid .att-table__head {
-  height: 28px;
-  font-size: 12.5px;
-}
-
-.att-grid .att-row {
-  height: 42px;
-}
-
-.att-row__face {
-  width: 30px;
-  height: 30px;
-  font-size: 12px;
-}
-
-.att-row__text b {
-  font-size: 13.5px;
-}
-
-.att-row__text span,
-.att-row__text small {
-  font-size: 12px;
-}
-
-.att-row__time {
-  font-size: 13px;
-}
-
-.att-status {
-  height: 24px;
-  padding: 0 10px 0 8px;
-  gap: 6px;
-  font-size: 12.5px;
-}
-
-.att-status::before {
-  width: 8px;
-  height: 8px;
-}
-
-.att-line__labels small {
-  font-size: 11px;
-}
-
-/* --- пагинация внизу панели --------------------------------------------------- */
-
-.att-grid .att-pager {
-  height: 36px;
-  margin-top: 6px;
-}
-
-.att-pager p {
-  font-size: 12.5px;
-}
-
-.att-pages__arrow,
-.att-pages__one,
-.att-pages__next {
-  height: 30px;
-}
-
-/* --- правая колонка ----------------------------------------------------------- */
-
-.att-attention {
-  padding: 8px 12px 4px;
-}
-
-.att-attention__title {
-  margin-bottom: 4px;
-  font-size: 15.5px;
-  line-height: 21px;
-}
-
-.att-attention__row {
-  height: 30px;
-  gap: 10px;
-}
-
-.att-attention__row span {
-  font-size: 13.5px;
-}
-
-.att-attention__row svg:first-child {
-  width: 20px;
-  height: 20px;
-}
-
-.att-person {
-  padding: 10px 12px 10px 14px;
-}
-
-.att-person__who {
-  flex: none;
-  align-items: center;
-  gap: 10px;
-}
-
-.att-person__face {
-  width: 44px;
-  height: 44px;
-  font-size: 15px;
-}
-
-/* Табельный номер и статус — в одну строку под фамилией: шапка
-   карточки становится в полтора раза ниже. */
-.att-person__who > div {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  column-gap: 8px;
-  min-width: 0;
-}
-
-.att-person__name {
-  flex: 1 0 100%;
-  font-size: 15px;
-  line-height: 20px;
-}
-
-.att-person__number {
-  margin-bottom: 0 !important;
-  font-size: 12.5px;
-  line-height: 22px;
-}
-
-/* Середина карточки — единственное, что прокручивается в правой
-   колонке: шапка с фамилией и кнопки внизу остаются на месте. */
-.att-person__scroll {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
-}
-
-.att-person__facts {
-  grid-template-columns: 92px minmax(0, 1fr);
-  row-gap: 2px;
-  margin-top: 8px;
-  padding-bottom: 8px;
-}
-
-.att-person__facts dt {
-  gap: 6px;
-  font-size: 12.5px;
-  line-height: 20px;
-}
-
-.att-person__facts dt svg {
-  width: 15px;
-  height: 15px;
-}
-
-.att-person__facts dd {
-  font-size: 13px;
-  line-height: 20px;
-}
-
-.att-person__day {
-  margin-top: 8px;
-}
-
-.att-person__label {
-  font-size: 12.5px;
-}
-
-.att-person__total {
-  margin: 2px 0 8px;
-  font-size: 18px;
-  line-height: 23px;
-}
-
-.att-events li {
-  height: 22px;
-  gap: 14px;
-  font-size: 12.5px;
-}
-
-.att-events li b {
-  font-size: 13px;
-}
-
-/* Пустой день — строка со значком слева, а не высокий столбец: те же
-   четыре элемента занимают вдвое меньше высоты. */
-.att-person__blank {
-  display: grid;
-  grid-template-columns: 30px minmax(0, 1fr);
-  column-gap: 10px;
-  row-gap: 1px;
-  align-items: start;
-  margin: 8px 0 0;
-  padding: 9px 10px;
-}
-
-.att-person__blankIcon {
-  grid-row: 1 / span 3;
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-}
-
-.att-person__blankTitle {
-  margin: 0;
-  font-size: 13.5px;
-  line-height: 18px;
-}
-
-.att-person__blankText {
-  font-size: 12.5px;
-  line-height: 17px;
-}
-
-.att-person__blank .att-status {
-  justify-self: start;
-  height: 22px;
-  margin-top: 4px;
-}
-
-/* Кнопки прибиты к низу карточки: место им даёт прокрутка середины, а
-   не `margin-top: auto`, и сжиматься они не должны. */
-.att-person__actions {
-  flex: none;
-  margin-top: 0;
-  gap: 8px;
-  padding-top: 8px;
-}
-
-.att-person__actions .att-btn {
-  height: 36px;
-  font-size: 13px;
-}
-
-/* Предупреждение сотрудника о своём дне.
-
-   Стоит выше событий и выделено рамкой: кадровик, открывший карточку с
-   пустым днём, должен сразу увидеть, что человек написал, — иначе он
-   начинает звонить тому, кто уже всё сказал. */
-.att-person__notice {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  margin: 0 0 14px;
-  padding: 12px 14px;
-  border: 1px solid #f0d9a8;
-  border-radius: 10px;
-  background: #fdf8ec;
-}
-
-.att-person__noticeIcon {
-  display: inline-flex;
   flex: 0 0 auto;
-  color: #8a6212;
+  min-height: 56px;
+  border-top: 1px solid var(--at-line);
+  font-size: 13.5px;
+  color: var(--at-muted);
 }
 
-.att-person__noticeText {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 0;
-  min-width: 0;
-}
+.at-pages { display: flex; align-items: center; gap: 4px; }
+.at-pages__group { display: inline-flex; align-items: center; gap: 4px; }
+.at-pages__gap { padding: 0 4px; }
 
-.att-person__noticeText b {
-  font-size: 13px;
-  color: #6f4f0c;
-}
-
-.att-person__noticeText span {
-  font-size: 13px;
-  line-height: 1.45;
-  color: #7a6238;
-  overflow-wrap: anywhere;
-}
-
-/* Строка периода: День | Неделя | Месяц | Период.
-
-   Стоит выше показателей, потому что сначала человек решает, за что
-   смотрит, и только потом — на что именно. */
-.att-period {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  flex-wrap: wrap;
-  margin: 0 0 16px;
-}
-
-.att-period__title {
-  font-size: 14px;
-  color: var(--muted, #6b7280);
-}
-
-.att-period__range {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.att-period__dash {
-  color: var(--muted, #6b7280);
-}
-
-/* Итоги периода: пять чисел и ничего больше.
-
-   Сетка с автоподбором: на 1920 карточки встают в ряд, на узком экране
-   переносятся сами и не вылезают за край. */
-.att-summary {
-  margin: 0 0 20px;
-}
-
-.att-summary__cards {
+.at-pages button {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 12px;
+  place-items: center;
+  min-width: 34px;
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: none;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--at-ink);
+  cursor: pointer;
 }
 
-.att-metric {
-  padding: 14px 16px;
-  border: 1px solid var(--line, #e5e7eb);
-  border-radius: 12px;
-  background: #fff;
-  min-width: 0;
+.at-pages button:hover:not(:disabled) { border-color: var(--at-edge); }
+.at-pages button:disabled { color: #c3cedd; cursor: default; }
+.at-pages .at-pages__on, .at-pages .at-pages__on:hover { background: var(--at-blue); color: #ffffff; }
+
+/* --- состояния -------------------------------------------------------------------- */
+
+.at-empty { margin: 0; padding: 26px 8px; font-size: 13.5px; color: var(--at-muted); }
+.at-empty--small { padding: 8px 0; }
+.at-empty--bad { color: var(--at-red); }
+.at-empty--strip { display: grid; place-items: center; height: 100%; border: 1px solid var(--at-line); border-radius: 14px; color: var(--at-red); }
+.at-warn { margin: 8px 0; padding: 8px 12px; border-radius: 8px; background: var(--at-amber-soft); font-size: 13px; color: #8a5a10; }
+
+.at-skeleton { display: flex; flex-direction: column; }
+.at-skeleton__row { display: grid; grid-template-columns: 30px minmax(0, 1fr) 180px; align-items: center; gap: 12px; height: 48px; padding: 0 12px; border-bottom: 1px solid #edf2f8; }
+
+.at-ghost {
+  display: block;
+  height: 10px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, #eef3f9, #f7f9fc, #eef3f9);
+  background-size: 200% 100%;
+  animation: at-ghost 1.2s ease-in-out infinite;
 }
 
-.att-metric__title {
-  margin: 0 0 6px;
-  font-size: 13px;
-  color: var(--muted, #6b7280);
+.at-ghost--round { width: 30px; height: 30px; border-radius: 50%; }
+.at-ghost--short { width: 70%; }
+.at-ghost--block { height: 100%; border-radius: 12px; }
+
+@keyframes at-ghost { to { background-position: -200% 0; } }
+
+/* --- карточка дня ------------------------------------------------------------------ */
+
+.at-drawer { position: fixed; inset: 0; z-index: 70; }
+.at-drawer__scrim { position: absolute; inset: 0; border: 0; background: rgba(18, 49, 107, 0.18); }
+
+.at-drawer__panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(460px, 94vw);
+  overflow-y: auto;
+  background: #ffffff;
+  box-shadow: -16px 0 36px rgba(18, 49, 107, 0.12);
+  animation: at-drawer 180ms cubic-bezier(0.2, 0, 0, 1);
 }
 
-.att-metric__value {
-  margin: 0;
-  font-size: 26px;
-  font-weight: 600;
-  line-height: 1.1;
+@keyframes at-drawer { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* --- узкие экраны ------------------------------------------------------------------ */
+
+@media (max-width: 1440px) {
+  .at-head__tools .app-select { width: 150px; }
+  .at-find { width: 200px; }
 }
 
-.att-metric__note,
-.att-metric__hint {
-  margin: 4px 0 0;
-  font-size: 12px;
-  color: var(--muted, #6b7280);
-  overflow-wrap: anywhere;
-}
-
-.att-summary__more {
-  margin: 12px 0 0;
-  font-size: 13px;
-  color: var(--muted, #6b7280);
+@media (max-width: 1280px) {
+  .at-sheet { overflow: auto; }
+  .at-head { height: auto; flex-wrap: wrap; padding: 12px 0; }
+  .at-strip { height: auto; }
+  .at-facts, .at-facts--three, .at-facts--four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .at-fact:nth-child(3) { border-left: 0; }
+  .at-fact:nth-child(n + 3) { border-top: 1px solid var(--at-line); }
+  .at-split { grid-template-columns: minmax(0, 1fr); }
+  .at-split__main { padding-right: 0; border-right: 0; }
+  .at-split__side { padding-left: 0; border-top: 1px solid var(--at-line); }
+  .at-table { overflow-x: auto; }
 }

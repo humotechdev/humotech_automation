@@ -17,6 +17,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import serializers, status
@@ -51,6 +53,8 @@ from humotech.telegram.services import (
     TelegramMiniAppService,
     welcome_facts,
 )
+
+log = logging.getLogger(__name__)
 
 
 class TelegramInvitationViewSet(ServiceViewSet):
@@ -468,7 +472,8 @@ class BotOutboxView(APIView):
         from django.conf import settings
 
         from humotech.notifications.outbox import claim, reclaim_stale
-        from humotech.surveys.services import dispatch_due
+        from humotech.surveys.automations import run_due
+        from humotech.surveys.services import dispatch_due, remind_due
 
         # Уборка перед выдачей: строки, зависшие в RUNNING после падения
         # отправщика, иначе не ушли бы никогда.
@@ -481,7 +486,22 @@ class BotOutboxView(APIView):
         # которой узнали бы только по ненаступившему опросу. Запрос
         # дешёвый: частичный индекс по `next_send_at`, и почти всегда он
         # не находит ничего.
-        dispatch_due()
+        # Здесь же — напоминания тем, кто не закончил, закрытие
+        # просроченных рассылок и автоматические опросы по событиям.
+        # Все трое стоят на частичных индексах и почти всегда не
+        # находят ничего.
+        #
+        # Ошибка здесь не должна остановить выдачу сообщений: это
+        # разные работы, и одно криво настроенное правило опроса не
+        # повод оставить всю компанию без уведомлений. Но и молча
+        # проглотить её нельзя: о ненаступившем опросе иначе не
+        # узнать вовсе.
+        for tick in (dispatch_due, remind_due, run_due):
+            try:
+                tick()
+            except Exception:
+                log.exception("периодическая работа %s не сработала", tick.__name__)
+
         batch = claim(limit=settings.NOTIFICATIONS["BATCH_SIZE"])
         return Response(
             {

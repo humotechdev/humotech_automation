@@ -1,17 +1,17 @@
 /**
- * Посещаемость: панель дня, состав смены, выбранный сотрудник и журнал.
+ * Посещаемость: один экран, четыре режима — за день, журнал, неделя, период.
  *
  * Проверяются обещания, которые легко нарушить незаметно: «нет отметки»
  * не прогул, отсутствие графика не опоздание, обрезанный ответ не выдаётся
  * за полный состав, а разница между первым входом и последним выходом не
  * подменяет время в офисе.
  *
- * Имя выбранного сотрудника на странице дважды — в строке и в правой
- * колонке, поэтому поиск по имени берёт все совпадения.
+ * Режимы — вкладки одного листа: лист и линия под вкладкой не
+ * пересоздаются, меняется только содержимое.
  */
 
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, describe, expect, test, vi } from 'vitest';
+import { describe, expect, test } from 'vitest';
 
 import { USER, crm, fakeNetwork, json, pick, renderApp } from './helpers';
 
@@ -86,17 +86,41 @@ const ROWS = [
 ];
 
 const EVENTS = [
-  { id: 'v-1', employee_id: 'e-1', office_id: 'o-1', office_name: 'Главный офис',
+  { id: 'v-1', employee_id: 'e-1', employee: { id: 'e-1', full_name: 'Каримов Алишер', employee_number: 'HT-001' }, office_id: 'o-1', office_name: 'Главный офис',
     qr_point_id: 'q-1', qr_point_name: 'Главный вход', event_type: 'ENTRY',
     source: 'QR', verification_status: 'ACCEPTED',
     occurred_at: `${DAY}T08:56:00Z`, received_at: `${DAY}T08:56:00Z`,
     rejection_reason: null, inside_geofence: true, inside_office_network: true },
-  { id: 'v-2', employee_id: 'e-1', office_id: 'o-1', office_name: 'Главный офис',
+  { id: 'v-2', employee_id: 'e-1', employee: { id: 'e-1', full_name: 'Каримов Алишер', employee_number: 'HT-001' }, office_id: 'o-1', office_name: 'Главный офис',
     qr_point_id: 'q-2', qr_point_name: 'Служебный вход', event_type: 'EXIT',
     source: 'QR', verification_status: 'ACCEPTED',
     occurred_at: `${DAY}T12:04:00Z`, received_at: `${DAY}T12:04:00Z`,
     rejection_reason: null, inside_geofence: true, inside_office_network: true },
 ];
+
+const OVERVIEW = {
+  period: { first: DAY, last: DAY, days: 1 }, previous_period: { first: DAY, last: DAY },
+  weekday: null, generated_at: `${DAY}T10:00:00Z`, timezones: ['Asia/Dushanbe'],
+  summary: {
+    attendance: { numerator: 18, denominator: 20, percent: 90 },
+    previous_attendance: { numerator: 17, denominator: 20, percent: 85 },
+    difference_points: 5, on_time: { numerator: 16, denominator: 18, percent: 88.9 },
+    late: { numerator: 2, denominator: 18, percent: 11.1 }, average_seconds: 27720,
+    open_sessions: 0, missed_days: 2, vacation_days: 3, sick_leave_days: 1, other_absence_days: 0,
+  },
+  days: [], previous_days: [], offices: [], regions: [],
+  employees: [
+    { id: 'e-1', name: 'Каримов Алишер', attendance: { numerator: 4, denominator: 5, percent: 80 },
+      late_days: 1, late_minutes: 12, missed_days: 1, seconds: 4 * 8 * 3600, vacation_days: 0, sick_days: 0,
+      other_days: 0, office_id: 'o-1', missed_dates: ['2026-09-02'], late_dates: [{ day: '2026-09-03', minutes: 12 }] },
+    { id: 'e-2', name: 'Саидова Дилноза', attendance: { numerator: 5, denominator: 5, percent: 100 },
+      late_days: 0, late_minutes: 0, missed_days: 0, seconds: 5 * 8 * 3600, vacation_days: 2, sick_days: 1,
+      other_days: 0, office_id: 'o-1', missed_dates: [], late_dates: [] },
+  ],
+  arrivals: { bucket_minutes: 10, from_minutes: -60, to_minutes: 90, buckets: [], start_time: '09:00',
+    uniform_start: true, median_minutes: 540, after_start: 0, late: { numerator: 0, denominator: 0, percent: null } },
+  weekdays: { days: [] },
+};
 
 function network(
   handler: (path: string, method: string) => Response | null = () => null,
@@ -141,6 +165,7 @@ function network(
         total: ROWS.length, truncated: false, items: ROWS,
       });
     }
+    if (path.includes('/analytics/overview')) return json(200, OVERVIEW);
     if (path.includes('/attendance/events')) {
       return json(200, { items: EVENTS, next_cursor: null, has_more: false });
     }
@@ -156,256 +181,149 @@ function network(
   });
 }
 
-describe('панель «Сегодня»', () => {
-  test('числа приходят с сервера, а не считаются по показанным строкам', async () => {
-    // В ответе состава четыре строки. Панель обязана называть 193 и 214
-    // из чисел дня: итог по тому, что поместилось в ответ, — не итог.
-    network();
-    renderApp('/attendance');
+const tableRow = (name: string) => (screen.getByText(name).closest('[role="row"]') as HTMLElement);
 
-    expect(await screen.findByText('193 из 214')).toBeTruthy();
-    expect(screen.getByText('Сейчас в офисе')).toBeTruthy();
-    // Опоздавшие и незакрытые — из чисел дня, а не из строк.
-    expect(screen.getAllByText('7').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('3').length).toBeGreaterThan(0);
+describe('один экран', () => {
+  test('смена режима не пересоздаёт лист и линию под вкладкой', async () => {
+    network();
+    renderApp(`/attendance?date=${DAY}`);
+    await screen.findByText('Каримов Алишер');
+
+    const sheet = document.querySelector('.at-sheet');
+    const ink = document.querySelector('.at-tabs__ink');
+    fireEvent.click(screen.getByRole('tab', { name: 'Журнал отметок' }));
+    expect(await screen.findByRole('heading', { name: 'Журнал отметок' })).toBeTruthy();
+
+    expect(document.querySelector('.at-sheet')).toBe(sheet);
+    expect(document.querySelector('.at-tabs__ink')).toBe(ink);
+    expect(screen.getByRole('tabpanel', { name: 'Журнал отметок' })).toBeTruthy();
   });
 
-  test('для прошедшей даты показатель не называется «сейчас»', async () => {
+  test('старые ссылки открывают свой режим', async () => {
+    network();
+    renderApp(`/attendance?period=range&from=2026-09-01&to=${DAY}`);
+
+    expect(await screen.findByRole('tab', { name: 'Период', selected: true })).toBeTruthy();
+    expect(await screen.findByText(/1–4 сентября 2026 · Сводка за период/)).toBeTruthy();
+  });
+});
+
+describe('за день', () => {
+  test('числа полосы приходят с сервера, а не считаются по строкам', async () => {
+    network();
+    renderApp(`/attendance?date=${DAY}`);
+
+    // 205 из 214 — это карточки дашборда, строк в таблице всего пять.
+    expect(await screen.findByText('205 из 214 по графику')).toBeTruthy();
+    expect(screen.getByText('96%')).toBeTruthy();
+    expect(screen.getByText('+5 п.п. к вчера')).toBeTruthy();
+  });
+
+  test('для прошедшей даты полоса не говорит «сейчас» и «сегодня»', async () => {
     network();
     renderApp('/attendance?date=2020-01-02');
 
-    expect(await screen.findByText('Итоги дня')).toBeTruthy();
-    // У прошедшего дня «сейчас в офисе» — ноль по определению, и
-    // кольцо обязано считать пришедших, а не находящихся. Заголовок
-    // рисуется сразу, числа — когда придут показатели дня.
-    expect(await screen.findByText('205 из 214')).toBeTruthy();
-    expect(screen.queryByText('Сейчас в офисе')).toBeNull();
+    expect(await screen.findByText('Статус дня')).toBeTruthy();
+    expect(screen.queryByText('Статус на сейчас')).toBeNull();
+    expect(screen.getByText('Явка за день')).toBeTruthy();
   });
 
-  test('быстрый отбор сужает таблицу и не трогает панель', async () => {
+  test('«Требуют внимания» — по одному правилу для чипа и строк', async () => {
     network();
     renderApp(`/attendance?date=${DAY}`);
-    await screen.findAllByText('Каримов Алишер');
+    await screen.findByText('Саидова Дилноза');
 
-    const quick = screen.getByRole('group', { name: 'Быстрый отбор' });
-    fireEvent.click(within(quick).getByRole('button', { name: /^Опоздали/ }));
-
-    await waitFor(() => expect(screen.queryByText('Каримов Алишер')).toBeNull());
-    expect(screen.getAllByText('Рахимов Тимур').length).toBeGreaterThan(0);
-    // Доля считается по всему составу дня: отбор — другой взгляд на то же.
-    expect(screen.getByText('205 из 214')).toBeTruthy();
-  });
-});
-
-describe('состав смены', () => {
-  test('время в офисе берётся с сервера, а не считается по входу и выходу', async () => {
-    // 08:56 → 12:04 это 3 ч 8 мин, но в офисе он провёл 5 ч 8 мин:
-    // посещений за день было несколько.
-    network();
-    renderApp(`/attendance?date=${DAY}`);
-
-    expect((await screen.findAllByText('5 ч 8 мин')).length).toBeGreaterThan(0);
-    expect(screen.queryByText('3 ч 8 мин')).toBeNull();
+    // Число на чипе и строки таблицы считаются одним правилом. День
+    // прошедший, поэтому незакрытая смена — тоже повод посмотреть.
+    const chip = screen.getByRole('button', { name: /Требуют внимания/ });
+    const rows = document.querySelectorAll('.at-table__body [role="row"]');
+    expect(chip.textContent).toMatch(new RegExp(`${rows.length}$`));
+    expect(screen.getByText('Рахимов Тимур')).toBeTruthy();
+    expect(document.querySelectorAll('.at-row--warn, .at-row--bad').length).toBe(rows.length);
   });
 
-  test('«нет отметки» не называется прогулом', async () => {
+  test('время в офисе берётся с сервера, а не разницей входа и выхода', async () => {
     network();
-    renderApp(`/attendance?date=${DAY}`);
-    await screen.findAllByText('Саидова Дилноза');
+    renderApp(`/attendance?date=${DAY}&quick=all`);
+    await screen.findByText('Каримов Алишер');
 
-    expect(screen.getAllByText('Нет отметки').length).toBeGreaterThan(0);
+    expect(within(tableRow('Каримов Алишер')).getByText('5 ч 08 мин')).toBeTruthy();
+  });
+
+  test('«нет отметки» не называется прогулом, без графика нет опоздания', async () => {
+    network();
+    renderApp(`/attendance?date=${DAY}&quick=all`);
+    await screen.findByText('Саидова Дилноза');
+
+    expect(within(tableRow('Саидова Дилноза')).getByText('Нет отметки')).toBeTruthy();
     expect(screen.queryByText(/[Пп]рогул/)).toBeNull();
+    const plain = tableRow('Нурматов Жавохир');
+    expect(within(plain).getByText('Без графика')).toBeTruthy();
+    expect(within(plain).queryByText(/Опоздал/)).toBeNull();
   });
 
-  test('без графика не показывается опоздание', async () => {
+  test('предупредивший виден отдельно, и его причина — рядом со статусом', async () => {
     network();
     renderApp(`/attendance?date=${DAY}`);
-    const [name] = await screen.findAllByText('Нурматов Жавохир');
-    const line = name?.closest('[role="row"]');
+    await screen.findByText('Юсупова Камила');
 
-    // Проверяется именно эта строка: опоздавшие в таблице есть.
-    expect(line?.textContent).toContain('График не задан');
-    expect(line?.textContent).not.toMatch(/Опоздал/);
+    const line = tableRow('Юсупова Камила');
+    expect(within(line).getByText('Предупредил об опоздании')).toBeTruthy();
+    expect(within(line).getByText('Пробки')).toBeTruthy();
   });
 
   test('обрезанный ответ не выдаётся за полный состав', async () => {
-    network((path) =>
-      path.includes('/attendance/presence')
-        ? json(200, {
-            date: DAY, timezone: 'Asia/Dushanbe', counts: {},
-            total: 900, truncated: true, items: ROWS,
-          })
-        : null,
-    );
+    network((path) => (path.includes('/attendance/presence')
+      ? json(200, { date: DAY, timezone: 'Asia/Dushanbe', counts: {}, total: 900, truncated: true, items: ROWS })
+      : null));
     renderApp(`/attendance?date=${DAY}`);
 
-    expect(await screen.findByText(/Показаны не все/)).toBeTruthy();
-  });
-
-  test('фильтр статуса уходит на сервер', async () => {
-    const calls = network();
-    renderApp(`/attendance?date=${DAY}`);
-    await screen.findAllByText('Каримов Алишер');
-
-    await pick('Статус', 'Нет отметки');
-
-    await waitFor(() =>
-      expect(calls.some((c) => c.url.includes('state=NOT_COME'))).toBe(true),
-    );
+    expect(await screen.findByText(/Показаны не все сотрудники/)).toBeTruthy();
   });
 
   test('ошибка не превращается в пустой состав', async () => {
-    network((path) =>
-      path.includes('/attendance/presence') ? json(500, { error: {} }) : null,
-    );
+    network((path) => (path.includes('/attendance/presence') ? json(500, { error: {} }) : null));
     renderApp(`/attendance?date=${DAY}`);
 
-    expect(await screen.findByText(/Не удалось загрузить состав смены/)).toBeTruthy();
-  });
-});
-
-describe('фильтры', () => {
-  test('регион, офис и отдел уходят на сервер', async () => {
-    const calls = network();
-    renderApp(`/attendance?date=${DAY}&region_id=r-1&office_id=o-1&department_id=d-1`);
-    await screen.findAllByText('Каримов Алишер');
-
-    const asked = calls.map((one) => one.url).filter((url) => url.includes('/presence'));
-    expect(asked.some((url) => url.includes('office_id=o-1'))).toBe(true);
-    expect(asked.some((url) => url.includes('department_id=d-1'))).toBe(true);
+    expect(await screen.findByText(/Не удалось загрузить сотрудников/)).toBeTruthy();
   });
 
-  test('выбранный день запрашивается именно он, а не сегодня', async () => {
-    // Иначе календарь показывает одну дату, а таблица — другую, и
-    // расхождение видно только по времени событий.
+  test('отдел уходит на сервер, день — выбранный', async () => {
     const calls = network();
     renderApp(`/attendance?date=${DAY}`);
-    await screen.findAllByText('Каримов Алишер');
+    await screen.findByText('Каримов Алишер');
 
-    const asked = calls.map((one) => one.url).filter((url) => url.includes('/presence'));
-    expect(asked.every((url) => url.includes(`date=${DAY}`))).toBe(true);
-  });
-
-  test('смена региона снимает офис другого региона', async () => {
-    // Офис чужого региона дал бы заведомо пустой список без объяснения.
-    network();
-    renderApp(`/attendance?date=${DAY}&office_id=o-1`);
-    await screen.findAllByText('Каримов Алишер');
-
-    await pick('Регион', 'Ташкент');
-
-    await waitFor(() =>
-      expect(window.location.search).not.toContain('office_id=o-1'),
-    );
+    await pick('Отдел', 'Операционный отдел');
+    await waitFor(() => {
+      const last = calls.filter((c) => c.url.includes('/attendance/presence')).pop()?.url ?? '';
+      expect(last).toContain('department_id=d-1');
+      expect(last).toContain(`date=${DAY}`);
+    });
   });
 });
 
 describe('карточка дня', () => {
-  test('показывает все события дня, а не первые три', async () => {
+  test('ссылка на день сотрудника открывает его отметки', async () => {
     network();
     renderApp(`/attendance?date=${DAY}&employee=e-1`);
 
-    // У человека с обедом событий четыре: обрезанный список прячет как
-    // раз то, из-за чего карточку открыли.
-    expect(await screen.findByText('Вход · Главный вход')).toBeTruthy();
-    expect(screen.getByText('Выход · Служебный вход')).toBeTruthy();
+    const card = await screen.findByRole('complementary', { name: 'Отметки за день' });
+    expect(await within(card).findByText('Каримов Алишер')).toBeTruthy();
+    expect((await within(card).findAllByText(/Главный вход|Служебный вход/)).length).toBe(2);
   });
 
-  test('пустой день объясняется словами, а не белой панелью', async () => {
-    network((path) =>
-      path.includes('/attendance/events') ? json(200, { items: [], next_cursor: null, has_more: false }) : null,
-    );
-    renderApp(`/attendance?date=${DAY}&employee=e-2`);
-
-    expect(await screen.findByText('Нет отметок за выбранный период')).toBeTruthy();
-    expect(screen.getByText(/не отмечал ни входа, ни выхода/)).toBeTruthy();
-  });
-});
-
-describe('предупреждение сотрудника', () => {
-  test('сказавший «опаздываю» — не «нет отметки»', async () => {
-    // Иначе стирается единственная разница между тем, кто написал, и
-    // тем, кто пропал: кадровик звонит обоим.
-    network();
-    renderApp('/attendance');
-    await screen.findAllByText('Юсупова Камила');
-
-    expect(screen.getAllByText('Опаздывает').length).toBeGreaterThan(0);
-  });
-
-  test('причина видна в карточке, а не только в базе', async () => {
-    network();
-    renderApp('/attendance');
-    const found = await screen.findAllByText('Юсупова Камила');
-
-    fireEvent.click(found[0]!.closest('tr') ?? found[0]!);
-
-    expect(
-      await screen.findByText('Сотрудник предупредил, что опаздывает'),
-    ).toBeTruthy();
-    expect(screen.getByText('Пробки')).toBeTruthy();
-  });
-});
-
-describe('выбранный сотрудник', () => {
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  test('показывает отметки дня с точками и незакрытое посещение', async () => {
-    // Незакрытое посещение тянется до «сейчас», а «сейчас» — это часы
-    // машины. Без закреплённого времени подпись то появлялась, то
-    // сливалась с началом последнего отрезка, смотря когда запущен тест.
-    // Время ставится на вечер того же дня: открытое посещение бывает
-    // только сегодня.
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(new Date(`${DAY}T15:30:00Z`));
-    network();
-    renderApp(`/attendance?date=${DAY}&employee=e-1`);
-
-    expect(await screen.findByText('Вход · Главный вход')).toBeTruthy();
-    expect(screen.getByText('Выход · Служебный вход')).toBeTruthy();
-    // Вторая сессия открыта: шкала дня кончается «сейчас», а не уходом.
-    expect(screen.getAllByText('сейчас').length).toBeGreaterThan(0);
-  });
-
-  test('исправление отметки доступно и открывает форму', async () => {
-    // Прав в интерфейсе больше нет: администратор один, и ему открыто
-    // всё. Отказ, если он когда-нибудь понадобится, исполняет сервер —
-    // прятать кнопку в браузере значит проверять доступ там, где его
-    // легче всего обойти.
-    network(() => null, ['attendance.read']);
-    renderApp(`/attendance?date=${DAY}&employee=e-1`);
-
-    const fix = await screen.findByRole('button', { name: /Исправить отметку/ });
-    expect(fix.hasAttribute('disabled')).toBe(false);
-  });
-});
-
-describe('ручная отметка', () => {
-  test('называется добавлением, а не правкой существующей', async () => {
-    // API умеет только добавить событие: обещать редактирование там,
-    // где его нет, — худший вид неточности.
-    network();
-    renderApp(`/attendance?date=${DAY}&employee=e-1`);
-
-    fireEvent.click(await screen.findByRole('button', { name: /Исправить отметку/ }));
-    expect(await screen.findByRole('button', { name: /Добавить отметку/ })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: /Внести исправление/ })).toBeNull();
-  });
-
-  test('без причины сохранить нельзя, а при ошибке введённое остаётся', async () => {
+  test('«Исправить» открывает добавление отметки; без причины не сохранить', async () => {
     const calls = network((path, method) =>
       method === 'POST' && path.includes('/attendance/manual')
         ? json(409, { error: { code: 'conflict', message: 'уже есть' } })
         : null,
     );
-    renderApp(`/attendance?date=${DAY}&employee=e-1`);
+    renderApp(`/attendance?date=${DAY}`);
+    await screen.findByText('Саидова Дилноза');
 
-    fireEvent.click(await screen.findByRole('button', { name: /Исправить отметку/ }));
+    fireEvent.click(within(tableRow('Саидова Дилноза')).getByRole('button', { name: 'Исправить' }));
     fireEvent.click(await screen.findByRole('button', { name: /Добавить отметку/ }));
-    const save = screen.getByRole('button', { name: 'Сохранить' });
-    expect(save.hasAttribute('disabled')).toBe(true);
+    expect(screen.getByRole('button', { name: 'Сохранить' }).hasAttribute('disabled')).toBe(true);
 
     const reason = screen.getByLabelText('Причина');
     fireEvent.change(reason, { target: { value: 'Забыл отметиться на входе' } });
@@ -418,12 +336,76 @@ describe('ручная отметка', () => {
 });
 
 describe('журнал отметок', () => {
-  test('по умолчанию показывает только успешные отметки', async () => {
-    const calls = network();
+  test('показывает события дня с именами и ручной отметкой HR', async () => {
+    network((path) => (path.includes('/attendance/events')
+      ? json(200, {
+        items: [...EVENTS, {
+          ...EVENTS[0], id: 'v-3', source: 'MANUAL', author_name: 'Саидова Мадина',
+          occurred_at: `${DAY}T10:00:00Z`, qr_point_name: null,
+        }],
+        next_cursor: null, has_more: false,
+      })
+      : null));
     renderApp(`/attendance?date=${DAY}&tab=log`);
 
-    await waitFor(() =>
-      expect(calls.some((c) => c.url.includes('verification_status=ACCEPTED'))).toBe(true),
-    );
+    expect(await screen.findByText('HR (Саидова М.)')).toBeTruthy();
+    expect(screen.getAllByText('Каримов Алишер').length).toBe(3);
+  });
+
+  test('весь день собирается по страницам, а не по первой', async () => {
+    let pages = 0;
+    network((path) => {
+      if (!path.includes('/attendance/events')) return null;
+      pages += 1;
+      return json(200, path.includes('cursor=')
+        ? { items: [EVENTS[1]], next_cursor: null, has_more: false }
+        : { items: [EVENTS[0]], next_cursor: 'next', has_more: true });
+    });
+    renderApp(`/attendance?date=${DAY}&tab=log`);
+
+    await waitFor(() => expect(screen.getAllByText('Каримов Алишер').length).toBe(2));
+    expect(pages).toBe(2);
+  });
+});
+
+describe('неделя', () => {
+  test('день, который ещё не наступил, не запрашивается и не «без отметки»', async () => {
+    const future = new Date();
+    future.setDate(future.getDate() + 3);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const anchor = `${future.getFullYear()}-${pad(future.getMonth() + 1)}-${pad(future.getDate())}`;
+    const now = new Date();
+    const todayIso = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+    const calls = network();
+    renderApp(`/attendance?tab=week&date=${anchor}`);
+
+    await screen.findByText(/Недельная сводка/);
+    await waitFor(() => expect(calls.some((c) => c.url.includes('/analytics/overview'))).toBe(true));
+    const asked = calls
+      .filter((c) => c.url.includes('/attendance/presence'))
+      .map((c) => new URL(c.url, 'http://x').searchParams.get('date') ?? '');
+    expect(asked.every((one) => one <= todayIso)).toBe(true);
+  });
+});
+
+describe('период', () => {
+  test('таблица — из сводки сервера, отсутствия только подтверждённые', async () => {
+    network();
+    renderApp(`/attendance?tab=period&from=2026-09-01&to=${DAY}`);
+
+    const table = await screen.findByRole('table', { name: 'Сотрудники за период' });
+    const row = (await within(table).findByText('Саидова Дилноза')).closest('[role="row"]') as HTMLElement;
+    const cells = within(row).getAllByRole('cell').map((cell) => cell.textContent);
+    expect(cells).toEqual(['СДСаидова Дилноза', '5', '5', '100%', '40 ч 00 мин', '0', '0', '3']);
+  });
+
+  test('«Требуют внимания» — с днём, к которому идти', async () => {
+    network();
+    renderApp(`/attendance?tab=period&from=2026-09-01&to=${DAY}`);
+
+    const side = await screen.findByRole('complementary', { name: 'Аналитика периода' });
+    expect(await within(side).findByText('Нет отметки')).toBeTruthy();
+    expect(within(side).getByText('Опоздание 12 мин')).toBeTruthy();
+    expect(within(side).getByText('2 сентября')).toBeTruthy();
   });
 });

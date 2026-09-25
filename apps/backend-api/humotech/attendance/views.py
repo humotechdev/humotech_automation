@@ -173,7 +173,29 @@ class AttendanceViewSet(ServiceViewSet):
             ),
             **self._paging(request),
         )
-        return self.page_response(page, serializer_class=AttendanceEventSerializer)
+        # Авторы ручных отметок — одним запросом на страницу, а не по
+        # запросу на строку.
+        user_ids = {
+            (row.event_metadata or {}).get("created_by_user_id")
+            for row in page.items
+            if row.source == "MANUAL"
+        } - {None}
+        authors = {}
+        if user_ids:
+            from humotech.accounts.models import User
+
+            for user in User.objects.select_related("employee").filter(id__in=user_ids):
+                name = (
+                    " ".join(one for one in [user.employee.last_name, user.employee.first_name] if one)
+                    if user.employee_id else ""
+                )
+                authors[str(user.id)] = name or (user.full_name or "").strip() or user.email
+        data = AttendanceEventSerializer(
+            page.items, many=True, context={"authors": authors},
+        ).data
+        return Response(
+            {"items": data, "next_cursor": page.next_cursor, "has_more": page.has_more}
+        )
 
     @extend_schema(
         summary="Рабочие сессии",

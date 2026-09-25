@@ -21,8 +21,8 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta
 
 from django.conf import settings
 from django.db.models import Q
@@ -38,7 +38,9 @@ from humotech.notifications.outbox import enqueue
 from humotech.onboarding import progress as progress_module
 from humotech.onboarding import seeding
 from humotech.onboarding.content import ACK_DEFAULT
+from humotech.audit.models import AuditLog
 from humotech.onboarding.models import (
+    PolicyCategory,
     EmployeeOnboarding,
     EmployeePolicyAcceptance,
     OnboardingProgram,
@@ -56,9 +58,21 @@ ENTITY_PROGRAM = "onboarding_programs"
 ENTITY_SECTION = "onboarding_sections"
 ENTITY_DOCUMENT = "policy_documents"
 ENTITY_VERSION = "policy_document_versions"
+ENTITY_CATEGORY = "policy_categories"
+
+#: Срок ознакомления по умолчанию: столько дней от включения в программу.
+DUE_DAYS = 14
+#: Через сколько дней после приглашения молчание считается «нет ответа».
+SILENT_DAYS = 3
+
+#: Группы списка «Сотрудники». Каждый человек ровно в одной — поэтому
+#: счётчики отбора складываются во «все». Порядок — порядок проверки.
+GROUPS = ("done", "attention", "waiting", "not_started", "in_progress")
+
+CATEGORY_AUDIT_FIELDS = ("title", "description", "owner_employee_id", "position", "archived_at")
 
 SECTION_AUDIT_FIELDS = ("position", "title", "button_label", "version", "archived_at")
-DOCUMENT_AUDIT_FIELDS = ("code", "title", "is_mandatory", "position", "archived_at")
+DOCUMENT_AUDIT_FIELDS = ("code", "title", "is_mandatory", "position", "category_id", "archived_at")
 VERSION_AUDIT_FIELDS = ("document_id", "version", "status", "published_at")
 
 #: Что бот скажет сотруднику в напоминании. Ни фамилии, ни содержания
@@ -91,6 +105,18 @@ class ProgressRow:
     position_name: str | None
     #: Действующее приглашение, если оно есть.
     invitation: TelegramLinkInvitation | None
+    #: Почему человек требует внимания: overdue, declined, renewal,
+    #: silent. Пусто — не требует. Одно правило на отбор, счётчик и
+    #: колонку «Требуют внимания».
+    reasons: tuple[str, ...] = ()
+    #: Одна из GROUPS.
+    group: str = "in_progress"
+    #: Обязательные документы глазами этого человека.
+    materials: tuple[dict, ...] = field(default_factory=tuple)
+
+    @property
+    def overdue(self) -> bool:
+        return "overdue" in self.reasons
 
 
 def _full_name(employee: Employee) -> str:
@@ -134,6 +160,34 @@ class OnboardingService(BaseService):
         ).values_list("employee_id", flat=True)
         return queryset.filter(id__in=allowed)
 
+    def _scoped(self, actor: Actor, *, search=None, office_id=None, department_id=None):
+        """Участники программы, видимые кадровику, с поиском и местом."""
+        rows = EmployeeOnboarding.objects.filter(
+            organization_id=actor.organization_id,
+            employee_id__in=self._visible_employees(actor).values_list("id", flat=True),
+        ).select_related("employee", "program")
+        if search:
+            needle = search.strip()
+            in_department = EmployeeAssignment.objects.filter(
+                is_primary=True, department__name__icontains=needle
+            ).values_list("employee_id", flat=True)
+            rows = rows.filter(
+                Q(employee__first_name__icontains=needle)
+                | Q(employee__last_name__icontains=needle)
+                | Q(employee__middle_name__icontains=needle)
+                | Q(employee__employee_number__icontains=needle)
+                | Q(employee_id__in=in_department)
+            )
+        if office_id:
+            rows = rows.filter(employee_id__in=EmployeeAssignment.objects.filter(
+                office_id=office_id, is_primary=True
+            ).values_list("employee_id", flat=True))
+        if department_id:
+            rows = rows.filter(employee_id__in=EmployeeAssignment.objects.filter(
+                department_id=department_id, is_primary=True
+            ).values_list("employee_id", flat=True))
+        return rows
+
     def list_progress(
         self,
         actor: Actor,
@@ -141,48 +195,43 @@ class OnboardingService(BaseService):
         status: str | None = None,
         search: str | None = None,
         office_id: str | None = None,
+        department_id: str | None = None,
+        group: str | None = None,
         limit: int | None = None,
         cursor: str | None = None,
     ) -> Page:
         """Сотрудники программы с их прогрессом.
 
-        Фильтр по статусу применяется ПОСЛЕ пересчёта, а не к колонке:
-        колонка — витрина, и выпуск новой редакции документа успевает
-        сделать её устаревшей раньше, чем кто-нибудь откроет страницу.
-        Поэтому страница берётся по ключу, а отбор по состоянию идёт
-        поверх неё — цена честного ответа.
+        Состояние и группа считаются пересчётом, а не по колонке: колонка —
+        витрина, и выпуск новой редакции документа успевает сделать её
+        устаревшей раньше, чем кто-нибудь откроет страницу. Поэтому отбор
+        по состоянию или группе идёт по пересчитанным строкам ДО деления
+        на страницы: иначе страница приходила бы короткой или пустой при
+        `has_more`, и список «терял» людей.
         """
         self.access.require(actor, "onboarding.read")
-        rows = EmployeeOnboarding.objects.filter(
-            organization_id=actor.organization_id,
-            employee_id__in=self._visible_employees(actor).values_list("id", flat=True),
-        ).select_related("employee", "program")
+        rows = self._scoped(actor, search=search, office_id=office_id, department_id=department_id)
+        if not status and not group:
+            page = paginate(rows, limit=normalize_limit(limit), cursor=cursor)
+            return Page(items=self._decorate(actor, page.items),
+                        next_cursor=page.next_cursor, has_more=page.has_more)
 
-        if search:
-            needle = search.strip()
-            rows = rows.filter(
-                Q(employee__first_name__icontains=needle)
-                | Q(employee__last_name__icontains=needle)
-                | Q(employee__middle_name__icontains=needle)
-                | Q(employee__employee_number__icontains=needle)
-            )
-        if office_id:
-            in_office = EmployeeAssignment.objects.filter(
-                office_id=office_id
-            ).values_list("employee_id", flat=True)
-            rows = rows.filter(employee_id__in=in_office)
-        if status:
-            # Предварительный отбор по витрине: он дешёвый и отсекает
-            # заведомо чужие строки. Окончательный — ниже, по пересчёту.
-            rows = rows.filter(status=status)
-
-        page = paginate(rows, limit=normalize_limit(limit), cursor=cursor)
-        built = self._decorate(actor, page.items)
+        if group and group not in GROUPS:
+            raise ValidationFailed("Неизвестная группа", details={"group": group})
+        built = self._decorate(actor, list(rows.order_by("employee__last_name", "employee__first_name", "id")))
         if status:
             built = [one for one in built if one.progress.status == status]
-        return Page(
-            items=built, next_cursor=page.next_cursor, has_more=page.has_more
-        )
+        if group:
+            built = [one for one in built if one.group == group]
+        # Курсор здесь — смещение: список уже посчитан целиком.
+        size = normalize_limit(limit)
+        try:
+            offset = max(0, int(cursor)) if cursor else 0
+        except ValueError:
+            raise ValidationFailed("Неверный курсор", details={"cursor": cursor}) from None
+        chunk = built[offset:offset + size]
+        more = offset + size < len(built)
+        return Page(items=chunk, next_cursor=str(offset + size) if more else None, has_more=more)
 
     def _decorate(
         self, actor: Actor, rows: list[EmployeeOnboarding]
@@ -228,6 +277,15 @@ class OnboardingService(BaseService):
                 row.status = "EXPIRED"
             invitations[row.employee_id] = row
 
+        # Кто соглашался с ПРЕЖНЕЙ редакцией документа: такому человеку
+        # нужна не первая встреча с документом, а повторное подтверждение.
+        earlier = set(
+            EmployeePolicyAcceptance.objects.filter(
+                employee_id__in=employee_ids, decision="ACCEPTED",
+            ).exclude(version__status="PUBLISHED").values_list("employee_id", "version__document_id")
+        )
+        today = timezone.localdate()
+
         built: list[ProgressRow] = []
         for row in rows:
             if row.program_id not in by_program:
@@ -236,15 +294,34 @@ class OnboardingService(BaseService):
                 )
             place = places.get(row.employee_id)
             account = accounts.get(row.employee_id)
+            progress = progress_module.compute(
+                row, sections=by_program[row.program_id], documents=documents,
+            )
+            telegram = account.status if account else "NOT_LINKED"
+            materials = tuple(
+                {
+                    "document_id": str(one.document.id),
+                    "title": one.document.title,
+                    "version": one.version.version if one.version else None,
+                    "state": (
+                        "accepted" if one.accepted
+                        else "declined" if one.declined
+                        else "renewal" if (row.employee_id, one.document.id) in earlier
+                        else "pending"
+                    ),
+                    "decided_at": one.decided_at,
+                }
+                for one in progress.required_policies
+            )
+            reasons, group = _classify(row, progress, telegram, materials, today, moment)
             built.append(
                 ProgressRow(
                     employee=row.employee,
-                    progress=progress_module.compute(
-                        row,
-                        sections=by_program[row.program_id],
-                        documents=documents,
-                    ),
-                    telegram_state=account.status if account else "NOT_LINKED",
+                    progress=progress,
+                    reasons=reasons,
+                    group=group,
+                    materials=materials,
+                    telegram_state=telegram,
                     office_name=place.office.name if place and place.office_id else None,
                     department_name=(
                         place.department.name
@@ -258,28 +335,29 @@ class OnboardingService(BaseService):
             )
         return built
 
-    def counts(self, actor: Actor) -> dict:
-        """Сколько человек в каком состоянии — для вкладок фильтра."""
+    def counts(self, actor: Actor, *, search=None, office_id=None, department_id=None) -> dict:
+        """Сколько человек в каком состоянии и в какой группе.
+
+        Считается тем же пересчётом и с теми же отборами места и поиска,
+        что и список: число на чипе обязано совпасть со строками под ним.
+        """
         self.access.require(actor, "onboarding.read")
-        rows = list(
-            EmployeeOnboarding.objects.filter(
-                organization_id=actor.organization_id,
-                employee_id__in=self._visible_employees(actor).values_list(
-                    "id", flat=True
-                ),
-            ).select_related("employee")
-        )
+        rows = list(self._scoped(actor, search=search, office_id=office_id, department_id=department_id))
         # Все состояния перечислены явно, включая нулевые: пустая вкладка
-        # должна показывать «0», а не исчезать. Отсутствие числа читается
-        # как «неизвестно», и это другое утверждение.
+        # должна показывать «0», а не исчезать.
         tally = {
             "all": len(rows), "NOT_STARTED": 0, "IN_PROGRESS": 0,
             "INFO_COMPLETED": 0, "POLICIES_IN_PROGRESS": 0,
             "COMPLETED": 0, "UPDATE_REQUIRED": 0,
             "BLOCKED_BY_DECLINED_POLICY": 0,
         }
+        groups = {name: 0 for name in GROUPS}
+        overdue = 0
         for one in self._decorate(actor, rows):
             tally[one.progress.status] = tally.get(one.progress.status, 0) + 1
+            groups[one.group] += 1
+            overdue += one.overdue
+        tally["groups"] = {"all": len(rows), **groups, "overdue": overdue}
         return tally
 
     # -------------------------------------------------------- один человек
@@ -392,6 +470,7 @@ class OnboardingService(BaseService):
                 employee=employee,
                 program=program,
                 status="NOT_STARTED",
+                due_date=timezone.localdate(moment) + timedelta(days=DUE_DAYS),
                 created_by_user_id=actor.user_id,
             )
             self.audit.record(
@@ -543,25 +622,73 @@ class OnboardingService(BaseService):
             )
         return {"sent_at": moment}
 
+    def set_due(self, actor: Actor, employee_id: uuid.UUID, due_date: date | None) -> EmployeeOnboarding:
+        """Назначить или снять срок ознакомления."""
+        self.access.require(actor, "onboarding.manage")
+        require_visible_employee(self.access, actor, employee_id)
+        row = EmployeeOnboarding.objects.filter(employee_id=employee_id).first()
+        if row is None:
+            raise NotFound("Сотрудник не включён в программу ознакомления")
+        before = {"due_date": row.due_date.isoformat() if row.due_date else None}
+        with self.atomic():
+            row.due_date = due_date
+            row.save(update_fields=["due_date", "updated_at"])
+            self.audit.record(
+                actor,
+                action="onboarding.due",
+                entity_type=ENTITY_ONBOARDING,
+                entity_id=row.id,
+                before=before,
+                after={"due_date": due_date.isoformat() if due_date else None},
+            )
+        return row
+
+    def remind_many(
+        self, actor: Actor, employee_ids: list[uuid.UUID], *, now: datetime | None = None
+    ) -> list[dict]:
+        """Напомнить нескольким сразу — с итогом по каждому.
+
+        Не «отправлено», а что именно случилось с каждым: у кого нет
+        Telegram, кому уже напомнили сегодня, кто успел закончить. Иначе
+        кнопка «Напомнить всем» молча проглатывала бы отказы.
+        """
+        self.access.require(actor, "onboarding.manage")
+        moment = now or timezone.now()
+        results = []
+        for employee_id in dict.fromkeys(employee_ids):
+            row = EmployeeOnboarding.objects.filter(
+                employee_id=employee_id, organization_id=actor.organization_id
+            ).first()
+            if row is not None and row.last_reminder_at and (
+                timezone.localdate(row.last_reminder_at) == timezone.localdate(moment)
+            ):
+                results.append({"employee_id": str(employee_id), "outcome": "already_today"})
+                continue
+            try:
+                self.remind(actor, employee_id, now=moment)
+                outcome = "sent"
+            except Conflict as error:
+                reason = (getattr(error, "details", None) or {}).get("reason")
+                outcome = "no_telegram" if reason == "not_linked" else "completed"
+            except NotFound:
+                outcome = "not_enrolled"
+            results.append({"employee_id": str(employee_id), "outcome": outcome})
+        return results
+
     # -------------------------------------------------------------- выгрузка
 
-    def export_rows(self, actor: Actor) -> list[dict]:
+    def export_rows(self, actor: Actor, *, search=None, office_id=None, department_id=None, group=None) -> list[dict]:
         """Плоская таблица состояния — для выгрузки из CRM.
 
         Постранично не режется намеренно: выгрузка отвечает на вопрос
         «покажи всех», и файл из первых пятидесяти строк ответом не был бы.
         """
         self.access.require(actor, "onboarding.read")
-        rows = list(
-            EmployeeOnboarding.objects.filter(
-                organization_id=actor.organization_id,
-                employee_id__in=self._visible_employees(actor).values_list(
-                    "id", flat=True
-                ),
-            ).select_related("employee", "program")
-        )
+        rows = list(self._scoped(actor, search=search, office_id=office_id, department_id=department_id))
         built = []
         for one in self._decorate(actor, rows):
+            if group and one.group != group:
+                continue
             built.append({
                 "employee_number": one.employee.employee_number,
                 "full_name": _full_name(one.employee),
@@ -577,6 +704,9 @@ class OnboardingService(BaseService):
                     f"{one.progress.policies_done}/{one.progress.policies_total}"
                 ),
                 "completed_at": one.progress.onboarding.completed_at,
+                "due_date": one.progress.onboarding.due_date,
+                "attention": ", ".join(REASON_TITLES[r] for r in one.reasons),
+                "last_reminder_at": one.progress.onboarding.last_reminder_at,
             })
         return built
 
@@ -719,9 +849,79 @@ class PolicyService(BaseService):
             PolicyDocument.objects.filter(
                 organization_id=actor.organization_id, archived_at__isnull=True
             )
+            .select_related("category", "created_by_user")
             .prefetch_related("versions")
             .order_by("position", "created_at")
         )
+
+    def document_facts(self, actor: Actor, documents: list[PolicyDocument]) -> dict:
+        """Кому назначен документ и кто подтвердил — для всех сразу.
+
+        Назначен документ участникам программы, если у него есть
+        опубликованная редакция: черновик никого ни к чему не обязывает,
+        и у него «назначено» честно равно нулю. Подтвердили — согласие с
+        ДЕЙСТВУЮЩЕЙ редакцией. «Новая версия» — соглашались с прежней, но
+        не с нынешней. Ближайший срок — самый ранний срок среди тех, кто
+        этот документ ещё не подтвердил.
+
+        Кто и когда менял документ — из журнала: там настоящие авторы и
+        у старых записей, которых новая колонка не знала бы.
+        """
+        self.access.require(actor, "onboarding.read")
+        service = OnboardingService()
+        service.access = self.access
+        participants = dict(
+            EmployeeOnboarding.objects.filter(
+                organization_id=actor.organization_id,
+                employee_id__in=service._visible_employees(actor).values_list("id", flat=True),
+            ).values_list("employee_id", "due_date")
+        )
+        live = {}
+        version_ids = []
+        for document in documents:
+            for version in document.versions.all():
+                version_ids.append(version.id)
+                if version.status == "PUBLISHED":
+                    live[document.id] = version
+        decisions = {}
+        for employee_id, version_id, document_id, decision, status in EmployeePolicyAcceptance.objects.filter(
+            employee_id__in=list(participants), version__document_id__in=[d.id for d in documents],
+        ).values_list("employee_id", "version_id", "version__document_id", "decision", "version__status"):
+            decisions.setdefault(document_id, []).append((employee_id, version_id, decision, status))
+
+        changes = {}
+        owner = {version: doc.id for doc in documents for version in (v.id for v in doc.versions.all())}
+        for entry in AuditLog.objects.filter(
+            organization_id=actor.organization_id,
+            entity_type__in=[ENTITY_DOCUMENT, ENTITY_VERSION],
+            entity_id__in=[d.id for d in documents] + version_ids,
+        ).select_related("actor_user").order_by("occurred_at"):
+            document_id = entry.entity_id if entry.entity_type == ENTITY_DOCUMENT else owner.get(entry.entity_id)
+            changes[document_id] = entry
+
+        facts = {}
+        for document in documents:
+            # Необязательный документ показывается, но ни от кого не
+            # требуется: назначенным он не считается — как и черновик.
+            version = live.get(document.id) if document.is_mandatory else None
+            rows = decisions.get(document.id, [])
+            accepted = {e for e, v, d, s in rows if version and v == version.id and d == "ACCEPTED"}
+            declined = {e for e, v, d, s in rows if version and v == version.id and d == "DECLINED"}
+            earlier = {e for e, v, d, s in rows if d == "ACCEPTED" and s != "PUBLISHED"} - accepted
+            owing = [e for e in participants if e not in accepted] if version else []
+            dues = [participants[e] for e in owing if participants[e] is not None]
+            change = changes.get(document.id)
+            facts[document.id] = {
+                "assigned": len(participants) if version else 0,
+                "confirmed": len(accepted),
+                "declined": len(declined),
+                "renewal_pending": len(earlier) if version else 0,
+                "nearest_due": min(dues) if dues else None,
+                "created_by": _user_name(document.created_by_user),
+                "changed_at": change.occurred_at if change else document.updated_at,
+                "changed_by": _user_name(change.actor_user) if change else _user_name(document.created_by_user),
+            }
+        return facts
 
     def create_document(self, actor: Actor, data: dict) -> PolicyDocument:
         self.access.require(actor, "policies.publish")
@@ -729,6 +929,9 @@ class PolicyService(BaseService):
         if not code:
             raise ValidationFailed("Код документа обязателен",
                                    details={"field": "code"})
+        category_id = data.get("category_id")
+        if category_id is not None:
+            CategoryService()._require(actor, category_id, live=True)
         with self.atomic():
             row = PolicyDocument.objects.create(
                 organization_id=actor.organization_id,
@@ -737,6 +940,7 @@ class PolicyService(BaseService):
                 description=data.get("description") or None,
                 is_mandatory=data.get("is_mandatory", True),
                 position=data.get("position") or 1,
+                category_id=category_id,
                 created_by_user_id=actor.user_id,
             )
             self.audit.record(
@@ -759,6 +963,12 @@ class PolicyService(BaseService):
             if name in data and data[name] is not None:
                 setattr(row, name, data[name])
                 fields.append(name)
+        if "category_id" in data:
+            wanted = data["category_id"]
+            if wanted is not None:
+                CategoryService()._require(actor, wanted, live=True)
+            row.category_id = wanted
+            fields.append("category")
         if not fields:
             return row
         with self.atomic():
@@ -1003,6 +1213,177 @@ class PolicyService(BaseService):
         ).first()
         if row is None:
             raise NotFound("Редакция не найдена")
+        return row
+
+
+#: Причины внимания словами кадровика.
+REASON_TITLES = {
+    "overdue": "Просрочен срок ознакомления",
+    "declined": "Отказ подтвердить документ",
+    "renewal": "Новая версия материала",
+    "silent": "Нет ответа от сотрудника",
+}
+
+
+def _classify(row, progress, telegram: str, materials, today: date, moment: datetime):
+    """Причины внимания и группа строки — одно правило на весь раздел.
+
+    * просрочено — срок назначен, прошёл, а ознакомление не завершено;
+    * отказ — сотрудник отказался подтвердить документ;
+    * новая версия — с прежней редакцией соглашался, с нынешней ещё нет;
+    * нет ответа — Telegram привязан, приглашён больше SILENT_DAYS дней
+      назад, а к ознакомлению не приступил.
+
+    Группы взаимоисключающие, поэтому чипы складываются во «все».
+    """
+    reasons = []
+    if not progress.completed:
+        due = row.due_date
+        if due is not None and due < today:
+            reasons.append("overdue")
+        if progress.has_declined:
+            reasons.append("declined")
+        if any(one["state"] == "renewal" for one in materials):
+            reasons.append("renewal")
+        since = row.invited_at or row.created_at
+        if (
+            telegram == "ACTIVE" and row.started_at is None and since is not None
+            and since <= moment - timedelta(days=SILENT_DAYS)
+        ):
+            reasons.append("silent")
+    if progress.completed:
+        group = "done"
+    elif reasons:
+        group = "attention"
+    elif telegram != "ACTIVE" and row.started_at is None:
+        group = "waiting"
+    elif progress.status == "NOT_STARTED":
+        group = "not_started"
+    else:
+        group = "in_progress"
+    return tuple(reasons), group
+
+
+def _user_name(user) -> str | None:
+    if user is None:
+        return None
+    return user.full_name or user.email
+
+
+class CategoryService(BaseService):
+    """Разделы материалов: группировка для кадровика и порядка."""
+
+    def categories(self, actor: Actor) -> list[dict]:
+        self.access.require(actor, "onboarding.read")
+        rows = list(
+            PolicyCategory.objects.filter(organization_id=actor.organization_id, archived_at__isnull=True)
+            .select_related("owner_employee")
+            .order_by("position", "title")
+        )
+        documents = {}
+        for doc in PolicyDocument.objects.filter(
+            organization_id=actor.organization_id, archived_at__isnull=True, category_id__in=[r.id for r in rows]
+        ).order_by("position", "created_at"):
+            documents.setdefault(doc.category_id, []).append(doc)
+        places = {
+            one.employee_id: one for one in EmployeeAssignment.objects.filter(
+                employee_id__in=[r.owner_employee_id for r in rows if r.owner_employee_id], is_primary=True,
+            ).select_related("position").order_by("-valid_from")
+        }
+        changes = {}
+        for entry in AuditLog.objects.filter(
+            organization_id=actor.organization_id, entity_type=ENTITY_CATEGORY, entity_id__in=[r.id for r in rows],
+        ).select_related("actor_user").order_by("occurred_at"):
+            changes[entry.entity_id] = entry
+        result = []
+        for row in rows:
+            owner = row.owner_employee
+            place = places.get(row.owner_employee_id)
+            change = changes.get(row.id)
+            docs = documents.get(row.id, [])
+            result.append({
+                "id": str(row.id),
+                "title": row.title,
+                "description": row.description,
+                "position": row.position,
+                "owner": {
+                    "id": str(owner.id),
+                    "full_name": _full_name(owner),
+                    "position_name": place.position.name if place and place.position_id else None,
+                } if owner else None,
+                "documents_count": len(docs),
+                "documents": [{"id": str(d.id), "title": d.title} for d in docs],
+                "changed_at": change.occurred_at if change else row.updated_at,
+                "changed_by": _user_name(change.actor_user) if change else None,
+            })
+        return result
+
+    def create(self, actor: Actor, data: dict) -> PolicyCategory:
+        self.access.require(actor, "policies.publish")
+        owner = self._owner(actor, data.get("owner_employee_id"))
+        with self.atomic():
+            row = PolicyCategory.objects.create(
+                organization_id=actor.organization_id,
+                title=data["title"].strip(),
+                description=(data.get("description") or "").strip() or None,
+                owner_employee_id=owner,
+                position=data.get("position") or 1,
+                created_by_user_id=actor.user_id,
+            )
+            self.audit.record(actor, action="onboarding.category.create", entity_type=ENTITY_CATEGORY,
+                              entity_id=row.id, after=snapshot(row, CATEGORY_AUDIT_FIELDS))
+        return row
+
+    def update(self, actor: Actor, category_id: uuid.UUID, data: dict) -> PolicyCategory:
+        self.access.require(actor, "policies.publish")
+        row = self._require(actor, category_id, live=True)
+        before = snapshot(row, CATEGORY_AUDIT_FIELDS)
+        fields = []
+        if data.get("title"):
+            row.title = data["title"].strip()
+            fields.append("title")
+        if "description" in data:
+            row.description = (data["description"] or "").strip() or None
+            fields.append("description")
+        if "owner_employee_id" in data:
+            row.owner_employee_id = self._owner(actor, data["owner_employee_id"])
+            fields.append("owner_employee")
+        if data.get("position"):
+            row.position = data["position"]
+            fields.append("position")
+        if not fields:
+            return row
+        with self.atomic():
+            row.save(update_fields=[*fields, "updated_at"])
+            self.audit.record(actor, action="onboarding.category.update", entity_type=ENTITY_CATEGORY,
+                              entity_id=row.id, before=before, after=snapshot(row, CATEGORY_AUDIT_FIELDS))
+        return row
+
+    def archive(self, actor: Actor, category_id: uuid.UUID) -> PolicyCategory:
+        """Убрать раздел. Только пустой: материалы сначала переносят."""
+        self.access.require(actor, "policies.publish")
+        row = self._require(actor, category_id, live=True)
+        if PolicyDocument.objects.filter(category_id=row.id, archived_at__isnull=True).exists():
+            raise Conflict("В разделе есть материалы: перенесите их в другой раздел")
+        before = snapshot(row, CATEGORY_AUDIT_FIELDS)
+        with self.atomic():
+            row.archived_at = timezone.now()
+            row.save(update_fields=["archived_at", "updated_at"])
+            self.audit.record(actor, action="onboarding.category.archive", entity_type=ENTITY_CATEGORY,
+                              entity_id=row.id, before=before, after=snapshot(row, CATEGORY_AUDIT_FIELDS))
+        return row
+
+    def _owner(self, actor: Actor, employee_id) -> uuid.UUID | None:
+        if not employee_id:
+            return None
+        if not Employee.objects.filter(id=employee_id, organization_id=actor.organization_id).exists():
+            raise ValidationFailed("Ответственный не найден", details={"field": "owner_employee_id"})
+        return employee_id
+
+    def _require(self, actor: Actor, category_id, *, live: bool = False) -> PolicyCategory:
+        row = PolicyCategory.objects.filter(id=category_id, organization_id=actor.organization_id).first()
+        if row is None or (live and row.archived_at is not None):
+            raise NotFound("Раздел не найден")
         return row
 
 

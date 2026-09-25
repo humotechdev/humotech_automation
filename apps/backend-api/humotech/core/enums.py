@@ -52,9 +52,29 @@ CALENDAR_EXCEPTION_TYPES = ("HOLIDAY", "SHORT_DAY", "WORKING_WEEKEND", "CLOSURE"
 # Опрос именной: HR видит, кто и как ответил. Анонимного вида здесь нет
 # и не появится незаметно — это другой продукт с другими обещаниями.
 SURVEY_QUESTION_KINDS = ("SINGLE", "MULTI", "SCALE", "TEXT")
+#: Жизнь шаблона. Опубликованный нельзя молча править: по нему уже
+#: спрашивали людей, и переписанный вопрос сделал бы прежние ответы
+#: ответами на другой вопрос. Правка создаёт новую редакцию.
+SURVEY_TEMPLATE_STATUSES = ("DRAFT", "PUBLISHED", "ARCHIVED")
 SURVEY_CAMPAIGN_STATUSES = ("DRAFT", "SCHEDULED", "ACTIVE", "FINISHED", "CANCELLED")
-SURVEY_AUDIENCE_KINDS = ("EMPLOYEES", "DEPARTMENT", "OFFICE", "ALL")
-SURVEY_RECIPIENT_STATUSES = ("PENDING", "SENT", "STARTED", "COMPLETED")
+#: Кого спросить. Регион и должность — те же оси, по которым HR и так
+#: делит компанию в остальных разделах: «все продавцы» и «весь
+#: Самарканд» встречаются чаще, чем список фамилий.
+SURVEY_AUDIENCE_KINDS = (
+    "EMPLOYEES", "DEPARTMENT", "OFFICE", "REGION", "POSITION", "ALL",
+)
+#: `SKIPPED` — человеку опрос отправить некуда: нет привязки Telegram
+#: или он уже не работает. Это исход, а не ошибка: без него такая
+#: строка висела бы вечно в «отправляем» и портила бы весь счёт.
+#: `EXPIRED` — срок ответа вышел, а опрос не пройден.
+SURVEY_RECIPIENT_STATUSES = (
+    "PENDING", "SENT", "STARTED", "COMPLETED", "SKIPPED", "EXPIRED",
+)
+
+#: Событие, по которому опрос уходит сам.
+SURVEY_TRIGGER_KINDS = (
+    "PROBATION_END", "FIRST_DAY", "DAYS_AFTER_HIRE", "BIRTHDAY", "SCHEDULE",
+)
 
 QR_DIRECTION_MODES = ("ENTRY", "EXIT", "BOTH")
 QR_MODES = ("STATIC", "ROTATING")
@@ -98,6 +118,11 @@ ABSENCE_ACTIONS = (
     # действие, а не комментарий: по нему в истории заявки видно, что
     # период в ней — из справки, а не со слов заболевшего.
     "PERIOD_SET",
+    # Кадровик подтвердил больничный поверх реальных отметок входа и
+    # выхода. Отдельное действие: «утвердил» и «утвердил, зная, что
+    # человек в эти дни отмечался» — разные решения, и второе должно
+    # быть видно в истории само по себе, с причиной.
+    "MARKS_OVERRIDDEN",
 )
 
 # --- Telegram, знания, вопросы, уведомления ---
@@ -208,7 +233,7 @@ QUESTION_MESSAGE_SOURCES = ("TELEGRAM", "CRM", "SYSTEM")
 # оставляет строку — лента и журнал аудита рассказывают одно и то же.
 QUESTION_EVENTS = (
     "CREATED", "TAKEN", "ASSIGNED", "TRANSFERRED", "PRIORITY", "CATEGORY",
-    "WAITING_EMPLOYEE", "RESUMED", "CLOSED", "REOPENED",
+    "WAITING_EMPLOYEE", "RESUMED", "CLOSED", "REOPENED", "STARTED",
 )
 # Чем кончилась попытка ассистента подготовить черновик.
 QUESTION_DRAFT_STATUSES = ("READY", "LOW_CONFIDENCE", "CONFLICT", "NO_SOURCES")

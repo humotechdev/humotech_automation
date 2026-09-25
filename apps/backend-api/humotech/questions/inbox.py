@@ -107,6 +107,14 @@ QUESTION_FIELDS = (
 
 ENTITY = "employee_questions"
 
+#: Файл к ответу HR: то, что Telegram покажет документом, и не больше.
+REPLY_FILE_TYPES = ("application/pdf", "image/png", "image/jpeg")
+REPLY_FILE_MAX_BYTES = 10 * 1024 * 1024
+#: Уведомление с файлом ссылается на сообщение, а не на обращение: бот
+#: по этой ссылке забирает именно этот файл.
+REPLY_FILE_TYPE = "question.reply.file"
+MESSAGE_ENTITY = "employee_question_messages"
+
 
 class TelegramUnavailable(DomainError):
     """Отправить некуда: привязки нет, она отозвана или сотрудник уволен.
@@ -269,7 +277,8 @@ class InboxService(BaseService):
 
         messages = list(
             question.messages.select_related(
-                "author_user__employee", "author_employee", "notification"
+                "author_user__employee", "author_employee", "notification",
+                "attachment",
             ).order_by("created_at", "id")
         )
         can_answer = self.access.has(actor, "questions.answer")
@@ -298,6 +307,7 @@ class InboxService(BaseService):
                     "priority": can_answer and status in OPEN,
                     "category": can_answer,
                     "wait": can_answer and status in WAITING_HR,
+                    "start": can_answer and status in ("NEW", "WAITING_EMPLOYEE"),
                     "close": can_answer and status in OPEN,
                     "reopen": can_answer and status == "CLOSED",
                     "reply": can_answer and status in OPEN,
@@ -458,6 +468,50 @@ class InboxService(BaseService):
             )
         return self.detail(actor, question)
 
+    def start(self, actor: Actor, question_id: uuid.UUID) -> dict:
+        """Перевести в работу, не трогая ответственного.
+
+        «Взять» делает то же и ещё забирает обращение себе. Кадровику,
+        который просто отмечает, что вопрос разбирают, передача чужого
+        обращения на себя была бы побочным действием выбора статуса.
+        """
+        self.access.require(actor, "questions.answer")
+        with self.atomic():
+            question = self._lock(actor, question_id)
+            if question.status == "IN_PROGRESS":
+                return self.detail(actor, question)
+            if question.status not in ("NEW", "WAITING_EMPLOYEE"):
+                raise Conflict(
+                    "Закрытое обращение сначала переоткрывают",
+                    details={"status": question.status},
+                )
+            before = snapshot(question, QUESTION_FIELDS)
+            question.status = "IN_PROGRESS"
+            if question.awaiting_reply and question.due_at is None:
+                question.due_at = timezone.now() + SLA[question.priority]
+            question.save()
+            self._event(
+                question, actor, "STARTED",
+                {"from": before["status"], "to": "IN_PROGRESS"},
+            )
+            self._audit(actor, question, "question.start", before)
+        return self.detail(actor, question)
+
+    def message_file(self, actor: Actor, question_id: uuid.UUID, message_id: uuid.UUID):
+        """Файл из ленты — кадровику, который видит это обращение."""
+        self.access.require(actor, "questions.read")
+        question = self._require(actor, question_id)
+        row = (
+            QuestionMessage.objects.select_related("attachment")
+            .filter(question=question, id=message_id, attachment__isnull=False)
+            .first()
+        )
+        if row is None:
+            raise NotFound("Файла в этом сообщении нет")
+        from humotech.files.storage import open_stored
+
+        return open_stored(row.attachment), row.attachment
+
     def wait_employee(self, actor: Actor, question_id: uuid.UUID) -> dict:
         self.access.require(actor, "questions.answer")
         with self.atomic():
@@ -512,8 +566,13 @@ class InboxService(BaseService):
         after: str = "KEEP",
         close_reason: str | None = None,
         client_request_id: str | None = None,
+        upload=None,
     ) -> dict:
         """Ответ сотруднику: лента, очередь Telegram, состояние, журнал.
+
+        К ответу можно приложить файл — тогда текст необязателен: «вот
+        бланк» без слов тоже ответ. Файл уходит документом, текст —
+        подписью к нему.
 
         Всё — одной транзакцией. Откатился ответ — откатилось и сообщение
         в очереди; сообщения в очереди без ответа в ленте тоже не бывает.
@@ -522,7 +581,7 @@ class InboxService(BaseService):
         второго сообщения человеку не даёт.
         """
         self.access.require(actor, "questions.answer")
-        body = clean_text(text, field="text", required=True)
+        body = clean_text(text, field="text", required=upload is None) or ""
         _known(after, "after", REPLY_AFTER)
         reason = (close_reason or "").strip() or "Ответ отправлен сотруднику"
         request_key = (client_request_id or "").strip()[:100] or None
@@ -546,6 +605,20 @@ class InboxService(BaseService):
                     details={"reason": telegram["reason"]},
                 )
 
+            stored = None
+            if upload is not None:
+                from humotech.files.storage import store
+
+                stored = store(
+                    upload,
+                    organization_id=question.organization_id,
+                    employee=None,
+                    allowed_types=REPLY_FILE_TYPES,
+                    max_bytes=REPLY_FILE_MAX_BYTES,
+                    prefix="questions",
+                    user_id=actor.user_id,
+                ).file
+
             before = snapshot(question, QUESTION_FIELDS)
             if question.assigned_to_user_id is None:
                 # Ответил — значит взял: иначе в «Мои» его нет, а вёл
@@ -562,7 +635,7 @@ class InboxService(BaseService):
             notification = outbox.enqueue(
                 organization_id=question.organization_id,
                 employee_id=question.employee_id,
-                notification_type="question.reply",
+                notification_type=REPLY_FILE_TYPE if stored else "question.reply",
                 title=f"Ответ на обращение №{question.number}",
                 # В ленте CRM — чистый текст, в чат — с заголовком: без
                 # номера человек с двумя обращениями не поймёт, о каком речь.
@@ -571,8 +644,8 @@ class InboxService(BaseService):
                 # ответов несколько, и ключ по обращению вернул бы второму
                 # ответу первое уведомление, так и не отправив его.
                 idempotency_key=f"question.reply:{message_id}",
-                related_entity_type=ENTITY,
-                related_entity_id=question.id,
+                related_entity_type=MESSAGE_ENTITY if stored else ENTITY,
+                related_entity_id=message_id if stored else question.id,
             )
             QuestionMessage.objects.create(
                 id=message_id,
@@ -583,6 +656,7 @@ class InboxService(BaseService):
                 body=body,
                 author_user_id=actor.user_id,
                 notification=notification,
+                attachment=stored,
                 client_request_id=request_key,
                 created_at=moment,
             )
@@ -604,6 +678,7 @@ class InboxService(BaseService):
             self._audit(
                 actor, question, "question.reply", before,
                 extra={"message_id": str(message_id),
+                       "file_id": str(stored.id) if stored else None,
                        "notification_id": str(notification.id) if notification else None},
             )
         return self.detail(actor, question)
@@ -887,7 +962,13 @@ class InboxService(BaseService):
             },
             "office": place.get("office"),
             "topic": row.normalized_topic or _snippet(row.question_text, 120),
-            "snippet": _snippet(getattr(row, "last_body", None) or row.question_text, 160),
+            # Пустое тело бывает только у ответа-файла: пересказываем его
+            # словом, иначе в очереди встала бы цитата исходного вопроса.
+            "snippet": (
+                "Файл"
+                if getattr(row, "last_body", None) == ""
+                else _snippet(getattr(row, "last_body", None) or row.question_text, 160)
+            ),
             "last_message_kind": getattr(row, "last_kind", None) or "EMPLOYEE",
             "category": row.category,
             "priority": row.priority,
@@ -1177,6 +1258,15 @@ def _message(row: QuestionMessage) -> dict:
         "author": author,
         "created_at": row.created_at,
         "delivery": delivery,
+        "attachment": (
+            {
+                "name": row.attachment.original_filename,
+                "mime_type": row.attachment.mime_type,
+                "size_bytes": row.attachment.size_bytes,
+            }
+            if row.attachment_id and row.attachment is not None
+            else None
+        ),
     }
 
 
@@ -1222,8 +1312,10 @@ def _draft(question: EmployeeQuestion) -> dict | None:
 
 
 def _person(user) -> dict:
+    # Имя из карточки сотрудника, иначе — из учётной записи. Почта — только
+    # когда имени нет нигде: в переписке человек подписывается именем.
     name = _full_name(user.employee) if getattr(user, "employee_id", None) else None
-    return {"id": user.id, "name": name or user.email}
+    return {"id": user.id, "name": name or (user.full_name or "").strip() or user.email}
 
 
 def _person_by_id(user_id) -> dict | None:
@@ -1314,6 +1406,29 @@ __all__ = [
 ]
 
 
+def employee_reply_file(context, message_id: uuid.UUID):
+    """Файл из ответа HR — боту, который отправляет его этому сотруднику.
+
+    Отдаётся только файл из обращения самого человека: номер сообщения
+    угадать можно, чужую бумагу по нему получить — нет.
+    """
+    from humotech.files.storage import open_stored
+
+    row = (
+        QuestionMessage.objects.select_related("attachment", "question")
+        .filter(
+            id=message_id,
+            kind="HR",
+            attachment__isnull=False,
+            question__employee_id=context.employee.id,
+        )
+        .first()
+    )
+    if row is None:
+        raise NotFound("Файла нет")
+    return open_stored(row.attachment), row.attachment
+
+
 def _reply_body(question, answer: str) -> str:
     """Ответ HR так, как его увидит человек в чате.
 
@@ -1330,4 +1445,5 @@ def _reply_body(question, answer: str) -> str:
     if asked:
         short = asked if len(asked) <= 120 else asked[:117].rstrip() + "…"
         head += f"\n\nВы спрашивали: «{short}»"
-    return f"{head}\n\n{answer}"
+    # Файл без слов: подпись к документу — только шапка с номером.
+    return f"{head}\n\n{answer}" if answer else head

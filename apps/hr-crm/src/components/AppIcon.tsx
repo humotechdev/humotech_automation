@@ -36,14 +36,16 @@ import type { ComponentType, SVGProps } from 'react';
  */
 import { FilterX, UsersRound } from 'lucide-react';
 import {
-  Archive, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, Bell, Book,
+  Archive, ArrowDownRight, Attachment, Check, DoubleCheck, Emoji, MoreHoriz, Suitcase, ArrowLeft, ArrowRight, ArrowUpRight, Bell, Book,
   Building, Calendar, ChatBubble, CheckCircle, CircleSpark, Clock,
   ClockRotateRight, Database, Download, EditPencil, Eye, EyeClosed, Filter, Globe,
-  Group, Home, Key, Lock, LogOut, MailOut, MapPin, NavArrowDown, NavArrowRight,
+  Group, Home, InfoCircle, Key, Lock, LogOut, MailOut, MapPin, NavArrowDown,
+  NavArrowRight,
   Page, Plus,
   FilterList, UserPlus,
   Refresh, ReportColumns, Reports, Search, SendDiagonal, Settings, ShieldCheck,
-  List, Table, User, ViewGrid, WarningCircle, Xmark, XmarkCircle,
+  List, MoreVert, Table, Trash, User, ViewGrid, WarningCircle, Xmark, XmarkCircle,
+  UserXmark, DataTransferBoth, GraduationCap, Megaphone, Hourglass, LightBulb, WarningTriangle, Community, UserBadgeCheck,
 } from 'iconoir-react';
 
 export type AppIconName =
@@ -56,7 +58,10 @@ export type AppIconName =
   | 'user' | 'user-plus' | 'filter-list' | 'eye' | 'eye-off'
   /* Крупные значки пустых состояний — единственные из Lucide. */
   | 'blank-people' | 'blank-search'
-  | 'close' | 'back' | 'next' | 'trend-up' | 'trend-down';
+  | 'close' | 'back' | 'next' | 'trend-up' | 'trend-down'
+  | 'info' | 'trash' | 'more'
+  | 'attach' | 'tick' | 'ticks' | 'bag' | 'dots' | 'smile'
+  | 'user-x' | 'transfer' | 'grad' | 'megaphone' | 'hourglass' | 'bulb' | 'warning' | 'team' | 'user-ok';
 
 type Glyph = ComponentType<SVGProps<SVGSVGElement>>;
 
@@ -82,6 +87,21 @@ const GLYPHS: Record<AppIconName, Glyph> = {
   // «Журнал отправок»: не входящие, а ушедшие письма.
   inbox: MailOut,
   alert: WarningCircle,
+  // Подсказка, а не предупреждение: у них разный вес, и значок
+  // тревоги там, где просто объясняют порядок, торопит зря.
+  info: InfoCircle,
+  trash: Trash,
+  /* Три точки: второстепенные действия строки под ними. */
+  more: MoreVert,
+  // Переписка: скрепка у поля ответа, галочки доставки у сообщения.
+  attach: Attachment,
+  tick: Check,
+  ticks: DoubleCheck,
+  // Отдел в карточке человека: портфель, как у рабочего места.
+  bag: Suitcase,
+  // Меню диалога — горизонтальные точки, как у переписки в мессенджерах.
+  dots: MoreHoriz,
+  smile: Emoji,
   database: Database,
   globe: Globe,
   send: SendDiagonal,
@@ -125,6 +145,15 @@ const GLYPHS: Record<AppIconName, Glyph> = {
   next: NavArrowRight,
   'trend-up': ArrowUpRight,
   'trend-down': ArrowDownRight,
+  'user-x': UserXmark,
+  transfer: DataTransferBoth,
+  grad: GraduationCap,
+  megaphone: Megaphone,
+  hourglass: Hourglass,
+  bulb: LightBulb,
+  warning: WarningTriangle,
+  team: Community,
+  'user-ok': UserBadgeCheck,
 };
 
 /**

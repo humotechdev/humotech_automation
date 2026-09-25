@@ -1,106 +1,54 @@
 /**
- * Главная страница CRM: обзор на выбранный день.
+ * Главная: оперативная картина дня.
  *
- * Все числа приходят с сервера. Ни одно не считается здесь заново:
- * `/dashboard` отдаёт карточки вместе с адресом списка, из которого
- * сложилось число, и посчитать иначе значило бы завести второе место,
- * где та же величина получается по другим правилам.
+ * Страница отвечает на четыре вопроса и не больше: что с людьми сегодня,
+ * что ждёт действия HR, как меняется явка и в каком офисе проблема.
+ * Подробности — в своих разделах; отсюда к ним ведёт каждое число.
+ *
+ * Все числа приходят с сервера. Ни одно не пересчитывается здесь по
+ * своим правилам: `/dashboard` отдаёт показатели вместе с адресом списка,
+ * из которого они сложились, `/attendance/presence` — состояния по офису,
+ * очередь заявок — их стадии. Отсутствием считается только то, что сервер
+ * называет отсутствием: неподтверждённый больничный им не является.
  *
  * Каждый блок грузится сам за себя: упавшая таблица офисов не повод
- * прятать карточки, которые уже пришли. Ошибка нигде не превращается
+ * прятать показатели, которые уже пришли. Ошибка нигде не превращается
  * в ноль — у блока своё состояние, и показывается оно.
  */
 
-import { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 
 import * as api from '../api/crm';
 import { AppShell } from '../components/AppShell';
-import { AttendanceChart, toPoints, type Point } from '../components/AttendanceChart';
+import { AppIcon, type AppIconName } from '../components/AppIcon';
 import { DatePicker } from '../components/DatePicker';
 import { Dropdown } from '../components/Dropdown';
-import { AppIcon, type AppIconName } from '../components/AppIcon';
-import {
-  formatPercent, formatTime, longDate, percent, shift, today, useBlock,
-  type Block,
-} from '../features/dashboard/data';
+import { longDate, shift, today, useBlock, type Block } from '../features/dashboard/data';
 import { useStickyState } from '../features/shell/sticky';
-import '../styles/dashboard.css';
+import '../styles/home.css';
 
 const RANGES = [
   { key: '7', title: '7 дней', days: 7 },
   { key: '14', title: '14 дней', days: 14 },
   { key: '30', title: 'Месяц', days: 30 },
 ] as const;
+type Range = (typeof RANGES)[number];
+
+/** Открытые заявки — те, по которым ещё не решили. */
+const OPEN = 'SUBMITTED,IN_REVIEW';
+const WEEKDAYS = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
+const MONTHS_SHORT = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
 
 /**
- * Шесть карточек образца: ключ сервера -> короткая подпись и иконка.
- *
- * Подписи здесь свои, а не серверные, по одной причине: длинные
- * («Активные сотрудники», «Должны работать сегодня») переносились на
- * две строки, и числа в первых двух карточках оказывались ниже
- * остальных. Для ПРОШЛОЙ даты слова «сегодня» и «сейчас» снимаются —
- * иначе подпись обещает настоящее время там, где показан архив.
- */
-const CARDS: {
-  key: string; icon: AppIconName; title: string; past?: string;
-  note: string; pastNote?: string; tone?: Tone;
-}[] = [
-  { key: 'active_employees', icon: 'users', title: 'Сотрудники',
-    note: 'Активные сотрудники', tone: 'people' },
-  { key: 'should_work_today', icon: 'calendar', title: 'По графику сегодня',
-    past: 'По графику', note: 'Ожидаются на работе', pastNote: 'Ожидались на работе',
-    tone: 'plan' },
-  { key: 'in_office', icon: 'building', title: 'Сейчас в офисах', past: 'В офисах',
-    note: '', tone: 'present' },
-  { key: 'not_come', icon: 'clock', title: 'Нет отметки',
-    note: 'Смена уже началась', pastNote: 'Смена шла без отметки', tone: 'pending' },
-  { key: 'vacation', icon: 'calendar', title: 'В отпуске',
-    note: 'Подтверждено на дату', tone: 'vacation' },
-  { key: 'sick_leave', icon: 'doc', title: 'На больничном',
-    note: 'Подтверждено на дату', tone: 'sick' },
-];
-
-/**
- * Состояние сотрудника цветом. Смысл каждого оттенка задан один раз в
- * `crm.css`, здесь только имена.
- *
- * Ни одно состояние не различается ОДНИМ цветом: рядом всегда стоит
- * слово — в карточке подпись, в таблице заголовок столбца. Больничный
- * намеренно не красный, а отсутствие отметки намеренно не «прогул»:
- * первое не нарушение, второе пока вопрос.
- */
-type Tone = 'people' | 'plan' | 'present' | 'pending' | 'vacation' | 'sick';
-
-/** Какие оттенки красят число и значок, а какие — только значок. */
-const TINTED: ReadonlySet<Tone> = new Set(['present', 'pending', 'vacation', 'sick']);
-
-/** Состояния смены, которые открываются списком из таблицы офисов. */
-const COLUMN_TONE: Record<string, Tone | undefined> = {
-  IN_OFFICE: 'present',
-  NOT_COME: 'pending',
-  VACATION: 'vacation',
-  SICK_LEAVE: 'sick',
-};
-
-/**
- * Куда ведёт число.
- *
- * Адрес не собирается заново: `/dashboard` отдаёт у каждой карточки
- * `endpoint` и `params` — тот самый список, из которого сложилось
- * число. Здесь остаётся перевести адрес API в адрес раздела и отбросить
- * параметры, которых раздел не понимает: ссылка, открывающая пустой
- * список, хуже обычного текста.
+ * Куда ведёт показатель. Адрес не собирается заново: `/dashboard` отдаёт
+ * у каждого числа список, из которого оно сложилось. Здесь остаётся
+ * перевести адрес API в адрес раздела и отбросить параметры, которых
+ * раздел не понимает: ссылка, открывающая пустой список, хуже текста.
  */
 const SECTION: Record<string, { route: string; accepts: string[] }> = {
-  '/api/v1/attendance/presence': {
-    route: '/attendance',
-    accepts: ['date', 'region_id', 'office_id', 'state'],
-  },
-  '/api/v1/employees': {
-    route: '/employees',
-    accepts: ['region_id', 'office_id', 'department_id'],
-  },
+  '/api/v1/attendance/presence': { route: '/attendance', accepts: ['date', 'region_id', 'office_id', 'state'] },
+  '/api/v1/employees': { route: '/employees', accepts: ['region_id', 'office_id', 'department_id'] },
 };
 
 function cardLink(card: api.Card | undefined): string | null {
@@ -114,15 +62,12 @@ function cardLink(card: api.Card | undefined): string | null {
 }
 
 export function DashboardPage() {
-  // Отбор главной хранится не в адресе, поэтому переживает уход в
-  // другой раздел отдельно: вернувшись, человек видит тот же регион,
-  // офис, дату и период графика.
+  // Отбор главной переживает уход в другой раздел: вернувшись, человек
+  // видит тот же регион, офис, дату и период графика.
   const [day, setDay] = useStickyState('dashboard.day', today);
   const [region, setRegion] = useStickyState('dashboard.region', '');
   const [office, setOffice] = useStickyState('dashboard.office', '');
-  const [range, setRange] = useStickyState<(typeof RANGES)[number]>('dashboard.range', RANGES[1]);
-  const [updated, setUpdated] = useState<Date | null>(null);
-  const [officeSearch, setOfficeSearch] = useStickyState('dashboard.officeSearch', '');
+  const [range, setRange] = useStickyState<Range>('dashboard.range', RANGES[0]);
   const [attempt, setAttempt] = useState(0);
 
   const filters: api.Filters = useMemo(
@@ -133,17 +78,13 @@ export function DashboardPage() {
     }),
     [day, region, office],
   );
+  const place = useMemo(
+    () => ({ ...(region ? { region_id: region } : {}), ...(office ? { office_id: office } : {}) }),
+    [region, office],
+  );
   const key = `${day}|${region}|${office}|${attempt}`;
 
-  const [cards] = useBlock(
-    (signal) =>
-      api.dashboard(filters, signal).then((body) => {
-        setUpdated(new Date());
-        return body;
-      }),
-    key,
-  );
-
+  const [cards] = useBlock((signal) => api.dashboard(filters, signal), key);
   const [directory] = useBlock(
     (signal) =>
       Promise.all([api.regions(signal), api.offices(signal)]).then(([r, o]) => ({
@@ -153,32 +94,25 @@ export function DashboardPage() {
     'directory',
   );
 
-  const from = shift(day, -(range.days - 1));
-  const [chart, reloadChart, chartRefresh] = useBlock(
-    (signal) =>
-      Promise.all([
-        api.analytics(from, day, filters, signal),
-        api.analytics(shift(from, -range.days), shift(day, -range.days), filters, signal),
-      ]).then(([now, before]) => ({
-        points: toPoints(now.series),
-        previous: toPoints(before.series),
-      })),
-    `${key}|${range.key}`,
-  );
-
   const visibleOffices = useMemo(() => {
     if (directory.state !== 'ready') return [];
     const all = directory.data.offices.filter((o) => o.status === 'ACTIVE');
     const inRegion = region ? all.filter((o) => o.region_id === region) : all;
     return office ? inRegion.filter((o) => o.id === office) : inRegion;
   }, [directory, region, office]);
+  const officeIds = useMemo(() => new Set(visibleOffices.map((o) => o.id)), [visibleOffices]);
+
+  const from = shift(day, -(range.days - 1));
+  const [chart, reloadChart, chartRefresh] = useBlock(
+    (signal) => api.analytics(from, day, filters, signal).then((body) => body.series),
+    `${key}|${range.key}`,
+  );
 
   const [table] = useBlock(
     (signal) =>
       Promise.all(
         visibleOffices.map((item) =>
-          api
-            .presence({ date: day, office_id: item.id }, signal)
+          api.presence({ date: day, office_id: item.id }, signal)
             .then((body) => ({ office: item, counts: body.counts })),
         ),
       ),
@@ -186,81 +120,55 @@ export function DashboardPage() {
     directory.state === 'ready',
   );
 
-  const [queues] = useBlock(
+  // Очередь заявок — с теми же регионом и офисом, что и вся страница.
+  const [open] = useBlock(
     (signal) =>
       Promise.all([
-        api.pendingAbsences(signal).catch(() => ({ requests: [] })),
-        api.corrections(signal).catch(() => ({ items: [] })),
-        api.invitations(signal).catch(() => ({ items: [] })),
-      ]).then(([absences, fixes, invites]) => ({ absences, fixes, invites })),
+        api.queue({ kind: 'absence', status: OPEN, limit: '200', ...place }, signal),
+        api.queue({ kind: 'correction', status: OPEN, limit: '200', ...place }, signal)
+          .catch(() => ({ items: [] as api.QueueItem[], next_cursor: null, has_more: false })),
+      ]).then(([absences, fixes]) => ({
+        absences: absences.items.map((item) => item.absence).filter((row): row is api.AbsenceRow => Boolean(row)),
+        fixes: fixes.items.length,
+      })),
     key,
   );
 
-  const [talks] = useBlock((signal) => api.escalations(signal), key);
-
-  /**
-   * Последние решения по заявкам.
-   *
-   * Очередь отдаёт страницу по времени ПОДАЧИ — другого порядка у неё
-   * нет. Поэтому берём последние поданные из решённых и раскладываем их
-   * по времени РЕШЕНИЯ уже здесь. Ограничение честное и названо в
-   * подписи: заявка, поданная давно и решённая сегодня, в эту страницу
-   * может не попасть.
-   */
-  const [decided] = useBlock(
+  const [events] = useBlock(
     (signal) =>
-      api
-        .queue({ kind: 'absence', status: 'APPROVED,REJECTED', limit: '50' }, signal)
-        .then(({ items }) =>
-          items
-            .map((item) => item.absence)
-            .filter((row): row is api.AbsenceRow => Boolean(row))
-            .sort((a, b) => (b.reviewed_at ?? '').localeCompare(a.reviewed_at ?? ''))
-            .slice(0, 2),
-        ),
+      Promise.all([
+        api.feed({ limit: '30' }, signal).then((page) => page.items).catch(() => [] as api.FeedEvent[]),
+        api.queue({ kind: 'absence', status: 'APPROVED,REJECTED', limit: '30', ...place }, signal)
+          .then((page) => page.items).catch(() => [] as api.QueueItem[]),
+      ]),
     key,
   );
 
   const counts = cards.state === 'ready' ? byKey(cards.data.cards) : {};
+  const cardOf = (name: string) => (cards.state === 'ready' ? cards.data.cards.find((c) => c.key === name) : undefined);
+  const isToday = day === today();
+
   const badges: Record<string, number> = {};
-  if (queues.state === 'ready') {
-    const requests =
-      queues.data.absences.requests.length + queues.data.fixes.items.length;
-    if (requests > 0) badges['requests'] = requests;
-  }
-  if (talks.state === 'ready' && talks.data.items.length > 0) {
-    badges['questions'] = talks.data.items.length;
+  if (open.state === 'ready' && open.data.absences.length + open.data.fixes > 0) {
+    badges['requests'] = open.data.absences.length + open.data.fixes;
   }
 
   return (
     <AppShell breadcrumb="Главная" badges={badges}>
-      {/* Корень страницы: по нему `dashboard.css` находит главную и
-          не задевает общие `.head`, `.cards` и `.panel` других разделов. */}
-      <div className="dash">
-        <header className="head">
-          <div>
-            {/* Бейджа «Демо-данные» здесь нет намеренно. Он остался в
-                «Администрировании» и «Настройках» — там он предупреждает
-                перед действиями над организацией, и это его работа. На
-                обзорной странице он ничего не защищает, а заголовок
-                главной — первое, что видно в CRM. */}
-            <h1 className="head__title">Обзор на сегодня</h1>
-            <p className="head__sub">
-              {longDate(day)} <span className="dot">·</span> По данным отметок
-            </p>
-          </div>
-
-          <div className="head__filters">
-            <div className="filters">
+      <div className="hm">
+        <section className="hm-sheet">
+          {/* --- шапка --- */}
+          <header className="hm-head">
+            <div>
+              <h1 className="hm-head__title">Обзор на сегодня</h1>
+              <p className="hm-head__sub">{longDate(day)} · данные по отметкам</p>
+            </div>
+            <div className="hm-head__tools">
               <Dropdown
                 label="Регион"
                 value={region}
                 empty="Все регионы"
-                options={
-                  directory.state === 'ready'
-                    ? directory.data.regions.map((r) => ({ id: r.id, name: r.name }))
-                    : []
-                }
+                options={directory.state === 'ready' ? directory.data.regions.map((r) => ({ id: r.id, name: r.name })) : []}
                 onChange={(value) => {
                   setRegion(value);
                   // Офис другого региона перестал быть допустимым выбором.
@@ -274,641 +182,476 @@ export function DashboardPage() {
                 options={visibleOffices.map((o) => ({ id: o.id, name: o.name }))}
                 onChange={setOffice}
               />
-              <DatePicker
-                label="Дата"
-                value={day}
-                now={today()}
-                onChange={setDay}
-              />
-              <button
-                type="button"
-                className="pick pick--icon"
-                aria-label="Обновить"
-                onClick={() => setAttempt((n) => n + 1)}
-              >
-                <AppIcon name="refresh" size={16} />
+              <DatePicker label="Дата" value={day} now={today()} onChange={setDay} />
+              <button type="button" className="hm-icon" aria-label="Обновить" onClick={() => setAttempt((n) => n + 1)}>
+                <AppIcon name="refresh" size={18} />
               </button>
             </div>
-            <p className="head__updated">
-              {updated ? `Обновлено в ${formatTime(updated)}` : 'Загружаем…'}
-            </p>
-          </div>
-        </header>
+          </header>
 
-        <Section block={cards} name="показатели">
-          {(data) => (
-            <ul className="cards">
-              {CARDS.map((card) => {
-                const found = data.cards.find((c) => c.key === card.key);
-                if (!found) return null;
-                const share =
-                  card.key === 'in_office'
-                    ? percent(found.value, counts['should_work_today'] ?? 0)
-                    : null;
-                const past = day < today();
-                const href = cardLink(found);
-                const note =
-                  card.key === 'in_office'
-                    ? share === null
-                      ? 'Сравнивать не с чем'
-                      : `из ${counts['should_work_today']} · ${formatPercent(share)}`
-                    : (past && card.pastNote) || card.note;
-                const inside = (
-                  <>
-                    <p className="metric__head">
-                      <span className="metric__mark" aria-hidden="true">
-                        <AppIcon name={card.icon} size={18} />
-                      </span>
-                      <span>{(past && card.past) || card.title}</span>
-                    </p>
-                    <p className="metric__value">{found.value}</p>
-                    <p className="metric__note">
-                      <span>{note}</span>
-                      {/* Стрелка стоит только там, где нажатие действительно
-                          открывает список. Карточка без адреса остаётся
-                          текстом и не притворяется кнопкой. */}
-                      {href && <AppIcon name="arrow" size={16} />}
-                    </p>
-                  </>
-                );
-                const shape = card.tone
-                  ? `metric metric--${card.tone}${TINTED.has(card.tone) ? ' metric--tone' : ''}`
-                  : 'metric';
-                return (
-                  <li key={card.key}>
-                    {href ? (
-                      <Link to={href} className={`${shape} metric--go`}>{inside}</Link>
-                    ) : (
-                      <div className={shape}>{inside}</div>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </Section>
+          {/* --- строка «Сегодня» --- */}
+          <Guard block={cards} name="показатели" className="hm-today hm-today--state">
+            {() => (
+              <ul className="hm-today" aria-label="Сегодня">
+                <Stat icon="users" value={counts['active_employees']} title="сотрудников"
+                      note="в штате по выбранным офисам" to={cardLink(cardOf('active_employees'))} />
+                <Stat icon="calendar" value={counts['should_work_today']}
+                      title={isToday ? 'по графику сегодня' : 'было по графику'}
+                      note={isToday ? 'должны отметиться сегодня' : 'должны были отметиться'}
+                      to={cardLink(cardOf('should_work_today'))} />
+                <Stat icon="building" value={counts['in_office']}
+                      title={isToday ? 'сейчас в офисе' : 'в офисе'}
+                      note={isToday ? 'на рабочих местах' : 'не отметили уход'}
+                      to={cardLink(cardOf('in_office'))} />
+                <Stat icon="alert" value={counts['not_come']} title="без отметки" warn
+                      note={isToday ? 'смена уже началась' : 'смена прошла без отметки'}
+                      to={cardLink(cardOf('not_come'))} />
+              </ul>
+            )}
+          </Guard>
 
-        <div className="grid">
-          <div className="grid__main">
-            <section className="panel panel--chart">
-              <div className="panel__head">
-                <div>
-                  <h2 className="panel__title">Явка за {range.title.toLowerCase()}</h2>
-                  <p className="panel__sub">Отметились хотя бы один раз за день</p>
+          {/* --- середина: ритм дня и фокус HR --- */}
+          <div className="hm-row">
+            <section className="hm-part" aria-label="Ритм дня">
+              <div className="hm-part__head">
+                <h2 className="hm-part__title">Ритм дня</h2>
+                <div className="hm-switch" role="group" aria-label="Период">
+                  {RANGES.map((item) => (
+                    <button key={item.key} type="button" aria-pressed={item.key === range.key}
+                            className={item.key === range.key ? 'hm-switch__on' : undefined}
+                            onClick={() => setRange(item)}>
+                      {item.title}
+                    </button>
+                  ))}
                 </div>
-                <PeriodSwitch value={range.key} onChange={setRange} />
               </div>
-              {/* Тонкая полоса под заголовком вместо затемнения панели:
-                  обновление видно, а читать прежние числа не мешает. */}
-              <span
-                className={chartRefresh.busy ? 'panel__progress panel__progress--on'
-                                             : 'panel__progress'}
-                aria-hidden="true"
-              />
               {chartRefresh.failed && chart.state === 'ready' && (
-                <p className="panel__retry" role="status">
-                  Не удалось обновить данные
-                  <button type="button" className="link link--go" onClick={reloadChart}>
-                    Повторить
-                  </button>
+                <p className="hm-retry" role="status">
+                  Не удалось обновить явку — показан прежний период.
+                  <button type="button" className="hm-link" onClick={reloadChart}>Повторить</button>
                 </p>
               )}
-              <Section block={chart} name="график">
-                {(data) => (
-                  <>
-                    <AttendanceChart
-                      points={data.points}
-                      previous={comparable(data.points, data.previous)}
-                      label={`Явка за ${range.title.toLowerCase()}`}
-                    />
-                    <div className="legend">
-                      <span><i className="legend__solid" /> Явка</span>
-                      {comparable(data.points, data.previous).length > 0 && (
-                        <span><i className="legend__dashed" /> Предыдущий период</span>
-                      )}
-                      <span className="legend__tail">
-                        {counts['left'] !== undefined && counts['left'] > 0 && (
-                          <span className="legend__note">
-                            Отметились и вышли: <b>{counts['left']}</b>
-                          </span>
-                        )}
-                        <Link className="link link--go" to="/analytics">
-                          Подробная аналитика <AppIcon name="arrow" size={16} />
-                        </Link>
-                      </span>
-                    </div>
-                  </>
-                )}
-              </Section>
-            </section>
-
-            <section className="panel panel--dense">
-              <div className="panel__head">
-                <div>
-                  <h2 className="panel__title">
-                    Офисы <span className="chip">{visibleOffices.length}</span>
-                  </h2>
-                  <p className="panel__sub">{longDate(day)} · сводка по всем офисам</p>
-                </div>
-                <div className="panel__tools">
-                  {/* Отбор идёт по уже загруженным строкам: запрашивать
-                      сервер заново незачем, сводка целиком уже здесь. */}
-                  <label className="find">
-                    <AppIcon name="search" size={16} />
-                    <input
-                      type="search"
-                      value={officeSearch}
-                      placeholder="Поиск офиса"
-                      aria-label="Поиск офиса"
-                      onChange={(event) => setOfficeSearch(event.target.value)}
-                    />
-                  </label>
-                  <Link className="link link--go" to="/analytics">
-                    Сравнить офисы <AppIcon name="arrow" size={16} />
-                  </Link>
-                </div>
-              </div>
-              <Section block={table} name="офисы">
-                {(all) => {
-                  const needle = officeSearch.trim().toLowerCase();
-                  const rows = needle
-                    ? all.filter((r) => r.office.name.toLowerCase().includes(needle))
-                    : all;
-                  return rows.length === 0 ? (
-                    <p className="empty">
-                      {needle
-                        ? `Офис «${officeSearch.trim()}» не найден среди доступных.`
-                        : 'В выбранной области нет доступных офисов.'}
-                    </p>
+              <Guard block={chart} name="явку">
+                {(series) => {
+                  const points = series.map((one) => ({
+                    day: one.day,
+                    attended: one.attended,
+                    expected: one.expected,
+                    value: one.expected > 0 ? Math.round((one.attended / one.expected) * 100) : null,
+                  }));
+                  const to = '/attendance' + api.query({ period: 'range', from, to: day, ...place });
+                  return points.every((p) => p.value === null) ? (
+                    <p className="hm-empty">За выбранный период по графику никто не работал — явку не с чем сравнить.</p>
                   ) : (
-                    <div className="scroller scroller--rows">
-                      <table className="grid-table">
-                        <thead>
-                          <tr>
-                            <th>Офис</th>
-                            <th>В штате</th>
-                            <th>По графику</th>
-                            <th>В офисе</th>
-                            <th>Нет отметки</th>
-                            <th>Отпуск</th>
-                            <th>Больничный</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {rows.map(({ office: item, counts: c }) => (
-                            <tr key={item.id}>
-                              <td className="grid-table__name">
-                                <AppIcon name="building" size={16} />
-                                {item.name}
-                              </td>
-                              <td>{staff(c)}</td>
-                              <td>{expected(c)}</td>
-                              {COLUMNS.map((state) => (
-                                <td key={state}>
-                                  <Count
-                                    value={c[state] ?? 0}
-                                    state={state}
-                                    day={day}
-                                    office={item.id}
-                                  />
-                                </td>
-                              ))}
-                            </tr>
-                          ))}
-                        </tbody>
-                        <tfoot>
-                          <tr>
-                            <td>Итого</td>
-                            <td>{counts['active_employees'] ?? '—'}</td>
-                            <td>{counts['should_work_today'] ?? '—'}</td>
-                            {COLUMNS.map((state) => (
-                              <td key={state}>
-                                <Count
-                                  value={counts[TOTAL_KEY[state] as string]}
-                                  state={state}
-                                  day={day}
-                                  office={office}
-                                  region={region}
-                                />
-                              </td>
-                            ))}
-                          </tr>
-                        </tfoot>
-                      </table>
-                    </div>
+                    <Link className="hm-chart-link" to={to} aria-label="Открыть посещаемость за этот период">
+                      <Rhythm points={points} />
+                    </Link>
                   );
                 }}
-              </Section>
-              <p className="panel__foot">Числа открывают списки сотрудников.</p>
-            </section>
-          </div>
-
-          <aside className="grid__side">
-            <section className="panel">
-              <h2 className="panel__title panel__title--row">
-                <span className="panel__mark panel__mark--pending" aria-hidden="true">
-                  <AppIcon name="alert" size={20} />
-                </span>
-                Требует внимания
-                {queues.state === 'ready' && (
-                  <span className="chip chip--count">{waiting(queues.data)}</span>
-                )}
-              </h2>
-              <Section block={queues} name="очереди">
-                {(data) => (
-                  <div className="queue-box">
-                    <ul className="queue">
-                      <Row icon="doc" title="Справки на проверку" note="Новые документы"
-                           count={data.absences.requests.filter(hasNewDocument).length}
-                           to="/requests?tab=sick&status=open" />
-                      <Row icon="sheet" title="Ожидаем справку" note="Больничные без документа"
-                           count={data.absences.requests.filter(waitsDocument).length}
-                           to="/requests?tab=sick&status=open" />
-                      <Row icon="calendar" title="Заявки на отпуск" note="Ожидают решения"
-                           count={data.absences.requests.filter(isLeave).length}
-                           to="/requests?tab=leave&status=open" />
-                      <Row icon="clock" title="Исправления отметок" note="Запросы сотрудников"
-                           count={data.fixes.items.length}
-                           to="/requests?tab=fixes&status=open" />
-                      {/* Подтверждение привязки живёт на карточке человека:
-                          отдельного списка ожидающих в системе нет, поэтому
-                          строка ведёт в список сотрудников. */}
-                      <Row icon="send" title="Привязки Telegram" note="Нужно подтверждение"
-                           count={data.invites.items.filter(pendingInvite).length}
-                           to="/employees?tab=active" />
-                    </ul>
-                    <Link className="btn btn--dark btn--wide" to="/requests?status=open">
-                      Открыть заявки <AppIcon name="arrow" size={18} />
-                    </Link>
-                  </div>
-                )}
-              </Section>
+              </Guard>
+              {cards.state === 'ready' && (
+                <p className="hm-note">
+                  <AppIcon name="info" size={16} />
+                  {(counts['should_work_today'] ?? 0) === 0
+                    ? (isToday ? 'Сегодня по выбранным условиям нет сотрудников по графику.' : 'В этот день по выбранным условиям никто не работал по графику.')
+                    : <>{isToday ? 'Сегодня отметил' : 'В этот день отметил'}{people(counts['should_work_today'] ?? 0) === 'сотрудник' ? 'ся' : 'ись'}{' '}
+                        <b>{counts['came'] ?? 0} из {counts['should_work_today']}</b> {genitive(counts['should_work_today'] ?? 0)}.</>}
+                </p>
+              )}
             </section>
 
-            <section className="panel">
-              <h2 className="panel__title panel__title--row">
-                <span className="panel__mark" aria-hidden="true">
-                  <AppIcon name="chat" size={20} />
-                </span>
-                Обращения
-                {talks.state === 'ready' && (
-                  <span className="chip chip--count">{talks.data.items.length}</span>
-                )}
-                <Link className="link link--go panel__aside" to="/questions">
-                  Все обращения <AppIcon name="arrow" size={16} />
-                </Link>
-              </h2>
-              <Section block={talks} name="обращения">
-                {(data) =>
-                  data.items.length === 0 ? (
-                    <p className="empty">Обращений, ждущих ответа, нет.</p>
+            <section className="hm-part" aria-label="Фокус HR">
+              <div className="hm-part__head">
+                <h2 className="hm-part__title">Фокус HR</h2>
+                <Link className="hm-link" to="/requests?status=open">Все задачи <AppIcon name="next" size={16} /></Link>
+              </div>
+              <Guard block={open} name="задачи">
+                {(data) => {
+                  const sick = data.absences.filter((row) => row.absence_type.code === 'SICK_LEAVE');
+                  const waitPaper = sick.filter((row) => row.stage === 'WAITING_DOCUMENTS' || row.stage === 'NEEDS_FIX').length;
+                  const review = sick.filter((row) => row.stage === 'HR_REVIEW').length;
+                  const leave = data.absences.filter((row) => row.absence_type.code !== 'SICK_LEAVE' && row.kind !== 'CANCEL').length;
+                  const missing = isToday ? counts['not_come'] ?? 0 : 0;
+                  const all: FocusRow[] = [
+                    { icon: 'doc', tone: 'bad', count: waitPaper, title: `${count(waitPaper, ['больничный ждёт', 'больничных ждут', 'больничных ждут'])} справку`,
+                      note: 'До подтверждения не попадут в табель', to: '/requests?tab=sick&status=open' },
+                    { icon: 'check', tone: 'plain', count: review, title: `${count(review, ['справка ждёт', 'справки ждут', 'справок ждут'])} проверки`,
+                      note: 'Больничный подтверждается после проверки', to: '/requests?tab=sick&status=open' },
+                    { icon: 'calendar', tone: 'plain', count: leave, title: `${count(leave, ['отпуск ждёт', 'отпуска ждут', 'отпусков ждут'])} решения`,
+                      note: 'Проверить пересечение периодов', to: '/requests?tab=leave&status=open' },
+                    { icon: 'late', tone: 'plain', count: data.fixes, title: `${count(data.fixes, ['исправление отметки', 'исправления отметок', 'исправлений отметок'])}`,
+                      note: 'Сотрудники просят поправить время', to: '/requests?tab=fixes&status=open' },
+                    { icon: 'alert', tone: 'warn', count: missing, title: `${count(missing, ['сотрудник', 'сотрудника', 'сотрудников'])} без отметки`,
+                      note: 'Смена уже началась', to: cardLink(cardOf('not_come')) ?? '/attendance' },
+                  ];
+                  const rows = all.filter((row) => row.count > 0);
+                  return rows.length === 0 ? (
+                    <p className="hm-empty">Сейчас ничего не ждёт решения HR.</p>
                   ) : (
-                    <ul className="feed">
-                      {data.items.slice(0, 2).map((item) => (
-                        <li key={item.id}>
-                          {/* Нажимается вся строка, а не заголовок внутри
-                              неё: попасть в строку списка мышью легко, в
-                              строчку текста внутри — нет. Ссылка ведёт
-                              сразу в это обращение, а не в общий список. */}
-                          <Link
-                            className="feed__row"
-                            to={`/questions?id=${encodeURIComponent(item.id)}`}
-                          >
-                            <span className="avatar avatar--sm" aria-hidden="true">
-                              {initialsOf(item.employee?.full_name)}
+                    <ul className="hm-focus">
+                      {rows.map((row) => (
+                        <li key={row.title}>
+                          <Link className="hm-focus__row" to={row.to}>
+                            <span className={`hm-mark hm-mark--${row.tone}`} aria-hidden="true">
+                              <AppIcon name={row.icon} size={18} />
                             </span>
-                            <span className="feed__text">
-                              <span className="feed__title">{item.topic}</span>
-                              <span className="feed__note">
-                                {item.employee?.full_name ?? 'Сотрудник'}
-                              </span>
+                            <span className="hm-focus__text">
+                              <b>{row.title}</b>
+                              <small>{row.note}</small>
                             </span>
-                            {/* Время последнего сообщения: по нему видно,
-                                сколько человек ждёт. */}
-                            {item.last_message_at && (
-                              <span className="feed__when">{ago(item.last_message_at)}</span>
-                            )}
-                            <AppIcon name="next" size={20} className="feed__go" />
+                            <span className={row.tone === 'warn' ? 'hm-focus__n hm-focus__n--warn' : 'hm-focus__n'}>{row.count}</span>
+                            <AppIcon name="next" size={16} className="hm-go" />
                           </Link>
                         </li>
                       ))}
                     </ul>
-                  )
-                }
-              </Section>
+                  );
+                }}
+              </Guard>
             </section>
+          </div>
 
-            <section className="panel">
-              <h2 className="panel__title panel__title--row">
-                <span className="panel__mark" aria-hidden="true">
-                  <AppIcon name="check" size={20} />
-                </span>
-                Последние решения
-                <Link
-                  className="link link--go panel__aside"
-                  to="/requests?status=APPROVED,REJECTED"
-                >
-                  Все решения <AppIcon name="arrow" size={16} />
-                </Link>
-              </h2>
-              <Section block={decided} name="решения">
-                {(rows) =>
-                  rows.length === 0 ? (
-                    <p className="empty">Решений по заявкам пока нет.</p>
-                  ) : (
-                    <ul className="feed">
-                      {rows.map((row) => {
-                        const ok = row.status === 'APPROVED';
+          {/* --- низ: офисы и события --- */}
+          <div className="hm-row hm-row--low">
+            <section className="hm-part" aria-label="Офисы сегодня">
+              <div className="hm-part__head">
+                <h2 className="hm-part__title">{isToday ? 'Офисы сегодня' : 'Офисы за день'}</h2>
+                <Link className="hm-link" to="/analytics?tab=attendance">Сравнить офисы <AppIcon name="next" size={16} /></Link>
+              </div>
+              <Guard block={table} name="офисы">
+                {(rows) => rows.length === 0 ? (
+                  <p className="hm-empty">В выбранной области нет доступных офисов.</p>
+                ) : (
+                  <div className="hm-table" role="table" aria-label="Офисы">
+                    <div className="hm-table__head" role="row">
+                      <span role="columnheader">Офис</span>
+                      <span role="columnheader">По графику</span>
+                      <span role="columnheader">В офисе</span>
+                      <span role="columnheader">Нет отметки</span>
+                      <span role="columnheader">Отсутствуют</span>
+                      <span aria-hidden="true" />
+                    </div>
+                    <div className="hm-table__body">
+                      {rows.map(({ office: item, counts: c }, index) => {
+                        const missing = c['NOT_COME'] ?? 0;
                         return (
-                          <li key={row.id}>
-                            {/* Строка открывает ту самую заявку, по которой
-                                принято решение. Список заявок показывает её
-                                карточку по адресу, а не просто прокручивается
-                                к нужному месту. */}
-                            <Link
-                              className="feed__row"
-                              to={
-                                // Список отсортирован по дате подачи, а
-                                // решения — по дате решения: без сужения по
-                                // сотруднику заявка месячной давности лежала
-                                // бы на десятой странице и карточка не
-                                // открылась бы.
-                                `/requests?employee_id=${encodeURIComponent(row.employee.id)}`
-                                + `&request=${encodeURIComponent(row.id)}`
-                              }
-                            >
-                              <span
-                                className={ok ? 'feed__mark feed__mark--ok'
-                                              : 'feed__mark feed__mark--no'}
-                                aria-hidden="true"
-                              >
-                                <AppIcon name={ok ? 'check' : 'cross'} size={20} />
-                              </span>
-                              <span className="feed__text">
-                                <span className="feed__title">
-                                  {row.absence_type.name}
-                                  <span className="dot">·</span>
-                                  {shortName(row.employee.full_name)}
-                                </span>
-                                <span className="feed__note">
-                                  {row.reviewed_at ? ago(row.reviewed_at) : 'решение принято'}
-                                </span>
-                              </span>
-                              <span className={ok ? 'verdict verdict--ok' : 'verdict verdict--no'}>
-                                {ok ? 'Одобрено' : 'Отклонено'}
-                              </span>
-                              <AppIcon name="next" size={20} className="feed__go" />
-                            </Link>
-                          </li>
+                          <Link key={item.id} role="row" className="hm-table__row"
+                                to={'/attendance' + api.query({ date: day, office_id: item.id })}>
+                            <span role="cell" className="hm-table__name">
+                              <i className={`hm-dot hm-dot--${index % 4}`} aria-hidden="true" />
+                              {item.name}
+                            </span>
+                            <span role="cell">{expected(c)}</span>
+                            <span role="cell">{c['IN_OFFICE'] ?? 0}</span>
+                            <span role="cell" className={missing > 0 ? 'hm-warn' : undefined}>{missing}</span>
+                            <span role="cell">{absent(c)}</span>
+                            <AppIcon name="next" size={16} className="hm-go" />
+                          </Link>
                         );
                       })}
-                    </ul>
-                  )
-                }
-              </Section>
+                    </div>
+                  </div>
+                )}
+              </Guard>
             </section>
-          </aside>
-        </div>
+
+            <section className="hm-part" aria-label="Последние события">
+              <div className="hm-part__head">
+                <h2 className="hm-part__title">Последние события</h2>
+              </div>
+              <Guard block={events} name="события">
+                {([feed, decided]) => {
+                  const list = timeline(feed, decided, officeIds, Boolean(region || office)).slice(0, 5);
+                  return list.length === 0 ? (
+                    <p className="hm-empty">Событий по выбранным офисам пока нет.</p>
+                  ) : (
+                    <ul className="hm-events">
+                      {list.map((one) => (
+                        <li key={one.id}>
+                          <Link className="hm-events__row" to={one.to}>
+                            <span className={`hm-mark hm-mark--sm hm-mark--${one.tone}`} aria-hidden="true">
+                              <AppIcon name={one.icon} size={16} />
+                            </span>
+                            <span className="hm-events__text">
+                              <b>{one.title}</b>
+                              <small>{one.note}</small>
+                            </span>
+                            <time dateTime={one.at}>{moment(one.at)}</time>
+                          </Link>
+                        </li>
+                      ))}
+                    </ul>
+                  );
+                }}
+              </Guard>
+            </section>
+          </div>
+
+          {/* --- быстрые переходы --- */}
+          <nav className="hm-links" aria-label="Быстрые переходы">
+            <Link to={'/attendance' + api.query({ date: day, ...place })}><AppIcon name="chart" size={18} />Открыть посещаемость<AppIcon name="next" size={16} /></Link>
+            <Link to="/requests?status=open"><AppIcon name="doc" size={18} />Открыть заявки<AppIcon name="next" size={16} /></Link>
+            <Link to="/analytics"><AppIcon name="report" size={18} />Открыть аналитику<AppIcon name="next" size={16} /></Link>
+          </nav>
+        </section>
       </div>
     </AppShell>
   );
 }
 
-// --- мелочи ---------------------------------------------------------------
+// --- части ---------------------------------------------------------------------
 
-/** Столбцы состояний в таблице офисов — те же коды, что у смены. */
-const COLUMNS = ['IN_OFFICE', 'NOT_COME', 'VACATION', 'SICK_LEAVE'] as const;
-
-/** Тот же столбец в строке «Итого» приходит с сервера под своим ключом. */
-const TOTAL_KEY: Record<string, string> = {
-  IN_OFFICE: 'in_office',
-  NOT_COME: 'not_come',
-  VACATION: 'vacation',
-  SICK_LEAVE: 'sick_leave',
-};
-
-/**
- * Число в таблице офисов.
- *
- * Ноль ссылкой не делается: открывать пустой список незачем, и ноль не
- * должен выглядеть нажимаемым. Цвет повторяет состояние, но различает их
- * заголовок столбца — цвет здесь добавка, а не единственный признак.
- */
-function Count({ value, state, day, office, region }: {
+function Stat({ icon, value, title, note, to, warn }: {
+  icon: AppIconName;
   value: number | undefined;
-  state: string;
-  day: string;
-  office?: string;
-  region?: string;
+  title: string;
+  note: string;
+  to: string | null;
+  warn?: boolean;
 }) {
-  if (value === undefined) return <span className="num num--none">—</span>;
-  const tone = COLUMN_TONE[state];
-  const shape = `num${tone && value > 0 ? ` num--${tone}` : ' num--none'}`;
-  if (value === 0) return <span className={shape}>0</span>;
-  const href =
-    '/attendance' +
-    api.query({
-      date: day,
-      state,
-      ...(office ? { office_id: office } : {}),
-      ...(region ? { region_id: region } : {}),
-    });
-  return <Link className={`${shape} num--go`} to={href}>{value}</Link>;
+  const hot = warn && (value ?? 0) > 0;
+  const inside = (
+    <>
+      <span className={hot ? 'hm-stat__icon hm-stat__icon--warn' : 'hm-stat__icon'} aria-hidden="true">
+        <AppIcon name={icon} size={20} />
+      </span>
+      <span className="hm-stat__body">
+        <span className="hm-stat__line">
+          <b className={hot ? 'hm-stat__value hm-warn' : 'hm-stat__value'}>{value ?? '—'}</b>
+          <span className={hot ? 'hm-stat__title hm-warn' : 'hm-stat__title'}>{title}</span>
+        </span>
+        <small className="hm-stat__note">{note}</small>
+      </span>
+    </>
+  );
+  // Ноль ссылкой не делается: открывать пустой список незачем.
+  return (
+    <li>
+      {to && (value ?? 0) > 0 ? <Link className="hm-stat hm-stat--go" to={to}>{inside}</Link> : <div className="hm-stat">{inside}</div>}
+    </li>
+  );
 }
 
-/**
- * Переключатель периода графика.
- *
- * Подложка выбранного пункта — один элемент, который переезжает между
- * кнопками, а не появляется и исчезает у каждой. Разница не только в
- * плавности: при смене класса у трёх кнопок браузер перерисовывает три
- * фона, и на слабой машине видно моргание.
- *
- * Переключатель отвечает на нажатие сразу и не ждёт ответа сервера:
- * состояние периода — местное, а загрузка данных идёт своим чередом.
- */
-function PeriodSwitch({ value, onChange }: {
-  value: string;
-  onChange: (item: (typeof RANGES)[number]) => void;
-}) {
-  const box = useRef<HTMLDivElement>(null);
-  const [glider, setGlider] = useState({ left: 0, width: 0 });
+type FocusRow = { icon: AppIconName; tone: 'bad' | 'warn' | 'plain'; count: number; title: string; note: string; to: string };
 
-  useLayoutEffect(() => {
-    const place = () => {
-      const frame = box.current;
-      const active = frame?.querySelector<HTMLElement>('[aria-pressed="true"]');
-      if (!frame || !active) return;
-      const outer = frame.getBoundingClientRect();
-      const inner = active.getBoundingClientRect();
-      setGlider({
-        left: Math.round(inner.left - outer.left),
-        width: Math.round(inner.width),
-      });
+type Point = { day: string; attended: number; expected: number; value: number | null };
+
+/**
+ * «Ритм дня»: доля отметившихся из тех, кто должен был работать.
+ *
+ * Своя тонкая линия вместо общего графика: здесь нужен силуэт недели, а
+ * не инструмент анализа. День без людей по графику — разрыв линии, а не
+ * ноль: ноль означал бы, что никто не пришёл.
+ */
+function Rhythm({ points }: { points: Point[] }) {
+  const box = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(640);
+  const [height, setHeight] = useState(176);
+  // Высота — от места, что осталось блоку: на высоком экране линия
+  // занимает его, а не оставляет пустоту под собой.
+  useEffect(() => {
+    const node = box.current;
+    if (!node) return;
+    const measure = () => {
+      setWidth(Math.max(280, node.clientWidth));
+      setHeight(Math.max(170, Math.min(320, node.clientHeight)));
     };
-    place();
-    // Ширина кнопок зависит от шрифта и ширины панели: после смены
-    // размеров окна подложка обязана переехать вместе с ними.
-    window.addEventListener('resize', place);
-    return () => window.removeEventListener('resize', place);
-  }, [value]);
+    measure();
+    const watcher = new ResizeObserver(measure);
+    watcher.observe(node);
+    return () => watcher.disconnect();
+  }, []);
+
+  const left = 34;
+  const right = 24;
+  const top = 10;
+  const bottom = 38;
+  const plotW = width - left - right;
+  const plotH = height - top - bottom;
+  const step = points.length > 1 ? plotW / (points.length - 1) : 0;
+  const x = (i: number) => left + (points.length > 1 ? i * step : plotW / 2);
+  const y = (v: number) => top + plotH - (v / 100) * plotH;
+  const labelEvery = points.length > 16 ? 5 : points.length > 8 ? 2 : 1;
+
+  // Отрезки без разрывов: день без графика рвёт линию.
+  const runs: { i: number; v: number }[][] = [];
+  let run: { i: number; v: number }[] = [];
+  points.forEach((p, i) => {
+    if (p.value === null) {
+      if (run.length) runs.push(run);
+      run = [];
+    } else run.push({ i, v: p.value });
+  });
+  if (run.length) runs.push(run);
+
+  const curve = (seg: { i: number; v: number }[]) =>
+    seg.map((p, k) => {
+      if (k === 0) return `M${x(p.i)},${y(p.v)}`;
+      const prev = seg[k - 1]!;
+      const mid = (x(prev.i) + x(p.i)) / 2;
+      return `C${mid},${y(prev.v)} ${mid},${y(p.v)} ${x(p.i)},${y(p.v)}`;
+    }).join(' ');
 
   return (
-    <div className="switch" role="group" aria-label="Период" ref={box}>
-      <span
-        className="switch__glider"
-        aria-hidden="true"
-        style={{ transform: `translateX(${glider.left}px)`, width: `${glider.width}px` }}
-      />
-      {RANGES.map((item) => (
-        <button
-          key={item.key}
-          type="button"
-          aria-pressed={item.key === value}
-          className={item.key === value ? 'switch__on' : ''}
-          onClick={() => onChange(item)}
-        >
-          {item.title}
-        </button>
-      ))}
+    <div className="hm-rhythm" ref={box}>
+      <svg width={width} height={height} role="img"
+           aria-label={`Явка по дням: ${points.map((p) => `${dayLabel(p.day)} — ${p.value === null ? 'нет графика' : `${p.value} %`}`).join(', ')}`}>
+        {[0, 25, 50, 75, 100].map((tick) => (
+          <g key={tick}>
+            <line x1={left} x2={width - right} y1={y(tick)} y2={y(tick)} className="hm-rhythm__grid" />
+            <text x={left - 8} y={y(tick) + 4} textAnchor="end" className="hm-rhythm__axis">{tick}</text>
+          </g>
+        ))}
+        {runs.map((seg, n) => (
+          <g key={n}>
+            {seg.length > 1 && (
+              <path className="hm-rhythm__area"
+                    d={`${curve(seg)} L${x(seg[seg.length - 1]!.i)},${y(0)} L${x(seg[0]!.i)},${y(0)} Z`} />
+            )}
+            <path className="hm-rhythm__line" d={curve(seg)} />
+          </g>
+        ))}
+        {points.map((p, i) => (
+          <g key={p.day}>
+            {p.value !== null && (
+              <circle cx={x(i)} cy={y(p.value)} r={3.5} className="hm-rhythm__dot">
+                <title>{`${dayLabel(p.day)}: ${p.attended} из ${p.expected} (${p.value} %)`}</title>
+              </circle>
+            )}
+            {i % labelEvery === 0 || i === points.length - 1 ? (
+              <text x={x(i)} y={height - 20} textAnchor="middle" className="hm-rhythm__axis">
+                <tspan x={x(i)}>{dayLabel(p.day)}</tspan>
+                <tspan x={x(i)} dy={14}>{weekday(p.day)}</tspan>
+              </text>
+            ) : null}
+          </g>
+        ))}
+      </svg>
     </div>
   );
 }
 
-/** Сколько всего ждёт решения — счётчик рядом с заголовком. */
-function waiting(data: {
-  absences: { requests: api.AbsenceRequestRow[] };
-  fixes: { items: unknown[] };
-  invites: { items: api.Invitation[] };
-}): number {
-  return (
-    data.absences.requests.filter(hasNewDocument).length +
-    data.absences.requests.filter(waitsDocument).length +
-    data.absences.requests.filter(isLeave).length +
-    data.fixes.items.length +
-    data.invites.items.filter(pendingInvite).length
-  );
-}
+type Event = { id: string; at: string; title: string; note: string; to: string; icon: AppIconName; tone: 'ok' | 'bad' | 'plain' | 'warn' };
 
 /**
- * Больничный, к которому приложили справку, и её ещё не проверили.
- *
- * Признак берётся из самой заявки: `/absence-requests/pending` отдаёт
- * документы вместе со строкой, поэтому отдельного запроса не нужно.
+ * Лента: новые заявки, справки и обращения из ленты уведомлений HR плюс
+ * решения по заявкам. Отбор по офису — по офису события; когда офис
+ * выбран, событие без офиса не показывается: о нём нельзя сказать, что
+ * оно из этого офиса.
  */
-const hasNewDocument = (row: api.AbsenceRequestRow) =>
-  !isLeave(row) &&
-  (row.documents ?? []).some((d) => d.verification_status === 'PENDING');
-
-/** Больничный, по которому справка нужна, но её ещё не прислали. */
-const waitsDocument = (row: api.AbsenceRequestRow) =>
-  !isLeave(row) && row.requires_document === true &&
-  (row.documents ?? []).length === 0;
-
-/**
- * «12 мин назад» по метке времени сервера.
- *
- * Единицы округляются вниз и не смешиваются: «2 ч назад» честнее, чем
- * «2 ч 40 мин назад», когда важно только «давно или нет». Будущая метка
- * не превращается в отрицательное число — такое бывает при расхождении
- * часов, и показывать «-3 мин назад» незачем.
- */
-function ago(iso: string): string {
-  const minutes = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
-  if (!Number.isFinite(minutes) || minutes < 1) return 'только что';
-  if (minutes < 60) return `${minutes} мин назад`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} ч назад`;
-  return `${Math.floor(hours / 24)} дн назад`;
-}
-
-/** Две буквы из ФИО для кружка. Пустое имя даёт прочерк, а не «UN». */
-function initialsOf(full: string | undefined): string {
-  const parts = (full ?? '').split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return '—';
-  const [a, b] = parts;
-  return ((a?.[0] ?? '') + (b?.[0] ?? '')).toUpperCase() || '—';
-}
-
-/** «Каримов Нодир Азизович» -> «Н. Каримов»: в узкой колонке ФИО целиком не помещается. */
-function shortName(full: string): string {
-  const [last, first] = full.split(/\s+/);
-  if (!last) return full;
-  return first ? `${first[0]}. ${last}` : last;
-}
-
-function byKey(cards: api.Card[]): Record<string, number> {
-  return Object.fromEntries(cards.map((card) => [card.key, card.value]));
-}
-
-const isLeave = (row: api.AbsenceRequestRow) => row.absence_type.code !== 'SICK_LEAVE';
-const pendingInvite = (row: api.Invitation) =>
-  row.status === 'PENDING' || row.status === 'PENDING_CONFIRMATION';
-
-/** В штате офиса: все состояния вместе — это и есть его состав на день. */
-const staff = (c: Record<string, number>) =>
-  Object.values(c).reduce((sum, value) => sum + value, 0);
-
-/** По графику: пришли, ушли и не пришли. Выходной и отсутствие сюда не входят. */
-const expected = (c: Record<string, number>) =>
-  (c['IN_OFFICE'] ?? 0) + (c['LEFT'] ?? 0) + (c['NOT_COME'] ?? 0);
-
-/** Предыдущий период показываем, только когда он сопоставим. */
-function comparable(points: Point[], previous: Point[]): Point[] {
-  if (previous.length !== points.length) return [];
-  return previous.some((p) => p.value !== null) ? previous : [];
-}
-
-/**
- * Строка очереди. Ссылкой становится только та, у которой есть куда
- * вести И есть что показать: ноль открывал бы пустой список.
- */
-function Row({ icon, title, note, count, to }: {
-  icon?: AppIconName; title: string; note?: string; count: number; to?: string;
-}) {
-  const inside = (
-    <>
-      {icon && <AppIcon name={icon} size={18} />}
-      <span className="queue__text">
-        <span className="queue__title">{title}</span>
-        {note && <span className="queue__note">{note}</span>}
-      </span>
-      <span className={count > 0 ? 'queue__count queue__count--on' : 'queue__count'}>
-        {count}
-      </span>
-      {to && count > 0 && <AppIcon name="chevron" size={16} />}
-    </>
-  );
-  return (
-    <li className="queue__row">
-      {to && count > 0 ? (
-        <Link className="queue__go" to={to}>{inside}</Link>
-      ) : (
-        inside
-      )}
-    </li>
-  );
+function timeline(feed: api.FeedEvent[], decided: api.QueueItem[], offices: Set<string>, narrowed: boolean): Event[] {
+  const out: Event[] = [];
+  for (const one of feed) {
+    if (narrowed && (!one.office_id || !offices.has(one.office_id))) continue;
+    const look: Record<api.FeedType, [AppIconName, Event['tone']]> = {
+      absence_request: ['calendar', 'plain'],
+      sick_leave: ['doc', 'bad'],
+      absence_cancel: ['cross', 'plain'],
+      absence_document: ['doc', 'plain'],
+      attendance_correction: ['late', 'warn'],
+      question: ['chat', 'plain'],
+    };
+    const [icon, tone] = look[one.type] ?? ['info', 'plain'];
+    out.push({
+      id: one.id, at: one.created_at, title: one.title, icon, tone, to: one.action_url || '/',
+      note: [one.employee_name, one.short_text || one.office_name].filter(Boolean).join(' — '),
+    });
+  }
+  for (const item of decided) {
+    const row = item.absence;
+    if (!row?.reviewed_at) continue;
+    const ok = row.status === 'APPROVED';
+    const sick = row.absence_type.code === 'SICK_LEAVE';
+    out.push({
+      id: `decided:${row.id}`,
+      at: row.reviewed_at,
+      title: sick ? (ok ? 'Больничный подтверждён' : 'Больничный отклонён') : `${row.absence_type.name}: ${ok ? 'одобрено' : 'отклонено'}`,
+      note: [shortName(row.employee.full_name), period(row.first_day, row.last_day)].filter(Boolean).join(' — '),
+      to: `/requests/${encodeURIComponent(row.id)}`,
+      icon: ok ? 'check' : 'cross',
+      tone: ok ? 'ok' : 'plain',
+    });
+  }
+  return out.sort((a, b) => b.at.localeCompare(a.at));
 }
 
 /**
  * Обёртка блока. Загрузка, отказ и ошибка — три разных вида, и ни один
  * из них не выглядит как ноль.
  */
-function Section<T>({ block, name, children }: {
+function Guard<T>({ block, name, children, className }: {
   block: Block<T>;
   name: string;
-  children: (data: T) => React.ReactNode;
+  children: (data: T) => ReactNode;
+  className?: string;
 }) {
-  if (block.state === 'loading') return <p className="empty">Загружаем {name}…</p>;
-  if (block.state === 'denied') {
-    return <p className="empty">Нет доступа к разделу «{name}».</p>;
-  }
-  if (block.state === 'error') {
-    return (
-      <p className="empty empty--bad">
-        Не удалось загрузить {name}. Данные не показаны — это не ноль.
-      </p>
-    );
-  }
-  return <>{children(block.data)}</>;
+  if (block.state === 'ready') return <>{children(block.data)}</>;
+  const text = block.state === 'loading'
+    ? `Загружаем ${name}…`
+    : block.state === 'denied'
+      ? `Нет доступа к разделу «${name}».`
+      : `Не удалось загрузить ${name}. Данные не показаны — это не ноль.`;
+  return <p className={['hm-empty', block.state === 'error' ? 'hm-empty--bad' : '', className ?? ''].filter(Boolean).join(' ')}>{text}</p>;
+}
+
+// --- мелочи ---------------------------------------------------------------------
+
+function byKey(cards: api.Card[]): Record<string, number> {
+  return Object.fromEntries(cards.map((card) => [card.key, card.value]));
+}
+
+/** По графику: пришли, ушли и не пришли. Выходной и отсутствие сюда не входят. */
+const expected = (c: Record<string, number>) => (c['IN_OFFICE'] ?? 0) + (c['LEFT'] ?? 0) + (c['NOT_COME'] ?? 0);
+
+/** Отсутствуют: только оформленное и подтверждённое — отпуск, больничный, иное. */
+const absent = (c: Record<string, number>) => (c['VACATION'] ?? 0) + (c['SICK_LEAVE'] ?? 0) + (c['OTHER_ABSENCE'] ?? 0);
+
+function plural(n: number, forms: [string, string, string]): string {
+  const tail = Math.abs(n) % 100;
+  const last = tail % 10;
+  if (tail > 10 && tail < 20) return forms[2];
+  if (last === 1) return forms[0];
+  if (last >= 2 && last <= 4) return forms[1];
+  return forms[2];
+}
+
+const count = (n: number, forms: [string, string, string]) => `${n} ${plural(n, forms)}`;
+const people = (n: number) => plural(n, ['сотрудник', 'сотрудника', 'сотрудников']);
+/** «из 1 сотрудника», «из 5 сотрудников» — после «из» родительный падеж. */
+const genitive = (n: number) => plural(n, ['сотрудника', 'сотрудников', 'сотрудников']);
+
+function dayLabel(iso: string): string {
+  const [, m, d] = iso.split('-');
+  return `${d}.${m}`;
+}
+
+function weekday(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  return WEEKDAYS[new Date(Date.UTC(y!, m! - 1, d!)).getUTCDay()]!;
+}
+
+function period(first: string | null, last: string | null): string {
+  if (!first) return '';
+  const f = (iso: string) => iso.split('-').reverse().join('.');
+  return last && last !== first ? `${f(first)} – ${f(last)}` : `с ${f(first)}`;
+}
+
+/** «10:24», «Вчера, 18:32», «22 сен, 10:00». */
+function moment(iso: string): string {
+  const date = new Date(iso);
+  const time = date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  const key = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  const now = new Date();
+  if (key(date) === key(now)) return time;
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (key(date) === key(yesterday)) return `Вчера, ${time}`;
+  return `${date.getDate()} ${MONTHS_SHORT[date.getMonth()]}, ${time}`;
+}
+
+/** «Каримов Нодир Азизович» -> «Каримов Н.»: в строке ленты ФИО целиком не нужно. */
+function shortName(full: string): string {
+  const [last, first] = full.split(/\s+/);
+  if (!last) return full;
+  return first ? `${last} ${first[0]}.` : last;
 }

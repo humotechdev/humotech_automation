@@ -822,3 +822,25 @@ class TestDashboard:
         cards = {c["key"]: c["value"] for c in board["cards"]}
         assert cards["in_office"] == 0
         assert cards["active_employees"] == 0
+
+
+def test_manual_event_shows_its_author_in_the_log(attendance_client, employee, office):
+    """В журнале ручная отметка подписана кадровиком, а не пустым источником."""
+    attendance_client.post(
+        f"{API}/attendance/manual",
+        {
+            "employee_id": str(employee.id), "office_id": str(office.id),
+            "event_type": "ENTRY", "occurred_at": utc(4).isoformat(),
+            "reason": "Забыл отметиться, подтвердил руководитель",
+        },
+        format="json",
+    )
+
+    body = attendance_client.get(
+        f"{API}/attendance/events",
+        {"date_from": DAY.isoformat(), "date_to": DAY.isoformat()},
+    ).json()
+
+    manual = [one for one in body["items"] if one["source"] == "MANUAL"]
+    assert manual and manual[0]["author_name"]
+    assert manual[0]["employee"]["full_name"]

@@ -53,6 +53,14 @@ class AttendanceEventSerializer(serializers.Serializer):
     inside_geofence = serializers.BooleanField(allow_null=True)
     inside_office_network = serializers.BooleanField(allow_null=True)
     created_at = serializers.DateTimeField()
+    author_name = serializers.SerializerMethodField(
+        help_text="Кто внёс ручную отметку; у отметки по QR — пусто",
+    )
+
+    def get_author_name(self, event) -> str | None:
+        authors = self.context.get("authors") or {}
+        user_id = (event.event_metadata or {}).get("created_by_user_id")
+        return authors.get(str(user_id)) if user_id else None
 
     # Ни `qr_nonce_hash`, ни координат, ни IP: журнал смотрит кадровик,
     # а это технические поля разбора инцидентов. Их место в аудите.

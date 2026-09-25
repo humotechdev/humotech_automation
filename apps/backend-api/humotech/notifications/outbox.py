@@ -45,6 +45,7 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
+from humotech.notifications.isolation import is_demo_chat_id
 from humotech.notifications.models import Notification, NotificationAttempt
 from humotech.telegram.identity import AccessDenied, resolve_account
 from humotech.telegram.models import TelegramAccount
@@ -91,6 +92,14 @@ def _log_attempt(
 #: тем же запросом, что и человек из кабинета.
 ATTACHMENTS = {
     "absence.created": "absence_application",
+    # То же самое по просьбе человека: он нажал «прислать» в кабинете.
+    # Скачать файл прямо в вебвью Telegram нельзя — оно не даёт
+    # сохранить blob, — поэтому бумага приходит сообщением в чат,
+    # откуда её и пересылают, и печатают.
+    "absence.application.copy": "absence_application",
+    "absence.certificate.copy": "absence_certificate",
+    # Файл, который кадровик приложил к ответу на обращение.
+    "question.reply.file": "question_file",
 }
 
 
@@ -196,6 +205,10 @@ def claim(*, limit: int = 20, now: datetime | None = None) -> list[Outgoing]:
             blocked = account is None or (
                 isinstance(resolved, AccessDenied) and not about_binding
             )
+            # Демонстрационная привязка: отправлять некому по построению.
+            if account is not None and is_demo_chat_id(account.telegram_chat_id):
+                blocked = True
+                resolved = AccessDenied("demo_account")
             if blocked:
                 # Адресата нет или доступ закрыт. Это не ошибка отправки:
                 # повторять нечего, и держать строку в очереди вечно

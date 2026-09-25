@@ -34,6 +34,10 @@ from humotech.files.storage import is_viewable, open_stored, store
 from humotech.onboarding.models import PolicyDocumentVersion
 from humotech.onboarding.presentation import row_json
 from humotech.onboarding.serializers import (
+    CategoryPatchSerializer,
+    CategoryWriteSerializer,
+    DueSerializer,
+    RemindManySerializer,
     CrmSectionSerializer,
     DocumentPatchSerializer,
     DocumentSerializer,
@@ -49,6 +53,7 @@ from humotech.onboarding.serializers import (
     VersionWriteSerializer,
 )
 from humotech.onboarding.services import (
+    CategoryService,
     OnboardingContentService,
     OnboardingService,
     PolicyService,
@@ -89,7 +94,7 @@ def _version_json(row) -> dict:
     }
 
 
-def _document_json(row) -> dict:
+def _document_json(row, facts: dict | None = None) -> dict:
     versions = sorted(
         row.versions.all(), key=lambda one: one.created_at, reverse=True
     )
@@ -104,6 +109,29 @@ def _document_json(row) -> dict:
         "archived_at": row.archived_at,
         "current_version": _version_json(live) if live else None,
         "versions": [_version_json(one) for one in versions],
+        "category": (
+            {"id": str(row.category.id), "title": row.category.title}
+            if row.category_id and row.category.archived_at is None else None
+        ),
+        **(facts or {}),
+    }
+
+
+def _documents_json(service, actor, rows) -> list[dict]:
+    facts = service.document_facts(actor, rows)
+    return [_document_json(one, facts.get(one.id)) for one in rows]
+
+
+def _one_document(service, actor, row) -> dict:
+    fresh = [one for one in service.documents(actor) if one.id == row.id]
+    return _documents_json(service, actor, fresh)[0] if fresh else _document_json(row)
+
+
+def _scope(query) -> dict:
+    return {
+        "search": query.get("search") or None,
+        "office_id": query.get("office_id") or None,
+        "department_id": query.get("department_id") or None,
     }
 
 
@@ -123,6 +151,11 @@ class OnboardingProgressView(APIView):
             OpenApiParameter("status", OpenApiTypes.STR),
             OpenApiParameter("search", OpenApiTypes.STR),
             OpenApiParameter("office_id", OpenApiTypes.UUID),
+            OpenApiParameter("department_id", OpenApiTypes.UUID),
+            OpenApiParameter(
+                "group", OpenApiTypes.STR,
+                enum=["done", "attention", "waiting", "not_started", "in_progress"],
+            ),
             OpenApiParameter("limit", OpenApiTypes.INT),
             OpenApiParameter("cursor", OpenApiTypes.STR),
         ],
@@ -134,8 +167,8 @@ class OnboardingProgressView(APIView):
         page = OnboardingService().list_progress(
             actor,
             status=query.get("status") or None,
-            search=query.get("search") or None,
-            office_id=query.get("office_id") or None,
+            group=query.get("group") or None,
+            **_scope(query),
             limit=int(query["limit"]) if query.get("limit") else None,
             cursor=query.get("cursor") or None,
         )
@@ -158,7 +191,7 @@ class OnboardingCountsView(APIView):
         responses={200: OpenApiTypes.OBJECT},
     )
     def get(self, request):
-        return Response(OnboardingService().counts(Actor.from_user(request.user)))
+        return Response(OnboardingService().counts(Actor.from_user(request.user), **_scope(request.query_params)))
 
 
 @extend_schema(tags=["Ознакомление"])
@@ -177,7 +210,10 @@ class OnboardingExportView(APIView):
         responses={200: OpenApiTypes.OBJECT},
     )
     def get(self, request):
-        rows = OnboardingService().export_rows(Actor.from_user(request.user))
+        rows = OnboardingService().export_rows(
+            Actor.from_user(request.user), group=request.query_params.get("group") or None,
+            **_scope(request.query_params),
+        )
         return Response({"items": rows, "total": len(rows)})
 
 
@@ -225,10 +261,10 @@ class EmployeeOnboardingActionView(APIView):
             OpenApiParameter("employee_pk", OpenApiTypes.UUID, OpenApiParameter.PATH),
             OpenApiParameter(
                 "action", OpenApiTypes.STR, OpenApiParameter.PATH,
-                enum=["invite", "reinvite", "revoke", "remind", "enrol"],
+                enum=["invite", "reinvite", "revoke", "remind", "enrol", "due"],
             ),
         ],
-        request=None,
+        request=DueSerializer,
         responses={200: InvitationResultSerializer},
     )
     def post(self, request, employee_pk, action: str):
@@ -261,7 +297,64 @@ class EmployeeOnboardingActionView(APIView):
             row = service.enrol(actor, employee_pk)
             return Response({"status": row.status}, status=status.HTTP_201_CREATED)
 
+        if action == "due":
+            data = validated(DueSerializer, request.data)
+            row = service.set_due(actor, employee_pk, data["due_date"])
+            return Response({"due_date": row.due_date})
+
         raise NotFound("Неизвестное действие")
+
+
+@extend_schema(tags=["Ознакомление"])
+class OnboardingRemindView(APIView):
+    """«Напомнить всем» — с итогом по каждому сотруднику."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        operation_id="onboarding_remind_many",
+        summary="Напомнить нескольким сотрудникам",
+        request=RemindManySerializer,
+        responses={200: OpenApiTypes.OBJECT},
+    )
+    def post(self, request):
+        data = validated(RemindManySerializer, request.data)
+        items = OnboardingService().remind_many(Actor.from_user(request.user), data["employee_ids"])
+        return Response({"items": items})
+
+
+class PolicyCategoryViewSet(ServiceViewSet):
+    """Разделы материалов."""
+
+    service_class = CategoryService
+    read_serializer_class = CategoryPatchSerializer
+
+    @extend_schema(operation_id="policy_categories", summary="Разделы материалов",
+                   responses={200: OpenApiTypes.OBJECT})
+    def list(self, request):
+        return Response({"items": self.service.categories(self.actor)})
+
+    def _one(self, row) -> dict:
+        found = [one for one in self.service.categories(self.actor) if one["id"] == str(row.id)]
+        return found[0] if found else {"id": str(row.id), "title": row.title}
+
+    @extend_schema(operation_id="policy_category_create", request=CategoryWriteSerializer,
+                   responses={201: OpenApiTypes.OBJECT})
+    def create(self, request):
+        data = validated(CategoryWriteSerializer, request.data)
+        return Response(self._one(self.service.create(self.actor, data)), status=status.HTTP_201_CREATED)
+
+    @extend_schema(operation_id="policy_category_update", request=CategoryPatchSerializer,
+                   responses={200: OpenApiTypes.OBJECT})
+    def partial_update(self, request, pk=None):
+        data = validated(CategoryPatchSerializer, request.data)
+        return Response(self._one(self.service.update(self.actor, pk, data)))
+
+    @extend_schema(operation_id="policy_category_archive", request=None, responses={200: OpenApiTypes.OBJECT})
+    @action(detail=True, methods=["post"])
+    def archive(self, request, pk=None):
+        row = self.service.archive(self.actor, pk)
+        return Response({"id": str(row.id), "archived_at": row.archived_at})
 
 
 # ------------------------------------------------------------------ разделы
@@ -328,7 +421,7 @@ class PolicyDocumentViewSet(ServiceViewSet):
     )
     def list(self, request):
         rows = self.service.documents(self.actor)
-        return Response({"items": [_document_json(one) for one in rows]})
+        return Response({"items": _documents_json(self.service, self.actor, rows)})
 
     @extend_schema(
         operation_id="policy_document_create",
@@ -338,7 +431,7 @@ class PolicyDocumentViewSet(ServiceViewSet):
     def create(self, request):
         data = validated(DocumentWriteSerializer, request.data)
         row = self.service.create_document(self.actor, data)
-        return Response(_document_json(row), status=status.HTTP_201_CREATED)
+        return Response(_one_document(self.service, self.actor, row), status=status.HTTP_201_CREATED)
 
     @extend_schema(
         operation_id="policy_document_update",
@@ -348,7 +441,7 @@ class PolicyDocumentViewSet(ServiceViewSet):
     def partial_update(self, request, pk=None):
         data = validated(DocumentPatchSerializer, request.data)
         row = self.service.update_document(self.actor, pk, data)
-        return Response(_document_json(row))
+        return Response(_one_document(self.service, self.actor, row))
 
     @extend_schema(
         operation_id="policy_document_archive", request=None,

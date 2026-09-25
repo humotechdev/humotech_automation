@@ -90,6 +90,18 @@ class Employee(
     # период, и без статуса PROBATION он ничего не значит.
     probation_from = models.DateField(null=True, blank=True)
     probation_to = models.DateField(null=True, blank=True)
+    #: Наставник на время стажировки — к кому идёт стажёр с вопросами и
+    #: кто даёт отзыв к решению. Не руководитель: руководитель задаётся
+    #: назначением и живёт дольше стажировки.
+    mentor_employee = models.ForeignKey(
+        "self",
+        on_delete=models.PROTECT,
+        db_column="mentor_employee_id",
+        db_index=False,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
     termination_date = models.DateField(null=True, blank=True)
     # Почему человека нет в штате. Свободный текст: причин столько же,
     # сколько обстоятельств, а «прочее» из списка не отвечает ни на один

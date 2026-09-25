@@ -56,7 +56,7 @@ from humotech.telegram.models import TelegramAccount
 CARD_FIELDS = (
     "employee_number", "first_name", "last_name", "middle_name", "phone",
     "corporate_email", "personal_email", "birth_date", "hire_date",
-    "probation_from", "probation_to",
+    "probation_from", "probation_to", "mentor_employee_id",
     "termination_date", "termination_reason", "preferred_language",
     "employment_status",
 )
@@ -74,7 +74,7 @@ CONTACT_FIELDS = ("first_name", "last_name", "middle_name", "phone",
                   "corporate_email", "personal_email", "birth_date",
                   "preferred_language", "employee_number",
                   "gender", "marital_status",
-                  "probation_from", "probation_to")
+                  "probation_from", "probation_to", "mentor_employee_id")
 
 # Статусы, при которых сотрудник считается работающим.
 WORKING_STATUSES = ("ACTIVE", "PROBATION")
@@ -755,6 +755,15 @@ class EmployeeService(BaseService):
             employee.probation_from = changes["probation_from"]
         if "probation_to" in changes:
             employee.probation_to = changes["probation_to"]
+        if "mentor_employee_id" in changes:
+            mentor = changes["mentor_employee_id"]
+            if mentor is not None:
+                if str(mentor) == str(employee.id):
+                    raise ValidationFailed("Сотрудник не может быть своим наставником",
+                                           details={"field": "mentor_employee_id"})
+                if not Employee.objects.filter(id=mentor, organization_id=employee.organization_id).exists():
+                    raise ValidationFailed("Наставник не найден", details={"field": "mentor_employee_id"})
+            employee.mentor_employee_id = mentor
         # Порядок дат проверяется здесь, чтобы человек увидел причину, а
         # не отказ базы. Правится одна из двух — сравнивать приходится с
         # той, что уже записана.

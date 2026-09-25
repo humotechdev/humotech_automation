@@ -317,7 +317,8 @@ describe('колокольчик', () => {
     const bell = await screen.findByRole('button', {
       name: /Уведомления, непрочитанных 4/,
     });
-    expect(within(bell).getByText('4')).toBeTruthy();
+    // На самом значке — только красная точка: число читается из подписи.
+    expect(bell.querySelector('.nf__new')).not.toBeNull();
   });
 
   test('пока сервер не ответил, числа нет', async () => {

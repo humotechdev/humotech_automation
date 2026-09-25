@@ -29,7 +29,8 @@ import { DayCard } from '../src/screens/History';
 import { Home } from '../src/screens/Home';
 import { Profile } from '../src/screens/Profile';
 import { forgetToken, rememberToken } from '../src/auth';
-import { AbsenceForm, RequestCard } from '../src/screens/Requests';
+import type { AbsenceRequest } from '../src/api';
+import { AbsenceForm, RequestCard, Requests } from '../src/screens/Requests';
 import { ScanResult } from '../src/screens/Scan';
 import { greeting } from '../src/screens/Home';
 import { BottomNavigation } from '../src/ui/BottomNavigation';
@@ -240,41 +241,311 @@ describe('история', () => {
 
 // --- 8-9. заявки ------------------------------------------------------------
 
+const sick = {
+  code: 'SICK_LEAVE',
+  name: 'Больничный',
+  requires_document: true,
+  deducts_leave_balance: false,
+};
+
 describe('заявки', () => {
   it.each([
-    ['SUBMITTED', 'ожидает решения'],
-    ['APPROVED', 'подтверждена'],
-    ['REJECTED', 'отклонена'],
-    ['CANCELLED', 'отменена'],
-  ])('статус %s подписан словом «%s»', (state, text) => {
-    render(<RequestCard request={request({ status: state })} onCancel={noop} />);
-    expect(screen.getByText(text)).toBeTruthy();
-  });
+    ['WAITING_DOCUMENTS', 'Ожидаем документы'],
+    ['HR_REVIEW', 'На проверке HR'],
+    ['NEEDS_FIX', 'Нужны исправления'],
+    ['PENDING', 'На согласовании'],
+    ['APPROVED', 'Подтверждён'],
+    ['REJECTED', 'Отклонён'],
+    ['CANCELLED', 'Отменён'],
+  ] as Array<[AbsenceRequest['stage'], string]>)(
+    'стадия %s подписана словами «%s»',
+    (stage, text) => {
+    // Стадию считает сервер: подтверждение больничного — это строка в
+    // табеле, и второе мнение о нём приложению иметь не положено.
+      render(
+        <RequestCard
+          request={request({ stage })}
+          onCancel={noop}
+          onChanged={noop}
+        />,
+      );
+      expect(screen.getByText(text)).toBeTruthy();
+    },
+  );
 
-  it('карточка не заливается цветом статуса целиком', () => {
+  it('цвет состояния лежит на кромке карточки, а не на всей заливке', () => {
+    // Заявок в списке несколько. Залитая целиком карточка кричит громче
+    // соседних, и экран превращается в светофор без главного.
     const { container } = render(
-      <RequestCard request={request({ status: 'REJECTED' })} onCancel={noop} />,
+      <RequestCard
+        request={request({ status: 'REJECTED', stage: 'REJECTED' })}
+        onCancel={noop}
+        onChanged={noop}
+      />,
     );
-    const card = container.querySelector('.card');
-    expect(card?.className).toBe('card');
+    const card = container.querySelector('.rq-card');
+    expect(card?.className).toBe('rq-card rq-card--danger');
+    expect(container.querySelector('.rq-card__state')).toBeTruthy();
   });
 
-  it('требование справки видно до отправки', () => {
+  it('пока нет справки, карточка говорит об этом, а не про решение', () => {
     render(
       <RequestCard
         request={request({
-          absence_type: {
-            code: 'SICK_LEAVE',
-            name: 'Больничный',
-            requires_document: true,
-            deducts_leave_balance: false,
-          },
-          documents: 0,
+          absence_type: sick,
+          stage: 'WAITING_DOCUMENTS',
+          certificate_status: null,
         })}
         onCancel={noop}
+        onChanged={noop}
       />,
     );
-    expect(screen.getByText('Нужна справка')).toBeTruthy();
+    expect(screen.getByText('Ожидаем документы')).toBeTruthy();
+    expect(screen.getByText('Прикрепить справку')).toBeTruthy();
+  });
+
+  it('приложенная справка не выдаётся за принятую', () => {
+    // Зелёная галочка «принято» на непроверенной бумаге — это обещание
+    // от имени кадровика, которого он не давал.
+    render(
+      <RequestCard
+        request={request({
+          absence_type: sick,
+          stage: 'HR_REVIEW',
+          certificate_status: 'PENDING',
+        })}
+        onCancel={noop}
+        onChanged={noop}
+      />,
+    );
+    expect(screen.getByText('На проверке HR')).toBeTruthy();
+    expect(screen.getByText('Справка приложена, ждёт проверки')).toBeTruthy();
+    expect(screen.queryByText('Справка принята')).toBeNull();
+  });
+
+  it('отклонённая справка оставляет дорогу принести другую', () => {
+    // Счётчик документов на этом месте закрыл бы человеку выход: бумага
+    // есть, но она не годится, а приложить новую уже нечем.
+    render(
+      <RequestCard
+        request={request({
+          absence_type: sick,
+          stage: 'NEEDS_FIX',
+          certificate_status: 'REJECTED',
+          certificate_comment: 'Фото нечитаемое',
+          documents: 1,
+        })}
+        onCancel={noop}
+        onChanged={noop}
+      />,
+    );
+    expect(screen.getByText('Нужны исправления')).toBeTruthy();
+    expect(
+      screen.getByText('Справку не приняли. Комментарий HR: Фото нечитаемое'),
+    ).toBeTruthy();
+    expect(screen.getByText('Приложить другую справку')).toBeTruthy();
+  });
+
+  it('принятая справка не просит принести ещё одну', () => {
+    render(
+      <RequestCard
+        request={request({
+          absence_type: sick,
+          status: 'APPROVED',
+          stage: 'APPROVED',
+          certificate_status: 'VERIFIED',
+          documents: 1,
+          can_cancel: false,
+        })}
+        onCancel={noop}
+        onChanged={noop}
+      />,
+    );
+    expect(screen.getByText('Справка принята')).toBeTruthy();
+    expect(screen.queryByText('Прикрепить справку')).toBeNull();
+  });
+
+  it('у продления справку не просят вовсе', () => {
+    // Продление подтверждается по исходной заявке, которая все три
+    // пункта уже прошла. Просить у него справку значит просить бумагу,
+    // которой никто не ждёт и которая ничего не откроет.
+    render(
+      <RequestCard
+        request={request({
+          kind: 'EXTEND',
+          absence_type: sick,
+          stage: 'PENDING',
+          certificate_status: null,
+        })}
+        onCancel={noop}
+        onChanged={noop}
+      />,
+    );
+    expect(screen.getByText('На согласовании')).toBeTruthy();
+    expect(screen.queryByText('Прикрепить справку')).toBeNull();
+  });
+
+  it('запрет организации доносить справку убирает строку, а не ломает её', () => {
+    // Организация может не принимать бумаги после решения. Тогда
+    // строки нет — вместо кнопки, которая упрётся в отказ сервера.
+    render(
+      <RequestCard
+        request={request({
+          absence_type: sick,
+          status: 'APPROVED',
+          stage: 'APPROVED',
+          certificate_status: 'REJECTED',
+          documents: 1,
+        })}
+        onCancel={noop}
+        onChanged={noop}
+        lateDocuments={false}
+      />,
+    );
+    expect(screen.queryByText('Прикрепить справку')).toBeNull();
+    expect(screen.queryByText('Приложить другую справку')).toBeNull();
+  });
+
+  it('подтверждённая заявка уходит в историю', async () => {
+    // Решённое дело: приложить нечего, отменить нельзя. Место такому
+    // — там, где смотрят прошлое, а не в списке текущих дел.
+    vi.stubGlobal(
+      'fetch',
+      fakeFetch({
+        '/me/absences/options': options,
+        '/me/leave-balance': { balances: [] },
+        '/me/absences': {
+          requests: [
+            request({
+              id: 'r-done',
+              absence_type: sick,
+              status: 'APPROVED',
+              stage: 'APPROVED',
+              certificate_status: 'VERIFIED',
+              can_cancel: false,
+            }),
+          ],
+          total: 1,
+        },
+      }).impl,
+    );
+    rememberToken('токен-сеанса');
+
+    render(<Requests fullName="Иванов Иван" />);
+
+    expect(await screen.findByText('Сейчас нет активных заявок')).toBeTruthy();
+    fireEvent.click(screen.getByRole('tab', { name: 'История' }));
+    expect(await screen.findByText('Подтверждён')).toBeTruthy();
+    // И справка при этом остаётся доступной: бумагу приносил человек.
+    expect(screen.getByText('Прислать справку в чат')).toBeTruthy();
+  });
+
+  it('незакрытый больничный ведёт к себе, а не к новой форме', async () => {
+    // Сервер второго не создаст: незакрытый больничный только один.
+    // Показать форму значило бы обещать то, чего не будет.
+    vi.stubGlobal(
+      'fetch',
+      fakeFetch({
+        '/me/absences/options': options,
+        '/me/leave-balance': { balances: [] },
+        '/me/absences': {
+          requests: [
+            request({
+              absence_type: sick,
+              stage: 'WAITING_DOCUMENTS',
+              certificate_status: null,
+            }),
+          ],
+          total: 1,
+        },
+      }).impl,
+    );
+    rememberToken('токен-сеанса');
+
+    render(<Requests fullName="Иванов Иван" />);
+
+    const row = await screen.findByText('Открыть текущий больничный');
+    expect(row).toBeTruthy();
+    // И открывает саму заявку, а не переключает вкладку: человек уже
+    // стоит на «Активных», и переключение выглядит как «ничего не
+    // произошло».
+    fireEvent.click(row);
+    const sheet = await screen.findByRole('dialog');
+    // Та же форма, что и при создании: те же поля в том же порядке,
+    // только заполненные из заявки и закрытые на правку.
+    const first = within(sheet).getByLabelText('С какого дня') as HTMLInputElement;
+    const last = within(sheet).getByLabelText('По какой день') as HTMLInputElement;
+    expect(first.value).toBe('2026-10-05');
+    expect(last.value).toBe('2026-10-16');
+    expect(first.disabled).toBe(true);
+    expect(last.disabled).toBe(true);
+    expect(
+      (within(sheet).getByLabelText(/Комментарий/) as HTMLTextAreaElement).disabled,
+    ).toBe(true);
+    // Согласие и «создать заявку» тут ни при чём — заявка уже подана.
+    expect(within(sheet).queryByText('Создать заявку')).toBeNull();
+    // А сделать с ней есть что.
+    expect(within(sheet).getByText('Прикрепить справку')).toBeTruthy();
+    expect(within(sheet).getByText('Прислать заявление в чат')).toBeTruthy();
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Закрыть' }));
+    // Подпись под строкой говорит, в каком состоянии заявка и что с ней
+    // делать — иначе «открыть» ведёт в неизвестность.
+    expect(
+      screen.getByText(/Ожидаем документы — приложите справку/),
+    ).toBeTruthy();
+    expect(screen.queryByText('Оформить больничный')).toBeNull();
+  });
+
+  it('справка уходит на сервер и список перечитывается', async () => {
+    const { impl, calls } = fakeFetch({ '/document': request({ documents: 1 }) });
+    vi.stubGlobal('fetch', impl);
+    rememberToken('токен-сеанса');
+    const changed = vi.fn();
+
+    const { container } = render(
+      <RequestCard
+        request={request({
+          id: 'r7',
+          absence_type: sick,
+          stage: 'WAITING_DOCUMENTS',
+          certificate_status: null,
+        })}
+        onCancel={noop}
+        onChanged={changed}
+      />,
+    );
+
+    const input = container.querySelector(
+      '.rq-act input[type="file"]',
+    ) as HTMLInputElement;
+    const file = new File(['%PDF-1.4'], 'spravka.pdf', {
+      type: 'application/pdf',
+    });
+    await act(async () => {
+      fireEvent.change(input, { target: { files: [file] } });
+    });
+
+    await waitFor(() =>
+      expect(posts(calls, '/me/absences/r7/document')).toHaveLength(1),
+    );
+    expect(changed).toHaveBeenCalled();
+  });
+
+  it('у закрытой заявки нет бланка для печати', () => {
+    // Подписанное заявление по отклонённой заявке потом всплывёт в
+    // переписке как действующее.
+    render(
+      <RequestCard
+        request={request({
+          status: 'REJECTED',
+          stage: 'REJECTED',
+          can_cancel: false,
+        })}
+        onCancel={noop}
+        onChanged={noop}
+      />,
+    );
+    expect(screen.queryByText('Заявление для печати')).toBeNull();
   });
 
   it('подтверждение блокирует повторную отправку', () => {

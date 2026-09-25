@@ -29,6 +29,7 @@ from rest_framework.views import APIView
 
 from humotech.absences.services import AbsenceService
 from humotech.absences.views import hr_request_json
+from humotech.core.timeframes import organization_zone
 from humotech.attendance.hr import AttendanceHrService
 from humotech.attendance.serializers import CorrectionRequestSerializer
 from humotech.attendance.views import _uuid_param
@@ -184,8 +185,12 @@ class RequestQueueView(APIView):
             request_kind=request.query_params.get("request_kind") or None,
         )
         rows = list(_before(queryset, position)[: size + 1])
+        # Пояс показа считается один раз на страницу: он один на всю
+        # организацию, а запрос за ним — не бесплатный.
+        zone = organization_zone(actor.organization_id)
         return [
-            _Row(row.created_at, row.id, "absence", hr_request_json(row)) for row in rows
+            _Row(row.created_at, row.id, "absence", hr_request_json(row, zone))
+            for row in rows
         ]
 
     def _corrections(self, actor, request, position, size) -> list[_Row]:

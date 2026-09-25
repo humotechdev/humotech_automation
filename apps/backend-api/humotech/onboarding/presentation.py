@@ -158,6 +158,12 @@ def row_json(row) -> dict:
         "last_reminder_at": onboarding.last_reminder_at,
         "invitation_status": invitation.status if invitation else None,
         "invitation_expires_at": invitation.expires_at if invitation else None,
+        "enrolled_at": onboarding.created_at,
+        "due_date": onboarding.due_date,
+        "overdue": "overdue" in row.reasons,
+        "reasons": list(row.reasons),
+        "group": row.group,
+        "materials": list(row.materials),
     }
 
 

@@ -13,12 +13,16 @@ import { DashboardPage } from '../pages/DashboardPage';
 import { EmployeesPage } from '../pages/EmployeesPage';
 import { EmployeePage } from '../pages/EmployeePage';
 import { NewEmployeePage } from '../pages/NewEmployeePage';
+import { RequestPage } from '../pages/RequestPage';
 import { RequestsPage } from '../pages/RequestsPage';
 import { AttendancePage } from '../pages/AttendancePage';
 import { OfficesPage } from '../pages/OfficesPage';
 import { OfficeSetupPage } from '../pages/OfficeSetupPage';
 import { QuestionsPage } from '../pages/QuestionsPage';
 import { SurveysPage } from '../pages/SurveysPage';
+import { SurveyTemplatePage } from '../pages/SurveyTemplatePage';
+import { SurveyWizardPage } from '../pages/SurveyWizardPage';
+import { SurveyAutomationPage } from '../pages/SurveyAutomationPage';
 import { OnboardingPage } from '../pages/OnboardingPage';
 import { SurveyCampaignPage } from '../pages/SurveyCampaignPage';
 import { AnalyticsPage } from '../pages/AnalyticsPage';
@@ -56,14 +60,35 @@ export function App() {
         <Route path="/employees/:id/edit" element={<NewEmployeePage />} />
         <Route path="/employees/:id" element={<EmployeePage />} />
         <Route path="/requests" element={<RequestsPage />} />
+        {/* Одна заявка — своим адресом, а не окном поверх очереди:
+            решение по ней стоит денег, и ссылку на спорную заявку
+            отправляют коллеге. */}
+        <Route path="/requests/:id" element={<RequestPage />} />
         <Route path="/attendance" element={<AttendancePage />} />
         <Route path="/offices" element={<OfficesPage />} />
         <Route path="/offices/:id/setup" element={<OfficeSetupPage />} />
         <Route path="/questions" element={<QuestionsPage />} />
-        {/* Опросы: список рассылок и шаблонов, карточка одной рассылки
-            с именными ответами. */}
-        <Route path="/surveys" element={<SurveysPage />} />
-        <Route path="/surveys/:id" element={<SurveyCampaignPage />} />
+        {/*
+          * Опросы — три вкладки в обязательном порядке:
+          * Шаблоны, Рассылки, Автоматизации. Адрес раздела
+          * целиком — это шаблоны, и переадресации здесь нет:
+          * открывается именно та вкладка, с которой начинается работа,
+          * а не та, куда отправила бы старая ссылка.
+          *
+          * Создание стоит ВЫШЕ карточек: иначе `new` совпал бы
+          * с `:id` и страница пыталась бы открыть рассылку с таким именем.
+          */}
+        {/* Список раздела — ОДИН маршрут на три вкладки: смена вкладки
+            меняет адрес, но не пересоздаёт страницу, и лист остаётся на
+            месте. Адреса вроде /surveys/campaigns/new заданы точнее и
+            побеждают этот маршрут сами. */}
+        <Route path="/surveys/:tab?" element={<SurveysPage />} />
+        <Route path="/surveys/templates/new" element={<SurveyTemplatePage />} />
+        <Route path="/surveys/templates/:id" element={<SurveyTemplatePage />} />
+        <Route path="/surveys/campaigns/new" element={<SurveyWizardPage />} />
+        <Route path="/surveys/campaigns/:id" element={<SurveyCampaignPage />} />
+        <Route path="/surveys/automations/new" element={<SurveyAutomationPage />} />
+        <Route path="/surveys/automations/:id" element={<SurveyAutomationPage />} />
         {/* Первичное ознакомление: кто где остановился, тексты разделов
             и обязательные документы. Карточка одного человека
             открывается тут же, панелью — отдельного адреса у неё нет:

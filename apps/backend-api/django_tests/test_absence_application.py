@@ -24,8 +24,13 @@ from humotech.absences.application_pdf import (
     human_date,
     plural_days,
 )
-from humotech.absences.models import AbsenceRequest, EmployeeAbsence
-from humotech.absences.services import AbsenceService
+from humotech.absences.models import (
+    AbsenceDocument,
+    AbsenceRequest,
+    EmployeeAbsence,
+)
+from humotech.absences.services import AbsenceService, _ContextFromRequest
+from humotech.core.errors import Conflict
 from humotech.telegram.identity import resolve_by_telegram_user_id
 
 from .conftest import bot_headers, link_telegram
@@ -278,9 +283,17 @@ def test_sick_leave_end_to_end(
     bot_client, api_client, make_user, organization, service, context,
     sick_leave, hr
 ):
-    """Заявка → заявление → справка → решение HR → табель."""
-    first = date.today()
-    last = first + timedelta(days=4)
+    """Заявка → бланк → справка → три проверки HR → решение → табель.
+
+    Проверок именно три, и все три делает человек: принять справку,
+    подтвердить пришедшее по почте заявление, проставить фактический
+    период. `APPROVED` — это строка в табеле, а не отметка «увидел».
+    """
+    # Период в прошлом: больничный закрывают справкой, а справку
+    # выдают при выписке. Подтвердить период, кончающийся завтра,
+    # значило бы записать в табель будущее.
+    last = date.today() - timedelta(days=1)
+    first = last - timedelta(days=4)
 
     # 1. Сотрудник оформляет больничный.
     made = service.create(
@@ -303,13 +316,33 @@ def test_sick_leave_end_to_end(
     )
     assert service.request(context, request_id).documents == 1
 
-    # 5. HR решает.
+    # 5. Пока кадровик её не посмотрел, подтверждать нечего.
+    with pytest.raises(Conflict) as exc:
+        service.decide(hr, request_id, approve=True)
+    assert exc.value.details["missing"] == [
+        "certificate", "application", "period",
+    ]
+
+    # 6. Кадровик принимает справку и отмечает пришедшее заявление.
+    paper = (
+        AbsenceDocument.objects
+        .filter(absence_request_id=request_id)
+        .exclude(document_type=APPLICATION_DOCUMENT)
+        .first()
+    )
+    service.verify_document(hr, request_id, paper.id, accept=True)
+    service.mark_application_received(hr, request_id)
+
+    # 7. И переносит период из справки — он мог разойтись с заявленным.
+    service.set_period(hr, request_id, first_day=first, last_day=last)
+
+    # 8. Только теперь решение проходит.
     service.decide(hr, request_id, approve=True, comment="Принято")
 
     request = AbsenceRequest.objects.get(id=request_id)
     assert request.status == "APPROVED"
 
-    # 6. И только теперь дни попадают в учёт.
+    # 9. И только теперь дни попадают в учёт.
     absence = EmployeeAbsence.objects.filter(origin_request_id=request_id).first()
     assert absence is not None
     assert absence.status in {"PLANNED", "ACTIVE"}
@@ -362,10 +395,10 @@ def test_bot_can_attach_a_document(bot_client, service, context, sick_leave):
 class TestDocumentDecision:
     @pytest.fixture()
     def with_document(self, service, context, sick_leave):
-        first = date.today()
+        last = date.today() - timedelta(days=1)
         made = service.create(
             context, absence_type_code="SICK_LEAVE",
-            first_day=first, last_day=first + timedelta(days=4),
+            first_day=last - timedelta(days=4), last_day=last,
         )
         service.attach_document(
             context, made.request.id,
@@ -427,6 +460,16 @@ class TestDocumentDecision:
 
     def test_request_decision_is_not_touched(self, service, hr, with_document):
         request, document = with_document
+        # Чтобы заявку вообще подтвердить, справку сперва принимают:
+        # `APPROVED` без принятой бумаги теперь невозможен.
+        service.verify_document(hr, request.id, document.id, accept=True)
+        service.mark_application_received(hr, request.id)
+        tz = _ContextFromRequest(request).timezone
+        service.set_period(
+            hr, request.id,
+            first_day=request.requested_start_at.astimezone(tz).date(),
+            last_day=request.requested_end_at.astimezone(tz).date(),
+        )
         service.decide(hr, request.id, approve=True, comment="ок")
 
         service.verify_document(

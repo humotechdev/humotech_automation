@@ -65,7 +65,41 @@ def question_context(access: AccessControl, actor: Actor, question: EmployeeQues
         "corrections": _corrections(employee.id) if has("attendance.read") else None,
         "documents": _documents(employee.id) if has("employees.read") else None,
         "history": _history(question),
+        "today": _today(access, actor, employee, place) if has("attendance.read") else None,
         "materials": _materials(question) if has("knowledge.read") else None,
+    }
+
+
+def _today(access, actor: Actor, employee, place: dict) -> dict:
+    """Где человек сегодня — тем же расчётом, что и страница посещаемости.
+
+    Своего правила «на работе» здесь нет: второе правило однажды
+    разошлось бы с первым, и кадровик увидел бы «да» там, где посещаемость
+    говорит «не пришёл». День — по поясу офиса сотрудника, а не сервера.
+    """
+    from humotech.attendance.hr import AttendanceHrService
+    from humotech.core.timeframes import office_zone, zone
+    from humotech.offices.models import Office
+
+    office = place.get("office")
+    row = Office.objects.filter(id=office["id"]).first() if office else None
+    # Без офиса — пояс организации: полночь по UTC для Ташкента наступает
+    # в пять утра, и «сегодня» до пяти было бы вчерашним днём.
+    tz = office_zone(row) if row is not None else zone(
+        getattr(employee.organization, "default_timezone", None)
+    )
+    day = timezone.now().astimezone(tz).date()
+    report = AttendanceHrService().presence(
+        actor, day=day, employee_id=employee.id,
+    )
+    mine = next((one for one in report.rows if one.employee_id == employee.id), None)
+    if mine is None:
+        return {"day": day, "state": None, "first_entry_at": None, "last_exit_at": None}
+    return {
+        "day": day,
+        "state": mine.state,
+        "first_entry_at": mine.first_entry_at,
+        "last_exit_at": mine.last_exit_at,
     }
 
 

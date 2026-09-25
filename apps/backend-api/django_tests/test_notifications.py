@@ -179,6 +179,31 @@ def test_claim_returns_the_chat_from_the_current_binding(
     assert Notification.objects.get(id=batch[0].id).status == "RUNNING"
 
 
+def test_demo_binding_is_never_handed_to_the_bot(
+    context, sick_leave, notification_settings
+):
+    """Демонстрационная привязка: сообщение снимается, а не отправляется.
+
+    Витрину показывают вживую, и кнопки в ней нажимают по-настоящему.
+    Идентификатор из демо-диапазона не должен уйти в Telegram никогда.
+    """
+    from humotech.notifications.isolation import DEMO_CHAT_ID_FLOOR
+    from humotech.telegram.models import TelegramAccount
+
+    TelegramAccount.objects.filter(telegram_user_id=TG_ID).update(
+        telegram_chat_id=DEMO_CHAT_ID_FLOOR + 7
+    )
+    AbsenceService().create(
+        context, absence_type_code="SICK_LEAVE",
+        first_day=soon(0), last_day=soon(2),
+    )
+
+    assert outbox.claim() == []
+    row = Notification.objects.get(notification_type="absence.created")
+    assert row.status == "CANCELLED"
+    assert row.error_message == "demo_account"
+
+
 def test_a_claimed_message_is_not_handed_out_twice(
     context, sick_leave, notification_settings
 ):

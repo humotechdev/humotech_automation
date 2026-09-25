@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import serializers
 from rest_framework.permissions import IsAuthenticated
@@ -14,6 +15,7 @@ from humotech.analytics.overview import OverviewService
 from humotech.core.errors import ValidationFailed
 from humotech.attendance.views import _date_param, _uuid_param
 from humotech.analytics.movement import MovementService
+from humotech.analytics.people import PeopleService
 from humotech.core.rbac import Actor
 
 
@@ -367,6 +369,10 @@ class AnalyticsOverviewView(APIView):
                 "weekday", int,
                 description="Детализация по дню недели: 1 — понедельник … 7",
             ),
+            OpenApiParameter(
+                "people_limit", int,
+                description="Сколько сотрудников вернуть (по умолчанию 50, не больше 2000)",
+            ),
         ],
         responses=OverviewResponseSerializer,
         tags=["Аналитика"],
@@ -381,10 +387,18 @@ class AnalyticsOverviewView(APIView):
             raise ValidationFailed(
                 "День недели — число от 1 до 7", details={"weekday": raw}
             ) from None
+        raw_limit = request.query_params.get("people_limit")
+        try:
+            people_limit = max(1, min(int(raw_limit), 2000)) if raw_limit else None
+        except ValueError:
+            raise ValidationFailed(
+                "Число сотрудников — целое", details={"people_limit": raw_limit}
+            ) from None
         body = OverviewService().overview(
             actor,
             first=first,
             last=last,
+            people_limit=people_limit,
             region_id=_uuid_param(request, "region_id"),
             office_id=_uuid_param(request, "office_id"),
             department_id=_uuid_param(request, "department_id"),
@@ -392,6 +406,64 @@ class AnalyticsOverviewView(APIView):
             weekday=weekday,
         )
         return Response(body)
+
+
+SCOPE_PARAMS = PERIOD_PARAMS + [
+    OpenApiParameter("region_id", str),
+    OpenApiParameter("office_id", str),
+    OpenApiParameter("department_id", str),
+]
+
+
+def _scope(request) -> dict:
+    first, last = _period(request)
+    return {
+        "first": first,
+        "last": last,
+        "region_id": _uuid_param(request, "region_id"),
+        "office_id": _uuid_param(request, "office_id"),
+        "department_id": _uuid_param(request, "department_id"),
+    }
+
+
+class TeamView(APIView):
+    """Команда за период: численность, приём, уход, переводы, состав."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Команда за период",
+        description=(
+            "Численность на дату — принят, не уволен и числится основным "
+            "назначением в выборке. Оставлен после стажировки — запись "
+            "журнала о переводе в штат. Перевод — смена отдела или офиса."
+        ),
+        parameters=SCOPE_PARAMS,
+        responses={200: OpenApiTypes.OBJECT},
+        tags=["Аналитика"],
+    )
+    def get(self, request):
+        return Response(PeopleService().team(Actor.from_user(request.user), **_scope(request)))
+
+
+class ProbationView(APIView):
+    """Стажировки: кто сейчас стажируется и чем закончились решения."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Стажировки",
+        description=(
+            "Сейчас на стажировке — по статусу и текущему назначению. "
+            "Решения периода: оставлен в штате (журнал) и не прошёл "
+            "стажировку (увольнение с этой причиной)."
+        ),
+        parameters=SCOPE_PARAMS,
+        responses={200: OpenApiTypes.OBJECT},
+        tags=["Аналитика"],
+    )
+    def get(self, request):
+        return Response(PeopleService().probation(Actor.from_user(request.user), **_scope(request)))
 
 
 def _period(request):

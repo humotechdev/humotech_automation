@@ -96,6 +96,7 @@ class OverviewService(AnalyticsService):
         employee_id: uuid.UUID | None = None,
         weekday: int | None = None,
         now: datetime | None = None,
+        people_limit: int | None = None,
     ) -> dict:
         self.access.require(actor, "analytics.read")
         _validate_period(first, last)
@@ -150,6 +151,7 @@ class OverviewService(AnalyticsService):
                 "vacation_days": current["vacation"],
                 "sick_leave_days": current["sick"],
                 "other_absence_days": current["other"],
+                "trip_days": current["trip"],
             },
             "days": current["days"],
             "previous_days": [
@@ -166,10 +168,16 @@ class OverviewService(AnalyticsService):
             # запросом её не считают: складывать офисы дважды по-разному
             # значит однажды получить два разных числа про одно и то же.
             "regions": self._regions(offices, current, previous),
+            # Разрезы для «сравнить по»: те же дни, сложенные по отделу,
+            # должности и руководителю отдела. Считаются из того же сбора,
+            # что и офисы, — второго правила явки нет.
+            "departments": self._groups(current, previous, "person_department", _department_names),
+            "positions": self._groups(current, previous, "person_position", _position_names),
+            "heads": self._groups(current, previous, "person_department", _head_names),
             # Рейтинг людей: по явке и по опозданиям. Нужен, чтобы
             # увидеть не «средняя по компании 92 %», а кто именно эти
             # восемь процентов.
-            "employees": self._people(current),
+            "employees": self._people(current, people_limit or PEOPLE_LIMIT),
             "arrivals": self._arrivals(current),
             "weekdays": self._weekdays(current),
         }
@@ -202,7 +210,10 @@ class OverviewService(AnalyticsService):
             people = people.filter(department_id=department_id)
         if employee_id is not None:
             people = people.filter(employee_id=employee_id)
-        roster = dict(people.values_list("employee_id", "office_id"))
+        places = list(people.values_list("employee_id", "office_id", "department_id", "position_id"))
+        roster = {one[0]: one[1] for one in places}
+        state["person_department"] = {one[0]: one[2] for one in places}
+        state["person_position"] = {one[0]: one[3] for one in places}
         employee_ids = list(roster)
 
         # Границы периода — самые широкие по всем поясам выборки; день
@@ -263,9 +274,16 @@ class OverviewService(AnalyticsService):
 
                 code = absences.get(key)
                 if code is not None:
-                    bucket = "sick" if code in SICK_CODES else "vacation" if code in VACATION_CODES else "other"
+                    bucket = (
+                        "sick" if code in SICK_CODES
+                        else "vacation" if code in VACATION_CODES
+                        else "trip" if code in TRIP_CODES
+                        else "other"
+                    )
                     counts[bucket] += 1
                     state[bucket] += 1
+                    state["person_absence"].setdefault(employee_id, Counter())[bucket] += 1
+                    state["person_office"][employee_id] = office_id
                     continue
 
                 plan = _plan_for(schedules.get(employee_id), day, exceptions.get(office_id, {}))
@@ -284,6 +302,7 @@ class OverviewService(AnalyticsService):
                 if not day_sessions:
                     counts["missed"] += 1
                     state["missed"] += 1
+                    state["person_missed_dates"].setdefault(employee_id, []).append(day)
                     continue
 
                 counts["attended"] += 1
@@ -311,6 +330,9 @@ class OverviewService(AnalyticsService):
                     # разрешившая приходить на четверть часа позже,
                     # считает опозданием именно их.
                     state["person_late_minutes"][employee_id] += delta - grace
+                    state["person_late_dates"].setdefault(employee_id, []).append(
+                        (day, delta - grace)
+                    )
                     column["late"] += 1
                 else:
                     counts["on_time"] += 1
@@ -326,6 +348,7 @@ class OverviewService(AnalyticsService):
                     seconds = sum(one.duration_seconds or 0 for one in day_sessions)
                     counts["closed_seconds"] += seconds
                     counts["closed_days"] += 1
+                    state["person_seconds"][employee_id] += seconds
                     state["closed_seconds"] += seconds
                     state["closed_days"] += 1
                     week["closed_seconds"] += seconds
@@ -406,11 +429,54 @@ class OverviewService(AnalyticsService):
         return rows
 
     @staticmethod
-    def _people(state: dict) -> list[dict]:
-        """Сотрудники: явка и опоздания.
+    def _groups(current: dict, previous: dict, key: str, naming) -> list[dict]:
+        """Явка по признаку сотрудника: отделу, должности, руководителю.
 
-        Только те, кого в периоде хоть раз ждали: человек без рабочих
-        дней не «худший по явке», его просто не с чем сравнить.
+        `naming` переводит значение признака в (ключ группы, название):
+        у руководителя ключ — сам руководитель, а отделы под ним
+        складываются в одну строку.
+        """
+        def fold(state: dict) -> dict:
+            values = state.get(key, {})
+            names = naming({one for one in values.values() if one is not None})
+            groups: dict = {}
+            for employee_id, expected in state["person_expected"].items():
+                if not expected:
+                    continue
+                group = names.get(values.get(employee_id)) or ("—", "Не указано")
+                counts = groups.setdefault(group, [0, 0])
+                counts[0] += state["person_attended"][employee_id]
+                counts[1] += expected
+            return groups
+
+        now = fold(current)
+        before = {group[0]: counts for group, counts in fold(previous).items()}
+        rows = []
+        for (group_id, name), (attended, expected) in now.items():
+            ratio = _ratio(attended, expected)
+            was = _ratio(*before.get(group_id, [0, 0]))
+            rows.append({
+                "id": group_id,
+                "name": name,
+                "attendance": ratio,
+                "previous_attendance": was,
+                "difference_points": _points(ratio, was),
+            })
+        rows.sort(key=lambda row: (
+            row["attendance"]["percent"] is None, -(row["attendance"]["percent"] or 0), row["name"],
+        ))
+        return rows
+
+    @staticmethod
+    def _people(state: dict, limit: int = 0) -> list[dict]:
+        """Сотрудники: явка, опоздания, время и оформленные отсутствия.
+
+        В списке те, кого в периоде хоть раз ждали, и те, кто весь период
+        был в оформленном отсутствии: второго не с чем сравнить по явке,
+        но кадровику важно видеть, что он в отпуске, а не пропал.
+
+        Время — только по дням с закрытыми посещениями: открытая сессия
+        ещё не знает, сколько человек проработал.
 
         Список ограничен: рейтинг на тысячу строк никто не читает, а
         весит он столько же, сколько вся остальная страница.
@@ -418,6 +484,7 @@ class OverviewService(AnalyticsService):
         from humotech.employees.models import Employee
 
         ids = [one for one, count in state["person_expected"].items() if count]
+        ids += [one for one in state["person_absence"] if one not in state["person_expected"]]
         if not ids:
             return []
 
@@ -443,6 +510,22 @@ class OverviewService(AnalyticsService):
                 "late_days": late,
                 "late_minutes": state["person_late_minutes"][employee_id],
                 "missed_days": expected - attended,
+                "seconds": state["person_seconds"][employee_id],
+                "vacation_days": state["person_absence"].get(employee_id, Counter())["vacation"],
+                "sick_days": state["person_absence"].get(employee_id, Counter())["sick"],
+                "other_days": state["person_absence"].get(employee_id, Counter())["other"],
+                "trip_days": state["person_absence"].get(employee_id, Counter())["trip"],
+                "office_id": (
+                    str(state["person_office"][employee_id])
+                    if employee_id in state["person_office"] else None
+                ),
+                # Последние дни без отметки и опоздания — для списка
+                # «требуют внимания»: к какому дню идти разбираться.
+                "missed_dates": [one.isoformat() for one in state["person_missed_dates"].get(employee_id, [])[-5:]],
+                "late_dates": [
+                    {"day": day.isoformat(), "minutes": minutes}
+                    for day, minutes in state["person_late_dates"].get(employee_id, [])[-5:]
+                ],
             })
 
         # Худшая явка сверху: страницу открывают, чтобы найти проблему,
@@ -452,7 +535,7 @@ class OverviewService(AnalyticsService):
             -row["late_days"],
             row["name"],
         ))
-        return rows[:PEOPLE_LIMIT]
+        return rows[: limit or PEOPLE_LIMIT]
 
     @staticmethod
     def _arrivals(state: dict) -> dict:
@@ -515,11 +598,42 @@ class OverviewService(AnalyticsService):
 PEOPLE_LIMIT = 50
 
 
+#: Коды командировки: отсутствие по работе, а не отпуск и не «прочее».
+TRIP_CODES = frozenset({"BUSINESS_TRIP"})
+
+
+def _department_names(ids: set) -> dict:
+    from humotech.departments.models import Department
+
+    return {row.id: (str(row.id), row.name) for row in Department.objects.filter(id__in=ids)}
+
+
+def _position_names(ids: set) -> dict:
+    from humotech.positions.models import Position
+
+    return {row.id: (str(row.id), row.name) for row in Position.objects.filter(id__in=ids)}
+
+
+def _head_names(ids: set) -> dict:
+    """Отдел -> его руководитель. Отдел без руководителя — своей строкой."""
+    from humotech.departments.models import Department
+
+    result = {}
+    for row in Department.objects.filter(id__in=ids).select_related("head_employee"):
+        head = row.head_employee
+        if head is None:
+            result[row.id] = (f"none:{row.id}", f"{row.name} — руководитель не назначен")
+        else:
+            name = " ".join(one for one in [head.last_name, head.first_name] if one)
+            result[row.id] = (str(head.id), name)
+    return result
+
+
 def _empty_state(offices: list[Office]) -> dict:
     ids = [office.id for office in offices]
     return {
         "expected": 0, "attended": 0, "missed": 0, "on_time": 0, "late": 0,
-        "arrivals": 0, "after_start": 0, "vacation": 0, "sick": 0, "other": 0,
+        "arrivals": 0, "after_start": 0, "vacation": 0, "sick": 0, "other": 0, "trip": 0,
         "closed_seconds": 0, "closed_days": 0, "open_sessions": 0,
         "office_expected": dict.fromkeys(ids, 0),
         "office_attended": dict.fromkeys(ids, 0),
@@ -531,6 +645,12 @@ def _empty_state(offices: list[Office]) -> dict:
         "person_late_minutes": Counter(),
         "person_office": {},
         "person_name": {},
+        "person_department": {},
+        "person_position": {},
+        "person_seconds": Counter(),
+        "person_absence": {},
+        "person_missed_dates": {},
+        "person_late_dates": {},
         "weekdays": {},
         "starts": Counter(),
         "entries": [],
@@ -545,7 +665,7 @@ def _empty_state(offices: list[Office]) -> dict:
 def _day_counts() -> dict:
     return {
         "expected": 0, "attended": 0, "missed": 0, "on_time": 0, "late": 0,
-        "vacation": 0, "sick": 0, "other": 0, "closed_seconds": 0, "closed_days": 0,
+        "vacation": 0, "sick": 0, "other": 0, "trip": 0, "closed_seconds": 0, "closed_days": 0,
     }
 
 
@@ -575,6 +695,7 @@ def _day_row(day: date, counts: dict, weekday: int | None, *, future: bool) -> d
         "vacation": counts["vacation"],
         "sick_leave": counts["sick"],
         "other_absence": counts["other"],
+        "trip": counts["trip"],
         "average_seconds": (
             round(counts["closed_seconds"] / counts["closed_days"]) if counts["closed_days"] else None
         ),

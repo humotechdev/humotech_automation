@@ -22,8 +22,13 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from humotech.absences.services import AbsenceService
+from humotech.absences.services import (
+    AbsenceService,
+    approval_blockers,
+    stage_of,
+)
 from humotech.core.api import validated
+from humotech.core.timeframes import local_date, organization_zone
 from humotech.core.errors import ValidationFailed
 from humotech.core.rbac import Actor
 
@@ -32,6 +37,14 @@ class DecisionSerializer(serializers.Serializer):
     comment = serializers.CharField(
         max_length=2000, required=False, allow_blank=True,
         help_text="Основание решения. Уходит сотруднику в чат",
+    )
+    override_marks = serializers.BooleanField(
+        required=False, default=False,
+        help_text=(
+            "Утвердить больничный, хотя в его дни есть отметки входа и "
+            "выхода. Без этого флага сервер отказывает: молча списать "
+            "отработанный день в больничный нельзя. Требует причины"
+        ),
     )
 
 
@@ -44,6 +57,28 @@ class AbsenceEmployeeSerializer(serializers.Serializer):
 class AbsenceTypeBriefSerializer(serializers.Serializer):
     code = serializers.CharField()
     name = serializers.CharField()
+
+
+class LeaveCheckSerializer(serializers.Serializer):
+    """Остаток отпуска против периода заявки.
+
+    `available_days` пустой — остаток на этот год не начислен: сравнивать
+    не с чем, и это не то же самое, что «не хватает».
+    """
+
+    year = serializers.IntegerField()
+    needed_days = serializers.IntegerField(help_text="Рабочих дней в периоде")
+    available_days = serializers.IntegerField(allow_null=True)
+    enough = serializers.BooleanField()
+
+
+class OverlapSerializer(serializers.Serializer):
+    """Отсутствие того же человека, задевающее эти дни."""
+
+    kind = serializers.CharField(help_text="absence — подтверждённое, request — заявка")
+    absence_type_name = serializers.CharField()
+    first_day = serializers.DateField()
+    last_day = serializers.DateField()
 
 
 class HrAbsenceRequestSerializer(serializers.Serializer):
@@ -69,11 +104,36 @@ class HrAbsenceRequestSerializer(serializers.Serializer):
         ),
     )
     status = serializers.CharField()
+    stage = serializers.CharField(
+        help_text=(
+            "Состояние словами человека — то же, что видит сотрудник: "
+            "WAITING_DOCUMENTS, HR_REVIEW, NEEDS_FIX, PENDING, APPROVED, "
+            "REJECTED, CANCELLED"
+        ),
+    )
+    missing_for_approval = serializers.ListField(
+        child=serializers.CharField(),
+        help_text=(
+            "Чего не хватает до подтверждения, по порядку работы "
+            "кадровика: certificate, application, period. Пустой список "
+            "значит «можно подтверждать»"
+        ),
+    )
     first_day = serializers.DateField(allow_null=True)
     last_day = serializers.DateField(allow_null=True)
     comment = serializers.CharField(allow_null=True)
     review_comment = serializers.CharField(allow_null=True)
     submitted_at = serializers.DateTimeField(allow_null=True)
+    # Показания, которые считаются запросами: их отдаёт ответ по одной
+    # заявке, где принимают решение, и не отдаёт очередь.
+    leave_balance = LeaveCheckSerializer(
+        allow_null=True, required=False,
+        help_text="Остаток отпуска против периода заявки. Пусто у больничного",
+    )
+    overlap = OverlapSerializer(
+        allow_null=True, required=False,
+        help_text="Чужое отсутствие на те же дни, если оно есть",
+    )
     history = serializers.ListField(
         child=serializers.DictField(),
         help_text=(
@@ -87,14 +147,37 @@ class PendingAbsenceRequestsSerializer(serializers.Serializer):
     requests = HrAbsenceRequestSerializer(many=True)
 
 
-def hr_request_json(request) -> dict:
+def hr_request_json(request, tz=None, *, deep: bool = False) -> dict:
     """Заявка глазами кадровика.
 
     Комментарий сотрудника здесь есть: тот, кто принимает решение, должен
     видеть, о чём его просят. Диагноза в нём быть не должно, и подсказка
     об этом стоит в самом поле ввода в приложении.
+
+    `tz` — пояс показа. Передаётся списком сразу на всю выдачу: считать
+    его на каждую строку значило бы лишний запрос на заявку.
+
+    `deep` — добавить показания, которые считаются запросами: остаток
+    отпуска и пересечение периодов. Нужны на странице одной заявки, где
+    принимают решение; в очереди их не показывают, и платить за них
+    обходом графиков на каждую строку незачем.
     """
+    zone = tz or organization_zone(request.organization_id)
+    extra: dict = {}
+    if deep:
+        service = AbsenceService()
+        clash = service.overlap_check(request)
+        extra = {
+            "leave_balance": service.leave_check(request),
+            "overlap": {
+                "kind": clash.kind,
+                "absence_type_name": clash.absence_type_name,
+                "first_day": clash.first_day.isoformat(),
+                "last_day": clash.last_day.isoformat(),
+            } if clash else None,
+        }
     return {
+        **extra,
         "id": str(request.id),
         "employee": {
             "id": str(request.employee_id),
@@ -116,12 +199,24 @@ def hr_request_json(request) -> dict:
             "name": request.absence_type.name,
         },
         "status": request.status,
+        # Та же стадия, что видит сотрудник: кадровик и человек должны
+        # называть состояние заявки одинаково, иначе разговор начинается
+        # с выяснения, кто что имел в виду.
+        "stage": stage_of(request),
+        # Чего не хватает до подтверждения — списком кодов, в том
+        # порядке, в каком это делает кадровик: справка, заявление,
+        # даты. Пустой список значит «можно подтверждать».
+        "missing_for_approval": list(approval_blockers(request)),
+        # Числа периода — в поясе организации. В UTC отпуск,
+        # начинающийся пятого числа в полночь по Ташкенту, приходился на
+        # вечер четвёртого: кадровик видел период на день длиннее и
+        # начинающийся не тогда, когда его просили.
         "first_day": (
-            request.requested_start_at.date().isoformat()
+            local_date(request.requested_start_at, zone).isoformat()
             if request.requested_start_at else None
         ),
         "last_day": (
-            request.requested_end_at.date().isoformat()
+            local_date(request.requested_end_at, zone).isoformat()
             if request.requested_end_at else None
         ),
         # Подписанное заявление пришло по почте. Второй, независимый от
@@ -142,6 +237,10 @@ def hr_request_json(request) -> dict:
                 "verified_at": (
                     document.verified_at.isoformat() if document.verified_at else None
                 ),
+                # Что кадровик сказал о бумаге. Без этого «нужна новая
+                # версия» на странице заявки означает «что-то не так,
+                # догадайся сам» — и следующий раз приносят то же самое.
+                "verification_comment": document.verification_comment,
                 "file": {
                     "id": str(document.file_id),
                     "name": document.file.original_filename,
@@ -172,6 +271,10 @@ def hr_request_json(request) -> dict:
             {
                 "at": action.created_at.isoformat(),
                 "action": action.action,
+                # Кто это сделал. Без имени история отвечает «что
+                # произошло», но не «с кого спрашивать», а спор о
+                # больничном — это всегда спор о чьём-то решении.
+                "actor": _actor_name(action),
                 "comment": (
                     action.comment
                     if action.action in HR_DECISION_ACTIONS
@@ -183,8 +286,27 @@ def hr_request_json(request) -> dict:
     }
 
 
+def _actor_name(action) -> str | None:
+    """Имя того, кто сделал шаг. `None` — шаг сделал сам заявитель.
+
+    Шаги сотрудника остаются без подписи намеренно: это его заявка, его
+    имя стоит наверху страницы, и повторять его у каждой строки значит
+    заглушить те строки, где имя как раз важно, — решения кадровика.
+    """
+    if action.actor_user_id and action.actor_user:
+        return action.actor_user.full_name or action.actor_user.email
+    return None
+
+
 # Шаги, комментарий к которым пишет кадровик, а не сотрудник.
-HR_DECISION_ACTIONS = ("APPROVED", "REJECTED", "CANCELLED")
+#
+# Отказ по справке сюда входит: причина написана кадровиком и уходит
+# человеку дословно, а в истории она — главное. Комментарий сотрудника
+# по-прежнему скрыт: в нём бывает диагноз.
+HR_DECISION_ACTIONS = (
+    "APPROVED", "REJECTED", "CANCELLED",
+    "DOCUMENT_REJECTED", "PERIOD_SET", "MARKS_OVERRIDDEN",
+)
 
 
 @extend_schema(tags=["Отсутствия"])
@@ -207,7 +329,33 @@ class PendingAbsenceRequestsView(APIView):
     def get(self, request):
         actor = Actor.from_user(request.user)
         rows = AbsenceService().pending(actor)
-        return Response({"requests": [hr_request_json(row) for row in rows]})
+        zone = organization_zone(actor.organization_id)
+        return Response({"requests": [hr_request_json(row, zone) for row in rows]})
+
+
+@extend_schema(tags=["Отсутствия"])
+class AbsenceRequestView(APIView):
+    """Одна заявка целиком: бумаги, история, чего не хватает до решения.
+
+    Тот же состав, что в очереди, — намеренно: страница заявки и строка
+    очереди обязаны говорить об одном и том же одними словами.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        operation_id="absence_request_read",
+        summary="Заявка на отсутствие",
+        parameters=[
+            OpenApiParameter(
+                "request_id", OpenApiTypes.UUID, location=OpenApiParameter.PATH
+            ),
+        ],
+        responses={200: HrAbsenceRequestSerializer},
+    )
+    def get(self, request, request_id):
+        row = AbsenceService().for_hr(Actor.from_user(request.user), request_id)
+        return Response(hr_request_json(row, deep=True))
 
 
 @extend_schema(tags=["Отсутствия"])
@@ -251,9 +399,10 @@ class AbsenceDecisionView(APIView):
             row = service.cancel_approved(actor, request_id, comment=comment)
         else:
             row = service.decide(
-                actor, request_id, approve=decision == "approve", comment=comment
+                actor, request_id, approve=decision == "approve",
+                comment=comment, override_marks=bool(data.get("override_marks"))
             )
-        return Response(hr_request_json(row))
+        return Response(hr_request_json(row, deep=True))
 
 
 class PeriodSerializer(serializers.Serializer):
@@ -298,7 +447,7 @@ class AbsencePeriodView(APIView):
             last_day=data["last_day"],
             comment=data.get("comment") or None,
         )
-        return Response(hr_request_json(row))
+        return Response(hr_request_json(row, deep=True))
 
 
 @extend_schema(tags=["Отсутствия"])
@@ -334,7 +483,7 @@ class AbsenceApplicationReceivedView(APIView):
             request_id,
             received=received not in ("false", "0"),
         )
-        return Response(hr_request_json(row))
+        return Response(hr_request_json(row, deep=True))
 
 
 @extend_schema(tags=["Отсутствия"])

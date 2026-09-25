@@ -247,7 +247,7 @@
      колонками 16. Радиус панели 10: большой радиус на плотном экране
      съедает угол таблицы. */
   --side-width: 212px;
-  --topbar-height: 50px;
+  --topbar-height: 64px;
   --panel-radius-lg: 12px;
   --layout-gap: 16px;
   --panel-radius: 10px;
@@ -370,6 +370,84 @@ html {
   min-height: 100dvh;
 }
 
+
+/*
+ * Inter — мягкий, шире и спокойнее узкого Roboto Condensed.
+ *
+ * Файлы свои, а не с внешнего сервера: как и у основного шрифта,
+ * система не должна зависеть от чужого узла, чтобы прочитать
+ * собственный текст. Экран офисов просил Inter и раньше, но файла
+ * не было, и на Windows он молча становился Segoe UI.
+ */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/inter-cyrillic-400.woff2') format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/inter-latin-400.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+2013-2014,
+    U+2018-201A, U+201C-201E, U+2020-2022, U+2026, U+2030, U+2039-203A, U+2122;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/fonts/inter-cyrillic-500.woff2') format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/fonts/inter-latin-500.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+2013-2014,
+    U+2018-201A, U+201C-201E, U+2020-2022, U+2026, U+2030, U+2039-203A, U+2122;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('/fonts/inter-cyrillic-600.woff2') format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('/fonts/inter-latin-600.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+2013-2014,
+    U+2018-201A, U+201C-201E, U+2020-2022, U+2026, U+2030, U+2039-203A, U+2122;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/inter-cyrillic-700.woff2') format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/inter-latin-700.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+2013-2014,
+    U+2018-201A, U+201C-201E, U+2020-2022, U+2026, U+2030, U+2039-203A, U+2122;
+}
+
 /* --- каркас --------------------------------------------------------------- */
 
 .shell {
@@ -383,6 +461,28 @@ html {
   font-size: 15px;
   line-height: 1.35;
   -webkit-font-smoothing: antialiased;
+}
+
+/*
+ * Мягкий набор: Inter на всём каркасе — меню, шапке и странице.
+ *
+ * Включается по разделу, а не на отдельных блоках: два шрифта на
+ * одном экране (узкий в меню, широкий в списке) читаются как два
+ * разных продукта. Окна и списки, которые рисуются поверх страницы
+ * отдельным слоем, получают его через `body`.
+ */
+.shell--soft,
+body.soft-type,
+/* Меню и шапка — одни на всю CRM. Раньше они наследовали шрифт
+   раздела: в «Опросах» были мягкими, в остальных — узкими, и при
+   переходе между разделами каркас заметно менялся. Теперь они всегда
+   такие, как в «Опросах», а шрифт страницы от них не зависит. */
+.side,
+.topbar {
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+  letter-spacing: -0.005em;
 }
 
 /*
@@ -804,67 +904,110 @@ html {
 
 /* Верхняя панель пропускает свет фотографии: плотное белое полотно
    отрезало бы её ровной линией по всей ширине. */
+/*
+ * Верхняя панель.
+ *
+ * Три колонки, а не ряд: поиск стоит по центру экрана и не съезжает от
+ * длины пути слева. Крайние колонки одинаковой доли — иначе «середина»
+ * оказывалась серединой остатка.
+ *
+ * Плотно-белая, без просвечивания: сквозь полупрозрачную панель
+ * проступала фотография подложки, и путь на ней читался хуже, чем на
+ * любом другом экране системы.
+ */
 .topbar {
   position: sticky;
   top: 0;
   z-index: 5;
-  display: flex;
+  display: grid;
+  /* Путь слева, поиск и значки справа одной группой: поиск — не
+     главное на странице, и в центре экрана он спорил с заголовком. */
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  gap: 14px;
   height: var(--topbar-height);
   flex: none;
   padding: 0 26px;
-  background: rgba(255, 255, 255, 0.42);
-  border-bottom: 1px solid rgba(214, 230, 245, 0.55);
-  -webkit-backdrop-filter: blur(22px) saturate(135%);
-  backdrop-filter: blur(22px) saturate(135%);
+  background: #ffffff;
+  border-bottom: 1px solid #e6edf6;
+}
+
+.topbar__left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.topbar__find {
+  justify-self: end;
 }
 
 .crumbs {
   margin: 0;
   display: flex;
-  gap: 8px;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  /* Путь набран нейтральным серым, а не синевой системы: на белой
+     панели синий путь спорил с ссылками страницы. */
   font-size: 14px;
-  color: #5778a8;
+  color: #4b5563;
 }
 
+.crumbs__home {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* Под курсором темнеет ровно то, по чему и перейдёшь. */
+.crumbs__home:hover { color: #1f2a37; }
+
 .crumbs__sep {
-  color: #7894bd;
+  flex: none;
+  color: #9aa7b8;
 }
 
 .crumbs__here {
-  color: #0d2c68;
-  font-weight: 680;
+  color: #1f2a37;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .topbar__tools {
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-self: end;
+  gap: 8px;
 }
 
 /* Поиск в шапке — постоянного размера. Он не главный элемент страницы:
    на широком экране растянутое поле в половину панели выглядело как
    основное действие, а на узком — сжималось до пары букв. */
+/* Поиск — постоянного размера и по центру панели. Растянутый на
+   половину ширины, он читался как главное действие страницы. */
 .find {
   display: flex;
   align-items: center;
   gap: 9px;
   flex: 0 0 auto;
-  width: 280px;
+  /* Под подсказку целиком и в широком наборе: обрезанное «отделам,»
+     читается как недописанная фраза. */
+  width: 372px;
   max-width: 100%;
-  height: 39px;
+  height: 38px;
   padding: 0 13px;
-  border: 1px solid rgba(214, 230, 245, 0.9);
+  border: 1px solid #e3ebf5;
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.62);
+  background: #ffffff;
   color: var(--ink-secondary);
 }
 
 .find svg {
   flex: none;
-  color: #1a4fb0;
+  color: #8ea3bf;
 }
 
 .find:focus-within {
@@ -877,12 +1020,13 @@ html {
   outline: none;
   background: none;
   font-size: 14px;
-  width: 196px;
+  width: 100%;
+  min-width: 0;
   color: var(--ink-primary);
 }
 
 .find input::placeholder {
-  color: var(--ink-tertiary);
+  color: #98a6b8;
 }
 
 /* Глобальный поиск живёт поверх рабочей области, а не расширяет topbar:
@@ -1013,19 +1157,26 @@ html {
   cursor: pointer;
 }
 
-/* Колокольчик. Точка сама по себе ничего не утверждала: она горела
-   всегда. Вместо неё — настоящее число непрочитанного (`.nf__badge`),
-   и когда непрочитанного нет, у колокольчика нет ничего. */
+/* Колокольчик. В шапке нужен один вопрос — есть ли что-то новое, —
+   и на него отвечает точка (`.nf__new`). Сколько именно непрочитанного,
+   видно в самой панели. Точка зажигается только при непрочитанном. */
 .tool--bell {
   position: relative;
 }
 
-/* «RU» стоит на своей полупрозрачной плашке: иначе надпись висит прямо
-   на фотографии и читается хуже соседних значков. */
+/* Язык — значок, «RU» и стрелка одной строкой. Плашка не нужна: панель
+   плотно-белая, и надпись больше не висит на фотографии. */
 .tool--wide {
-  background: rgba(255, 255, 255, 0.55);
-  border-color: rgba(214, 230, 245, 0.9);
-  color: #1a4fb0;
+  width: auto;
+  padding: 0 10px;
+  background: none;
+  border-color: transparent;
+  color: #4b5563;
+  font-size: 14px;
+}
+
+.tool--wide:hover {
+  background: #f2f6fb;
 }
 
 .tool--wide:hover {
@@ -2207,305 +2358,6 @@ html {
   }
 }
 
-/* --- график --------------------------------------------------------------- */
-
-.chart-box {
-  display: flex;
-  align-items: center;
-  gap: 18px;
-}
-
-.chart-box__plot {
-  position: relative;
-  flex: 1;
-  min-width: 0;
-  /* Высота не растёт вслед за окном: пропорции держит `viewBox`, а
-     потолок не даёт рисунку отодвинуть таблицу офисов вниз. */
-  aspect-ratio: 1000 / 268;
-  max-height: 232px;
-}
-
-.plot {
-  display: block;
-  width: 100%;
-  height: 100%;
-  display: block;
-}
-
-.plot__field {
-  fill: rgba(250, 252, 255, 0.5);
-}
-
-.plot__axis {
-  stroke: rgba(126, 166, 224, 0.45);
-  stroke-width: 1;
-  vector-effect: non-scaling-stroke;
-}
-
-.plot__grid {
-  stroke: var(--chart-grid);
-  stroke-width: 1;
-  vector-effect: non-scaling-stroke;
-}
-
-.plot__tick {
-  fill: var(--chart-tick);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-/* Основная серия — синяя, сравнительная — нейтральная серая и
-   пунктиром. Различие держится не только на цвете: пунктир виден
-   и на монохромной печати, и тем, кто цвета не различает. */
-.plot__line {
-  stroke-width: 3;
-  fill: none;
-  stroke: var(--action-bg);
-  stroke-width: 2;
-  stroke-linejoin: round;
-  vector-effect: non-scaling-stroke;
-}
-
-.plot__line--prev {
-  stroke: var(--chart-compare);
-  stroke-width: 2;
-  stroke-dasharray: 6 5;
-}
-
-.plot__dot {
-  fill: var(--chart-main);
-}
-
-.plot__dot--on {
-  fill: var(--chart-main);
-  stroke: #ffffff;
-  stroke-width: 2.6;
-  vector-effect: non-scaling-stroke;
-}
-
-/* Кольцо вокруг точки под курсором: на месячном графике точки стоят
-   плотно, и одного увеличения радиуса мало, чтобы понять, какая из них
-   выбрана. */
-.plot__ring {
-  fill: none;
-  stroke: var(--chart-main);
-  stroke-width: 2;
-  opacity: 0.35;
-  vector-effect: non-scaling-stroke;
-}
-
-/* Вертикальная направляющая от подсказки до оси. Она отвечает на
-   вопрос «а это какой день»: без неё в тридцати точках подсказка
-   относится к чему-то примерно там. */
-.plot__guide {
-  stroke: var(--chart-main);
-  stroke-width: 1;
-  stroke-dasharray: 4 4;
-  opacity: 0.45;
-  vector-effect: non-scaling-stroke;
-}
-
-/*
- * Подсказка под курсором — карточка, а не строка.
- *
- * В одну строку «198 / 214 (92,5%)» помещается, но сравнение с прошлым
- * периодом туда уже не влезает, а именно оно отвечает на вопрос «это
- * много или мало». Поэтому карточка: день сверху, доля крупно, прошлый
- * период отдельной строкой со своим пунктирным значком — тем же, что у
- * линии на поле.
- *
- * Карточка светлая: тёмная плашка поверх светлого графика перекрывала
- * линию плотным пятном, и под курсором пропадало то, ради чего курсор
- * туда подвели.
- */
-.tip {
-  position: absolute;
-  top: 10px;
-  min-width: 168px;
-  padding: 9px 11px 10px;
-  border-radius: 11px;
-  border: 1px solid var(--border-default);
-  background: var(--surface-1);
-  box-shadow: 0 8px 22px rgba(16, 55, 102, 0.16);
-  color: var(--text-body);
-  font-size: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  pointer-events: none;
-  white-space: nowrap;
-  z-index: 3;
-}
-
-/* Нижнее положение: карточка стоит над подписями оси, а не на линии. */
-.tip--under {
-  top: auto;
-  bottom: 42px;
-}
-
-.tip__day {
-  color: var(--text-muted);
-  font-size: 11.5px;
-}
-
-.tip__row {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--text-muted);
-}
-
-.tip__row b {
-  margin-left: auto;
-  padding-left: 12px;
-  color: var(--text-heading);
-  font-weight: 640;
-  font-variant-numeric: tabular-nums;
-}
-
-/* Значки повторяют линии на поле: кружок — основная серия, пунктирная
-   чёрточка — прошлый период. Одинаковые значки означали бы, что цвет
-   остаётся единственным различием. */
-.tip__mark {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--chart-main);
-  flex: none;
-}
-
-.tip__mark--dash {
-  width: 14px;
-  height: 0;
-  border-radius: 0;
-  background: none;
-  border-top: 2px dotted var(--chart-compare);
-}
-
-.tip__big {
-  margin: 1px 0 2px;
-  font-size: 21px;
-  font-weight: 720;
-  line-height: 1.1;
-  letter-spacing: -0.02em;
-  color: var(--text-heading);
-  font-variant-numeric: tabular-nums;
-}
-
-.tip__off {
-  color: var(--text-muted);
-  white-space: normal;
-  max-width: 190px;
-}
-
-/* Итог дня — отдельная плашка у правого края поля. Не украшение: на
-   графике из тридцати точек последнее значение теряется среди
-   остальных, а именно оно чаще всего и нужно. */
-.chart-box__total {
-  flex: none;
-  width: 126px;
-  padding: 15px 14px;
-  border-radius: 11px;
-  background: rgba(227, 241, 254, 0.9);
-  text-align: left;
-}
-
-.chart-box__total-label {
-  margin: 0;
-  font-size: 13px;
-  color: #315b90;
-}
-
-.chart-box__total-main {
-  margin: 6px 0 0;
-  font-size: 19px;
-  font-weight: 640;
-  color: var(--ink-strong);
-  font-variant-numeric: tabular-nums;
-}
-
-.chart-box__total-percent {
-  margin: 3px 0 0;
-  font-size: 33px;
-  font-weight: 760;
-  color: var(--ink-strong);
-  line-height: 1.08;
-  letter-spacing: -0.03em;
-  font-variant-numeric: tabular-nums;
-}
-
-/* Разница с прошлым периодом. Цвет лежит на цифре и на стрелке, а не
-   на плашке под ними: подложка превращала подпись в ярлык и спорила с
-   самим числом явки, которое стоит строкой выше. Стрелка рядом с цветом
-   не для красоты — зелёное и янтарное различают не все, а «вверх» и
-   «вниз» различают все. */
-.chart-box__shift {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin: 8px 0 0;
-  background: transparent;
-  font-size: 13px;
-  font-weight: 680;
-  font-variant-numeric: tabular-nums;
-}
-
-.chart-box__shift--up {
-  color: var(--green-600);
-}
-
-.chart-box__shift--down {
-  color: var(--amber-600);
-}
-
-/* Ровно столько же, сколько вчера, — это не событие: нейтральный цвет,
-   а не зелёный и не янтарный. */
-.chart-box__shift--flat {
-  color: var(--steel-600);
-}
-
-.legend {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 18px;
-  margin-top: 12px;
-  padding-top: 11px;
-  border-top: 1px solid var(--border-default);
-  font-size: 13px;
-  color: var(--ink-secondary);
-}
-
-.legend span {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-}
-
-.legend__tail {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.legend__note b {
-  color: var(--text-heading);
-  font-variant-numeric: tabular-nums;
-}
-
-.legend__solid,
-.legend__dashed {
-  width: 16px;
-  height: 0;
-  border-top: 2px solid var(--chart-main);
-}
-
-.legend__dashed {
-  border-top-style: dotted;
-  border-color: var(--chart-compare);
-}
-
 /* --- таблица офисов ------------------------------------------------------- */
 
 .scroller {
@@ -3106,7 +2958,12 @@ html {
   }
 
   .topbar {
+    grid-template-columns: minmax(0, 1fr) auto;
     padding: 0 14px;
+  }
+
+  .topbar__find {
+    display: none;
   }
 
   .head__filters {
@@ -3993,7 +3850,7 @@ html {
   font-size: 12px;
 }
 
-/* Раздел «Обращения» — в `styles/questions.css`, под префиксом `qs-`. */
+/* Раздел «Обращения» — в `styles/questions.css`, под префиксом `tk-`. */
 
 /* --- раздел «Аналитика» ------------------------------------------------------ */
 
@@ -8227,6 +8084,19 @@ html {
   animation: nf-fade 0.14s ease-out;
 }
 
+/* Красная точка у колокольчика: «что-то есть», без числа. Имя своё:
+   `.nf__dot` уже носят точки строк в самом списке уведомлений. */
+.nf__new {
+  position: absolute;
+  top: 8px;
+  right: 9px;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #f0402f;
+  box-shadow: 0 0 0 2px #ffffff;
+}
+
 .nf__badge {
   position: absolute;
   top: 3px;
@@ -9173,8 +9043,8 @@ html {
 .canvas,
 .nf__list,
 .nf__body--page .nf__list,
-.qs-queue,
-.qs-talk__body,
+.tk-list,
+.tk-side__body,
 .rq-list,
 .rq-side,
 .emp-table-wrap,

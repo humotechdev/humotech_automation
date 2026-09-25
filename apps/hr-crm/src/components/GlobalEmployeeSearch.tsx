@@ -130,7 +130,7 @@ export function GlobalEmployeeSearch() {
         <input
           ref={input}
           type="search"
-          placeholder="Поиск сотрудника"
+          placeholder="Поиск по сотрудникам, отделам, опросам…"
           value={value}
           onFocus={() => setOpen(true)}
           onChange={(event) => { setValue(event.target.value); setOpen(true); }}

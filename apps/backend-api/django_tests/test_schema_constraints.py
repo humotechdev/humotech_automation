@@ -184,6 +184,8 @@ def test_absence_period_cannot_end_before_it_starts(db, organization, employee):
                 origin_request_id=request.id,
                 start_at=start,
                 end_at=start - timedelta(days=2),
+                start_date=start.date(),
+                end_date=start.date(),
                 status="PLANNED",
             )
 

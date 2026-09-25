@@ -1,1147 +1,875 @@
 /**
- * Первичное ознакомление: кто где остановился, тексты разделов и
- * обязательные документы.
+ * «Ознакомления»: один лист, три вкладки — сотрудники, материалы, разделы.
  *
- * Три вкладки, потому что это три разных предмета.
+ * Лист, шапка и вкладки постоянные: при смене вкладки они не
+ * пересоздаются и не меняют размер, линия под вкладкой переезжает, а
+ * содержимое появляется мягко. Числа на вкладках грузятся один раз на
+ * странице — и у неактивных вкладок они тоже видны.
  *
- * **Сотрудники** — единственное место, где видно, что человек ещё не
- * работает с ботом. Рядом с прогрессом стоит состояние привязки: без
- * него «0 из 10» одинаково выглядит и у того, кто ленится, и у того,
- * кому ссылку просто некуда отправить, — а делать в этих случаях надо
- * разное.
+ * Ни одно число не считается здесь по своим правилам. Группы сотрудников
+ * («требуют внимания», «ждут подключения», «не начали», «в процессе»,
+ * «завершили»), сроки и просрочки считает сервер одним правилом — оно же
+ * у чипа, у показателя и у колонки справа. Назначено и подтвердили у
+ * материала — тоже с сервера: черновик никого не обязывает, и у него
+ * «назначено» честно пустое.
  *
- * **Разделы** — десять информационных карточек. Правка текста поднимает
- * редакцию, но никого не возвращает к чтению: карточка сообщает, а не
- * обязывает.
- *
- * **Документы** — то, что обязывает. Редакция публикуется отдельным
- * действием и с этой секунды возвращает к подтверждению всех, кто её
- * не принял. Поэтому публикация спрашивает подтверждение и называет
- * последствие, а не «уверены ли вы».
- *
- * Доступа к боту ознакомление не закрывает ни в каком состоянии.
- * Незавершённое — это работа кадровика: напомнить, дослать ссылку,
- * поговорить с отказавшимся. Поэтому страница устроена как очередь, а
- * не как список нарушителей.
+ * «Материал» — обязательный документ компании. Знакомство с компанией —
+ * карточки, которые бот показывает первыми, — живёт в «Разделах»
+ * закреплённой строкой: у него нет версий и согласия, только прочтение.
  */
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
 import * as api from '../api/crm';
-import { AppShell } from '../components/AppShell';
+import { messageFor } from '../api/errors';
+import { AppShell, initials } from '../components/AppShell';
 import { AppIcon, type AppIconName } from '../components/AppIcon';
-import {
-  Confirm,
-  Empty,
-  Failed,
-  Field,
-  Loading,
-  Refusal,
-  SectionBar,
-  SidePanel,
-  useSaving,
-} from '../components/admin/Parts';
-import { useBlock } from '../features/dashboard/data';
+import { AppPopover, Dropdown } from '../components/AppSelect';
+import { SlideTabs } from '../components/SlideTabs';
+import { useBlock, type Block } from '../features/dashboard/data';
 import { useSession } from '../features/auth/session';
-import { moment } from '../features/time/zone';
+import {
+  CategoryPanel, DocumentPanel, IntroPanel, NewMaterialPanel, PersonPanel,
+  dateRu, daysUntil, materialsOf, plural, progressOf,
+} from '../features/onboarding/panels';
 import '../styles/admin.css';
 import '../styles/onboarding.css';
 
-type Tab = 'people' | 'sections' | 'documents';
+type Tab = 'people' | 'materials' | 'sections';
 
-/**
- * Сколько строк берём за раз. Потолок сервера — 200; отбор и поиск
- * работают по этой странице, а числа на вкладках приходят отдельно и
- * считают всех. Когда страница упирается в потолок, под таблицей
- * появляется прямая оговорка — молчаливое усечение было бы враньём.
- */
-const PAGE = 200;
-
-/** Состояния в порядке прохождения — так же они стоят и во вкладках отбора. */
-const STATE: Record<api.OnboardingStatus, string> = {
-  NOT_STARTED: 'Не начал',
-  IN_PROGRESS: 'Читает разделы',
-  INFO_COMPLETED: 'Ждёт согласия',
-  POLICIES_IN_PROGRESS: 'Подтверждает документы',
-  COMPLETED: 'Завершил',
-  UPDATE_REQUIRED: 'Требуется ознакомление',
-  BLOCKED_BY_DECLINED_POLICY: 'Отказался',
-};
-
-/**
- * Состояния, с которыми кадровик что-то делает сам.
- *
- * Отказ разбирают разговором, новую редакцию — напоминанием адресно.
- * Остальное незавершённое бот доводит сам: раз в несколько дней он
- * напоминает, и вмешиваться в это не нужно.
- */
-const ATTENTION: api.OnboardingStatus[] = [
-  'BLOCKED_BY_DECLINED_POLICY', 'UPDATE_REQUIRED',
+const TABS: { key: Tab; title: string }[] = [
+  { key: 'people', title: 'Сотрудники' },
+  { key: 'materials', title: 'Материалы' },
+  { key: 'sections', title: 'Разделы' },
 ];
 
-/**
- * Вкладки отбора. «Ожидает согласия» склеивает два состояния —
- * «дочитал» и «подтвердил часть»: для кадровика это одно и то же
- * положение дел, человек сидит на документах.
- */
-const FILTERS: Array<{ key: string; title: string; match: api.OnboardingStatus[] }> = [
-  { key: 'all', title: 'Все', match: [] },
-  { key: 'attention', title: 'Требуют внимания', match: ATTENTION },
-  { key: 'NOT_STARTED', title: 'Не начали', match: ['NOT_STARTED'] },
-  { key: 'IN_PROGRESS', title: 'В процессе', match: ['IN_PROGRESS'] },
-  {
-    key: 'POLICIES',
-    title: 'Ожидают согласия',
-    match: ['INFO_COMPLETED', 'POLICIES_IN_PROGRESS'],
-  },
-  {
-    key: 'UPDATE_REQUIRED',
-    title: 'Нужна новая редакция',
-    match: ['UPDATE_REQUIRED'],
-  },
-  { key: 'COMPLETED', title: 'Завершили', match: ['COMPLETED'] },
-  {
-    key: 'BLOCKED_BY_DECLINED_POLICY',
-    title: 'Отказались',
-    match: ['BLOCKED_BY_DECLINED_POLICY'],
-  },
+/** Старые ссылки: `tab=documents` — это «Материалы». */
+function tabOf(params: URLSearchParams): Tab {
+  const raw = params.get('tab');
+  if (raw === 'materials' || raw === 'documents') return 'materials';
+  if (raw === 'sections') return 'sections';
+  return 'people';
+}
+
+const GROUPS: { key: api.OnboardingGroup | 'all'; title: string }[] = [
+  { key: 'all', title: 'Все' },
+  { key: 'attention', title: 'Требуют внимания' },
+  { key: 'not_started', title: 'Не начали' },
+  { key: 'in_progress', title: 'В процессе' },
+  { key: 'waiting', title: 'Ждут подключения к Telegram' },
+  { key: 'done', title: 'Завершили' },
 ];
 
-const TELEGRAM: Record<string, string> = {
-  ACTIVE: 'Привязан',
-  PENDING: 'Ждёт подтверждения',
-  REVOKED: 'Отключён',
-  BLOCKED: 'Заблокирован',
-  NOT_LINKED: 'Не привязан',
+const REASON: Record<api.OnboardingReason, { title: string; tone: Tone; icon: AppIconName }> = {
+  overdue: { title: 'Просрочен срок ознакомления', tone: 'red', icon: 'clock' },
+  declined: { title: 'Отказ подтвердить материал', tone: 'red', icon: 'alert' },
+  renewal: { title: 'Новая версия материала', tone: 'blue', icon: 'doc' },
+  silent: { title: 'Нет ответа от сотрудника', tone: 'amber', icon: 'alert' },
 };
+
+type Tone = 'blue' | 'green' | 'amber' | 'red' | 'grey';
+
+/** Состояние строки словами — без внутренних кодов. */
+function stateOf(row: api.OnboardingRow): { title: string; tone: Tone } {
+  const reasons = row.reasons ?? [];
+  switch (row.group) {
+    case 'done': return { title: 'Завершено', tone: 'green' };
+    case 'attention':
+      if (reasons.includes('overdue')) return { title: 'Просрочено', tone: 'red' };
+      if (reasons.includes('declined')) return { title: 'Отказ подтвердить', tone: 'red' };
+      if (reasons.includes('renewal')) return { title: 'Новая версия', tone: 'amber' };
+      return { title: 'Требует внимания', tone: 'amber' };
+    case 'waiting': return { title: 'Ждёт подключения', tone: 'grey' };
+    case 'not_started': return { title: 'Не начато', tone: 'grey' };
+    default: return { title: 'В процессе', tone: 'blue' };
+  }
+}
+
+const PAGE = 25;
 
 export function OnboardingPage() {
   const session = useSession();
   const zone = session.status === 'authenticated' ? session.user.timezone : '';
-
   const [params, setParams] = useSearchParams();
-  const tab = (params.get('tab') as Tab) || 'people';
-  const filter = params.get('state') || 'all';
-  const picked = params.get('employee');
-  const [search, setSearch] = useState('');
+  const tab = tabOf(params);
   const [attempt, setAttempt] = useState(0);
+  const refresh = useCallback(() => setAttempt((n) => n + 1), []);
 
-  const patch = useCallback(
-    (next: Record<string, string | null>) => {
-      setParams(
-        (was) => {
-          const copy = new URLSearchParams(was);
-          for (const [key, value] of Object.entries(next)) {
-            if (!value) copy.delete(key);
-            else copy.set(key, value);
-          }
-          return copy;
-        },
-        { replace: true },
-      );
-    },
-    [setParams],
-  );
-
-  const [people, reloadPeople] = useBlock(
-    (signal) => api.onboardingProgress({ limit: String(PAGE) }, signal),
-    `onboarding-people|${attempt}`,
-    true,
-  );
-  /*
-   * Числа на вкладках приходят с сервера, а не считаются по таблице.
-   * Таблица — одна страница, и посчитанное по ней «Завершили 42»
-   * означало бы «сорок два из первых двухсот», молча и без оговорки.
-   * Два запроса дают два момента времени, но лучше чуть устаревшая
-   * правда, чем свежая неправда.
-   */
-  const [counts] = useBlock(
-    (signal) => api.onboardingCounts(signal),
-    `onboarding-counts|${attempt}`,
-    true,
-  );
-  const [sections, reloadSections] = useBlock(
-    (signal) => api.onboardingSections(signal),
-    `onboarding-sections|${attempt}`,
-    true,
-  );
-  const [documents, reloadDocuments] = useBlock(
-    (signal) => api.policyDocuments(signal),
-    `onboarding-documents|${attempt}`,
-    true,
-  );
-
-  const refresh = useCallback(() => {
-    setAttempt((n) => n + 1);
-    reloadPeople();
-    reloadSections();
-    reloadDocuments();
-  }, [reloadPeople, reloadSections, reloadDocuments]);
-
-  const rows = people.state === 'ready' ? people.data.items : [];
-  const sectionRows = sections.state === 'ready' ? sections.data.items : [];
-  const documentRows = documents.state === 'ready' ? documents.data.items : [];
-
-  /**
-   * Числа на вкладках. Пока сервер не ответил — по видимым строкам:
-   * пустая вкладка читается как «никого нет», а это неправда.
-   */
-  const tally = useMemo(() => {
-    if (counts.state === 'ready') {
-      const server = counts.data;
-      const made: Record<string, number> = { all: server['all'] ?? 0 };
-      for (const one of FILTERS.slice(1)) {
-        made[one.key] = one.match.reduce(
-          (sum, status) => sum + (server[status] ?? 0), 0,
-        );
+  const patch = useCallback((changes: Record<string, string | null>) => {
+    setParams((was) => {
+      const next = new URLSearchParams(was);
+      for (const [key, value] of Object.entries(changes)) {
+        if (value) next.set(key, value);
+        else next.delete(key);
       }
-      return made;
-    }
-    const made: Record<string, number> = { all: rows.length };
-    for (const one of FILTERS.slice(1)) {
-      made[one.key] = rows.filter((row) => one.match.includes(row.status)).length;
-    }
-    return made;
-  }, [rows, counts]);
+      return next;
+    }, { replace: true });
+  }, [setParams]);
 
-  const shown = useMemo(() => {
-    const needle = search.trim().toLowerCase();
-    const chosen = FILTERS.find((one) => one.key === filter);
-    return rows.filter((row) => {
-      if (chosen && chosen.match.length && !chosen.match.includes(row.status)) {
-        return false;
-      }
-      if (!needle) return true;
-      return (
-        row.full_name.toLowerCase().includes(needle)
-        || (row.employee_number ?? '').toLowerCase().includes(needle)
-      );
-    });
-  }, [rows, filter, search]);
+  // Числа на вкладках — один раз на странице, для всех трёх.
+  const [counts] = useBlock((signal) => api.onboardingCounts(signal), `onb-counts|${attempt}`);
+  const [documents] = useBlock((signal) => api.policyDocuments(signal), `onb-docs|${attempt}`);
+  const [categories] = useBlock((signal) => api.policyCategories(signal), `onb-cats|${attempt}`);
+  const [cards] = useBlock((signal) => api.onboardingSections(signal), `onb-cards|${attempt}`);
+  const [directory] = useBlock(
+    (signal) => Promise.all([api.offices(signal), api.departmentsPage({ limit: '200', status: 'ACTIVE' }, signal)])
+      .then(([offices, departments]) => ({
+        offices: offices.items.filter((one) => one.status === 'ACTIVE').map((one) => ({ id: one.id, name: one.name })),
+        departments: departments.items.map((one) => ({ id: one.id, name: one.name })),
+      })),
+    'onb-directory',
+  );
 
-  const [sectionDraft, setSectionDraft] = useState<SectionDraft | null>(null);
-  const [documentPick, setDocumentPick] = useState<string | null>(null);
+  const tabs = TABS.map((one) => ({
+    ...one,
+    count: one.key === 'people'
+      ? (counts.state === 'ready' ? counts.data.groups?.all ?? counts.data['all'] ?? null : null)
+      : one.key === 'materials'
+        ? (documents.state === 'ready' ? documents.data.items.length : null)
+        : (categories.state === 'ready' && cards.state === 'ready'
+          ? categories.data.items.length + (cards.data.items.length ? 1 : 0) : null),
+  }));
 
-  const open = picked !== null || sectionDraft !== null || documentPick !== null;
+  const [panel, setPanel] = useState<Panel | null>(null);
+  const picked = params.get('employee');
+  const close = () => { setPanel(null); patch({ employee: null }); };
+
+  const shared: Shared = {
+    params, patch, attempt, refresh, zone, open: setPanel,
+    documents, categories, cards,
+    offices: directory.state === 'ready' ? directory.data.offices : [],
+    departments: directory.state === 'ready' ? directory.data.departments : [],
+  };
+  const views: Record<Tab, View> = {
+    people: usePeopleTab(tab === 'people', shared),
+    materials: useMaterialsTab(tab === 'materials', shared),
+    sections: useSectionsTab(tab === 'sections', shared),
+  };
+  const view = views[tab];
 
   return (
     <AppShell breadcrumb="Ознакомление" section="onboarding">
-      <header className="head head--tight">
-        <div>
-          <h1 className="head__title">Ознакомление</h1>
-          <p className="head__sub">
-            Новый сотрудник читает материалы компании и подтверждает
-            обязательные документы в Telegram. Бот напоминает сам, пока
-            дело не доделано
-          </p>
-        </div>
-        <div className="head__actions">
-          <ExportButton />
-        </div>
-      </header>
+      <div className="on">
+        <section className="on-sheet">
+          <header className="on-head">
+            <div className="on-head__text">
+              <h1 className="on-head__title">Ознакомления</h1>
+              <p className="on-head__sub">{view.sub}</p>
+            </div>
+            <div className="on-head__action">{view.action}</div>
+          </header>
 
-      <div className="tabs tabs--top" role="tablist" aria-label="Разделы ознакомления">
-        {([
-          ['people', 'Сотрудники', rows.length],
-          ['sections', 'Разделы', sectionRows.length],
-          ['documents', 'Документы', documentRows.length],
-        ] as Array<[Tab, string, number]>).map(([key, title, count]) => (
-          <button key={key} type="button" role="tab" aria-selected={tab === key}
-                  className={tab === key ? 'tab tab--on' : 'tab'}
-                  onClick={() => patch({
-                    tab: key === 'people' ? null : key,
-                    employee: null,
-                  })}>
-            {title}
-            <span className="tab__count">{count}</span>
-          </button>
-        ))}
-      </div>
+          <SlideTabs
+            label="Разделы ознакомления"
+            value={tab}
+            items={tabs}
+            onPick={(key) => patch({ tab: key === 'people' ? null : key, employee: null })}
+            classes={{ list: 'on-tabs', tab: 'on-tab', on: 'on-tab--on', count: 'on-tab__count', ink: 'on-tabs__ink' }}
+          />
 
-      <div className={open ? 'split split--open' : 'split'}>
-        <section className="panel panel--list" aria-label="Ознакомление">
-          {tab === 'people' && (
-            <>
-              <SectionBar search={search} onSearch={setSearch}
-                          placeholder="Имя или табельный номер">
-                <div className="ob-chips" role="group" aria-label="Состояние">
-                  {FILTERS.map((one) => (
-                    <button key={one.key} type="button"
-                            className={filter === one.key ? 'ob-chip ob-chip--on' : 'ob-chip'}
-                            onClick={() => patch({
-                              state: one.key === 'all' ? null : one.key,
-                            })}>
-                      {one.title}
-                      <span className="ob-chip__count">{tally[one.key] ?? 0}</span>
-                    </button>
-                  ))}
-                </div>
-              </SectionBar>
-
-              {people.state === 'loading' && <Loading />}
-              {people.state === 'error' && <Failed onRetry={reloadPeople} />}
-              {people.state === 'ready' && shown.length === 0 && (
-                <Empty
-                  filtered={filter !== 'all' || search.trim() !== ''}
-                  nothing="Под этот отбор никто не подходит."
-                  none={
-                    'Пока никого не позвали. Ознакомление назначается сотруднику '
-                    + 'в его карточке — кнопкой «Отправить ознакомление».'
-                  }
-                />
-              )}
-              {people.state === 'ready' && shown.length > 0 && (
-                <div className="scroller">
-                  <table className="grid-table table-cards" aria-label="Прогресс ознакомления">
-                    <thead>
-                      <tr>
-                        <th scope="col">Сотрудник</th>
-                        <th scope="col">Telegram</th>
-                        <th scope="col">Разделы</th>
-                        <th scope="col">Документы</th>
-                        <th scope="col">Состояние</th>
-                        <th scope="col"><span className="visually-hidden">Открыть</span></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {shown.map((row) => (
-                        <tr key={row.employee_id}
-                            className={row.employee_id === picked ? 'row row--on' : 'row'}>
-                          <td>
-                            <button type="button" className="adm-name"
-                                    onClick={() => patch({ employee: row.employee_id })}>
-                              <span className="adm-name__title">{row.full_name}</span>
-                              <span className="adm-name__sub">
-                                {[row.office_name, row.position_name]
-                                  .filter(Boolean).join(' · ') || '—'}
-                              </span>
-                            </button>
-                          </td>
-                          <td data-label="Telegram">
-                            <span className={
-                              row.telegram_state === 'ACTIVE'
-                                ? 'ob-tg ob-tg--on' : 'ob-tg'
-                            }>
-                              {TELEGRAM[row.telegram_state] ?? row.telegram_state}
-                            </span>
-                          </td>
-                          <td data-label="Разделы">
-                            <Progress done={row.sections_done} total={row.sections_total} />
-                          </td>
-                          <td data-label="Документы">
-                            <Progress done={row.policies_done} total={row.policies_total}
-                                      word="документа" />
-                          </td>
-                          <td data-label="Состояние">
-                            <span className={
-                              row.status === 'BLOCKED_BY_DECLINED_POLICY'
-                                ? 'state state--bad'
-                                : row.status === 'UPDATE_REQUIRED'
-                                  ? 'state state--warn'
-                                  : row.completed ? 'state state--good' : 'state'
-                            }>
-                              <i className="state__dot" />
-                              {STATE[row.status] ?? row.status}
-                            </span>
-                          </td>
-                          <td className="num">
-                            <button type="button" className="tool tool--ghost"
-                                    aria-label={`Открыть ${row.full_name}`}
-                                    onClick={() => patch({ employee: row.employee_id })}>
-                              <AppIcon name="arrow" size={16} />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {people.state === 'ready' && people.data.has_more && (
-                    <p className="ob-more">
-                      Показаны первые {PAGE}. Уточните отбор или воспользуйтесь
-                      выгрузкой — в ней все.
-                    </p>
-                  )}
-                </div>
-              )}
-            </>
-          )}
-
-          {tab === 'sections' && (
-            <SectionList
-              block={sections}
-              rows={sectionRows}
-              onRetry={reloadSections}
-              onPick={setSectionDraft}
-            />
-          )}
-
-          {tab === 'documents' && (
-            <DocumentList
-              block={documents}
-              rows={documentRows}
-              zone={zone}
-              onRetry={reloadDocuments}
-              onPick={setDocumentPick}
-            />
-          )}
+          <div className="on-place">
+            <div key={tab} className="on-pane" role="tabpanel" aria-label={TABS.find((one) => one.key === tab)?.title}>
+              {view.body}
+            </div>
+          </div>
         </section>
-
-        {picked && (
-          <PersonPanel
-            id={picked}
-            zone={zone}
-            onClose={() => patch({ employee: null })}
-            onChanged={refresh}
-          />
-        )}
-        {sectionDraft && (
-          <SectionPanel
-            draft={sectionDraft}
-            onClose={() => setSectionDraft(null)}
-            onSaved={() => { setSectionDraft(null); refresh(); }}
-          />
-        )}
-        {documentPick && (
-          <DocumentPanel
-            id={documentPick}
-            rows={documentRows}
-            zone={zone}
-            onClose={() => setDocumentPick(null)}
-            onChanged={refresh}
-          />
-        )}
       </div>
+
+      {picked && !panel && (
+        <PersonPanel id={picked} zone={zone} onClose={close} onChanged={refresh} />
+      )}
+      {panel?.kind === 'person' && <PersonPanel id={panel.id} zone={zone} onClose={close} onChanged={refresh} />}
+      {panel?.kind === 'document' && documents.state === 'ready' && (
+        <DocumentPanel id={panel.id} rows={documents.data.items}
+                       categories={categories.state === 'ready' ? categories.data.items : []}
+                       zone={zone} onClose={close} onChanged={refresh} />
+      )}
+      {panel?.kind === 'new-document' && (
+        <NewMaterialPanel categories={categories.state === 'ready' ? categories.data.items : []}
+                          onClose={close}
+                          onCreated={(id) => { refresh(); setPanel({ kind: 'document', id }); }} />
+      )}
+      {panel?.kind === 'category' && (
+        <CategoryPanel category={panel.category} onClose={close} onSaved={() => { close(); refresh(); }} />
+      )}
+      {panel?.kind === 'intro' && <IntroPanel onClose={close} onChanged={refresh} />}
     </AppShell>
   );
 }
 
-/* --- прогресс ------------------------------------------------------------ */
+type Panel =
+  | { kind: 'person'; id: string }
+  | { kind: 'document'; id: string }
+  | { kind: 'new-document' }
+  | { kind: 'category'; category: api.PolicyCategory | null }
+  | { kind: 'intro' };
 
-/**
- * «7 из 10» с полоской.
- *
- * Число и полоска вместе, а не по отдельности: полоска показывает, много
- * ли осталось, с одного взгляда по всему столбцу, а число отвечает на
- * вопрос «сколько именно», когда взгляд остановился.
- */
-function Progress({ done, total, word = 'раздела' }: {
-  done: number; total: number; word?: string;
-}) {
-  if (total === 0) return <span className="ob-progress__none">—</span>;
-  const share = Math.round((done / total) * 100);
-  return (
-    <span className="ob-progress" title={`${done} из ${total} ${word}`}>
-      <span className="ob-progress__bar" aria-hidden="true">
-        <i style={{ width: `${share}%` }}
-           className={done >= total ? 'ob-progress__fill ob-progress__fill--done'
-                                    : 'ob-progress__fill'} />
-      </span>
-      <b className="ob-progress__num">{done}/{total}</b>
-    </span>
-  );
-}
-
-/* --- карточка сотрудника ------------------------------------------------- */
-
-const EVENT_ICON: Record<string, AppIconName> = {
-  invited: 'send',
-  linked: 'user',
-  started: 'book',
-  section: 'doc',
-  info_completed: 'check',
-  // Документ обязывает — замок, а не лист бумаги: в ленте это событие
-  // надо отличать от прочитанной карточки с одного взгляда.
-  policy: 'lock',
-  completed: 'check',
-  reminded: 'bell',
+type Shared = {
+  params: URLSearchParams;
+  patch: (changes: Record<string, string | null>) => void;
+  attempt: number;
+  refresh: () => void;
+  zone: string;
+  open: (panel: Panel) => void;
+  documents: Block<{ items: api.PolicyDocument[] }>;
+  categories: Block<{ items: api.PolicyCategory[] }>;
+  cards: Block<{ items: api.OnboardingSection[] }>;
+  offices: { id: string; name: string }[];
+  departments: { id: string; name: string }[];
 };
 
-function PersonPanel({ id, zone, onClose, onChanged }: {
-  id: string;
-  zone: string;
-  onClose: () => void;
-  onChanged: () => void;
-}) {
-  const [attempt, setAttempt] = useState(0);
-  const [card, reload] = useBlock(
-    (signal) => api.employeeOnboarding(id, signal),
-    `onboarding-card|${id}|${attempt}`,
-    true,
-  );
-  const again = useCallback(() => {
-    setAttempt((n) => n + 1);
-    reload();
-    onChanged();
-  }, [reload, onChanged]);
+type View = { sub: string; action: ReactNode; body: ReactNode };
 
+// --- общие мелочи -------------------------------------------------------------
+
+function Search({ value, onChange, placeholder, wide }: { value: string; onChange: (value: string) => void; placeholder: string; wide?: boolean }) {
   return (
-    <SidePanel title="Ознакомление сотрудника" onClose={onClose}>
-      {card.state === 'loading' && <Loading />}
-      {card.state === 'error' && <Failed onRetry={reload} />}
-      {card.state === 'ready' && (
-        <>
-          <h3 className="ob-person">{card.data.full_name}</h3>
-          <p className="ob-person__sub">
-            {[card.data.office_name, card.data.department_name, card.data.position_name]
-              .filter(Boolean).join(' · ') || 'Место работы не указано'}
-          </p>
-
-          <div className="ob-facts">
-            <Fact label="Состояние" value={STATE[card.data.status] ?? card.data.status} />
-            <Fact label="Разделы"
-                  value={`${card.data.sections_done} из ${card.data.sections_total}`} />
-            <Fact label="Документы"
-                  value={`${card.data.policies_done} из ${card.data.policies_total}`} />
-            <Fact label="Telegram"
-                  value={TELEGRAM[card.data.telegram_state] ?? card.data.telegram_state} />
-          </div>
-
-          <Invitation row={card.data} zone={zone} onChanged={again} />
-
-          <h4 className="ob-sub">Что происходило</h4>
-          {card.data.timeline.length === 0 ? (
-            <p className="empty">Пока ничего: приглашение ещё не выдавали.</p>
-          ) : (
-            <ol className="ob-line">
-              {card.data.timeline.map((event, index) => (
-                <li key={`${event.kind}-${index}`} className="ob-line__row">
-                  <span className="ob-line__mark" aria-hidden="true">
-                    <AppIcon name={EVENT_ICON[event.kind] ?? 'doc'} size={16} />
-                  </span>
-                  <span className="ob-line__body">
-                    <b>{event.title}</b>
-                    <span className="ob-line__when">
-                      {moment(event.at, zone, true)}
-                      {event.detail ? ` · ${event.detail}` : ''}
-                    </span>
-                  </span>
-                </li>
-              ))}
-            </ol>
-          )}
-        </>
-      )}
-    </SidePanel>
-  );
-}
-
-function Fact({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="ob-fact">
-      <span className="ob-fact__label">{label}</span>
-      <b className="ob-fact__value">{value}</b>
-    </div>
-  );
-}
-
-/**
- * Ссылка и то, что с ней можно сделать.
- *
- * Ссылка показывается РОВНО ОДИН раз — в ответе на её выдачу. В базе
- * лежит только хеш токена, и достать её оттуда нельзя даже
- * суперпользователю: потерянная отзывается и выдаётся заново. Поэтому
- * поле с адресом появляется сразу после нажатия и исчезает при закрытии
- * панели, а не хранится в карточке.
- */
-function Invitation({ row, zone, onChanged }: {
-  row: api.OnboardingCard;
-  zone: string;
-  onChanged: () => void;
-}) {
-  const [link, setLink] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-  const [note, setNote] = useState<string | null>(null);
-  const saving = useSaving();
-  const live = row.invitation_status === 'ACTIVE';
-  const linked = row.telegram_state === 'ACTIVE';
-
-  const issue = (again: boolean) =>
-    saving.run(async () => {
-      const made = await api.inviteToOnboarding(row.employee_id, again);
-      setLink(made.link);
-      setCopied(false);
-      setNote(made.linked
-        ? 'Ссылка не нужна: Telegram уже привязан. Ознакомление назначено.'
-        : null);
-    }, onChanged);
-
-  return (
-    <div className="ob-invite">
-      <h4 className="ob-sub">Telegram и ознакомление</h4>
-      <p className="ob-invite__state">
-        {live
-          ? `Ссылка выдана, действует до ${moment(row.invitation_expires_at ?? '', zone, false)}`
-          : linked
-            ? 'Telegram привязан: ссылка больше не нужна'
-            : 'Ссылка не выдавалась'}
-      </p>
-
-      <div className="ob-invite__tools">
-        {!live && !linked && (
-          <button type="button" className="btn btn--primary" disabled={saving.busy}
-                  onClick={() => issue(false)}>
-            <AppIcon name="send" size={16} /> Создать приглашение
-          </button>
-        )}
-        {live && (
-          <>
-            <button type="button" className="btn" disabled={saving.busy}
-                    onClick={() => issue(true)}>
-              Создать новую ссылку
-            </button>
-            <button type="button" className="btn" disabled={saving.busy}
-                    onClick={() => saving.run(
-                      () => api.revokeOnboardingInvite(row.employee_id),
-                      () => { setLink(null); onChanged(); },
-                    )}>
-              Отозвать
-            </button>
-          </>
-        )}
-        {/*
-          * «Отправить» доступно только при живой привязке — и это не
-          * ограничение интерфейса, а правило Telegram: бот не может
-          * написать первым. Пока человек не открыл бота сам, отправлять
-          * сообщение некуда, и кнопка, которая молча ничего не делает,
-          * хуже выключенной.
-          */}
-        <button type="button" className="btn" disabled={saving.busy || !linked}
-                title={linked ? '' : 'Бот не может написать первым: сначала ссылка'}
-                onClick={() => saving.run(
-                  () => api.remindOnboarding(row.employee_id),
-                  () => { setNote('Напоминание отправлено'); onChanged(); },
-                )}>
-          <AppIcon name="bell" size={16} /> Напомнить в Telegram
-        </button>
-      </div>
-
-      {link && (
-        <div className="ob-link">
-          <p className="ob-link__hint">
-            Ссылка персональная и одноразовая. Она показывается один раз —
-            скопируйте её сейчас: восстановить её нельзя, только выпустить новую.
-          </p>
-          <div className="ob-link__row">
-            <input className="ob-link__value" readOnly value={link}
-                   aria-label="Ссылка на ознакомление"
-                   onFocus={(event) => event.currentTarget.select()} />
-            <button type="button" className="btn"
-                    onClick={async () => {
-                      try {
-                        await navigator.clipboard.writeText(link);
-                        setCopied(true);
-                      } catch {
-                        // Буфер обмена закрыт настройками браузера.
-                        // Поле рядом уже выделяется по щелчку — этого
-                        // достаточно, чтобы скопировать руками.
-                        setCopied(false);
-                      }
-                    }}>
-              {copied ? 'Скопировано' : 'Скопировать'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {note && <p className="ob-note">{note}</p>}
-      <Refusal text={saving.refusal} />
-    </div>
-  );
-}
-
-/* --- разделы ------------------------------------------------------------- */
-
-type SectionDraft = {
-  id: string | null;
-  title: string;
-  body: string;
-  button_label: string;
-};
-
-function blankSection(): SectionDraft {
-  return { id: null, title: '', body: '', button_label: 'Я ознакомился' };
-}
-
-function SectionList({ block, rows, onRetry, onPick }: {
-  block: ReturnType<typeof useBlock<{ items: api.OnboardingSection[] }>>[0];
-  rows: api.OnboardingSection[];
-  onRetry: () => void;
-  onPick: (draft: SectionDraft) => void;
-}) {
-  return (
-    <>
-      <div className="toolbar adm-bar">
-        <p className="ob-about">
-          Эти карточки сотрудник читает в Telegram по одной. Правка текста
-          поднимает редакцию раздела, но перечитывать заново никого не
-          заставляет — карточка рассказывает, а не обязывает.
-        </p>
-        <button type="button" className="btn btn--primary"
-                onClick={() => onPick(blankSection())}>
-          <AppIcon name="plus" size={16} /> Добавить раздел
-        </button>
-      </div>
-
-      {block.state === 'loading' && <Loading />}
-      {block.state === 'error' && <Failed onRetry={onRetry} />}
-      {block.state === 'ready' && rows.length === 0 && (
-        <Empty filtered={false} nothing=""
-               none="Разделов нет. Наполнение ставится командой seed_onboarding." />
-      )}
-      {block.state === 'ready' && rows.length > 0 && (
-        <ol className="ob-cards">
-          {rows.map((row) => (
-            <li key={row.id}>
-              <button type="button" className="ob-card"
-                      onClick={() => onPick({
-                        id: row.id,
-                        title: row.title,
-                        body: row.body,
-                        button_label: row.button_label,
-                      })}>
-                <span className="ob-card__no">{row.position}</span>
-                <span className="ob-card__body">
-                  <b className="ob-card__title">{row.title}</b>
-                  <span className="ob-card__text">{row.body.slice(0, 140)}…</span>
-                  <span className="ob-card__foot">
-                    Кнопка: «{row.button_label}» · редакция {row.version}
-                  </span>
-                </span>
-                <AppIcon name="arrow" size={16} />
-              </button>
-            </li>
-          ))}
-        </ol>
-      )}
-    </>
-  );
-}
-
-function SectionPanel({ draft, onClose, onSaved }: {
-  draft: SectionDraft;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const [form, setForm] = useState(draft);
-  const [archiving, setArchiving] = useState(false);
-  const saving = useSaving();
-  const archive = useSaving();
-
-  const set = (key: keyof SectionDraft, value: string) =>
-    setForm((was) => ({ ...was, [key]: value }));
-
-  const valid = form.title.trim() !== '' && form.body.trim() !== '';
-
-  return (
-    <>
-      <SidePanel title={draft.id ? 'Раздел ознакомления' : 'Новый раздел'}
-                 onClose={onClose}>
-        <Field label="Название">
-          <input value={form.title} maxLength={255}
-                 onChange={(event) => set('title', event.target.value)} />
-        </Field>
-        <Field label="Текст"
-               hint="То, что человек увидит в чате. Разметка не поддерживается — обычный текст и списки.">
-          <textarea className="ob-area" rows={16} value={form.body}
-                    onChange={(event) => set('body', event.target.value)} />
-        </Field>
-        <Field label="Подпись кнопки"
-               hint="Под правилами уместнее «С правилами ознакомился», под последним разделом — «Завершить ознакомление».">
-          <input value={form.button_label} maxLength={100}
-                 onChange={(event) => set('button_label', event.target.value)} />
-        </Field>
-
-        <Refusal text={saving.refusal} />
-        <div className="adm-side__tools">
-          {draft.id && (
-            <button type="button" className="btn btn--danger"
-                    onClick={() => setArchiving(true)}>
-              Убрать из программы
-            </button>
-          )}
-          <button type="button" className="btn" onClick={onClose}>Отмена</button>
-          <button type="button" className="btn btn--primary"
-                  disabled={!valid || saving.busy}
-                  onClick={() => saving.run(
-                    () => draft.id
-                      ? api.updateOnboardingSection(draft.id, {
-                        title: form.title.trim(),
-                        body: form.body,
-                        button_label: form.button_label.trim(),
-                      })
-                      : api.createOnboardingSection({
-                        title: form.title.trim(),
-                        body: form.body,
-                        button_label: form.button_label.trim(),
-                      }),
-                    onSaved,
-                  )}>
-            {saving.busy ? 'Сохраняем…' : 'Сохранить'}
-          </button>
-        </div>
-      </SidePanel>
-
-      {archiving && draft.id && (
-        <Confirm
-          title="Убрать раздел"
-          what={`Раздел «${draft.title}» перестанет показываться сотрудникам.`}
-          consequence="Подтверждения тех, кто его уже прочитал, сохранятся: убрать раздел — не то же самое, что стереть факт прочтения."
-          confirmLabel="Убрать"
-          busy={archive.busy}
-          refusal={archive.refusal}
-          onCancel={() => setArchiving(false)}
-          onConfirm={() => archive.run(
-            () => api.archiveOnboardingSection(draft.id as string),
-            onSaved,
-          )}
-        />
-      )}
-    </>
-  );
-}
-
-/* --- документы ----------------------------------------------------------- */
-
-function DocumentList({ block, rows, zone, onRetry, onPick }: {
-  block: ReturnType<typeof useBlock<{ items: api.PolicyDocument[] }>>[0];
-  rows: api.PolicyDocument[];
-  zone: string;
-  onRetry: () => void;
-  onPick: (id: string) => void;
-}) {
-  return (
-    <>
-      <div className="toolbar adm-bar">
-        <p className="ob-about">
-          Эти документы сотрудник подтверждает отдельно от разделов.
-          Публикация новой редакции возвращает к подтверждению всех, кто
-          её ещё не принял: они получают состояние «Требуется
-          ознакомление» и напоминание от бота.
-        </p>
-      </div>
-
-      {block.state === 'loading' && <Loading />}
-      {block.state === 'error' && <Failed onRetry={onRetry} />}
-      {block.state === 'ready' && rows.length === 0 && (
-        <Empty filtered={false} nothing=""
-               none="Документов нет. Наполнение ставится командой seed_onboarding." />
-      )}
-      {block.state === 'ready' && rows.length > 0 && (
-        <ul className="ob-docs">
-          {rows.map((row) => (
-            <li key={row.id}>
-              <button type="button" className="ob-doc" onClick={() => onPick(row.id)}>
-                <span className="ob-doc__body">
-                  <b className="ob-doc__title">{row.title}</b>
-                  <span className="ob-doc__sub">{row.description ?? row.code}</span>
-                  <span className="ob-doc__foot">
-                    {row.current_version ? (
-                      <>
-                        Действует редакция {row.current_version.version}
-                        {row.current_version.published_at
-                          ? ` · с ${moment(row.current_version.published_at, zone, false)}`
-                          : ''}
-                        {row.current_version.has_file ? ' · с файлом' : ''}
-                      </>
-                    ) : (
-                      <span className="ob-doc__warn">
-                        Не опубликован: никого ни к чему не обязывает
-                      </span>
-                    )}
-                  </span>
-                </span>
-                <AppIcon name="arrow" size={16} />
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </>
-  );
-}
-
-function DocumentPanel({ id, rows, zone, onClose, onChanged }: {
-  id: string;
-  rows: api.PolicyDocument[];
-  zone: string;
-  onClose: () => void;
-  onChanged: () => void;
-}) {
-  const document = rows.find((one) => one.id === id);
-  const [draft, setDraft] = useState<{ version: string; summary: string; body: string; agree_label: string } | null>(null);
-  const [publishing, setPublishing] = useState<api.PolicyVersion | null>(null);
-  const [showPending, setShowPending] = useState(false);
-  const saving = useSaving();
-  const publish = useSaving();
-
-  const [pending, reloadPending] = useBlock(
-    (signal) => api.policyPending(id, signal),
-    `policy-pending|${id}|${showPending}`,
-    showPending,
-  );
-
-  if (!document) return null;
-  const drafts = document.versions.filter((one) => one.status === 'DRAFT');
-
-  return (
-    <>
-      <SidePanel title={document.title} onClose={onClose}>
-        <p className="ob-person__sub">{document.description ?? document.code}</p>
-
-        {document.current_version ? (
-          <div className="ob-version">
-            <p className="ob-version__head">
-              <b>Действующая редакция {document.current_version.version}</b>
-              {document.current_version.published_at
-                && ` · с ${moment(document.current_version.published_at, zone, false)}`}
-            </p>
-            <p className="ob-version__summary">{document.current_version.summary}</p>
-            {document.current_version.has_file && (
-              <a className="link" href={api.policyFileUrl(document.current_version.id)}
-                 target="_blank" rel="noreferrer">
-                <AppIcon name="doc" size={16} /> {document.current_version.file_name}
-              </a>
-            )}
-          </div>
-        ) : (
-          <p className="empty">
-            Опубликованной редакции нет. Пока её не выпустят, документ
-            никого ни к чему не обязывает.
-          </p>
-        )}
-
-        <div className="adm-side__tools ob-tools">
-          <button type="button" className="btn"
-                  onClick={() => setShowPending((was) => !was)}>
-            {showPending ? 'Скрыть' : 'Кто не подтвердил'}
-          </button>
-          <button type="button" className="btn btn--primary"
-                  onClick={() => setDraft({
-                    version: nextVersion(document),
-                    summary: document.current_version?.summary ?? '',
-                    body: document.current_version?.body ?? '',
-                    agree_label: document.current_version?.agree_label ?? 'Согласен',
-                  })}>
-            <AppIcon name="plus" size={16} /> Новая редакция
-          </button>
-        </div>
-
-        {showPending && (
-          <div className="ob-pending">
-            {pending.state === 'loading' && <Loading />}
-            {pending.state === 'error' && <Failed onRetry={reloadPending} />}
-            {pending.state === 'ready' && pending.data.total === 0 && (
-              <p className="empty">Действующую редакцию подтвердили все.</p>
-            )}
-            {pending.state === 'ready' && pending.data.total > 0 && (
-              <ul className="ob-pending__list">
-                {pending.data.items.map((one) => (
-                  <li key={one.employee_id}>
-                    {one.full_name}
-                    {one.declined_at && (
-                      <span className="ob-pending__no">
-                        отказался {moment(one.declined_at, zone, false)}
-                      </span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        )}
-
-        {drafts.length > 0 && (
-          <>
-            <h4 className="ob-sub">Черновики</h4>
-            <ul className="ob-drafts">
-              {drafts.map((one) => (
-                <li key={one.id} className="ob-drafts__row">
-                  <span>
-                    <b>Редакция {one.version}</b>
-                    {one.has_file ? ` · ${one.file_name}` : ' · без файла'}
-                  </span>
-                  <span className="ob-drafts__tools">
-                    <FileUpload versionId={one.id} onDone={onChanged} />
-                    <button type="button" className="btn btn--primary"
-                            onClick={() => setPublishing(one)}>
-                      Опубликовать
-                    </button>
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-
-        {document.versions.length > 1 && (
-          <>
-            <h4 className="ob-sub">История редакций</h4>
-            <ul className="ob-history">
-              {document.versions.map((one) => (
-                <li key={one.id}>
-                  Редакция {one.version} — {VERSION_STATE[one.status] ?? one.status}
-                  {one.published_at
-                    ? ` · ${moment(one.published_at, zone, false)}`
-                    : ''}
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-
-        <Refusal text={saving.refusal} />
-      </SidePanel>
-
-      {draft && (
-        <VersionForm
-          draft={draft}
-          onChange={setDraft}
-          busy={saving.busy}
-          refusal={saving.refusal}
-          onCancel={() => setDraft(null)}
-          onSave={() => saving.run(
-            () => api.createPolicyVersion(id, {
-              version: draft.version.trim(),
-              summary: draft.summary,
-              body: draft.body,
-              agree_label: draft.agree_label.trim(),
-            }),
-            () => { setDraft(null); onChanged(); },
-          )}
-        />
-      )}
-
-      {publishing && (
-        <Confirm
-          title="Опубликовать редакцию"
-          what={`Редакция ${publishing.version} документа «${document.title}» станет действующей.`}
-          consequence={
-            'Всем, кто её не подтвердил, ознакомление откроется заново со '
-            + 'состоянием «Требуется ознакомление», и бот начнёт напоминать. '
-            + 'Доступ к боту при этом сохраняется, а перечитывать '
-            + 'информационные разделы не придётся — только подтвердить этот '
-            + 'документ.'
-          }
-          confirmLabel="Опубликовать"
-          busy={publish.busy}
-          refusal={publish.refusal}
-          onCancel={() => setPublishing(null)}
-          onConfirm={() => publish.run(
-            () => api.publishPolicyVersion(publishing.id),
-            () => { setPublishing(null); onChanged(); },
-          )}
-        />
-      )}
-    </>
-  );
-}
-
-const VERSION_STATE: Record<string, string> = {
-  DRAFT: 'черновик',
-  PUBLISHED: 'действует',
-  ARCHIVED: 'в архиве',
-};
-
-/** Следующий номер по умолчанию: 1.0 → 2.0. Правится руками. */
-function nextVersion(document: api.PolicyDocument): string {
-  const live = document.current_version?.version ?? '0.0';
-  const major = Number.parseInt(live.split('.')[0] ?? '0', 10);
-  return `${Number.isNaN(major) ? 1 : major + 1}.0`;
-}
-
-function VersionForm({ draft, onChange, busy, refusal, onCancel, onSave }: {
-  draft: { version: string; summary: string; body: string; agree_label: string };
-  onChange: (next: { version: string; summary: string; body: string; agree_label: string }) => void;
-  busy: boolean;
-  refusal: string | null;
-  onCancel: () => void;
-  onSave: () => void;
-}) {
-  const set = (key: keyof typeof draft, value: string) =>
-    onChange({ ...draft, [key]: value });
-
-  return (
-    <div className="adm-ask" role="dialog" aria-modal="true" aria-label="Новая редакция">
-      <div className="adm-ask__box adm-ask__box--wide">
-        <h2 className="adm-ask__title">Новая редакция</h2>
-        <p className="adm-ask__what">
-          Создаётся черновиком. Пока она не опубликована, никого ни к чему
-          не обязывает — текст можно править, файл заменять.
-        </p>
-        <Field label="Номер">
-          <input value={draft.version} maxLength={20}
-                 onChange={(event) => set('version', event.target.value)} />
-        </Field>
-        <Field label="Краткий текст в боте"
-               hint="То, что человек увидит перед кнопками согласия.">
-          <textarea className="ob-area" rows={5} value={draft.summary}
-                    onChange={(event) => set('summary', event.target.value)} />
-        </Field>
-        <Field label="Полный текст"
-               hint="Открывается кнопкой «Открыть полный документ». Можно оставить пустым, если приложите PDF.">
-          <textarea className="ob-area" rows={12} value={draft.body}
-                    onChange={(event) => set('body', event.target.value)} />
-        </Field>
-        <Field label="Подпись кнопки согласия">
-          <input value={draft.agree_label} maxLength={100}
-                 onChange={(event) => set('agree_label', event.target.value)} />
-        </Field>
-        <Refusal text={refusal} />
-        <div className="adm-ask__tools">
-          <button type="button" className="btn" onClick={onCancel} disabled={busy}>
-            Отмена
-          </button>
-          <button type="button" className="btn btn--primary" onClick={onSave}
-                  disabled={busy || draft.version.trim() === '' || draft.summary.trim() === ''}>
-            {busy ? 'Сохраняем…' : 'Сохранить черновик'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/** Приложить утверждённый PDF к черновику редакции. */
-function FileUpload({ versionId, onDone }: { versionId: string; onDone: () => void }) {
-  const saving = useSaving();
-  return (
-    <label className="btn ob-file">
-      {saving.busy ? 'Загружаем…' : 'Приложить PDF'}
-      <input type="file" accept="application/pdf" hidden
-             onChange={(event) => {
-               const file = event.target.files?.[0];
-               event.target.value = '';
-               if (file) saving.run(() => api.uploadPolicyFile(versionId, file), onDone);
-             }} />
+    <label className={wide ? 'on-search on-search--wide' : 'on-search'}>
+      <AppIcon name="search" size={18} />
+      <input type="search" value={value} placeholder={placeholder} aria-label={placeholder}
+             onChange={(event) => onChange(event.target.value)} />
     </label>
   );
 }
 
-/* --- выгрузка ------------------------------------------------------------ */
+/** Поиск уходит на сервер с паузой — по строке на каждую букву не надо. */
+function useDebounced(value: string, delay = 300): string {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSettled(value), delay);
+    return () => window.clearTimeout(timer);
+  }, [value, delay]);
+  return settled;
+}
 
-/**
- * Выгрузка состояния в CSV.
- *
- * Файл собирается в браузере из того же ответа, что показан на экране:
- * отдельный серверный экспорт означал бы второй способ посчитать одно и
- * то же и расхождение между таблицей и файлом.
- */
-function ExportButton() {
-  const saving = useSaving();
+function Info({ children }: { children: ReactNode }) {
+  return <p className="on-info"><AppIcon name="info" size={18} />{children}</p>;
+}
+
+function Dot({ tone, children }: { tone: Tone; children: ReactNode }) {
+  return <span className={`on-state on-state--${tone}`}><i aria-hidden="true" />{children}</span>;
+}
+
+function Skeleton({ rows = 5 }: { rows?: number }) {
   return (
-    <>
-      <button type="button" className="btn" disabled={saving.busy}
-              onClick={() => saving.run(async () => {
-                const body = await api.onboardingExport();
-                download(toCsv(body.items));
-              })}>
-        <AppIcon name="report" size={16} /> {saving.busy ? 'Готовим…' : 'Выгрузить'}
-      </button>
-      <Refusal text={saving.refusal} />
-    </>
+    <div className="on-skeleton" aria-busy="true" aria-label="Загрузка">
+      {Array.from({ length: rows }, (_, i) => (
+        <div key={i} className="on-skeleton__row"><span className="on-ghost on-ghost--round" /><span className="on-ghost" /><span className="on-ghost on-ghost--short" /></div>
+      ))}
+    </div>
   );
 }
+
+function Failure({ block, onRetry }: { block: Block<unknown>; onRetry: () => void }) {
+  if (block.state === 'denied') return <p className="on-empty">Нет прав на этот раздел.</p>;
+  return (
+    <p className="on-empty on-empty--error" role="alert">
+      Не удалось загрузить данные. <button type="button" className="on-link" onClick={onRetry}>Повторить</button>
+    </p>
+  );
+}
+
+function Menu({ label, items }: { label: string; items: { title: string; onPick: () => void; disabled?: boolean }[] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="on-pop">
+      <button type="button" className="on-more" aria-label={label} aria-haspopup="menu" aria-expanded={open}
+              onClick={() => setOpen((was) => !was)}>
+        <AppIcon name="dots" size={18} />
+      </button>
+      <AppPopover open={open} onClose={() => setOpen(false)} className="on-menu">
+        <div role="menu" aria-label={label}>
+          {items.map((one) => (
+            <button key={one.title} type="button" role="menuitem" className="on-menu__item" disabled={one.disabled}
+                    onClick={() => { setOpen(false); one.onPick(); }}>
+              {one.title}
+            </button>
+          ))}
+        </div>
+      </AppPopover>
+    </span>
+  );
+}
+
+// --- Сотрудники -------------------------------------------------------------------
+
+function usePeopleTab(active: boolean, shared: Shared): View {
+  const { params, patch, attempt, refresh } = shared;
+  const group = (GROUPS.some((one) => one.key === params.get('group')) ? params.get('group') : 'all') as api.OnboardingGroup | 'all';
+  const office = params.get('office_id') ?? '';
+  const department = params.get('department_id') ?? '';
+  const [draft, setDraft] = useState(params.get('search') ?? '');
+  const search = useDebounced(draft);
+  useEffect(() => { if ((params.get('search') ?? '') !== search) patch({ search: search || null }); }, [search]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const scope = useMemo<api.OnboardingScope>(() => ({
+    ...(search.trim() ? { search: search.trim() } : {}),
+    ...(office ? { office_id: office } : {}),
+    ...(department ? { department_id: department } : {}),
+  }), [search, office, department]);
+  const scopeKey = `${JSON.stringify(scope)}|${attempt}`;
+
+  const [counts, reloadCounts] = useBlock((signal) => api.onboardingCounts(signal, scope), `onb-counts-scope|${scopeKey}`, active);
+  const [pages, setPages] = useState(1);
+  useEffect(() => setPages(1), [scopeKey, group]);
+  const [rows, reloadRows] = useBlock(async (signal) => {
+    // Страницы по 25, «Показать ещё» дочитывает следующую.
+    const items: api.OnboardingRow[] = [];
+    let cursor: string | undefined;
+    let more = false;
+    for (let n = 0; n < pages; n += 1) {
+      const page = await api.onboardingProgress({
+        ...scope, ...(group !== 'all' ? { group } : {}), limit: String(PAGE), ...(cursor ? { cursor } : {}),
+      }, signal);
+      items.push(...page.items);
+      more = page.has_more;
+      cursor = page.next_cursor ?? undefined;
+      if (!more || !cursor) break;
+    }
+    return { items, more };
+  }, `onb-rows|${scopeKey}|${group}|${pages}`, active);
+  const [attention, reloadAttention] = useBlock(
+    (signal) => api.onboardingProgress({ ...scope, group: 'attention', limit: '200' }, signal),
+    `onb-attention|${scopeKey}`,
+    active,
+  );
+
+  const [exporting, setExporting] = useState<string | null>(null);
+  const exportReport = () => {
+    setExporting('Готовим файл…');
+    api.onboardingExport(undefined, { ...scope, ...(group !== 'all' ? { group } : {}) })
+      .then((body) => {
+        download(toCsv(body.items));
+        setExporting(body.total ? null : 'Под этот отбор никто не подходит — файл пустой');
+      })
+      .catch((error) => setExporting(messageFor(error)));
+  };
+
+  const [reminded, setReminded] = useState<string | null>(null);
+  const [reminding, setReminding] = useState(false);
+  const remindAll = (ids: string[]) => {
+    setReminding(true);
+    setReminded(null);
+    api.remindOnboardingMany(ids)
+      .then((body) => {
+        const tally = (outcome: api.RemindOutcome) => body.items.filter((one) => one.outcome === outcome).length;
+        const parts = [
+          tally('sent') ? `Напомнили: ${tally('sent')}` : 'Никому не напомнили',
+          tally('no_telegram') ? `нет Telegram: ${tally('no_telegram')}` : '',
+          tally('already_today') ? `уже напоминали сегодня: ${tally('already_today')}` : '',
+          tally('completed') ? `уже завершили: ${tally('completed')}` : '',
+        ].filter(Boolean);
+        setReminded(parts.join(' · '));
+        refresh();
+      })
+      .catch((error) => setReminded(messageFor(error)))
+      .finally(() => setReminding(false));
+  };
+
+  const groups = counts.state === 'ready' ? counts.data.groups : undefined;
+
+  const body = (
+    <>
+      <div className="on-tools">
+        <Search value={draft} onChange={setDraft} placeholder="Имя, отдел или табельный номер" />
+        <div className="on-chips" role="group" aria-label="Состояние">
+          {GROUPS.map((one) => (
+            <button key={one.key} type="button" aria-pressed={group === one.key}
+                    className={group === one.key ? 'on-chip on-chip--on' : 'on-chip'}
+                    onClick={() => patch({ group: one.key === 'all' ? null : one.key })}>
+              {one.title}
+              {one.key !== 'all' && <span className="on-chip__count">{groups ? groups[one.key] ?? 0 : '·'}</span>}
+            </button>
+          ))}
+        </div>
+        <div className="on-tools__end">
+          <Dropdown label="Офис" empty="Все офисы" value={office} options={shared.offices}
+                    onChange={(value) => patch({ office_id: value || null })} />
+          <Dropdown label="Отдел" empty="Все отделы" value={department} options={shared.departments}
+                    onChange={(value) => patch({ department_id: value || null })} />
+        </div>
+      </div>
+
+      <div className="on-kpis">
+        {counts.state === 'ready' && groups ? (
+          <>
+            <Kpi icon="doc" tone="blue" value={groups.all} label="назначено" />
+            <Kpi icon="check" tone="green" value={groups.done} label="подтвердили всё" />
+            <Kpi icon="alert" tone="amber" value={groups.attention} label="требуют внимания" />
+            <Kpi icon="clock" tone="red" value={groups.overdue} label="просрочены" />
+          </>
+        ) : counts.state === 'loading' ? (
+          [0, 1, 2, 3].map((i) => <div key={i} className="on-kpi"><span className="on-ghost on-ghost--icon" /><span className="on-ghost on-ghost--value" /></div>)
+        ) : <Failure block={counts} onRetry={reloadCounts} />}
+      </div>
+
+      <div className="on-body">
+        <section className="on-main" aria-label="Ознакомления сотрудников">
+          <h2 className="on-title">Ознакомления сотрудников</h2>
+          {rows.state === 'loading' && <Skeleton />}
+          {(rows.state === 'error' || rows.state === 'denied') && <Failure block={rows} onRetry={reloadRows} />}
+          {rows.state === 'ready' && rows.data.items.length === 0 && (
+            <p className="on-empty">
+              {group !== 'all' || scope.search || office || department
+                ? 'Под этот отбор никто не подходит.'
+                : 'Пока никого не позвали. Ознакомление назначается в карточке сотрудника — кнопкой «Отправить ознакомление».'}
+            </p>
+          )}
+          {rows.state === 'ready' && rows.data.items.length > 0 && (
+            <div className="on-scroll">
+              <table className="on-table" aria-label="Ознакомления сотрудников">
+                <thead>
+                  <tr><th>Сотрудник</th><th>Офис / Отдел</th><th>Назначено</th><th>Прогресс</th><th>Срок</th><th>Статус</th><th><span className="visually-hidden">Действия</span></th></tr>
+                </thead>
+                <tbody>
+                  {rows.data.items.map((row) => {
+                    const state = stateOf(row);
+                    const due = row.due_date ?? null;
+                    const count = materialsOf(row);
+                    return (
+                      <tr key={row.employee_id}>
+                        <td>
+                          <button type="button" className="on-person" onClick={() => shared.open({ kind: 'person', id: row.employee_id })}>
+                            <span className="on-avatar" aria-hidden="true">{initials(row.full_name)}</span>
+                            <span><b>{row.full_name}</b><small>{row.employee_number ? `#${row.employee_number}` : 'без табельного номера'}</small></span>
+                          </button>
+                        </td>
+                        <td><span className="on-two"><b>{row.office_name ?? '—'}</b><small>{row.department_name ?? 'Без отдела'}</small></span></td>
+                        <td>{count} {plural(count, 'материал', 'материала', 'материалов')}</td>
+                        <td><Bar value={progressOf(row)} /></td>
+                        <td className={row.overdue ? 'on-red' : ''}>{due ? dateRu(due) : <span className="on-muted">не назначен</span>}</td>
+                        <td><Dot tone={state.tone}>{state.title}</Dot></td>
+                        <td>
+                          <Menu label={`Действия: ${row.full_name}`} items={[
+                            { title: 'Открыть ознакомление', onPick: () => shared.open({ kind: 'person', id: row.employee_id }) },
+                            { title: 'Напомнить', disabled: row.completed || row.telegram_state !== 'ACTIVE', onPick: () => remindAll([row.employee_id]) },
+                          ]} />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              {rows.data.more && (
+                <button type="button" className="on-link on-more-rows" onClick={() => setPages((n) => n + 1)}>Показать ещё</button>
+              )}
+            </div>
+          )}
+        </section>
+
+        <aside className="on-side" aria-label="Требуют внимания">
+          <h2 className="on-title">Требуют внимания</h2>
+          {attention.state === 'loading' && <Skeleton rows={3} />}
+          {(attention.state === 'error' || attention.state === 'denied') && <Failure block={attention} onRetry={reloadAttention} />}
+          {attention.state === 'ready' && (attention.data.items.length ? (
+            <>
+              <ul className="on-alerts">
+                {attention.data.items.slice(0, 4).map((row) => {
+                  const reason = REASON[(row.reasons ?? ['silent'])[0] as api.OnboardingReason];
+                  return (
+                    <li key={row.employee_id}>
+                      <span className={`on-alerts__icon on-tone--${reason.tone}`}><AppIcon name={reason.icon} size={18} /></span>
+                      <span className="on-alerts__text">
+                        <b>{reason.title}</b>
+                        <button type="button" className="on-alerts__who" onClick={() => shared.open({ kind: 'person', id: row.employee_id })}>{row.full_name}</button>
+                        <small>{alertDetail(row)}</small>
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+              {attention.data.items.length > 4 && <p className="on-muted on-alerts__more">и ещё {attention.data.items.length - 4}</p>}
+              <button type="button" className="on-remind" disabled={reminding}
+                      onClick={() => remindAll(attention.data.items.filter((one) => !one.completed).map((one) => one.employee_id))}>
+                <AppIcon name="send" size={18} /> {reminding ? 'Отправляем…' : 'Напомнить всем'}
+              </button>
+              {reminded && <p className="on-note">{reminded}</p>}
+            </>
+          ) : <p className="on-empty">Сейчас никто не требует внимания: сроки в порядке, отказов и новых версий без ответа нет.</p>)}
+        </aside>
+      </div>
+
+      <Info>Сотрудник читает материал в Telegram и подтверждает ознакомление. История действий сохраняется.</Info>
+    </>
+  );
+
+  return {
+    sub: 'Назначайте обязательные материалы, следите за подтверждениями и вовремя напоминайте сотрудникам.',
+    action: (
+      <span className="on-action-slot">
+        <button type="button" className="on-outline" onClick={exportReport}>
+          <AppIcon name="download" size={18} /> Выгрузить отчёт
+        </button>
+        {(exporting || reminded) && <span className="on-toast" role="status">{exporting ?? reminded}</span>}
+      </span>
+    ),
+    body,
+  };
+}
+
+/** Подробность для правой колонки: к какому материалу или сроку относится. */
+function alertDetail(row: api.OnboardingRow): string {
+  const reasons = row.reasons ?? [];
+  const materials = row.materials ?? [];
+  if (reasons.includes('overdue')) return `Срок был ${dateRu(row.due_date ?? '')}`;
+  if (reasons.includes('declined')) return materials.filter((one) => one.state === 'declined').map((one) => `«${one.title}»`).join(', ');
+  if (reasons.includes('renewal')) {
+    const titles = materials.filter((one) => one.state === 'renewal').map((one) => `«${one.title}»`).join(', ');
+    return `${titles} — нужно подтвердить заново`;
+  }
+  const since = row.invited_at ?? row.enrolled_at;
+  return since ? `Приглашён(а) ${dateRu(since.slice(0, 10))}, к ознакомлению не приступил(а)` : 'К ознакомлению не приступил(а)';
+}
+
+function Kpi({ icon, tone, value, label }: { icon: AppIconName; tone: Tone; value: number; label: string }) {
+  return (
+    <div className="on-kpi">
+      <span className={`on-kpi__icon on-kpi__icon--${tone}`}><AppIcon name={icon} size={20} /></span>
+      <span><b>{value}</b><small>{label}</small></span>
+    </div>
+  );
+}
+
+function Bar({ value }: { value: number | null }) {
+  if (value === null) return <span className="on-muted">—</span>;
+  return (
+    <span className="on-bar">
+      <small>{value}%</small>
+      <span className="on-bar__track"><span style={{ width: `${value}%` }} /></span>
+    </span>
+  );
+}
+
+// --- Материалы -------------------------------------------------------------------
+
+type DocStatus = 'published' | 'draft' | 'renewal';
+
+function statusOfDoc(doc: api.PolicyDocument): DocStatus {
+  const hasDraft = doc.versions.some((one) => one.status === 'DRAFT');
+  if (!doc.current_version) return 'draft';
+  return hasDraft ? 'renewal' : 'published';
+}
+
+const DOC_STATUS: Record<DocStatus, { title: string; tone: Tone }> = {
+  published: { title: 'Опубликован', tone: 'green' },
+  draft: { title: 'Черновик', tone: 'grey' },
+  renewal: { title: 'Готовится новая версия', tone: 'amber' },
+};
+
+const SORTS = [
+  { id: 'changed', name: 'Сначала недавно изменённые' },
+  { id: 'title', name: 'По названию' },
+  { id: 'order', name: 'По порядку в разделе' },
+];
+
+function useMaterialsTab(active: boolean, shared: Shared): View {
+  const { documents, categories } = shared;
+  const [search, setSearch] = useState('');
+  const [status, setStatus] = useState('');
+  const [section, setSection] = useState('');
+  const [sort, setSort] = useState('');
+  void active;
+
+  const list = documents.state === 'ready' ? documents.data.items : [];
+  const shown = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    const rows = list.filter((doc) => {
+      if (status && statusOfDoc(doc) !== status) return false;
+      if (section === 'none' ? doc.category : section && doc.category?.id !== section) return false;
+      if (!needle) return true;
+      return `${doc.title} ${doc.description ?? ''} ${doc.category?.title ?? ''}`.toLowerCase().includes(needle);
+    });
+    const by = sort || 'changed';
+    return [...rows].sort((a, b) => (
+      by === 'title' ? a.title.localeCompare(b.title, 'ru')
+        : by === 'order' ? (a.category?.title ?? '￿').localeCompare(b.category?.title ?? '￿', 'ru') || a.position - b.position
+          : (b.changed_at ?? '').localeCompare(a.changed_at ?? '')
+    ));
+  }, [list, search, status, section, sort]);
+
+  const sectionOptions = [
+    ...(categories.state === 'ready' ? categories.data.items.map((one) => ({ id: one.id, name: one.title })) : []),
+    { id: 'none', name: 'Без раздела' },
+  ];
+  const renewalPeople = list.reduce((sum, doc) => sum + (doc.renewal_pending ?? 0), 0);
+  const soonest = list
+    .filter((doc) => doc.nearest_due)
+    .sort((a, b) => (a.nearest_due ?? '').localeCompare(b.nearest_due ?? ''))[0];
+
+  const body = (
+    <>
+      <div className="on-tools">
+        <Search value={search} onChange={setSearch} placeholder="Найти материал" />
+        <div className="on-tools__end on-tools__end--grow">
+          <Dropdown label="Статус" empty="Все статусы" value={status}
+                    options={(Object.keys(DOC_STATUS) as DocStatus[]).map((id) => ({ id, name: DOC_STATUS[id].title }))}
+                    onChange={setStatus} />
+          <Dropdown label="Раздел" empty="Все разделы" value={section} options={sectionOptions} onChange={setSection} />
+          <Dropdown label="Сортировка" empty="Сначала недавно изменённые" value={sort} options={SORTS.slice(1)} onChange={setSort} />
+        </div>
+      </div>
+      <Info>После публикации материал нельзя менять — создайте новую версию, чтобы история подтверждений оставалась точной.</Info>
+
+      <div className="on-body">
+        <section className="on-main" aria-label="Материалы">
+          <h2 className="on-title">Материалы</h2>
+          {documents.state === 'loading' && <Skeleton />}
+          {(documents.state === 'error' || documents.state === 'denied') && <Failure block={documents} onRetry={shared.refresh} />}
+          {documents.state === 'ready' && shown.length === 0 && (
+            <p className="on-empty">{list.length ? 'Под этот отбор материалов нет.' : 'Материалов пока нет. Создайте первый — кнопкой «Создать материал».'}</p>
+          )}
+          {documents.state === 'ready' && shown.length > 0 && (
+            <div className="on-scroll">
+              <table className="on-table" aria-label="Материалы">
+                <thead>
+                  <tr><th>Материал и описание</th><th>Раздел</th><th>Версия / Статус</th><th>Назначено</th><th>Подтвердили</th><th>Последнее обновление</th><th><span className="visually-hidden">Действия</span></th></tr>
+                </thead>
+                <tbody>
+                  {shown.map((doc) => {
+                    const state = DOC_STATUS[statusOfDoc(doc)];
+                    const draft = doc.versions.find((one) => one.status === 'DRAFT');
+                    // Необязательный, как и черновик, ни от кого не требуется.
+                    const live = !!doc.current_version && doc.is_mandatory;
+                    return (
+                      <tr key={doc.id}>
+                        <td>
+                          <button type="button" className="on-doc" onClick={() => shared.open({ kind: 'document', id: doc.id })}>
+                            <span className="on-doc__icon" aria-hidden="true"><AppIcon name="doc" size={18} /></span>
+                            <span><b>{doc.title}</b><small>{doc.description || (doc.is_mandatory ? 'Обязательный материал' : 'Необязательный материал')}</small></span>
+                          </button>
+                        </td>
+                        <td>{doc.category?.title ?? <span className="on-muted">Без раздела</span>}</td>
+                        <td>
+                          <span className="on-two">
+                            <b>{doc.current_version ? `v${doc.current_version.version}` : draft ? `v${draft.version}` : '—'}</b>
+                            <Dot tone={state.tone}>{state.title}</Dot>
+                          </span>
+                        </td>
+                        <td>{live ? doc.assigned ?? 0 : <span className="on-muted" title={doc.current_version ? 'Необязательный материал ни от кого не требуется' : 'Черновик никого не обязывает'}>—</span>}</td>
+                        <td>
+                          {live ? (
+                            <span className="on-two">
+                              <b>{doc.confirmed ?? 0}</b>
+                              {(doc.renewal_pending ?? 0) > 0 && <small className="on-amber">новая версия: {doc.renewal_pending}</small>}
+                            </span>
+                          ) : <span className="on-muted">—</span>}
+                        </td>
+                        <td><span className="on-two"><b>{doc.changed_at ? dateRu(doc.changed_at.slice(0, 10)) : '—'}</b><small>{doc.changed_by ?? doc.created_by ?? ''}</small></span></td>
+                        <td><Menu label={`Действия: ${doc.title}`} items={[{ title: 'Открыть материал', onPick: () => shared.open({ kind: 'document', id: doc.id }) }]} /></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+
+        <aside className="on-side" aria-label="Быстрый обзор">
+          <h2 className="on-title">Быстрый обзор</h2>
+          {documents.state === 'ready' ? (
+            <>
+              <ul className="on-facts">
+                <Fact icon="doc" tone="blue" value={list.length} label={plural(list.length, 'материал', 'материала', 'материалов')} />
+                <Fact icon="check" tone="green" value={list.filter((d) => d.current_version).length} label="опубликовано" />
+                <Fact icon="pencil" tone="grey" value={list.filter((d) => !d.current_version).length} label={plural(list.filter((d) => !d.current_version).length, 'черновик', 'черновика', 'черновиков')} />
+                <Fact icon="refresh" tone="blue" value={list.filter((d) => statusOfDoc(d) === 'renewal').length} label="готовится новая версия" />
+              </ul>
+              <h3 className="on-subtitle">Нужно проверить</h3>
+              <ul className="on-checks">
+                {renewalPeople > 0 && (
+                  <li>
+                    <span className="on-tone--amber"><AppIcon name="user" size={18} /></span>
+                    <span>
+                      <b>{renewalPeople} {plural(renewalPeople, 'сотрудник не подтвердил', 'сотрудника не подтвердили', 'сотрудников не подтвердили')} новую версию</b>
+                      <button type="button" className="on-link" onClick={() => shared.patch({ tab: null, group: 'attention' })}>Посмотреть сотрудников</button>
+                    </span>
+                  </li>
+                )}
+                {soonest && soonest.nearest_due && (
+                  <li>
+                    <span className={daysUntil(soonest.nearest_due) < 0 ? 'on-tone--red' : 'on-tone--amber'}><AppIcon name="clock" size={18} /></span>
+                    <span>
+                      <b>{soonest.title}: {dueWords(soonest.nearest_due)}</b>
+                      <button type="button" className="on-link" onClick={() => shared.open({ kind: 'document', id: soonest.id })}>Открыть материал</button>
+                    </span>
+                  </li>
+                )}
+                {!renewalPeople && !soonest && <li className="on-muted">Всё в порядке: новых версий без ответа и близких сроков нет.</li>}
+              </ul>
+            </>
+          ) : <Skeleton rows={4} />}
+        </aside>
+      </div>
+
+      <Info>При новой версии сотрудник получает материал повторно, а прежние подтверждения сохраняются в истории.</Info>
+    </>
+  );
+
+  return {
+    sub: 'Материалы, которые сотрудники читают и подтверждают в Telegram.',
+    action: (
+      <span className="on-action-slot">
+        <button type="button" className="on-outline" onClick={() => shared.open({ kind: 'new-document' })}>
+          <AppIcon name="plus" size={18} /> Создать материал
+        </button>
+      </span>
+    ),
+    body,
+  };
+}
+
+function dueWords(day: string): string {
+  const left = daysUntil(day);
+  if (left < 0) return `срок прошёл ${-left} ${plural(-left, 'день', 'дня', 'дней')} назад`;
+  if (left === 0) return 'срок сегодня';
+  return `срок через ${left} ${plural(left, 'день', 'дня', 'дней')}`;
+}
+
+function Fact({ icon, tone, value, label }: { icon: AppIconName; tone: Tone; value: number; label: string }) {
+  return (
+    <li className="on-fact">
+      <span className={`on-fact__icon on-tone--${tone}`}><AppIcon name={icon} size={18} /></span>
+      <b>{value}</b>
+      <span>{label}</span>
+    </li>
+  );
+}
+
+// --- Разделы ------------------------------------------------------------------------
+
+function useSectionsTab(active: boolean, shared: Shared): View {
+  const { categories, cards, documents } = shared;
+  const [search, setSearch] = useState('');
+  const [sort, setSort] = useState('');
+  void active;
+
+  const list = categories.state === 'ready' ? categories.data.items : [];
+  const intro = cards.state === 'ready' ? cards.data.items : [];
+  const shown = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    const rows = list.filter((one) => !needle || `${one.title} ${one.description ?? ''} ${one.documents.map((d) => d.title).join(' ')}`.toLowerCase().includes(needle));
+    return [...rows].sort((a, b) => (sort === 'title' ? a.title.localeCompare(b.title, 'ru') : b.changed_at.localeCompare(a.changed_at)));
+  }, [list, search, sort]);
+  const introShown = intro.length > 0 && (!search.trim() || 'знакомство с компанией'.includes(search.trim().toLowerCase()));
+  const loose = documents.state === 'ready' ? documents.data.items.filter((doc) => !doc.category).length : 0;
+  const top = Math.max(1, ...list.map((one) => one.documents_count), loose);
+
+  const body = (
+    <>
+      <div className="on-tools">
+        <Search value={search} onChange={setSearch} placeholder="Найти раздел" wide />
+        <div className="on-tools__end on-sort">
+          <Dropdown label="Сортировка" empty="Сначала недавно изменённые" value={sort}
+                    options={[{ id: 'title', name: 'По названию' }]} onChange={setSort} />
+        </div>
+      </div>
+      <Info>Раздел помогает HR и сотруднику быстро найти нужный материал. Внутри раздела можно менять порядок материалов.</Info>
+
+      <div className="on-body">
+        <section className="on-main" aria-label="Разделы материалов">
+          <h2 className="on-title">Разделы материалов</h2>
+          {(categories.state === 'loading' || cards.state === 'loading') && <Skeleton />}
+          {(categories.state === 'error' || categories.state === 'denied') && <Failure block={categories} onRetry={shared.refresh} />}
+          {categories.state === 'ready' && cards.state === 'ready' && (
+            shown.length === 0 && !introShown ? (
+              <p className="on-empty">{list.length ? 'Под этот поиск разделов нет.' : 'Разделов пока нет. Создайте первый — кнопкой «Создать раздел».'}</p>
+            ) : (
+              <div className="on-scroll">
+                <table className="on-table" aria-label="Разделы материалов">
+                  <thead>
+                    <tr><th>Раздел и описание</th><th>Материалов</th><th>Ответственный</th><th>Последнее обновление</th><th>Примеры материалов</th><th><span className="visually-hidden">Действия</span></th></tr>
+                  </thead>
+                  <tbody>
+                    {introShown && (
+                      <tr className="on-row--pinned">
+                        <td>
+                          <button type="button" className="on-doc" onClick={() => shared.open({ kind: 'intro' })}>
+                            <span className="on-doc__icon on-doc__icon--folder" aria-hidden="true"><AppIcon name="book" size={18} /></span>
+                            <span><b>Знакомство с компанией</b><small>Карточки о компании, которые бот показывает первыми. Их читают, согласие не требуется.</small></span>
+                          </button>
+                        </td>
+                        <td><span className="on-two"><b>{intro.length}</b><small>{plural(intro.length, 'карточка', 'карточки', 'карточек')}</small></span></td>
+                        <td><span className="on-muted">—</span></td>
+                        <td>{dateRu([...intro].sort((a, b) => b.updated_at.localeCompare(a.updated_at))[0]!.updated_at.slice(0, 10))}</td>
+                        <td><Examples titles={intro.map((one) => one.title)} /></td>
+                        <td><Menu label="Действия: Знакомство с компанией" items={[{ title: 'Открыть карточки', onPick: () => shared.open({ kind: 'intro' }) }]} /></td>
+                      </tr>
+                    )}
+                    {shown.map((one) => (
+                      <tr key={one.id}>
+                        <td>
+                          <button type="button" className="on-doc" onClick={() => shared.open({ kind: 'category', category: one })}>
+                            <span className="on-doc__icon on-doc__icon--folder" aria-hidden="true"><AppIcon name="archive" size={18} /></span>
+                            <span><b>{one.title}</b><small>{one.description ?? 'Без описания'}</small></span>
+                          </button>
+                        </td>
+                        <td><span className="on-two"><b>{one.documents_count}</b><small>{plural(one.documents_count, 'материал', 'материала', 'материалов')}</small></span></td>
+                        <td>{one.owner ? <span className="on-two"><b>{one.owner.full_name}</b><small>{one.owner.position_name ?? ''}</small></span> : <span className="on-muted">не назначен</span>}</td>
+                        <td><span className="on-two"><b>{dateRu(one.changed_at.slice(0, 10))}</b><small>{one.changed_by ?? ''}</small></span></td>
+                        <td>{one.documents.length ? <Examples titles={one.documents.map((d) => d.title)} /> : <span className="on-muted">материалов нет</span>}</td>
+                        <td><Menu label={`Действия: ${one.title}`} items={[{ title: 'Изменить раздел', onPick: () => shared.open({ kind: 'category', category: one }) }]} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
+          )}
+        </section>
+
+        <aside className="on-side" aria-label="Структура материалов">
+          <h2 className="on-title">Структура материалов</h2>
+          {categories.state === 'ready' ? (
+            <ul className="on-structure">
+              {list.map((one) => (
+                <li key={one.id}>
+                  <span className="on-structure__head"><b>{one.title}</b><b>{one.documents_count}</b></span>
+                  <span className="on-structure__track"><span style={{ width: `${(one.documents_count * 100) / top}%` }} /></span>
+                </li>
+              ))}
+              {loose > 0 && (
+                <li>
+                  <span className="on-structure__head"><span className="on-muted">Без раздела</span><b>{loose}</b></span>
+                  <span className="on-structure__track"><span className="on-structure__fill--grey" style={{ width: `${(loose * 100) / top}%` }} /></span>
+                </li>
+              )}
+              {!list.length && !loose && <li className="on-muted">Материалов пока нет.</li>}
+            </ul>
+          ) : <Skeleton rows={3} />}
+          <h3 className="on-subtitle">Совет</h3>
+          <p className="on-tip"><span className="on-tone--amber"><AppIcon name="bulb" size={20} /></span>Сначала создайте раздел, затем добавьте материалы и опубликуйте их. Так сотруднику проще пройти ознакомление.</p>
+        </aside>
+      </div>
+
+      <Info>Изменение раздела не меняет историю уже подтверждённых материалов.</Info>
+    </>
+  );
+
+  return {
+    sub: 'Соберите материалы по понятным разделам и назначайте их сотрудникам.',
+    action: (
+      <span className="on-action-slot">
+        <button type="button" className="on-outline" onClick={() => shared.open({ kind: 'category', category: null })}>
+          <AppIcon name="plus" size={18} /> Создать раздел
+        </button>
+      </span>
+    ),
+    body,
+  };
+}
+
+function Examples({ titles }: { titles: string[] }) {
+  return (
+    <ul className="on-examples">
+      {titles.slice(0, 3).map((title) => <li key={title}><AppIcon name="doc" size={16} />{title}</li>)}
+      {titles.length > 3 && <li className="on-muted">и ещё {titles.length - 3}</li>}
+    </ul>
+  );
+}
+
+// --- выгрузка --------------------------------------------------------------------
 
 const COLUMNS: Array<[string, string]> = [
   ['employee_number', 'Табельный номер'],
@@ -1149,10 +877,11 @@ const COLUMNS: Array<[string, string]> = [
   ['office', 'Офис'],
   ['department', 'Отдел'],
   ['position', 'Должность'],
-  ['telegram', 'Telegram'],
-  ['status', 'Состояние'],
-  ['sections', 'Разделы'],
-  ['policies', 'Документы'],
+  ['sections', 'Знакомство с компанией'],
+  ['policies', 'Материалы'],
+  ['due_date', 'Срок'],
+  ['attention', 'Требует внимания'],
+  ['last_reminder_at', 'Последнее напоминание'],
   ['completed_at', 'Завершено'],
 ];
 
@@ -1162,9 +891,7 @@ function toCsv(rows: Record<string, string | number | null>[]): string {
     return /[";\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
   };
   const head = COLUMNS.map(([, title]) => title).join(';');
-  const body = rows.map(
-    (row) => COLUMNS.map(([key]) => escape(row[key] ?? null)).join(';'),
-  );
+  const body = rows.map((row) => COLUMNS.map(([key]) => escape(row[key] ?? null)).join(';'));
   // BOM: без него Excel читает кириллицу в CSV как набор знаков вопроса.
   return `﻿${[head, ...body].join('\n')}`;
 }
@@ -1174,7 +901,7 @@ function download(csv: string): void {
   const url = URL.createObjectURL(blob);
   const link = window.document.createElement('a');
   link.href = url;
-  link.download = `ознакомление-${new Date().toISOString().slice(0, 10)}.csv`;
+  link.download = `ознакомления-${new Date().toISOString().slice(0, 10)}.csv`;
   link.click();
   URL.revokeObjectURL(url);
 }

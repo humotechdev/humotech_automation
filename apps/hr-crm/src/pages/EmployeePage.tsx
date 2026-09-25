@@ -1259,6 +1259,9 @@ function Probation({ id, person, onChanged }: {
         <span>
           По итогам испытательного срока человека принимают в штат или
           расстаются с ним.
+          {(person as { mentor?: { full_name: string } | null }).mentor
+            ? ` Наставник: ${(person as { mentor: { full_name: string } }).mentor.full_name}.`
+            : ' Наставник не назначен.'}
         </span>
       </p>
       <button type="button" className="btn btn--primary"

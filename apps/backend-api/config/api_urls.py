@@ -26,6 +26,8 @@ from humotech.analytics.views import (
     ComparisonView,
     DashboardView,
     MovementView,
+    ProbationView,
+    TeamView,
 )
 from humotech.attendance.views import (
     AttendanceViewSet,
@@ -44,6 +46,7 @@ from humotech.absences.views import (
     AbsencePeriodView,
     AbsenceDocumentDecisionView,
     AbsenceDecisionView,
+    AbsenceRequestView,
     AbsenceDocumentDownloadView,
     PendingAbsenceRequestsView,
 )
@@ -64,9 +67,11 @@ from humotech.onboarding.views import (
     EmployeeOnboardingActionView,
     EmployeeOnboardingView,
     OnboardingCountsView,
+    OnboardingRemindView,
     OnboardingExportView,
     OnboardingProgressView,
     OnboardingSectionViewSet,
+    PolicyCategoryViewSet,
     PolicyDocumentViewSet,
     PolicyVersionFileView,
     PolicyVersionPublishView,
@@ -98,7 +103,11 @@ from humotech.reports.job_views import ExportJobViewSet
 from humotech.reports.views import ExportView
 from humotech.schedules.calendar_views import CalendarExceptionViewSet
 from humotech.schedules.views import EmployeeScheduleViewSet, WorkScheduleViewSet
-from humotech.surveys.views import SurveyCampaignViewSet, SurveyTemplateViewSet
+from humotech.surveys.views import (
+    SurveyAutomationViewSet,
+    SurveyCampaignViewSet,
+    SurveyTemplateViewSet,
+)
 from humotech.telegram.views import (
     BotLinkAcceptView,
     BotLinkView,
@@ -166,6 +175,11 @@ router.register(
 router.register(
     "surveys/campaigns", SurveyCampaignViewSet, basename="survey-campaign"
 )
+# Автоматизация — третья сущность, а не разновидность рассылки:
+# у правила нет получателей и не будет до самого события.
+router.register(
+    "surveys/automations", SurveyAutomationViewSet, basename="survey-automation"
+)
 # Первичное ознакомление. Разделы и документы — разные справочники:
 # карточка рассказывает о компании, документ обязывает, и версионируются
 # они по-разному.
@@ -174,6 +188,9 @@ router.register(
 )
 router.register(
     "onboarding/documents", PolicyDocumentViewSet, basename="policy-document"
+)
+router.register(
+    "onboarding/categories", PolicyCategoryViewSet, basename="policy-category"
 )
 
 urlpatterns = [
@@ -218,6 +235,10 @@ urlpatterns = [
         "onboarding/progress",
         OnboardingProgressView.as_view(),
         name="onboarding-progress",
+    ),
+    path(
+        "onboarding/remind", OnboardingRemindView.as_view(),
+        name="onboarding-remind",
     ),
     path(
         "onboarding/counts", OnboardingCountsView.as_view(),
@@ -320,6 +341,9 @@ urlpatterns = [
     # Всё для страницы «Аналитика» одним ответом: сводка с прошлым
     # периодом, дни, рейтинг офисов, ритм прихода, дни недели.
     path("analytics/overview", AnalyticsOverviewView.as_view(), name="analytics-overview"),
+    # Люди за период: «Команда» и «Стажировки» страницы аналитики.
+    path("analytics/team", TeamView.as_view(), name="analytics-team"),
+    path("analytics/probation", ProbationView.as_view(), name="analytics-probation"),
     # Выгрузки. Право reports.export проверяется отдельно от прав на сами
     # данные: выгрузка не должна быть обходным путём к закрытому экрану.
     # Конструктор отчётов: поля видов и предпросмотр до заказа файла.
@@ -392,6 +416,10 @@ urlpatterns = [
     # он следующим этапом, — но подтверждать больничные надо уже сейчас.
     path("absence-requests/pending", PendingAbsenceRequestsView.as_view(),
          name="absence-requests-pending"),
+    # Чтение одной заявки. Раньше маршрута с <str:decision>: тот ловит
+    # любой хвост, а у этого хвоста нет вовсе.
+    path("absence-requests/<uuid:request_id>", AbsenceRequestView.as_view(),
+         name="absence-request"),
     # Заявление для печати. Раньше маршрута с <str:decision>: иначе
     # «application» разобралось бы как решение по заявке.
     path("absence-requests/<uuid:request_id>/application",

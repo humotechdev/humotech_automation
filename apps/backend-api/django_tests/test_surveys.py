@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import itertools
 from datetime import date, timedelta
 
 import pytest
@@ -23,11 +24,40 @@ from humotech.core.errors import Conflict, NotFound, ValidationFailed
 from humotech.employees.models import Employee, EmployeeAssignment
 from humotech.notifications.models import Notification
 from humotech.surveys import services
-from humotech.surveys.models import SurveyAnswer, SurveyRecipient
+from humotech.surveys.models import (
+    SurveyAnswer,
+    SurveyQuestion,
+    SurveyRecipient,
+    SurveyTemplate,
+)
 from humotech.surveys.services import (
     SurveyCampaignService,
     SurveyTemplateService,
 )
+from humotech.telegram.models import TelegramAccount
+
+#: Номера Telegram уникальны в масштабе всей базы, поэтому выдаются
+#: счётчиком, а не константой.
+_next_tg = itertools.count(770_000_001)
+
+
+def link_telegram(organization, person) -> TelegramAccount:
+    """Привязать Telegram.
+
+    Опрос живёт в Telegram, и человеку без привязки его
+    отправить некуда — такая строка получает `SKIPPED`. Значит,
+    в тестах про саму рассылку привязка обязательна: без неё
+    проверялся бы пропуск, а не отправка.
+    """
+    number = next(_next_tg)
+    return TelegramAccount.objects.create(
+        organization=organization,
+        employee=person,
+        telegram_user_id=number,
+        telegram_chat_id=number,
+        status="ACTIVE",
+        connected_at=timezone.now(),
+    )
 
 QUESTIONS = [
     {"text": "Насколько вам комфортно в команде?", "kind": "SCALE"},
@@ -58,6 +88,17 @@ def hr_actor(make_actor, organization):
 
 
 @pytest.fixture()
+def employee(employee, organization):
+    """Тот же сотрудник, но с привязанным Telegram.
+
+    Общая фикстура привязки не даёт, и правильно делает:
+    другим модулям Telegram не нужен. Опросу нужен всегда.
+    """
+    link_telegram(organization, employee)
+    return employee
+
+
+@pytest.fixture()
 def templates():
     return SurveyTemplateService()
 
@@ -75,7 +116,7 @@ def template(templates, hr_actor):
     )
 
 
-def second_employee(organization, office, number="EMP-0002"):
+def second_employee(organization, office, number="EMP-0002", *, telegram=True):
     person = Employee.objects.create(
         organization=organization,
         employee_number=number,
@@ -93,6 +134,8 @@ def second_employee(organization, office, number="EMP-0002"):
         is_primary=True,
         valid_from=date(2024, 3, 1),
     )
+    if telegram:
+        link_telegram(organization, person)
     return person
 
 
@@ -522,6 +565,33 @@ class TestWhatHrSees:
         places = services.places_of([employee.id])
         assert places[employee.id]["office"] == office.name
 
+    def test_anonymous_survey_shows_only_the_summary(
+        self, campaigns, hr_actor, template, employee, office,
+    ):
+        """Анонимный опрос: ни ответов по людям, ни имён в выгрузке."""
+        campaign = campaigns.create(
+            hr_actor, template_id=template.id, audience_kind="OFFICE",
+            audience_ids=[str(office.id)], send_now=True, is_anonymous=True,
+        )
+        recipient = SurveyRecipient.objects.get(campaign_id=campaign.id)
+        rows = list(template.questions.order_by("position"))
+        services.submit(
+            employee_id=employee.id, recipient_id=recipient.id,
+            answers=[
+                {"question_id": str(rows[0].id), "number": 4},
+                {"question_id": str(rows[1].id), "options": ["Коллеги"]},
+                {"question_id": str(rows[2].id), "text": "Хорошо"},
+            ],
+        )
+
+        assert campaigns.answers(hr_actor, campaign.id) == []
+        header, body = campaigns.export(hr_actor, campaign.id)
+        assert header[0] == "№"
+        assert all(employee.last_name not in cell for row in body for cell in row)
+        assert body[0][1] == "4"
+        summary = campaigns.summary(hr_actor, campaign.id)
+        assert summary["progress"]["completed"] == 1
+
     def test_progress_separates_sent_started_and_done(
         self, campaigns, hr_actor, template, employee, office, organization,
     ):
@@ -585,3 +655,189 @@ class TestWhatHrSees:
         )
         with pytest.raises(Exception):
             campaigns.answers(nobody_actor, campaign.id)
+
+
+# --- удаление и архив ---------------------------------------------------------
+
+
+class TestTemplateRemoval:
+    """Удаляется только то, у чего нет следов; остальное — архивом."""
+
+    def test_an_unused_draft_is_deleted(self, templates, hr_actor, template):
+        templates.delete(hr_actor, template.id)
+
+        assert not SurveyTemplate.objects.filter(id=template.id).exists()
+        # Вопросы уходят вместе с ним, а не висят без шаблона.
+        assert not SurveyQuestion.objects.filter(template_id=template.id).exists()
+
+    def test_a_template_already_sent_is_not_deleted(
+        self, templates, campaigns, hr_actor, template, employee, office,
+    ):
+        """По нему уже спрашивали: без шаблона ответы теряют вопросы."""
+        campaigns.create(
+            hr_actor, template_id=template.id, audience_kind="ALL", send_now=True,
+        )
+
+        with pytest.raises(Conflict) as refused:
+            templates.delete(hr_actor, template.id)
+
+        assert refused.value.details["reason"] == "has_campaigns"
+        assert SurveyTemplate.objects.filter(id=template.id).exists()
+
+    def test_a_published_template_is_archived_not_deleted(
+        self, templates, hr_actor, template,
+    ):
+        templates.publish(hr_actor, template.id)
+
+        with pytest.raises(Conflict):
+            templates.delete(hr_actor, template.id)
+
+    def test_archived_templates_come_only_on_request(
+        self, templates, hr_actor, template,
+    ):
+        """Из работы архивный убран, но найти его можно — отдельным отбором."""
+        templates.archive(hr_actor, template.id)
+
+        working = templates.list(hr_actor)
+        archived = templates.list(hr_actor, status="ARCHIVED")
+
+        assert template.id not in {one.id for one in working.items}
+        assert template.id in {one.id for one in archived.items}
+
+    def test_search_looks_into_the_description_too(
+        self, templates, hr_actor, template,
+    ):
+        """«Короткий опрос о работе» — в описании, а не в названии."""
+        found = templates.list(hr_actor, search="о работе")
+
+        assert template.id in {one.id for one in found.items}
+
+
+# --- круг, снимок, правка, напоминание, выгрузка ------------------------------
+
+
+class TestAudienceAndSnapshot:
+    """Кого спросят — видно до отправки, и это же уходит в день отправки."""
+
+    def test_region_reaches_everyone_in_its_offices(
+        self, templates, campaigns, hr_actor, template, employee, office, region,
+    ):
+        templates.publish(hr_actor, template.id)
+        seen = campaigns.preview(
+            hr_actor, audience_kind="REGION", audience_ids=[str(region.id)],
+        )
+        assert seen["total"] == 1
+        assert seen["people"][0]["id"] == str(employee.id)
+
+    def test_preview_names_who_the_survey_will_not_reach(
+        self, campaigns, hr_actor, employee, organization, office,
+    ):
+        """Без Telegram — не ошибка, а пропуск, и он виден заранее."""
+        second_employee(organization, office, telegram=False)
+
+        seen = campaigns.preview(hr_actor, audience_kind="ALL", audience_ids=[])
+
+        assert seen["total"] == 2
+        assert seen["reachable"] == 1
+        assert seen["no_telegram"] == 1
+        assert {one["telegram"] for one in seen["people"]} == {True, False}
+
+    def test_a_scheduled_survey_asks_the_circle_approved_at_creation(
+        self, templates, campaigns, hr_actor, template, employee,
+        organization, office,
+    ):
+        """Пришедший в отдел после планирования в круг не попадает,
+        а уволенный за это время получает исход с причиной."""
+        templates.publish(hr_actor, template.id)
+        campaign = campaigns.create(
+            hr_actor, template_id=template.id, audience_kind="OFFICE",
+            audience_ids=[str(office.id)],
+            scheduled_at=timezone.now() + timedelta(days=1),
+        )
+        assert campaign.audience_snapshot == [str(employee.id)]
+
+        newcomer = second_employee(organization, office, "EMP-NEW")
+        employee.employment_status = "TERMINATED"
+        employee.save(update_fields=["employment_status"])
+
+        services.dispatch(campaign, now=timezone.now() + timedelta(days=1))
+
+        rows = {row.employee_id: row for row in SurveyRecipient.objects.filter(
+            campaign_id=campaign.id,
+        )}
+        assert newcomer.id not in rows
+        assert rows[employee.id].status == "SKIPPED"
+        assert rows[employee.id].skip_reason == "Уже не работает в компании"
+
+    def test_a_scheduled_survey_can_be_moved_before_it_goes(
+        self, templates, campaigns, hr_actor, template, employee,
+    ):
+        templates.publish(hr_actor, template.id)
+        campaign = campaigns.create(
+            hr_actor, template_id=template.id, audience_kind="ALL",
+            scheduled_at=timezone.now() + timedelta(days=1),
+        )
+        later = timezone.now() + timedelta(days=3)
+
+        moved = campaigns.update(hr_actor, campaign.id, {"scheduled_at": later})
+
+        assert moved.scheduled_at == later
+        assert moved.next_send_at == later
+
+    def test_a_sent_survey_is_not_edited(
+        self, templates, campaigns, hr_actor, template, employee,
+    ):
+        """Люди уже получили приглашение — менять опрос под ними нельзя."""
+        templates.publish(hr_actor, template.id)
+        campaign = campaigns.create(
+            hr_actor, template_id=template.id, audience_kind="ALL", send_now=True,
+        )
+        with pytest.raises(Conflict):
+            campaigns.update(
+                hr_actor, campaign.id,
+                {"scheduled_at": timezone.now() + timedelta(days=1)},
+            )
+
+
+class TestRemindAndExport:
+    def test_reminder_goes_once_a_day_and_only_to_those_waiting(
+        self, templates, campaigns, hr_actor, template, employee,
+    ):
+        templates.publish(hr_actor, template.id)
+        campaign = campaigns.create(
+            hr_actor, template_id=template.id, audience_kind="ALL", send_now=True,
+        )
+
+        first = campaigns.remind(hr_actor, campaign.id)
+        again = campaigns.remind(hr_actor, campaign.id)
+
+        assert first == {"reminded": 1, "already": 0}
+        # Второе нажатие в тот же день — уже давление, а не напоминание.
+        assert again == {"reminded": 0, "already": 1}
+
+    def test_nobody_is_reminded_about_a_cancelled_survey(
+        self, templates, campaigns, hr_actor, template, employee,
+    ):
+        templates.publish(hr_actor, template.id)
+        campaign = campaigns.create(
+            hr_actor, template_id=template.id, audience_kind="ALL", send_now=True,
+        )
+        campaigns.cancel(hr_actor, campaign.id)
+
+        with pytest.raises(Conflict):
+            campaigns.remind(hr_actor, campaign.id)
+
+    def test_export_puts_names_next_to_answers(
+        self, templates, campaigns, hr_actor, template, employee,
+    ):
+        """Опрос именной — и выгрузка тоже."""
+        templates.publish(hr_actor, template.id)
+        campaign = campaigns.create(
+            hr_actor, template_id=template.id, audience_kind="ALL", send_now=True,
+        )
+
+        header, rows = campaigns.export(hr_actor, campaign.id)
+
+        assert header[0] == "Сотрудник"
+        assert "Насколько вам комфортно в команде?" in header
+        assert employee.last_name in rows[0][0]

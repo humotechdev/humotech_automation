@@ -69,6 +69,18 @@ export class ApiFailure extends Error {
    * `null` — сервер причины не назвал; тогда показывают общую фразу.
    */
   readonly detail: string | null;
+  /**
+   * `details.reason` — почему именно отказано, внутри одного кода.
+   *
+   * 409 у заявки бывает «период занят», «больничный уже оформлен» и
+   * «в эти дни есть отметки», и делать из них одно и то же нельзя:
+   * у последнего есть продолжение — осознанное решение кадровика,
+   * — а у первых двух его нет. Различать по тексту нельзя: текст
+   * переписывают.
+   */
+  readonly reason: string | null;
+  /** `details` целиком: в нём приходят дни конфликта и ссылка на заявку. */
+  readonly details: Record<string, unknown>;
 
   constructor(
     kind: FailureKind,
@@ -77,6 +89,7 @@ export class ApiFailure extends Error {
     field: string | null = null,
     code: string | null = null,
     detail: string | null = null,
+    details: Record<string, unknown> = {},
   ) {
     super(kind);
     this.name = 'ApiFailure';
@@ -86,6 +99,8 @@ export class ApiFailure extends Error {
     this.field = field;
     this.code = code;
     this.detail = detail;
+    this.details = details;
+    this.reason = typeof details.reason === 'string' ? details.reason : null;
   }
 }
 
@@ -108,4 +123,19 @@ const MESSAGES: Record<FailureKind, string> = {
 
 export function messageFor(error: unknown): string {
   return error instanceof ApiFailure ? MESSAGES[error.kind] : MESSAGES.server;
+}
+
+/**
+ * Отказ словами сервера, если он их сказал.
+ *
+ * «Состояние материала изменилось» — честный ответ там, где причина
+ * техническая: две вкладки, устаревшая страница. Но сервис отказывает и
+ * по делу — «больничный закрывается по справке: дата окончания не может
+ * быть в будущем», «период пересекается с подтверждённым отсутствием», —
+ * и это объяснение написано для человека. Заменять его общей фразой
+ * значит прятать от кадровика единственное, что ему нужно знать.
+ */
+export function reasonFor(error: unknown): string {
+  if (error instanceof ApiFailure && error.detail) return error.detail;
+  return messageFor(error);
 }

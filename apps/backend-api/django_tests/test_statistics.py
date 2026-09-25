@@ -326,6 +326,8 @@ def make_absence(context, code, first_day, last_day, *, status="ACTIVE"):
         origin_request=request,
         start_at=datetime.combine(first_day, datetime.min.time(), tzinfo=DUSHANBE),
         end_at=datetime.combine(last_day, datetime.max.time(), tzinfo=DUSHANBE),
+        start_date=first_day,
+        end_date=last_day,
         status=status,
     )
 

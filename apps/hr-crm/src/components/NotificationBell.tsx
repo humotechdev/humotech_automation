@@ -264,7 +264,11 @@ export function NotificationBell() {
           onClick={() => setOpen((was) => !was)}
         >
           <AppIcon name="bell" size={ICON_SIZE.title} />
-          {unread > 0 && <span className="nf__badge">{badgeText(unread)}</span>}
+          {/* Точка, а не число: сколько именно непрочитанного, видно
+              в самой панели, а в шапке нужен один вопрос — есть ли
+              что-то новое. Появляется только при непрочитанном, так
+              что «горит всегда» ей не грозит. */}
+          {unread > 0 && <span className="nf__new" aria-hidden="true" />}
         </button>
 
         {open && (

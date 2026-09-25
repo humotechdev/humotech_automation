@@ -10,11 +10,14 @@ from __future__ import annotations
 
 import uuid
 from datetime import date
+from urllib.parse import quote
 
+from django.http import FileResponse
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import serializers
 from rest_framework.decorators import action
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
 from humotech.core.api import ServiceViewSet, validated
@@ -29,6 +32,7 @@ from humotech.core.enums import (
     QUESTION_STATUSES,
     UNANSWERED_QUESTION_STATUSES,
 )
+from humotech.attendance.hr import PRESENCE_STATES
 from humotech.core.errors import ValidationFailed
 from humotech.knowledge.views import FaqSerializer
 from humotech.questions.inbox import QUICK_FILTERS, REPLY_AFTER, InboxFilters, InboxService
@@ -272,6 +276,12 @@ class DeliverySerializer(serializers.Serializer):
     error = serializers.CharField(allow_null=True)
 
 
+class AttachmentSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    mime_type = serializers.CharField()
+    size_bytes = serializers.IntegerField()
+
+
 class MessageSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     kind = serializers.ChoiceField(choices=QUESTION_MESSAGE_KINDS)
@@ -282,6 +292,7 @@ class MessageSerializer(serializers.Serializer):
     author = AuthorSerializer()
     created_at = serializers.DateTimeField()
     delivery = DeliverySerializer(allow_null=True)
+    attachment = AttachmentSerializer(allow_null=True)
 
 
 class SourceSerializer(serializers.Serializer):
@@ -319,6 +330,9 @@ class ActionsSerializer(serializers.Serializer):
     priority = serializers.BooleanField()
     category = serializers.BooleanField()
     wait = serializers.BooleanField()
+    start = serializers.BooleanField(
+        help_text="Перевести в работу, не меняя ответственного",
+    )
     close = serializers.BooleanField()
     reopen = serializers.BooleanField()
     reply = serializers.BooleanField()
@@ -420,6 +434,13 @@ class QuestionHistorySerializer(serializers.Serializer):
     recent = HistoryItemSerializer(many=True)
 
 
+class TodaySerializer(serializers.Serializer):
+    day = serializers.DateField()
+    state = serializers.ChoiceField(choices=PRESENCE_STATES, allow_null=True)
+    first_entry_at = serializers.DateTimeField(allow_null=True)
+    last_exit_at = serializers.DateTimeField(allow_null=True)
+
+
 class InboxContextSerializer(serializers.Serializer):
     employee = ContextEmployeeSerializer()
     links = ContextLinksSerializer()
@@ -429,6 +450,10 @@ class InboxContextSerializer(serializers.Serializer):
     documents = ContextDocumentSerializer(many=True, allow_null=True)
     history = QuestionHistorySerializer()
     materials = SourceSerializer(many=True, allow_null=True)
+    today = TodaySerializer(
+        allow_null=True,
+        help_text="Где сотрудник сегодня; null — нет права видеть посещаемость",
+    )
 
 
 class ReadResultSerializer(serializers.Serializer):
@@ -453,7 +478,12 @@ class CloseSerializer(serializers.Serializer):
 
 class ReplySerializer(serializers.Serializer):
     text = serializers.CharField(
-        max_length=4000, help_text="Уйдёт сотруднику в Telegram как есть",
+        max_length=4000, required=False, allow_blank=True, default="",
+        help_text="Уйдёт сотруднику в Telegram как есть; без файла обязателен",
+    )
+    file = serializers.FileField(
+        required=False,
+        help_text="PDF, PNG или JPEG до 10 МБ — придёт документом в Telegram",
     )
     after = serializers.ChoiceField(
         choices=REPLY_AFTER, default="KEEP",
@@ -621,6 +651,30 @@ class EscalationViewSet(ServiceViewSet):
             self.service.set_category(self.actor, pk, **payload)
         )
 
+    @extend_schema(summary="В работу, не меняя ответственного", request=None)
+    @action(detail=True, methods=["post"])
+    def start(self, request, pk=None):
+        return self.item_response(self.service.start(self.actor, pk))
+
+    @extend_schema(
+        summary="Файл из переписки",
+        responses={(200, "application/octet-stream"): OpenApiTypes.BINARY},
+    )
+    @action(
+        detail=True, methods=["get"],
+        url_path=r"messages/(?P<message_id>[0-9a-f-]{36})/file",
+    )
+    def message_file(self, request, pk=None, message_id=None):
+        stream, meta = self.service.message_file(
+            self.actor, pk, uuid.UUID(message_id),
+        )
+        answer = FileResponse(stream, content_type=meta.mime_type)
+        # Имя по RFC 5987: кириллица в заголовке как есть не проходит.
+        answer["Content-Disposition"] = (
+            "inline; filename*=UTF-8''" + quote(meta.original_filename or "file")
+        )
+        return answer
+
     @extend_schema(summary="Ждём сотрудника", request=None)
     @action(detail=True, methods=["post"])
     def wait(self, request, pk=None):
@@ -646,10 +700,16 @@ class EscalationViewSet(ServiceViewSet):
         ),
         request=ReplySerializer,
     )
-    @action(detail=True, methods=["post"])
+    @action(
+        detail=True, methods=["post"],
+        parser_classes=[JSONParser, MultiPartParser, FormParser],
+    )
     def reply(self, request, pk=None):
         payload = validated(ReplySerializer, request.data)
-        return self.item_response(self.service.reply(self.actor, pk, **payload))
+        upload = payload.pop("file", None)
+        return self.item_response(
+            self.service.reply(self.actor, pk, upload=upload, **payload)
+        )
 
     @extend_schema(
         summary="Пересобрать черновик по базе знаний",

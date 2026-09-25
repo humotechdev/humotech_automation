@@ -77,6 +77,11 @@ export function QrPointsManager({ office, canManage, located, onChanged, onGeo }
     return answer.sticker_link;
   }
 
+  // Пока точек нет, кнопка стоит в самом пустом состоянии — рядом с
+  // объяснением, зачем она. Вторая такая же в шапке была бы тем же
+  // действием, повторённым в двух местах одного экрана.
+  const blank = list.state === 'ready' && points.length === 0 && !adding;
+
   return (
     <div className="ofs-qr">
       <div className="ofs-qr__main">
@@ -84,7 +89,7 @@ export function QrPointsManager({ office, canManage, located, onChanged, onGeo }
           <h2 className="ofs-title">
             QR-точки <span className="ofs-qr__count">· {points.length}</span>
           </h2>
-          {canManage && !adding && (
+          {canManage && !adding && !blank && (
             <button type="button" className="ofs-btn ofs-btn--blue"
                     onClick={() => setAdding(true)}>
               <AppIcon name="plus" size={16} />
@@ -117,10 +122,28 @@ export function QrPointsManager({ office, canManage, located, onChanged, onGeo }
         {list.state === 'loading' && <p className="ofs-empty">Загружаем QR-точки…</p>}
         {list.state === 'denied' && <p className="ofs-empty">Нет доступа к QR-точкам.</p>}
         {list.state === 'error' && <p className="ofs-empty ofs-empty--bad">Не удалось загрузить QR-точки.</p>}
-        {list.state === 'ready' && points.length === 0 && !adding && (
-          <p className="ofs-empty">
-            Точек пока нет. {canManage ? 'Добавьте первую — например, «Главный вход».' : ''}
-          </p>
+        {blank && (
+          <div className="ofs-blank">
+            <AppIcon name="grid" size={20} />
+            <p className="ofs-blank__title">QR-точек пока нет</p>
+            <p className="ofs-blank__text">
+              {canManage
+                ? 'Точка — это место, где сотрудник отмечается: дверь, проходная, вход на склад. Заведите первую, распечатайте код и повесьте его на стену.'
+                : 'Точки заводит администратор офиса. Пока их нет, отметиться по QR в этом офисе нельзя.'}
+            </p>
+            {canManage && (
+              <>
+                <button type="button" className="ofs-btn ofs-btn--blue"
+                        onClick={() => setAdding(true)}>
+                  <AppIcon name="plus" size={20} />
+                  Добавить QR-точку
+                </button>
+                <p className="ofs-blank__hint">
+                  Например, «Главный вход»
+                </p>
+              </>
+            )}
+          </div>
         )}
 
         {points.length > 0 && (

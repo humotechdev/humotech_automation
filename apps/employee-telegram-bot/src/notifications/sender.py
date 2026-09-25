@@ -55,6 +55,10 @@ class Sender(Protocol):
     ) -> Outcome: ...
 
 
+#: Предел подписи к файлу в Telegram — короче предела сообщения (4096).
+CAPTION_LIMIT = 1024
+
+
 class TelegramSender:
     """Настоящая доставка. Единственное место, где бот пишет в чат.
 
@@ -79,8 +83,24 @@ class TelegramSender:
         markup = markup_for(notification_type, entity_id)
         try:
             document = await self._fetch(attachment, entity_id, telegram_user_id)
+            if document is None and attachment == "question_file":
+                # Файл и есть ответ кадровика. Текст без него — «вот
+                # бланк» без бланка; пусть очередь повторит позже.
+                return Outcome(sent=False, error="attachment_unavailable")
             if document is not None:
                 content, name = document
+                if len(text) > CAPTION_LIMIT:
+                    # Подпись к файлу в Telegram короче сообщения: длинный
+                    # ответ уходит текстом, а файл — следом, с первой
+                    # строкой ответа. По ней бот узнаёт ответ HR, когда
+                    # человек отвечает прямо на файл.
+                    await self._bot.send_message(chat_id, text, reply_markup=markup)
+                    await self._bot.send_document(
+                        chat_id,
+                        BufferedInputFile(content, filename=name),
+                        caption=text.split("\n", 1)[0],
+                    )
+                    return Outcome(sent=True)
                 # Текст уходит подписью к файлу, а не отдельным
                 # сообщением: два сообщения подряд про одно и то же
                 # человек читает как два разных события.
@@ -113,16 +133,26 @@ class TelegramSender:
         что заявка создана, чем не узнать ничего из-за недоступной
         бумаги. Заявление он в любом случае откроет из кабинета.
         """
-        if attachment != "absence_application":
+        if attachment not in (
+            "absence_application", "absence_certificate", "question_file",
+        ):
             return None
         if self._client is None or entity_id is None or telegram_user_id is None:
             return None
         try:
+            if attachment == "question_file":
+                return await self._client.question_reply_file(
+                    telegram_user_id, entity_id
+                )
+            if attachment == "absence_certificate":
+                return await self._client.absence_certificate(
+                    telegram_user_id, entity_id
+                )
             return await self._client.absence_application(
                 telegram_user_id, entity_id
             )
         except ApiError as error:
-            logger.info("application not attached: %s", error.code)
+            logger.info("paper not attached: %s", error.code)
             return None
 
 

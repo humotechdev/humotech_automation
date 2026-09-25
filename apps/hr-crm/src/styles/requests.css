@@ -106,6 +106,19 @@
   color: #1466d8;
 }
 
+/* Профиль сотрудника — переход, а не действие по заявке: синий контур
+   отличает его от серых кнопок скачивания и от красного отклонения. */
+.rq-btn--profile {
+  border-color: #b9d3f5;
+  background: #f3f8ff;
+  color: #1466d8;
+}
+
+.rq-btn--profile:hover:not(:disabled) {
+  border-color: #8fbaf0;
+  background: #e9f2ff;
+}
+
 .rq-btn--reject {
   border-color: #ef9a96;
   background: #ffffff;
@@ -120,88 +133,94 @@
 
 /* --- сетка ------------------------------------------------------------------ */
 
+/* Одна рабочая зона: очередь слева, выбранная заявка справа. Панель
+   стоит рядом постоянно, а не выезжает поверх списка — иначе, чтобы
+   посмотреть вторую заявку, сначала надо закрыть первую. */
+/*
+ * Очередь и разбор выбранной заявки — одна панель, а не две.
+ *
+ * Две рамки рядом читаются как два независимых блока, между которыми
+ * надо переводить взгляд. Здесь же это одно действие: выбрал строку —
+ * смотришь, чего ей не хватает. Разделяет их тонкая линия, и она же
+ * говорит, что правая часть принадлежит левой.
+ */
 .rq-grid {
   flex: 1 1 0;
   min-height: 520px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  column-gap: 10px;
+  grid-template-columns: minmax(0, 62fr) minmax(360px, 38fr);
+  column-gap: 0;
   margin: 0 0 -2px -3px;
-}
-
-.rq-grid--open {
-  grid-template-columns: minmax(0, 917px) minmax(0, 1fr);
-}
-
-.rq-list,
-.rq-side {
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
   border: 1px solid rgba(221, 229, 239, 0.9);
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.96);
   box-shadow: 0 6px 24px rgba(30, 64, 120, 0.06);
 }
 
+.rq-list,
+.rq-view {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .rq-list {
   padding: 0 8px 8px 9px;
+}
+
+.rq-view {
+  border-left: 1px solid var(--rq-line);
 }
 
 /* --- вкладки ---------------------------------------------------------------- */
 
 .rq-tabs {
   display: flex;
-  gap: 8px;
+  gap: 4px;
   height: 52px;
   flex: none;
   margin: 0 0 0 6px;
   border-bottom: 1px solid var(--rq-line);
 }
 
-.rq-tab {
+.rq-tabs > button {
   position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 16px;
+  gap: 8px;
+  padding: 0 14px;
   border: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
   background: transparent;
   font: inherit;
   font-size: 14px;
-  color: #3e4f6d;
+  color: #56688a;
   cursor: pointer;
 }
 
-.rq-tab--on {
-  color: #1466d8;
+.rq-tabs > button[aria-selected='true'] {
+  border-bottom-color: var(--rq-blue);
+  color: #12305c;
   font-weight: 600;
 }
 
-.rq-tab--on::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: -1px;
-  height: 3px;
-  border-radius: 2px;
-  background: var(--rq-blue);
-}
-
-.rq-tab__count {
-  min-width: 22px;
-  padding: 1px 7px;
+/* Число в кружке: оно меняется, и без подложки читается как часть
+   слова — «Больничные 3» превращается в название. */
+.rq-tabs i {
+  min-width: 20px;
+  padding: 1px 6px;
   border-radius: 999px;
-  background: #e8f0fb;
+  background: #eef2f8;
   font-size: 12px;
+  font-style: normal;
   font-weight: 600;
-  color: #34507f;
+  color: #56688a;
   text-align: center;
 }
 
-.rq-tab--on .rq-tab__count {
-  background: #dce9fd;
+.rq-tabs > button[aria-selected='true'] i {
+  background: #e4efff;
   color: #1466d8;
 }
 
@@ -364,17 +383,26 @@
   color: #b42318;
 }
 
+/* Пять колонок вместо восьми. Период и состояние документа ушли:
+   первое дублировало то, что и так видно в панели справа, второе
+   повторяло статус другими словами. */
 .rq-row {
   position: relative;
   display: grid;
-  /* Период — одной строкой, как в эталоне: ему ширина нужнее, чем типу,
-     у которого подпись и так в две строки. */
-  grid-template-columns: 52px minmax(0, 1.2fr) minmax(0, 0.9fr) minmax(0, 1.2fr) minmax(0, 0.85fr) 112px 132px 22px;
+  /*
+   * У состояния своя постоянная ширина, а не «по надписи».
+   *
+   * Каждая строка — отдельная сетка, и колонка `auto` мерилась по
+   * своему тексту: «На согласовании» и «Ожидаем документы» разной
+   * длины, из-за чего вся строка съезжала. Имена, виды, числа и
+   * состояния стояли лесенкой вместо столбцов.
+   */
+  grid-template-columns:
+    48px minmax(0, 1.3fr) minmax(0, 0.9fr) minmax(0, 1fr) 176px 28px;
   align-items: center;
-  /* 14, а не 10: при десяти подпись типа вставала вплотную к периоду. */
   column-gap: 14px;
-  min-height: 80px;
-  padding: 0 12px 0 10px;
+  min-height: 78px;
+  padding: 0 8px 0 10px;
   border-bottom: 1px solid #edf1f6;
   cursor: pointer;
 }
@@ -383,20 +411,20 @@
   background: #f8fbff;
 }
 
+/* Выбранная строка — очень светлая заливка и тонкая линия слева.
+   Не карточка: она стоит в ряду таких же, и выделять её рамкой со
+   всех сторон значит выдернуть из списка. */
 .rq-row--on {
-  border: 1px solid #b9d4fb;
-  border-radius: 6px;
   background: #eef5ff;
 }
 
 .rq-row--on::before {
   content: '';
   position: absolute;
-  top: -1px;
-  bottom: -1px;
-  left: -1px;
+  top: 0;
+  bottom: 0;
+  left: 0;
   width: 3px;
-  border-radius: 6px 0 0 6px;
   background: var(--rq-blue);
 }
 
@@ -443,22 +471,13 @@
   text-overflow: ellipsis;
 }
 
-.rq-row__kind,
-.rq-row__doc {
-  display: flex;
+/* Значок и подпись вида — одна вещь, и между ними нужен зазор:
+   без него «Больничный» читается как продолжение картинки. */
+.rq-row__kind {
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
-  font-size: 13px;
-  line-height: 17px;
-  color: var(--rq-ink);
-}
-
-.rq-row__kind > svg,
-.rq-row__doc > svg {
-  flex: none;
-  width: 24px;
-  height: 24px;
 }
 
 .rq-row__kind--blue > svg { color: #2f5fb8; }
@@ -472,20 +491,6 @@
 .rq-row__doc--orange > svg { color: var(--rq-orange); }
 .rq-row__doc--red > svg { color: var(--rq-red); }
 .rq-row__doc--none { color: var(--rq-muted); padding-left: 4px; }
-
-.rq-row__period {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  font-size: 13px;
-  line-height: 19px;
-  color: var(--rq-ink);
-}
-
-.rq-row__period small {
-  font-size: 12px;
-  color: var(--rq-muted);
-}
 
 .rq-row__period > span {
   white-space: nowrap;
@@ -553,455 +558,6 @@
   cursor: default;
 }
 
-/* --- подробности ------------------------------------------------------------ */
-
-.rq-side {
-  padding: 0 15px 14px 16px;
-  overflow: hidden;
-}
-
-.rq-side__head {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  height: 54px;
-  flex: none;
-  border-bottom: 1px solid var(--rq-line);
-}
-
-.rq-side__head h2 {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 700;
-  color: var(--rq-ink);
-  white-space: nowrap;
-}
-
-.rq-side__close {
-  display: flex;
-  margin-left: auto;
-  padding: 4px;
-  border: 0;
-  background: transparent;
-  color: #34507f;
-  cursor: pointer;
-}
-
-.rq-side__body {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow-y: auto;
-}
-
-.rq-person {
-  display: flex;
-  gap: 14px;
-  padding: 12px 0 14px;
-}
-
-.rq-person__face {
-  width: 56px;
-  height: 56px;
-  font-size: 19px;
-}
-
-.rq-person p {
-  margin: 0;
-}
-
-.rq-person__name {
-  font-size: 16.5px;
-  line-height: 22px;
-  font-weight: 700;
-  color: var(--rq-ink);
-}
-
-.rq-person__number {
-  font-size: 13px;
-  line-height: 18px;
-  color: var(--rq-muted);
-}
-
-.rq-person__place {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 22px;
-  margin-top: 6px !important;
-  font-size: 12.5px;
-  color: #4d5f7d;
-}
-
-.rq-person__place span {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.rq-person__place svg {
-  color: #4d6d9c;
-}
-
-.rq-facts {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px 16px;
-  margin: 0;
-  padding: 14px 14px 12px;
-  border: 1px solid var(--rq-line);
-  border-radius: 8px;
-  flex: none;
-}
-
-.rq-fact {
-  display: flex;
-  gap: 14px;
-  align-items: flex-start;
-}
-
-.rq-fact > svg {
-  flex: none;
-  width: 26px;
-  height: 26px;
-  margin-top: 4px;
-  color: #4d6d9c;
-}
-
-.rq-fact dt {
-  font-size: 12.5px;
-  color: var(--rq-muted);
-}
-
-.rq-fact dd {
-  margin: 0;
-  font-size: 14px;
-  line-height: 20px;
-  font-weight: 600;
-  color: var(--rq-ink);
-}
-
-.rq-block {
-  margin-top: 14px;
-  flex: none;
-}
-
-.rq-block h3 {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--rq-ink);
-}
-
-.rq-block h3 svg {
-  color: #4d6d9c;
-}
-
-.rq-block__text {
-  margin: 4px 0 0 32px;
-  font-size: 13.5px;
-  line-height: 18px;
-  color: #3e4f6d;
-}
-
-.rq-block__text--warn {
-  color: var(--rq-orange);
-}
-
-.rq-closed {
-  margin: 16px 0 0;
-}
-
-.rq-doc {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 150px;
-  gap: 12px;
-  margin-top: 8px;
-}
-
-.rq-doc__card {
-  display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
-  column-gap: 12px;
-  padding: 12px 12px 10px 16px;
-  border-radius: 8px;
-  background: #f5f8fc;
-}
-
-.rq-doc__type {
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  width: 30px;
-  height: 36px;
-  padding-bottom: 5px;
-  border-radius: 3px 10px 3px 3px;
-  background: #e5484d;
-  font-size: 9px;
-  font-weight: 700;
-  color: #ffffff;
-}
-
-.rq-doc__text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.rq-doc__text b {
-  font-size: 13.5px;
-  font-weight: 600;
-  color: var(--rq-ink);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.rq-doc__text small {
-  font-size: 11.5px;
-  color: var(--rq-muted);
-}
-
-.rq-doc__state--orange { color: var(--rq-orange) !important; }
-.rq-doc__state--green { color: var(--rq-green) !important; }
-.rq-doc__state--red { color: var(--rq-red) !important; }
-
-.rq-doc__actions {
-  grid-column: 1 / -1;
-  display: flex;
-  justify-content: center;
-  gap: 24px;
-  margin-top: 10px;
-}
-
-.rq-doc__actions a {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 600;
-  color: #1466d8;
-  text-decoration: none;
-}
-
-.rq-doc__preview {
-  width: 150px;
-  height: 180px;
-  margin-top: -40px;
-  border: 1px solid var(--rq-line);
-  border-radius: 6px;
-  object-fit: cover;
-  box-shadow: 0 4px 14px rgba(22, 48, 92, 0.08);
-}
-
-.rq-doc__preview--file {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  background: #fafbfd;
-  font-size: 12px;
-  font-weight: 700;
-  color: #7d8aa3;
-}
-
-.rq-history {
-  margin: 8px 0 0 32px;
-  padding: 0;
-  list-style: none;
-}
-
-.rq-history li {
-  position: relative;
-  display: grid;
-  grid-template-columns: 130px minmax(0, 1fr);
-  gap: 14px;
-  min-height: 27px;
-  align-items: center;
-  padding-left: 22px;
-  font-size: 13px;
-  color: var(--rq-ink);
-}
-
-.rq-history li::before {
-  content: '';
-  position: absolute;
-  left: 2px;
-  width: 9px;
-  height: 9px;
-  border-radius: 999px;
-  background: var(--rq-blue);
-}
-
-.rq-history time {
-  color: #4d5f7d;
-}
-
-.rq-history__now::before {
-  width: 12px !important;
-  height: 12px !important;
-  left: 0 !important;
-  border: 3px solid var(--rq-blue);
-  background: #ffffff !important;
-  box-sizing: border-box;
-}
-
-.rq-alert {
-  margin: 12px 0 0;
-  font-size: 13px;
-  color: #c2362f;
-}
-
-.rq-done {
-  margin: 12px 0 0;
-  font-size: 13px;
-  color: var(--rq-green);
-}
-
-.rq-decide {
-  margin-top: auto;
-  padding-top: 14px;
-  flex: none;
-}
-
-.rq-comment {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  height: 42px;
-  padding: 0 14px;
-  border: 1px solid var(--rq-field);
-  border-radius: 8px;
-  background: #ffffff;
-  color: #7d8aa3;
-}
-
-.rq-comment input {
-  flex: 1;
-  min-width: 0;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  font: inherit;
-  font-size: 13.5px;
-  color: var(--rq-ink);
-}
-
-.rq-comment small {
-  font-size: 12.5px;
-}
-
-.rq-decide__buttons {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  margin-top: 16px;
-}
-
-.rq-decide__buttons .rq-btn {
-  height: 40px;
-  padding: 0 10px;
-}
-
-/* The document action is currently disabled, but keep its full label legible
-   and reserve the top row for the two actual decisions. */
-.rq-decide__buttons .rq-btn:nth-child(2) {
-  grid-column: 1 / -1;
-  grid-row: 2;
-}
-
-.rq-decide__buttons .rq-btn:nth-child(3) {
-  grid-column: 2;
-  grid-row: 1;
-}
-
-@media (max-width: 1280px) {
-  .rq-grid--open {
-    grid-template-columns: minmax(0, 1fr);
-    row-gap: 12px;
-  }
-
-  .rq-filters {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    height: auto;
-  }
-}
-
-/* The details rail is deliberately narrow beside the request list. Stack
-   document metadata and its preview there so both remain readable. */
-@media (max-width: 1600px) {
-  .rq-doc {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .rq-doc__preview {
-    width: 100%;
-    height: 104px;
-    margin-top: 0;
-    object-fit: contain;
-  }
-}
-
-/* --- «Заявки» на любой ширине ------------------------------------------------
- *
- * Здесь нет подгонки под конкретные экраны. Раньше было: сначала правило
- * на 1280, потом на 1400, потом на 1600 — и каждый раз находился монитор,
- * на котором страница ломалась заново. Причина в том, что ширина списка
- * зависит не от окна, а от того, открыты ли подробности: при одном и том
- * же экране список бывает и 1400, и 700.
- *
- * Поэтому строка заявки смотрит на СВОЙ контейнер (`@container`), а не на
- * окно. Сколько места ей досталось — столько колонок она и показывает,
- * независимо от размера монитора, масштаба системы и открытой панели.
- *
- * Остальное сделано текучим: ширины через `clamp` и `auto-fit`, а не
- * ступеньками. Ступенька всегда оставляет диапазон, в котором плохо.
- */
-
-/* Подробности открываются ШТОРКОЙ поверх страницы, а не второй колонкой.
- *
- * Колонка забирала у списка треть ширины, и от нажатия на строку
- * страница перекладывалась целиком: колонки сужались, строки
- * перестраивались, высота менялась. Шторка ничего этого не делает —
- * список под ней остаётся ровно таким, каким был.
- *
- * Шапка не перекрывается: шторка начинается под ней. Прокрутка у
- * шторки своя, страница под ней не двигается. */
-.rq-grid--open {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.rq-grid--open .rq-side {
-  position: fixed;
-  top: var(--topbar-height);
-  right: 0;
-  bottom: 0;
-  z-index: 46;
-  width: min(560px, 94vw);
-  border-radius: 0;
-  border-left: 1px solid var(--rq-line);
-  box-shadow: -18px 0 46px rgba(19, 62, 104, 0.18);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
-  /* Плотный фон: у панели в потоке он был полупрозрачным, и сквозь
-     шторку читались строки списка под ней. */
-  background: #fff;
-}
-
-/* Шапка шторки остаётся на виду при прокрутке её содержимого: закрыть
-   её нужно из любого места. */
-.rq-grid--open .rq-side__head {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  background: #fff;
-}
-
 /* Строка отбора укладывается сама. Не сетка из равных долей: у полей
    разные потребности — паре дат нужно вдвое больше, чем выбору офиса,
    а кнопке «Фильтры» хватает её подписи. Поэтому гибкая строка, где у
@@ -1066,138 +622,6 @@
   min-width: 0;
 }
 
-/* --- колонки списка ----------------------------------------------------------
- *
- * Шапка колонок и строки живут на одной сетке: её описание лежит в
- * переменной `--rq-cols` у области прокрутки, и оба набора берут его
- * оттуда. Поэтому подпись «Статус» стоит ровно над статусами на любой
- * ширине.
- *
- * Ширину меряем у самого списка (`@container`), а не у окна. Когда
- * места мало, уходит сначала документ, потом дата подачи: ФИО, тип,
- * период, статус и стрелка остаются всегда.
- *
- * Статус — фиксированные 140 px: «Отмена запрошена», самая длинная
- * метка, занимает около 130 и не должна обрезаться. Стрелка — у
- * правого края, в своей колонке.
- */
-.rq-rows {
-  --rq-cols: 32px minmax(0, 1.35fr) minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 0.95fr) 92px 140px 18px;
-}
-
-.rq-row,
-.rq-cols {
-  grid-template-columns: var(--rq-cols);
-  column-gap: 12px;
-}
-
-.rq-row > *,
-.rq-cols > * {
-  min-width: 0;
-}
-
-@container rq-list (max-width: 880px) {
-  .rq-rows {
-    --rq-cols: 32px minmax(0, 1.35fr) minmax(0, 1fr) minmax(0, 1.15fr) 92px 140px 18px;
-  }
-
-  .rq-row > :nth-child(5),
-  .rq-cols > :nth-child(5) {
-    display: none;
-  }
-}
-
-@container rq-list (max-width: 700px) {
-  .rq-rows {
-    --rq-cols: 32px minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1.15fr) 140px 18px;
-  }
-
-  .rq-row > :nth-child(6),
-  .rq-cols > :nth-child(6) {
-    display: none;
-  }
-}
-
-/* Меньше 520 строка перестаёт быть строкой: значок и ФИО сверху,
-   остальное — под ними. Шапка колонок в таком виде ничего не
-   подписывает и прячется. */
-@container rq-list (max-width: 520px) {
-  .rq-rows {
-    --rq-cols: 32px minmax(0, 1fr) 18px;
-  }
-
-  .rq-cols {
-    display: none;
-  }
-
-  .rq-rows .rq-row {
-    height: auto;
-    row-gap: 4px;
-    padding: 8px 10px;
-  }
-
-  .rq-row > :nth-child(3),
-  .rq-row > :nth-child(4),
-  .rq-row > :nth-child(7) {
-    grid-column: 2;
-  }
-}
-
-/* Подробности: длинные значения переносятся и не выходят за край. */
-.rq-side,
-.rq-side * {
-  min-width: 0;
-}
-
-.rq-side__body {
-  overflow-wrap: break-word;
-}
-
-/* Номер заявки сокращается отточием, метка состояния рядом не
-   сжимается и не наезжает на него. */
-/* Шапка подробностей переносится: номер заявки длинный, а метка
-   состояния рядом с ним не сжимается. Лучше две строки, чем номер,
-   обрезанный до «Заявка …». */
-.rq-side__head {
-  gap: 8px 10px;
-  flex-wrap: wrap;
-  height: auto;
-  min-height: 54px;
-  padding: 8px 0;
-}
-
-.rq-side__head h2 {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.rq-side__head > :not(h2) {
-  flex: none;
-}
-
-/* На узком экране шторка занимает почти всю ширину — читать заявку
-   в полосе 300 px нечем. */
-@media (max-width: 720px) {
-  .rq-grid--open .rq-side {
-    width: 100vw;
-  }
-}
-
-/* Затемнение под шторкой заявки. Ниже шапки: она остаётся доступной. */
-.rq-scrim {
-  position: fixed;
-  top: var(--topbar-height);
-  right: 0;
-  bottom: 0;
-  left: 0;
-  z-index: 45;
-  border: 0;
-  padding: 0;
-  background: rgba(11, 40, 100, 0.22);
-  cursor: pointer;
-}
-
 /* --- «Заявки»: плотная рабочая страница ---------------------------------------
  *
  * Та же задача, что на «Обращениях», «Сотрудниках», «Посещаемости» и
@@ -1209,10 +633,15 @@
  * Страница ровно в высоту окна и целиком не прокручивается: шапка,
  * вкладки и отбор стоят на месте, пагинация прибита к низу списка,
  * прокручиваются только строки заявок.
+ *
+ * Это про очередь. Карточка одной заявки (`.rq-one`) растёт по
+ * содержимому и прокручивается целиком: там нет списка, который можно
+ * было бы прокручивать отдельно, и обрезать её нижний край нельзя —
+ * внизу стоит отклонение заявки.
  */
 
 @media (min-width: 721px) and (min-height: 560px) {
-  .canvas:has(> .rq) {
+  .canvas:has(> .rq:not(.rq-one)) {
     flex: 1 1 0;
     min-height: 0;
     overflow: hidden;
@@ -1220,7 +649,7 @@
     padding-bottom: 12px;
   }
 
-  .rq {
+  .rq:not(.rq-one) {
     flex: 1 1 auto;
     min-height: 0;
   }
@@ -1419,56 +848,12 @@
   scrollbar-gutter: stable;
 }
 
-/* --- шапка колонок ------------------------------------------------------------ */
-
-.rq-cols {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  display: grid;
-  align-items: center;
-  height: 30px;
-  padding: 0 12px 0 20px;
-  border-bottom: 1px solid var(--rq-line);
-  background: #f5f8fc;
-  font-size: 12px;
-  font-weight: 600;
-  color: #5b6d8a;
-}
-
-.rq-cols > span {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
 /* --- строки ------------------------------------------------------------------- */
 
 /* Все строки одной высоты: каждая колонка — одна-две строки текста без
    переноса, длинное сокращается многоточием. Выбранная строка
    выделяется заливкой и тенью внутрь, а не рамкой: рамка добавляла
    строке два пикселя, и список под ней вздрагивал. */
-.rq-rows .rq-row {
-  height: 52px;
-  min-height: 0;
-  padding: 0 12px 0 20px;
-  border: 0;
-  border-bottom: 1px solid #edf1f6;
-  border-radius: 0;
-}
-
-.rq-rows .rq-row--on {
-  background: #eef5ff;
-  box-shadow: inset 0 0 0 1px #b9d4fb;
-}
-
-.rq-rows .rq-row--on::before {
-  top: 0;
-  bottom: 0;
-  left: 0;
-  border-radius: 0;
-}
-
 .rq-row:focus-visible {
   outline: 2px solid #1f6fe0;
   outline-offset: -2px;
@@ -1503,62 +888,12 @@
   margin-right: 6px;
 }
 
-.rq-row__kind,
-.rq-row__doc {
-  gap: 7px;
-  font-size: 12.5px;
-  line-height: 16px;
-}
-
-.rq-row__kind > svg,
-.rq-row__doc > svg {
-  width: 18px;
-  height: 18px;
-}
-
-.rq-row__kind > span,
-.rq-row__doc > span {
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.rq-row__period {
-  font-size: 12.5px;
-  line-height: 17px;
-}
-
-.rq-row__period > span,
-.rq-row__period small {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.rq-row__period small {
-  font-size: 11.5px;
-  line-height: 15px;
-}
-
-.rq-row__when {
-  overflow: hidden;
-  font-size: 12px;
-  text-overflow: ellipsis;
-}
-
 .rq-rows .rq-status {
   justify-self: start;
   max-width: 100%;
   height: 24px;
   padding: 0 10px;
   font-size: 12.5px;
-}
-
-.rq-row__go {
-  justify-self: end;
-  width: 18px;
-  height: 18px;
 }
 
 .rq-rows .rq-empty {
@@ -1580,280 +915,1142 @@
   font-size: 12.5px;
 }
 
-/* --- шторка заявки ------------------------------------------------------------
+/* --- конфликт посещаемости --------------------------------------------------
  *
- * Шапка с номером и крестиком — сверху, решение — снизу, а
- * прокручивается только середина: сотрудник, факты, причина, документ
- * и история. Одобрить или отклонить можно, не пролистывая документ.
+ * Появляется только после отказа сервера: отметки внутри больничного —
+ * редкость, и спрашивать про них у каждой заявки значит превратить
+ * исключение в обязательный шаг.
  */
 
-.rq-grid--open .rq-side {
+.rq-marks {
   display: flex;
   flex-direction: column;
-  width: min(520px, 94vw);
-  padding: 0;
-  overflow: hidden;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 12px;
+  border: 1px solid #f3d9b4;
+  border-radius: 10px;
+  background: #fff1de;
 }
 
-.rq-grid--open .rq-side__head {
-  position: static;
-  flex: none;
-  min-height: 50px;
-  padding: 8px 14px 8px 18px;
-}
-
-.rq-side__head h2 {
-  font-size: 17px;
-  line-height: 22px;
-}
-
-.rq-side .rq-status {
-  height: 24px;
-  padding: 0 10px;
-  font-size: 12.5px;
-}
-
-.rq-side__body {
-  flex: 1 1 auto;
-  min-height: 0;
-  padding: 0 14px 12px 18px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
-}
-
-.rq-side__foot {
-  flex: none;
-  padding: 10px 18px 14px;
-  border-top: 1px solid var(--rq-line);
-  background: #ffffff;
-}
-
-.rq-side__foot .rq-alert,
-.rq-side__foot .rq-done {
-  margin: 0 0 8px;
-}
-
-.rq-side__foot .rq-decide {
-  margin-top: 0;
-  padding-top: 0;
-}
-
-.rq-side__foot .rq-closed {
+.rq-marks h4 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: #b8650a;
 }
 
-.rq-person {
-  gap: 12px;
-  padding: 10px 0;
-}
-
-.rq-person__face {
-  width: 44px;
-  height: 44px;
-  font-size: 15px;
-}
-
-.rq-person__name {
-  font-size: 15px;
-  line-height: 20px;
-}
-
-.rq-person__number {
-  font-size: 12.5px;
-  line-height: 17px;
-}
-
-.rq-person__place {
-  gap: 2px 16px;
-  margin-top: 3px !important;
-  font-size: 12px;
-}
-
-.rq-facts {
-  gap: 10px 14px;
-  padding: 10px 12px;
-}
-
-.rq-fact {
-  gap: 10px;
-}
-
-.rq-fact > svg {
-  width: 20px;
-  height: 20px;
-  margin-top: 2px;
-}
-
-.rq-fact dt {
-  font-size: 12px;
-}
-
-.rq-fact dd {
-  font-size: 13px;
-  line-height: 18px;
-}
-
-.rq-block {
-  margin-top: 12px;
-}
-
-.rq-block h3 {
-  gap: 8px;
-  font-size: 13.5px;
-}
-
-.rq-block h3 svg {
-  width: 18px;
-  height: 18px;
-}
-
-.rq-block__text {
-  margin-left: 26px;
-  font-size: 13px;
-}
-
-.rq-history {
-  margin: 6px 0 0 26px;
-}
-
-.rq-history li {
-  grid-template-columns: 118px minmax(0, 1fr);
-  gap: 10px;
-  min-height: 24px;
-  font-size: 12.5px;
-}
-
-.rq-comment {
-  height: 36px;
-  padding: 0 10px;
-  gap: 8px;
-}
-
-.rq-comment input {
-  font-size: 13px;
-}
-
-.rq-comment small {
-  font-size: 11.5px;
-}
-
-.rq-decide__buttons {
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.rq-decide__buttons .rq-btn {
-  height: 36px;
-  gap: 7px;
-  font-size: 13px;
-}
-
-.rq-decide__buttons .rq-btn svg {
-  width: 17px;
-  height: 17px;
-}
-
-/* Решение по справке.
-
-   Стоит под карточкой документа, а не рядом с решением по заявке: это
-   разные решения, и ставить их в один ряд значит предлагать принять
-   больничный нажатием, предназначенным для бумаги. */
-.rq-doc__decide {
+/* Дни — строкой чипов: их бывает один, а бывает десять, и список
+   столбиком в таком случае отодвигает кнопку решения за край. */
+.rq-marks ul {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 10px;
-}
-
-.rq-doc__decideRow {
-  display: flex;
-  gap: 8px;
   flex-wrap: wrap;
-}
-
-.rq-doc__decide textarea.input {
-  width: 100%;
-  resize: vertical;
-}
-
-/* --- два пункта проверки больничного ----------------------------------------
- *
- * Список, а не пара плашек: кадровик смотрит на него как на чек-лист —
- * что закрыто, что нет. Пункты независимы намеренно: подписанное
- * заявление подтверждает намерение человека, справка — факт болезни,
- * и приходят они разными дорогами.
- */
-
-.rq-checks {
+  gap: 4px 8px;
   margin: 0;
   padding: 0;
   list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
 }
 
-.rq-checks li {
+.rq-marks li {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #fff;
+  font-size: 13px;
+  color: #22303f;
+}
+
+.rq-marks p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #52627a;
+}
+
+.rq-marks .rq-btn {
+  align-self: flex-start;
+}
+
+/* --- правая панель очереди ---------------------------------------------------
+ *
+ * Читает заявку, а не решает по ней. Решение — на отдельной странице:
+ * у него есть цена, и принимать его, не открыв бумаги и историю,
+ * нельзя. Здесь кадровик понимает, стоит ли эту заявку открывать.
+ */
+
+.rq-view {
+  padding: 24px 28px 22px;
+  gap: 20px;
+}
+
+.rq-view--idle {
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.rq-view--idle p {
+  margin: 0;
+  max-width: 240px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--rq-muted);
+}
+
+.rq-view__head {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+}
+
+.rq-view__icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+  background: #e8f0fb;
+  color: #2f5fb8;
+}
+
+.rq-view__head h2 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 600;
+  color: var(--rq-ink);
+}
+
+.rq-view__head p {
+  margin: 2px 0 8px;
+  font-size: 13px;
+  color: var(--rq-muted);
+}
+
+.rq-view__body {
+  padding-top: 16px;
+  border-top: 1px solid var(--rq-line);
+}
+
+.rq-view__body h3 {
+  margin: 0 0 12px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--rq-ink);
+}
+
+.rq-view__checks {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rq-check {
+  display: grid;
+  /* Подпись занимает своё, значение — остаток строки. При `auto` у
+     значения длинный период выдавливал «Фактические даты» в две
+     строки и наезжал на них. */
+  grid-template-columns: 20px auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 15px 0;
+  border-bottom: 1px solid var(--rq-line);
+  font-size: 14px;
+}
+
+.rq-check:first-child { padding-top: 4px; }
+.rq-check:last-child { border-bottom: 0; padding-bottom: 4px; }
+
+.rq-check > svg {
+  color: #7d8ca6;
+}
+
+.rq-check b {
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--rq-ink);
+}
+
+.rq-check__value {
+  min-width: 0;
+  font-size: 13.5px;
+  text-align: right;
+}
+
+.rq-check__value--orange { color: var(--rq-orange); }
+.rq-check__value--red { color: var(--rq-red); }
+.rq-check__value--green { color: #17915a; }
+.rq-check__value--grey { color: var(--rq-muted); }
+
+/* Подсказка, а не предупреждение: объясняет порядок, а не торопит. */
+.rq-hint {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--rq-muted);
+}
+
+.rq-hint > svg {
+  margin-top: 1px;
+  color: #7d97c4;
+}
+
+.rq-view__foot {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  margin-top: auto;
+  padding-top: 18px;
+  border-top: 1px solid var(--rq-line);
+}
+
+.rq-view__foot .rq-btn {
+  justify-content: center;
+  text-decoration: none;
+}
+
+/* Пустая очередь: короткий ответ внутри списка, а не отдельная
+   страница с иллюстрацией. */
+.rq-none {
+  padding: 48px 16px;
+  text-align: center;
+}
+
+.rq-none p {
+  margin: 0 0 6px;
+  font-size: 14.5px;
+  font-weight: 500;
+  color: var(--rq-ink);
+}
+
+.rq-none small {
+  font-size: 13px;
+  color: var(--rq-muted);
+}
+
+/* --- строка очереди: подпись даты и стрелка ---------------------------------- */
+
+.rq-row__when {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+  color: var(--rq-ink);
+}
+
+.rq-row__when small {
+  font-size: 12px;
+  color: var(--rq-muted);
+}
+
+.rq-row__state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.rq-row__state i {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+  flex: none;
+}
+
+a.rq-row__go {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  color: #9aa9c0;
+}
+
+a.rq-row__go:hover {
+  background: #e4edfa;
+  color: #1466d8;
+}
+
+/* --- страница одной заявки ----------------------------------------------------
+ *
+ * Те же поверхности, что и в очереди: белые карточки, тонкая светлая
+ * граница, минимум теней. Отдельная страница отличается не стилем, а
+ * тем, что на ней принимают решение.
+ */
+
+.rq-one {
+  /*
+   * Карточка растёт по содержимому, а не по окну.
+   *
+   * От `.rq` ей доставался `flex: 1` — высота приколачивалась к экрану,
+   * и всё, что не помещалось, вылезало за нижний край: отклонение
+   * заявки оказывалось нарисованным поверх фона, вне своей же карточки.
+   */
+  flex: 0 0 auto;
+  gap: 0;
+  padding: 22px 26px 20px;
+  border: 1px solid rgba(221, 229, 239, 0.9);
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 6px 24px rgba(30, 64, 120, 0.06);
+}
+
+/* Путь внутри карточки: он про эту заявку, а не про раздел вообще. */
+.rq-one__crumbs {
   display: flex;
   align-items: center;
+  gap: 9px;
+  margin: 0 0 14px;
+  font-size: 13.5px;
+  color: var(--rq-muted);
+}
+
+.rq-one__crumbs a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* Под курсором темнеет ровно тот кусок, по которому и перейдёшь. */
+.rq-one__crumbs a:hover { color: var(--rq-ink); }
+.rq-one__crumbs i { font-style: normal; color: #b6c2d4; }
+.rq-one__crumbs b { font-weight: 600; color: var(--rq-ink); }
+
+.rq-one__head {
+  display: flex;
+  align-items: flex-end;
   justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.rq-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-size: 13px;
+  color: #1466d8;
+  text-decoration: none;
+}
+
+.rq-back:hover {
+  text-decoration: underline;
+}
+
+.rq-who {
+  display: grid;
+  /*
+   * Свободную ширину делят поровну имя и дата: линия между ними встаёт
+   * посередине полосы, дата начинается сразу за ней, а состояние
+   * уходит к правому краю и больше не липнет к дате.
+   */
+  grid-template-columns: 56px minmax(0, 1fr) 1px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+  padding: 16px 18px;
+  border: 1px solid var(--rq-line);
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.rq-who__face {
+  width: 56px;
+  height: 56px;
+  font-size: 18px;
+}
+
+.rq-who__name b {
+  display: block;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--rq-ink);
+}
+
+.rq-who__name small,
+.rq-who__when small {
+  font-size: 13px;
+  color: var(--rq-muted);
+}
+
+.rq-who__split {
+  align-self: stretch;
+  width: 1px;
+  /* По бокам чуть больше воздуха, чем даёт общий зазор: линия делит
+     полосу, а не подчёркивает соседнюю строку. */
+  margin: 2px 6px;
+  background: var(--rq-line);
+}
+
+/* Дата стоит вплотную к линии и читается сверху вниз: подпись, под ней
+   число и время. Прижатая к правому краю, она склеивалась с состоянием
+   и выглядела его частью. */
+.rq-who__when {
+  text-align: left;
+}
+
+.rq-who__when b {
+  display: block;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--rq-ink);
+}
+
+/* Состояние заявки в карточке сотрудника: значок, слово и пояснение.
+   «Нужны исправления» без второй строки читается как отказ, а заявка
+   при этом жива и лежит на рассмотрении. */
+.rq-mark {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 8px;
+}
+
+.rq-mark b {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.rq-mark small {
+  display: block;
+  margin-top: 1px;
+  font-size: 12.5px;
+}
+
+.rq-mark--orange { background: #fff6e5; }
+.rq-mark--orange > svg,
+.rq-mark--orange b { color: #b8650a; }
+.rq-mark--orange small { color: #97744a; }
+
+.rq-mark--red { background: #fdf1f0; }
+.rq-mark--red > svg,
+.rq-mark--red b { color: #b8322c; }
+.rq-mark--red small { color: #9a6c69; }
+
+.rq-mark--green { background: #e9f7f0; }
+.rq-mark--green > svg,
+.rq-mark--green b { color: #17845a; }
+.rq-mark--green small { color: #5c8676; }
+
+.rq-mark--grey { background: #f1f4f8; }
+.rq-mark--grey > svg,
+.rq-mark--grey b { color: #4a5c78; }
+.rq-mark--grey small { color: var(--rq-muted); }
+
+.rq-one__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 62fr) minmax(340px, 38fr);
+  align-items: start;
+  gap: 16px;
+}
+
+/* Бумаги сотрудника и проверка кадровика — два разных занятия, и у
+   каждого своя рамка внутри общей карточки заявки. */
+.rq-card {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 20px;
+  border: 1px solid var(--rq-line);
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.rq-card--side { padding: 20px; }
+
+/* Разделы внутри колонки отделены линией: бумаги, справка и история —
+   три разных вопроса к одной заявке, а не один сплошной текст. */
+.rq-part + .rq-part {
+  padding-top: 18px;
+  border-top: 1px solid var(--rq-line);
+}
+
+.rq-card__title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--rq-ink);
+}
+
+.rq-part h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--rq-ink);
+}
+
+.rq-part__text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--rq-muted);
+}
+
+/*
+ * Период внизу столбца проверки.
+ *
+ * Длительность — не отдельный факт, а те же даты другими словами,
+ * поэтому она стоит в той же строке, а не под ней: складывать дни
+ * взглядом кадровик не должен.
+ */
+.rq-span {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: center;
   gap: 12px;
-  padding: 10px 12px;
+  margin-top: 4px;
+  padding: 13px 14px;
+  border: 1px solid var(--rq-line);
+  border-radius: 10px;
+  background: #f8fafd;
+}
+
+.rq-span__mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: #ffffff;
+  border: 1px solid var(--rq-line);
+  color: #5b7aa8;
+}
+
+.rq-span__body small {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 12px;
+  color: var(--rq-muted);
+}
+
+.rq-span__body b {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--rq-ink);
+}
+
+.rq-span__body i {
+  font-style: normal;
+  font-size: 12.5px;
+  font-weight: 400;
+  color: var(--rq-muted);
+}
+
+/* Дат ещё нет — это состояние, а не значение: тем же цветом, что и
+   «не указаны» в строке проверки над ним. */
+.rq-span__body b.rq-span--none {
+  font-weight: 500;
+  color: var(--rq-orange);
+}
+
+/* Строка файла. Не дропзона: файл сюда не кладут — его приносит
+   сотрудник из своего приложения. */
+.rq-file {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--rq-line);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+/*
+ * Справка и решение по ней — одна вещь в одной рамке.
+ *
+ * Отказ без файла рядом не читается: «не принята» — это про этот
+ * документ, а не про заявку вообще.
+ */
+.rq-paper {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
   border: 1px solid var(--rq-line);
   border-radius: 10px;
 }
 
-/* Закрытый пункт — зелёная полоса слева, а не зелёная заливка: строка
-   должна оставаться читаемой, а не превращаться в плашку. */
-.rq-checks li.is-done {
-  border-left: 3px solid var(--rq-green);
+.rq-paper .rq-file {
+  border: 0;
+  padding: 0 2px;
 }
 
-.rq-checks li span {
+.rq-paper .rq-refused { margin-top: 0; }
+
+/*
+ * Справки ещё нет.
+ *
+ * Та же рамка, что и у приложенной: раздел не проваливается в одну
+ * серую строку, и сразу понятно, что документ ждут, а не забыли.
+ * Значок в спокойной подложке — он тут не действие, а заглушка на
+ * месте будущего файла.
+ */
+.rq-wait {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+  padding: 16px 14px;
+  border: 1px solid var(--rq-line);
+  border-radius: 10px;
+}
+
+.rq-wait__mark {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: #f1f4f9;
+  color: #8fa0b8;
 }
 
-.rq-checks li b {
+.rq-wait__body b {
+  display: block;
+  margin-bottom: 3px;
   font-size: 14px;
+  font-weight: 600;
   color: var(--rq-ink);
 }
 
-.rq-checks li small {
+.rq-wait__body small {
+  font-size: 13px;
+  color: var(--rq-muted);
+}
+
+.rq-file__type {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+}
+
+/* Значок без подложки: цветной квадрат рядом с каждой строкой спорит
+   за внимание с самим действием, а различает строки цвет линий. */
+.rq-file__type--blue { color: #2f5fb8; }
+.rq-file__type--red { color: var(--rq-red); }
+
+.rq-file__text b {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--rq-ink);
+}
+
+.rq-file__text small {
   font-size: 12px;
   color: var(--rq-muted);
 }
 
-.rq-checks li.is-done small {
-  color: var(--rq-green);
+.rq-file__get {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 14px;
+  border: 1px solid #d5e0ef;
+  border-radius: 8px;
+  background: #ffffff;
+  font-size: 13.5px;
+  color: #2c4a77;
+  text-decoration: none;
+  white-space: nowrap;
 }
 
-/* --- фактический период ------------------------------------------------------ */
+.rq-file__get:hover {
+  border-color: #b9d4fb;
+  color: #1466d8;
+}
 
-.rq-period {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
+/* Справку не приняли. Приглушённый тон и строка под файлом, а не
+   баннер во всю ширину: бумагу не выбросили, за ней придут снова. */
+.rq-refused {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
   gap: 10px;
-  margin-top: 10px;
+  margin-top: 8px;
+  padding: 12px 14px;
+  border: 1px solid #f3cfcd;
+  border-radius: 8px;
+  background: #fdf1f0;
 }
 
-.rq-period label {
+.rq-refused > svg {
+  margin-top: 2px;
+  color: var(--rq-red);
+}
+
+.rq-refused b {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #b8322c;
+}
+
+.rq-refused small {
+  display: block;
+  margin-top: 2px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: #7c4a47;
+}
+
+.rq-refused__wait {
+  color: #9a6c69;
+}
+
+.rq-ok {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: #17915a;
+}
+
+/* История: неизменяемая лента. Прошлую справку и комментарий нельзя
+   стереть заменой новой. */
+.rq-time {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  flex: 1 1 140px;
+  gap: 14px;
+  /* Три события видно сразу, остальные — прокруткой: лента растёт с
+     каждой правкой, и целиком она нужна редко. */
+  max-height: 132px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0 0 0 26px;
+  list-style: none;
+  /*
+   * Линия ленты — фоном, а не рамкой блока.
+   *
+   * У прокручиваемого блока всё, что вылезает за его край, обрезается,
+   * и кружки событий, стоящие на самой рамке, срезало пополам.
+   */
+  background: linear-gradient(var(--rq-line), var(--rq-line)) 8px 0 / 1px 100% no-repeat;
+}
+
+.rq-time li {
+  position: relative;
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 12px;
+  font-size: 13px;
+}
+
+.rq-time li::before {
+  content: '';
+  position: absolute;
+  left: -22px;
+  top: 4px;
+  width: 9px;
+  height: 9px;
+  border: 2px solid #ffffff;
+  border-radius: 999px;
+  background: #9dbbe8;
+  box-shadow: 0 0 0 1px #c7d8f0;
+}
+
+.rq-time li.is-bad::before {
+  background: var(--rq-red);
+  box-shadow: 0 0 0 1px #f0b9b6;
+}
+
+.rq-time time {
+  color: var(--rq-muted);
+}
+
+.rq-time b {
+  font-weight: 500;
+  color: #1c4c93;
+}
+
+.rq-time li.is-bad b {
+  color: var(--rq-ink);
+}
+
+/* Имя автора шага — рядом с самим шагом и спокойнее его: отвечает на
+   «с кого спрашивать», но не спорит с «что произошло». */
+.rq-time i {
+  font-style: normal;
+  font-weight: 400;
+  color: var(--rq-muted);
+}
+
+.rq-time small {
+  display: block;
+  margin-top: 2px;
+  font-size: 12.5px;
+  color: var(--rq-muted);
+}
+
+.rq-time__none {
+  display: block;
+  color: var(--rq-muted);
+}
+
+/* --- чек-лист кадровика -------------------------------------------------------- */
+
+.rq-card--side {
+  gap: 16px;
+}
+
+.rq-steps {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  /* Три пункта проверки — один предмет, а не три строки, повисшие под
+     заголовком: в рамке видно, где проверка начинается и где кончается,
+     и отделённое ниже пояснение перестаёт читаться её продолжением. */
+  padding: 0 14px;
+  border: 1px solid var(--rq-line);
+  border-radius: 10px;
+  list-style: none;
+}
+
+.rq-step + .rq-step {
+  border-top: 1px solid var(--rq-line);
+}
+
+.rq-step > button,
+.rq-step__flat {
+  display: grid;
+  /* См. `.rq-check`: подпись по себе, значение — по остатку. */
+  grid-template-columns: 20px auto minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 14px 2px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  color: var(--rq-ink);
+}
+
+.rq-step > button {
+  cursor: pointer;
+}
+
+.rq-step > button:hover {
+  color: #1466d8;
+}
+
+.rq-step b {
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.rq-step > * > span {
+  min-width: 0;
+  font-size: 13px;
+  text-align: right;
+  color: var(--rq-muted);
+}
+
+.rq-step--wait > * > svg:first-child { color: #b0bdd2; }
+.rq-step--wait > * > span { color: var(--rq-orange); }
+.rq-step--done > * > svg:first-child { color: #17915a; }
+.rq-step--done > * > span { color: #17915a; }
+.rq-step--bad > * > svg:first-child { color: var(--rq-red); }
+.rq-step--bad > * > span { color: var(--rq-red); }
+
+.rq-step__go {
+  color: #b0bdd2;
+}
+
+/* Действие раскрывается под своим пунктом: проверка идёт по одному,
+   и три формы сразу превращают её в анкету. */
+/*
+ * Действие раскрывается внутри своей строки, в той же рамке.
+ *
+ * Отдельной голубой панелью под списком оно отвечало неизвестно на
+ * какой пункт: три строки выше, а панель одна. Здесь у неё нет ни
+ * рамки, ни подложки — она продолжение строки, а не соседний предмет.
+ */
+.rq-act {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 2px 16px;
+}
+
+.rq-act p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--rq-muted);
+}
+
+.rq-act__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/*
+ * Два исхода проверки справки.
+ *
+ * Равной ширины и оба контуром: кадровик выбирает, а не соглашается с
+ * подсвеченным по умолчанию. Залитая синим «принять» подталкивала бы
+ * принимать не глядя.
+ */
+.rq-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 0 2px 16px;
+}
+
+/* Ширину делят по надписям, а не поровну: «отправить на исправление»
+   длиннее «принять справку», и равные половины ломали бы его надвое. */
+.rq-pick__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.rq-pick__btn {
+  flex: 1 1 auto;
+  min-width: 140px;
+  height: 40px;
+  padding: 0 12px;
+  white-space: nowrap;
+  border: 1px solid var(--rq-line);
+  border-radius: 8px;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--rq-ink);
+  cursor: pointer;
+}
+
+/* Принять — обычный ход дела, синим. Вернуть на исправление — шаг
+   назад для сотрудника, янтарным: это не отказ по заявке, но и не
+   «дальше», и красный здесь обещал бы больше, чем происходит. */
+.rq-pick__btn--take { border-color: #9ec4f2; color: #1466d8; }
+.rq-pick__btn--take:hover:not(:disabled) { border-color: #1466d8; background: #f3f8ff; }
+.rq-pick__btn--fix { border-color: #e6bd7c; color: #a9720d; }
+.rq-pick__btn--fix:hover:not(:disabled) { border-color: #d79f3f; background: #fdf7ec; }
+.rq-pick__btn:hover:not(:disabled) { border-color: #b6c4d8; }
+.rq-pick__btn:disabled { opacity: 0.55; cursor: default; }
+
+.rq-pick__hint {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--rq-muted);
+}
+
+/*
+ * Окно с причиной возврата справки.
+ *
+ * Причину пишут не между делом: текст уходит сотруднику в чат, и место
+ * под него — отдельное окно, а не поле в углу столбца.
+ */
+.rq-ask {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgb(15 23 42 / 45%);
+}
+
+.rq-ask__box {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(460px, 100%);
+  max-height: 88vh;
+  overflow-y: auto;
+  padding: 20px 22px 22px;
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 18px 44px rgb(15 23 42 / 24%);
+}
+
+.rq-ask__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.rq-ask__head h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--rq-ink);
+}
+
+.rq-ask__x {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--rq-muted);
+  cursor: pointer;
+}
+
+.rq-ask__x:hover { background: #f1f4f9; color: var(--rq-ink); }
+
+.rq-ask__note {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--rq-muted);
+}
+
+.rq-ask__bad {
+  margin: 0;
+  font-size: 13px;
+  color: var(--rq-red);
+}
+
+.rq-ask__tools {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+/* В окне кнопки по надписи: растягивать «отправить» во всю оставшуюся
+   ширину незачем — рядом с ним не список, а отказ от затеи. */
+.rq-ask__tools .rq-pick__btn {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 0 16px;
+}
+
+.rq-act__dates {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+/* Подпись поля — только своя: внутри календаря тоже есть `span`, и
+   общее правило красило его сообщение об ошибке в серый. */
+.rq-act__dates > div > span {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: var(--rq-muted);
+}
+
+/*
+ * Календарь в узком столбце.
+ *
+ * Общее поле даты рассчитано на широкую форму и держит 190 точек. В
+ * колонке проверки на половину приходится меньше, и пара полей
+ * вылезала за край карточки. Здесь поле тянется по месту, а не по
+ * своей мерке.
+ */
+.rq-act__dates .date,
+.rq-act__dates .date__field {
+  display: flex;
+  width: 100%;
   min-width: 0;
 }
 
-.rq-period label span {
-  font-size: 12px;
+.rq-act__dates .date__input {
+  width: 100%;
+  min-width: 0;
+}
+
+/* Подсказка отделена от списка линией: список — это работа, подсказка
+   — объяснение, почему кнопка ниже пока не нажимается. */
+.rq-card--side .rq-hint {
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: #eef4fd;
+  color: #3a5a8c;
+}
+
+.rq-card--side .rq-btn--approve {
+  justify-content: center;
+  width: 100%;
+  height: 46px;
+}
+
+/* Подпись под кнопкой: объясняет её неактивность там, где на неё
+   смотрят, — а не в другом конце карточки. */
+.rq-foot-note {
+  margin: 0;
+  font-size: 12.5px;
+  text-align: center;
   color: var(--rq-muted);
 }
 
-.rq-period .input {
+.rq-card--side .rq-btn--approve:disabled {
+  border-color: var(--rq-line);
+  background: #eef1f6;
+  color: #9aa9c0;
+  cursor: not-allowed;
+}
+
+/* --- финальное отклонение -------------------------------------------------------
+ *
+ * Внизу страницы и отдельно от проверки: это конец процесса, а не
+ * очередной её шаг. Рядом с «вернуть справку» ему не место.
+ */
+
+.rq-finish {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--rq-line);
+}
+
+/* Отклонение — крайняя мера: контур и текст красные, заливки нет.
+   Залитая красным кнопка звала бы нажать, а звать сюда нечем. */
+.rq-finish .rq-btn--danger {
+  border-color: #eab3af;
+  background: transparent;
+  color: #c2362f;
+}
+
+.rq-finish .rq-btn--danger:hover:not(:disabled) {
+  border-color: #d98b85;
+  background: #fdf4f3;
+}
+
+.rq-finish__note {
+  font-size: 12.5px;
+  color: var(--rq-muted);
+}
+
+.rq-finish__ask {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   width: 100%;
+  max-width: 560px;
 }

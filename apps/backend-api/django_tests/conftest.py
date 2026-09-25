@@ -696,6 +696,8 @@ def make_absence(db, organization):
             absence_type=absence_type,
             start_at=first_moment,
             end_at=last_moment,
+            start_date=day,
+            end_date=day,
             status="ACTIVE",
         )
 

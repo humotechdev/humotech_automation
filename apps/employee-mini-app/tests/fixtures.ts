@@ -116,6 +116,9 @@ export function request(over: Partial<AbsenceRequest> = {}): AbsenceRequest {
       deducts_leave_balance: true,
     },
     status: 'SUBMITTED',
+    stage: 'PENDING',
+    certificate_status: null,
+    certificate_comment: null,
     extension_pending: false,
     first_day: '2026-10-05',
     last_day: '2026-10-16',
@@ -149,6 +152,7 @@ export const options: AbsenceOptions = {
   policy: {
     require_hr_approval: true,
     document_required: false,
+    document_can_be_added_later: true,
     employee_may_cancel_pending: true,
     cancelling_approved_requires_hr: true,
     extensions_allowed: true,

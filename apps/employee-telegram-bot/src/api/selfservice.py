@@ -88,6 +88,58 @@ class SelfServiceClient:
                 raise _error(response.status, await self._body(response))
             return await response.read(), f"zayavlenie-{request_id[:8]}.pdf"
 
+    async def absence_certificate(
+        self, telegram_id: int, request_id: str
+    ) -> tuple[bytes, str]:
+        """Приложенная справка: содержимое и имя файла.
+
+        Тот же адрес, что и у кабинета. Имя собирается по типу: справка
+        приходит и снимком с камеры, и PDF, а файл без расширения
+        Telegram покажет, но телефон открыть не предложит.
+        """
+        session = await self._get_session()
+        headers = {
+            BOT_SECRET_HEADER: settings.backend_bot_secret,
+            EMPLOYEE_HEADER: str(telegram_id),
+        }
+        async with session.get(
+            f"{self._base_url}/me/absences/{request_id}/document",
+            headers=headers,
+        ) as response:
+            if response.status >= 400:
+                raise _error(response.status, await self._body(response))
+            kind = response.headers.get("Content-Type", "").split(";")[0].strip()
+            suffix = {
+                "application/pdf": ".pdf",
+                "image/jpeg": ".jpg",
+                "image/png": ".png",
+            }.get(kind, "")
+            return await response.read(), f"spravka-{request_id[:8]}{suffix}"
+
+    async def question_reply_file(
+        self, telegram_id: int, message_id: str
+    ) -> tuple[bytes, str]:
+        """Файл, который кадровик приложил к ответу на обращение.
+
+        Имя — то, с которым файл приложили: «Бланк заявления.pdf»
+        человеку понятнее, чем набор букв.
+        """
+        session = await self._get_session()
+        headers = {
+            BOT_SECRET_HEADER: settings.backend_bot_secret,
+            EMPLOYEE_HEADER: str(telegram_id),
+        }
+        async with session.get(
+            f"{self._base_url}/me/questions/replies/{message_id}/file",
+            headers=headers,
+        ) as response:
+            if response.status >= 400:
+                raise _error(response.status, await self._body(response))
+            return await response.read(), _file_name(
+                response.headers.get("Content-Disposition", ""),
+                response.headers.get("Content-Type", ""),
+            )
+
     async def leave_balance(self, telegram_id: int) -> dict:
         return await self._get("/me/leave-balance", telegram_id)
 
@@ -458,3 +510,20 @@ def _error(status: int, body: Any):
 
 
 __all__ = ["BOT_SECRET_HEADER", "EMPLOYEE_HEADER", "SelfServiceClient"]
+
+
+def _file_name(disposition: str, content_type: str) -> str:
+    """Имя файла из `Content-Disposition` (RFC 5987) или по типу."""
+    from urllib.parse import unquote
+
+    marker = "filename*=UTF-8''"
+    if marker in disposition:
+        name = unquote(disposition.split(marker, 1)[1].split(";", 1)[0].strip())
+        if name:
+            return name
+    kind = content_type.split(";")[0].strip()
+    return "file" + {
+        "application/pdf": ".pdf",
+        "image/jpeg": ".jpg",
+        "image/png": ".png",
+    }.get(kind, "")

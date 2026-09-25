@@ -406,7 +406,40 @@ def text_of(data: bytes, font: TrueTypeFont | None = None) -> str:
     return "\n".join(out)
 
 
+def _declared_length(data: bytes, before: int) -> int | None:
+    """Значение `/Length` из словаря перед потоком.
+
+    Ищется справа налево и с проверкой следующего символа: у вложенного
+    шрифта в том же словаре стоит `/Length1` — размер РАСПАКОВАННОГО
+    файла. Взять его за длину потока значит прочитать один байт вместо
+    двухсот тысяч.
+    """
+    at = before
+    while True:
+        mark = data.rfind(b"/Length", 0, at)
+        if mark == -1:
+            return None
+        tail = data[mark + 7:mark + 27]
+        if tail[:1].isdigit():
+            # Это `/Length1`, `/Length2` и подобные. Ищем дальше влево.
+            at = mark
+            continue
+        digits = tail.split()
+        return int(digits[0]) if digits and digits[0].isdigit() else None
+
+
 def _streams(data: bytes) -> list[bytes]:
+    """Тела всех потоков документа.
+
+    Длина берётся из `/Length` в словаре перед `stream`, а НЕ поиском
+    `endstream`. Сжатые байты — произвольный двоичный мусор, и
+    последовательность `endstream` встречается в них сама собой: редко,
+    но регулярно, потому что содержимое каждой бумаги немного разное.
+    Поток тогда обрезался посередине, распаковка падала, и проверка
+    бумаги падала вместе с ней — на случайном документе и только иногда.
+    Искать конец там, где документ сам его назвал, надёжнее любого
+    разделителя.
+    """
     out: list[bytes] = []
     at = 0
     while True:
@@ -416,24 +449,19 @@ def _streams(data: bytes) -> list[bytes]:
         start = data.find(b"\nstream", at)
         if start == -1:
             return out
+
+        length = _declared_length(data, start)
+        if length is None:
+            return out
+
         start += len(b"\nstream")
         if data[start:start + 2] == b"\r\n":
             start += 2
         elif data[start:start + 1] in (b"\n", b"\r"):
             start += 1
-        end = data.find(b"endstream", start)
-        if end == -1:
-            return out
-        body = data[start:end]
-        # Убирается РОВНО один перевод строки, а не все подряд: сжатые
-        # данные заканчиваются чем угодно, и `rstrip` откусывал у них
-        # настоящие байты, после чего поток переставал распаковываться.
-        if body.endswith(b"\r\n"):
-            body = body[:-2]
-        elif body.endswith(b"\n") or body.endswith(b"\r"):
-            body = body[:-1]
-        out.append(body)
-        at = end + len(b"endstream")
+
+        out.append(data[start:start + length])
+        at = start + length
 
 
 def page_size(data: bytes) -> tuple[float, float]:
