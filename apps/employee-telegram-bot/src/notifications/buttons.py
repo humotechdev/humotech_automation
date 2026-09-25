@@ -23,6 +23,7 @@ from urllib.parse import quote
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
 from src.config.settings import settings
+from src.utils.safe import is_uuid
 
 logger = logging.getLogger("humotech.notifications")
 
@@ -112,9 +113,10 @@ def document_markup(request_id: str | None) -> InlineKeyboardMarkup | None:
     искать, где именно, — а заявка, к которой прикладывать, у него не
     одна. Кнопка снимает этот вопрос: она знает свою заявку.
     """
-    if not request_id:
+    if not request_id or not is_uuid(request_id):
         # Backend прислал отказ без ссылки на заявку. Кнопка приложила
-        # бы справку «куда-нибудь» — лучше без неё.
+        # бы справку «куда-нибудь» — лучше без неё. Не-UUID сюда тоже не
+        # пускаем: идентификатор потом уходит в путь запроса.
         logger.warning("document rejection without request id: button skipped")
         return None
     return InlineKeyboardMarkup(

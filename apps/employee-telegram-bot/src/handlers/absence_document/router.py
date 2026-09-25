@@ -29,6 +29,7 @@ from src.api.errors import ApiError
 from src.api.selfservice import SelfServiceClient
 from src.messages import absence_document as text
 from src.notifications.buttons import UPLOAD_DOCUMENT
+from src.utils.safe import escape, is_uuid, safe_filename
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,11 @@ class Upload(StatesGroup):
 async def ask_file(call: CallbackQuery, state: FSMContext) -> None:
     request_id = (call.data or "")[len(UPLOAD_DOCUMENT):]
     await call.answer()
-    if not request_id or call.message is None:
+    if not is_uuid(request_id) or call.message is None:
+        # `callback_data` — данные от клиента. Идентификатор заявки
+        # уходит в путь запроса с общим секретом бота, поэтому ничего,
+        # кроме UUID, здесь не принимается. Чья это заявка, проверяет
+        # сервер по Telegram ID нажавшего.
         return
 
     await state.set_state(Upload.waiting_file)
@@ -65,7 +70,7 @@ async def receive(
 ) -> None:
     data = await state.get_data()
     request_id = str(data.get("absence_request_id") or "")
-    if not request_id or message.from_user is None:
+    if not is_uuid(request_id) or message.from_user is None:
         await state.clear()
         return
 
@@ -76,6 +81,9 @@ async def receive(
     if (kept.size or 0) > text.MAX_BYTES:
         # Состояние не снимается: человек пришлёт снимок поменьше.
         await message.answer(text.TOO_BIG)
+        return
+    if kept.size is not None and kept.size <= 0:
+        await message.answer(text.NOT_A_FILE)
         return
 
     bot = message.bot
@@ -88,6 +96,10 @@ async def receive(
     except Exception:
         logger.exception("не удалось скачать файл справки")
         await message.answer(text.FAILED)
+        return
+    if not content or len(content) > text.MAX_BYTES:
+        # Размер в сообщении сообщает клиент; решает то, что скачалось.
+        await message.answer(text.TOO_BIG if content else text.NOT_A_FILE)
         return
 
     await state.clear()
@@ -103,7 +115,9 @@ async def receive(
         logger.info("справка не принята сервером: %s", failed.status)
         # Отказ сервера показывается его словами, если они есть: он
         # объясняет, что именно не так — тип, размер или закрытая заявка.
-        await message.answer(failed.message or text.FAILED)
+        # Экранируется: в тексте отказа бывает имя файла, которое
+        # придумал отправитель, а сообщение уходит с HTML-разметкой.
+        await message.answer(escape(failed.message) or text.FAILED)
         return
     except Exception:
         logger.exception("справка не ушла на сервер")
@@ -129,7 +143,9 @@ def _file_of(message: Message) -> _Kept | None:
     if message.document is not None:
         return _Kept(
             file_id=message.document.file_id,
-            name=message.document.file_name or "spravka",
+            # Имя придумал отправитель: без пути, управляющих символов
+            # и символов смены направления («spravka‮gpj.exe»).
+            name=safe_filename(message.document.file_name, "spravka"),
             mime_type=message.document.mime_type or "application/octet-stream",
             size=message.document.file_size,
         )

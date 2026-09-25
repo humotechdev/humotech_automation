@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+from src.utils.safe import escape
+
 SCAN_FAILED = (
     "Не получилось отметиться. Попробуйте ещё раз через минуту — "
     "если не выйдет, напишите в отдел кадров."
@@ -109,8 +111,10 @@ def outcome(result: dict) -> str:
         return SCAN_FAILED
 
     lines = [f"<b>{head}</b>"]
-    where = result.get("office_name")
-    point = result.get("point_name")
+    # Названия офиса и точки заводит администратор в CRM: это чужой текст,
+    # а сообщение уходит с HTML-разметкой.
+    where = escape(result.get("office_name"))
+    point = escape(result.get("point_name"))
     if status in ("ENTERED", "EXITED"):
         if where:
             lines.append(f"Офис: {where}")
@@ -121,9 +125,9 @@ def outcome(result: dict) -> str:
             lines.append(f"Расстояние до офиса: {metres} м")
         at = result.get("occurred_at_local")
         if at:
-            lines.append(f"Время: {at}")
+            lines.append(f"Время: {escape(at)}")
     elif where:
-        lines.append(f"{where}, {point}" if point else str(where))
+        lines.append(f"{where}, {point}" if point else where)
 
     session = result.get("session") or {}
     seconds = session.get("duration_seconds")

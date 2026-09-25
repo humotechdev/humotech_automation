@@ -13,3 +13,11 @@ dist/
 *.log
 coverage/
 .vite/
+
+# Тесты и служебное: в сборку не входят.
+tests/
+.git/
+.gitignore
+.dockerignore
+*.pem
+*.key

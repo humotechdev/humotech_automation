@@ -12,3 +12,14 @@ __pycache__/
 .pytest_cache/
 *.log
 *.png
+
+# Тесты и служебное в образ не нужны.
+tests/
+pytest.ini
+.git/
+.gitignore
+.dockerignore
+Dockerfile
+*.md
+*.pem
+*.key

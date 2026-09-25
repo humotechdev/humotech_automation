@@ -498,11 +498,11 @@ export const api = {
    * Открыть опрос. Не просто чтение: с этого начинается отсчёт «начал
    * проходить», и HR видит разницу между «не открывал» и «бросил».
    */
-  survey: (id: string) => call<Survey>(`/me/surveys/${id}`),
+  survey: (id: string) => call<Survey>(`/me/surveys/${encodeURIComponent(id)}`),
   /** Ответы уходят целиком: опрос проходят за раз, а не по вопросу. */
   submitSurvey: (id: string, answers: SurveyAnswer[]) =>
     call<{ id: string; status: string; completed_at: string | null }>(
-      `/me/surveys/${id}`,
+      `/me/surveys/${encodeURIComponent(id)}`,
       { method: 'POST', body: { answers } },
     ),
   leaveBalance: () =>

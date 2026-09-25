@@ -200,10 +200,15 @@ class TestReplyFile:
         def __init__(self):
             self.sent = []
 
-        async def send_document(self, chat_id, document, caption=None, reply_markup=None):
+        async def send_document(
+            self, chat_id, document, caption=None, reply_markup=None, **kwargs
+        ):
+            # Очередь шлёт обычный текст: разметку отключают явно.
+            assert "parse_mode" in kwargs and kwargs["parse_mode"] is None
             self.sent.append(("document", document.filename, caption))
 
-        async def send_message(self, chat_id, text, reply_markup=None):
+        async def send_message(self, chat_id, text, reply_markup=None, **kwargs):
+            assert "parse_mode" in kwargs and kwargs["parse_mode"] is None
             self.sent.append(("message", None, text))
 
     class Files:
@@ -222,7 +227,8 @@ class TestReplyFile:
 
         return asyncio.run(TelegramSender(bot, files).deliver(
             chat_id=1, text=text, notification_type="question.reply.file",
-            entity_id="message-1", attachment="question_file", telegram_user_id=7,
+            entity_id="6f1b1c1e-0000-4000-8000-000000000001",
+            attachment="question_file", telegram_user_id=7,
         ))
 
     def test_короткий_ответ_уходит_подписью_к_файлу(self):

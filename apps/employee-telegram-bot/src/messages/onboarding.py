@@ -51,14 +51,16 @@ def resume(state: dict) -> str:
     if not position:
         return "Продолжим ознакомление."
     return (
-        f"Вы остановились на разделе {position} из {total}:\n«{title}»."
+        f"Вы остановились на разделе {escape(str(position))} из "
+        f"{escape(str(total))}:\n«{title}»."
     )
 
 
 def card(section: dict) -> str:
     """Одна информационная карточка."""
     return (
-        f"<b>Ознакомление · {section['position']} из {section['total']}</b>\n\n"
+        f"<b>Ознакомление · {escape(str(section['position']))} из "
+        f"{escape(str(section['total']))}</b>\n\n"
         f"<b>{escape(section['title'])}</b>\n\n"
         f"{escape(section['body'])}"
     )
@@ -69,7 +71,7 @@ def card_done(section: dict) -> str:
     when = _moment(section.get("acknowledged_at"))
     mark = "✓ Ознакомление подтверждено"
     if section.get("acknowledged_version"):
-        mark += f"\nВерсия {section['acknowledged_version']}"
+        mark += f"\nВерсия {escape(str(section['acknowledged_version']))}"
     if when:
         mark += f" · {when}"
     return f"{card(section)}\n\n{mark}"
@@ -94,7 +96,8 @@ def info_done(state: dict) -> str:
 def document(policy: dict) -> str:
     """Экран одного обязательного документа."""
     head = (
-        f"<b>Обязательные документы · {policy['index']} из {policy['total']}</b>\n\n"
+        f"<b>Обязательные документы · {escape(str(policy['index']))} из "
+        f"{escape(str(policy['total']))}</b>\n\n"
         f"<b>{escape(policy['title'])}</b>"
     )
     if policy.get("version"):

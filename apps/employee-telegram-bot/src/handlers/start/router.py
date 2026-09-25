@@ -17,6 +17,7 @@ backend, бот только пересказывает ответ челове�
 from __future__ import annotations
 
 import logging
+import re
 
 from aiogram import F, Router
 from aiogram.filters import CommandObject, CommandStart
@@ -48,6 +49,9 @@ ONBOARDING_PREFIX = "onboarding_"
 #: Оба префикса разом. Порядок значения не имеет — они не пересекаются.
 LINK_PREFIXES = (LINK_PREFIX, ONBOARDING_PREFIX)
 
+#: Алфавит и предел полезной нагрузки deep-link в Telegram.
+_TOKEN = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
 
 def parse_link_payload(payload: str | None) -> str | None:
     """Токен из полезной нагрузки `/start`, либо None.
@@ -60,7 +64,10 @@ def parse_link_payload(payload: str | None) -> str | None:
     payload = payload.strip()
     for prefix in LINK_PREFIXES:
         if payload.startswith(prefix):
-            return payload[len(prefix):] or None
+            token = payload[len(prefix):]
+            # `/start` можно набрать руками с любым хвостом. Настоящий
+            # токен — только алфавит deep-link Telegram, не длиннее 64.
+            return token if _TOKEN.fullmatch(token) else None
     return None
 
 
@@ -146,7 +153,13 @@ async def start_with_link(
 async def accept_link_terms(callback: CallbackQuery, client: SelfServiceClient) -> None:
     try:
         await client.accept_link_terms(telegram_user_id=callback.from_user.id)
-    except ApiError:
+    except ApiError as error:
+        reason = (error.details or {}).get("reason") if isinstance(error.details, dict) else None
+        if reason == "hr_confirmation_required":
+            # Узнали по имени в Telegram, а не по ссылке: доступ откроет
+            # только кадровик. Повторное нажатие ничего не изменит.
+            await callback.answer(text.LINK_NEEDS_HR, show_alert=True)
+            return
         await callback.answer("Не получилось подтвердить условия. Попробуйте ещё раз.", show_alert=True)
         return
     await callback.answer("Условия приняты")

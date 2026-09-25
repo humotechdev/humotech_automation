@@ -88,12 +88,23 @@ export function isQuickScanRoute(
  */
 export const SURVEY_PATH = '/survey';
 
+/**
+ * Идентификатор получателя опроса — UUID и ничего больше.
+ *
+ * Адрес страницы задаёт тот, кто прислал ссылку, а идентификатор отсюда
+ * вклеивается в путь запроса к API. Без проверки `%2F..`, `?` и прочее
+ * из адресной строки уходило бы в запрос с токеном сотрудника.
+ */
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export function surveyOf(
   pathname: string = window.location.pathname,
 ): string | null {
   const parts = pathname.replace(/\/+$/, '').split('/').filter(Boolean);
   if (parts.length !== 2 || `/${parts[0]}` !== SURVEY_PATH) return null;
-  return parts[1] ?? null;
+  const id = parts[1];
+  return id && UUID_RE.test(id) ? id : null;
 }
 
 /**

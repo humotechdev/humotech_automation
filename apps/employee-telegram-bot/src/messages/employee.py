@@ -14,6 +14,9 @@ from datetime import datetime
 from datetime import timezone as dt_timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+# Всё, что пришло с сервера, экранируется: сообщения уходят с HTML-разметкой.
+from src.utils.safe import escape
+
 # Из стандартной библиотеки, а не из `zoneinfo`: базы часовых поясов
 # в системе может не быть вовсе (Windows), и падать на импорте модуля
 # с текстами из-за этого нельзя. Пояс офиса всё равно приходит по имени,
@@ -164,15 +167,18 @@ def ask_answered(answer: str, sources: list[str]) -> str:
     Человек должен знать, на чём ответ основан, и куда смотреть, если
     он расходится с тем, что ему сказали устно.
     """
-    text = answer.strip()
+    # Ответ ассистента — чужой текст: на него влияют и вопрос человека,
+    # и содержимое базы знаний. Без экранирования `<a href=…>` в нём
+    # стал бы ссылкой, а знак «<» сорвал бы отправку.
+    text = escape(answer.strip())
     if sources:
-        text += "\n\nИсточник: " + ", ".join(sources[:3])
+        text += "\n\nИсточник: " + ", ".join(escape(one) for one in sources[:3])
     return text
 
 
 def ask_hr_sent(result: dict) -> str:
     """Подтверждение с номером: по нему человек и HR говорят об одном."""
-    number = result.get("number")
+    number = escape(result.get("number"))
     if result.get("created"):
         return (
             f"Вопрос передан в отдел кадров, номер обращения — №{number}.\n"
@@ -185,11 +191,11 @@ def greet(profile: dict) -> str:
     employee = profile.get("employee") or {}
     office = profile.get("office") or {}
     position = profile.get("position") or {}
-    lines = [f"<b>{employee.get('full_name', 'Сотрудник')}</b>"]
+    lines = [f"<b>{escape(employee.get('full_name') or 'Сотрудник')}</b>"]
     if position.get("name"):
-        lines.append(position["name"])
+        lines.append(escape(position["name"]))
     if office.get("name"):
-        lines.append(f"Офис: {office['name']}")
+        lines.append(f"Офис: {escape(office['name'])}")
     return "\n".join(lines)
 
 
@@ -214,14 +220,14 @@ def presence(status: dict) -> str:
     if status.get("absence_name") and status["state"] in (
         "SICK_LEAVE", "VACATION", "OTHER_ABSENCE"
     ):
-        lines.append(status["absence_name"])
+        lines.append(escape(status["absence_name"]))
 
     lines.append(f"Сегодня в офисе: {duration(status.get('seconds_today', 0))}")
 
     if status.get("scheduled_start") and status.get("scheduled_end"):
         lines.append(
-            f"График на сегодня: {status['scheduled_start'][:5]}–"
-            f"{status['scheduled_end'][:5]}"
+            f"График на сегодня: {escape(status['scheduled_start'][:5])}–"
+            f"{escape(status['scheduled_end'][:5])}"
         )
     if status.get("last_entry_at"):
         lines.append(f"Последний вход: {_moment(status['last_entry_at'], tz)}")
@@ -281,9 +287,9 @@ def history(body: dict) -> str:
             where = session.get("office_name")
             point = session.get("entry_point_name")
             if where and point:
-                lines.append(f"  {where}, {point}")
+                lines.append(f"  {escape(where)}, {escape(point)}")
         if day.get("absence_name"):
-            lines.append(f"  {day['absence_name']}")
+            lines.append(f"  {escape(day['absence_name'])}")
         lines.append("")
 
     if body.get("has_more"):
@@ -301,9 +307,9 @@ def requests(body: dict) -> str:
 
     lines = ["<b>Мои заявки</b>", ""]
     for row in rows:
-        kind = row["absence_type"]["name"]
+        kind = escape(row["absence_type"]["name"])
         stage = REQUEST_STAGE.get(row.get("stage") or "") or REQUEST_STATUS.get(
-            row["status"], row["status"].lower()
+            row["status"], escape(row["status"].lower())
         )
         if row.get("first_day"):
             period = f"{_date(row['first_day'])} — {_date(row['last_day'])}"
@@ -313,11 +319,12 @@ def requests(body: dict) -> str:
             # настоящие проставит кадровик по справке.
             period = "период уточняется"
         lines.append(f"<b>{kind}</b>: {period}")
-        lines.append(f"  {stage}, рабочих дней: {row['working_days']}")
+        lines.append(f"  {stage}, рабочих дней: {escape(row['working_days'])}")
         if row.get("extension_pending"):
             lines.append("  продление ждёт решения")
         if row.get("review_comment"):
-            lines.append(f"  комментарий: {row['review_comment']}")
+            # Комментарий кадровика — свободный текст из CRM.
+            lines.append(f"  комментарий: {escape(row['review_comment'])}")
         lines.append("")
     return "\n".join(lines).strip()
 
@@ -327,7 +334,7 @@ def balance_line(body: dict) -> str:
     if not rows:
         return ""
     parts = [
-        f"{row['absence_type']['name']}: {row['available_days']:g} дн."
+        f"{escape(row['absence_type']['name'])}: {row['available_days']:g} дн."
         for row in rows
     ]
     return "Остаток: " + "; ".join(parts)

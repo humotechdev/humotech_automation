@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from src.utils.safe import escape
+
 LINK_PENDING = (
     "Добро пожаловать в HUMOTECH!\n\n"
     "Перед началом работы ознакомьтесь с правилами: используйте личный "
@@ -22,6 +24,9 @@ LINK_INVALID = "Ссылка недействительна. Попросите 
 LINK_TAKEN = "Этот Telegram уже привязан к другому сотруднику."
 LINK_INACTIVE = "Привязка недоступна. Обратитесь в отдел кадров."
 LINK_ERROR = "Не получилось. Попробуйте ещё раз через пару минут."
+LINK_NEEDS_HR = (
+    "Привязку подтвердит отдел кадров. Доступ появится после подтверждения."
+)
 
 # Код причины из ответа backend -> что сказать человеку. Причина приходит
 # в `error.details.reason`; текст ответа не разбирается — он переводится
@@ -52,27 +57,29 @@ def welcome(facts: dict) -> str:
     Незаполненные поля просто не упоминаются — строка «График: —» хуже
     отсутствия строки.
     """
-    name = facts.get("full_name") or "коллега"
+    # Все значения — из карточки в CRM, то есть чужой текст: сообщение
+    # уходит с HTML-разметкой, и «<» в названии отдела сорвал бы его.
+    name = escape(facts.get("full_name")) or "коллега"
     where = EMPLOYMENT_WORDS.get(facts.get("employment_status") or "", "на работу")
     since = facts.get("hire_date")
 
     head = f"Добро пожаловать в HUMOTECH, {name}."
     head += f"\n\nВы приняты {where}"
     if since:
-        head += f" с {since}"
+        head += f" с {escape(since)}"
     head += "."
 
     rows = []
     if facts.get("office_name"):
-        rows.append(f"Офис: {facts['office_name']}")
+        rows.append(f"Офис: {escape(facts['office_name'])}")
     if facts.get("department_name"):
-        rows.append(f"Отдел: {facts['department_name']}")
+        rows.append(f"Отдел: {escape(facts['department_name'])}")
     if facts.get("position_name"):
-        rows.append(f"Должность: {facts['position_name']}")
+        rows.append(f"Должность: {escape(facts['position_name'])}")
     if facts.get("schedule_name"):
-        rows.append(f"График: {facts['schedule_name']}")
+        rows.append(f"График: {escape(facts['schedule_name'])}")
     if facts.get("manager_name"):
-        rows.append(f"Руководитель: {facts['manager_name']}")
+        rows.append(f"Руководитель: {escape(facts['manager_name'])}")
 
     if rows:
         head += "\n\n" + "\n".join(rows)

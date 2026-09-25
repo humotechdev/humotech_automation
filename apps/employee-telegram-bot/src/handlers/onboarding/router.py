@@ -39,6 +39,7 @@ from src.keyboards import onboarding as ob
 from src.messages import employee as base_text
 from src.messages import onboarding as text
 from src.middlewares.employee import REASON_UNAVAILABLE
+from src.utils.safe import is_uuid
 
 logger = logging.getLogger(__name__)
 
@@ -220,7 +221,13 @@ async def begin(callback: CallbackQuery, client: SelfServiceClient) -> None:
         reason = (error.details or {}).get("reason") if error.details else None
         if reason != "pending_confirmation":
             raise
-        await client.accept_link_terms(telegram_user_id=callback.from_user.id)
+        try:
+            await client.accept_link_terms(telegram_user_id=callback.from_user.id)
+        except Conflict:
+            # Согласие доступа не открыло: привязку подтверждает HR
+            # (человека узнали по имени в Telegram, а не по ссылке).
+            await callback.message.answer(base_text.PENDING)
+            return
         state = await client.onboarding_start(callback.from_user.id)
 
     # Приветствие остаётся в чате как приветствие, но кнопка с него
@@ -246,7 +253,7 @@ async def begin(callback: CallbackQuery, client: SelfServiceClient) -> None:
 async def acknowledge(callback: CallbackQuery, client: SelfServiceClient) -> None:
     section_id = callback.data[len(ob.ACK):]
     await callback.answer()
-    if callback.message is None:
+    if callback.message is None or not is_uuid(section_id):
         return
     try:
         state = await client.onboarding_acknowledge(
@@ -285,10 +292,11 @@ async def go_back(callback: CallbackQuery, client: SelfServiceClient) -> None:
     await callback.answer()
     if callback.message is None:
         return
-    try:
-        position = int(callback.data[len(ob.BACK):])
-    except ValueError:
+    raw = callback.data[len(ob.BACK):]
+    # Номер уходит в путь запроса: только цифры ASCII и не ноль.
+    if not (raw.isascii() and raw.isdigit()) or len(raw) > 4 or int(raw) < 1:
         return
+    position = int(raw)
     section = await client.onboarding_section(callback.from_user.id, position)
     body = (
         text.card_done(section) if section.get("acknowledged_at")
@@ -357,6 +365,12 @@ async def open_full_text(callback: CallbackQuery, client: SelfServiceClient) -> 
     if callback.message is None:
         return
     version_id = callback.data[len(ob.OPEN):]
+    if not is_uuid(version_id):
+        # `callback_data` — данные клиента, а идентификатор уходит в путь
+        # запроса с общим секретом бота. `../` здесь увёл бы запрос на
+        # другой адрес backend.
+        await callback.answer(text.STALE_VERSION, show_alert=True)
+        return
     try:
         body = await client.policy_text(callback.from_user.id, version_id)
     except NotFound:
@@ -397,7 +411,7 @@ async def decide(callback: CallbackQuery, client: SelfServiceClient) -> None:
     agreed = callback.data.startswith(ob.AGREE)
     version_id = callback.data[len(ob.AGREE):]
     await callback.answer()
-    if callback.message is None:
+    if callback.message is None or not is_uuid(version_id):
         return
     try:
         state = await client.onboarding_decision(
