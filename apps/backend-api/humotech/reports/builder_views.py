@@ -54,6 +54,9 @@ class ReportSpecSerializer(serializers.Serializer):
     include_inactive = serializers.BooleanField(required=False, default=False)
     fields = serializers.ListField(
         child=serializers.CharField(max_length=50), required=False,
+        # Полей у самого большого вида — десяток; сто — запас, а не
+        # приглашение прислать полмиллиона строк в одном списке.
+        max_length=100,
         help_text="Ключи полей из каталога. Не передано — поля по умолчанию",
     )
     name = serializers.CharField(

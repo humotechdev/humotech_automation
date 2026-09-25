@@ -634,6 +634,7 @@ class TelegramLinkService(BaseService):
                 telegram_username=telegram_username,
                 language_code=language_code,
                 now=now,
+                via="LINK",
             )
 
     def recognize(
@@ -701,6 +702,7 @@ class TelegramLinkService(BaseService):
                 telegram_username=name,
                 language_code=language_code,
                 now=now,
+                via="USERNAME",
             )
 
     def _bind(
@@ -712,6 +714,7 @@ class TelegramLinkService(BaseService):
         telegram_username: str | None,
         language_code: str | None,
         now: datetime,
+        via: str,
     ) -> TelegramAccount:
         """Общая часть привязки: по ссылке и по узнаванию она одна.
 
@@ -758,9 +761,11 @@ class TelegramLinkService(BaseService):
         invitation.status = "PENDING_CONFIRMATION"
         invitation.used_at = now
         invitation.consumed_by_telegram_user_id = telegram_user_id
+        invitation.consumed_via = via
         invitation.save(
             update_fields=[
-                "status", "used_at", "consumed_by_telegram_user_id", "updated_at",
+                "status", "used_at", "consumed_by_telegram_user_id",
+                "consumed_via", "updated_at",
             ]
         )
 
@@ -793,6 +798,15 @@ class TelegramLinkService(BaseService):
             ).first()
             if invitation is None:
                 raise TelegramLinkError("invalid", "Приглашение не найдено")
+            if invitation.consumed_via == "USERNAME":
+                # Узнали по имени в Telegram, а не по ссылке. Имя можно
+                # занять: кадровик вписал его в карточку, а в Telegram его
+                # взял посторонний. Согласие такого человека с условиями
+                # доступа не открывает — только подтверждение HR.
+                raise TelegramLinkError(
+                    "hr_confirmation_required",
+                    "Привязку подтвердит отдел кадров",
+                )
             account.status = "ACTIVE"
             account.connected_at = now
             account.save(update_fields=["status", "connected_at", "updated_at"])
@@ -930,7 +944,11 @@ class TelegramMiniAppService(BaseService):
         Состояние привязки тоже перечитывается: отзыв обязан действовать
         немедленно, а не с истечением срока токена.
         """
-        from humotech.telegram.tokens import read_mini_app_token
+        from humotech.telegram.tokens import (
+            _issued_at,
+            _predates_link,
+            read_mini_app_token,
+        )
 
         claims = read_mini_app_token(
             token,
@@ -945,6 +963,20 @@ class TelegramMiniAppService(BaseService):
             .first()
         )
         if account is None or account.telegram_user_id != claims.telegram_user_id:
+            return None
+        # Токен выдан ровно этой привязке: тот же сотрудник, та же
+        # организация. Строка привязки переиспользуется, и без сверки
+        # подписанных полей с текущими токен пережил бы её перенос.
+        if (
+            str(account.employee_id) != claims.employee_id
+            or str(account.organization_id) != claims.organization_id
+        ):
+            return None
+        # Защита в глубину: выпущенный до текущей привязки токен мёртв,
+        # даже если чтение токена когда-нибудь перестанет это проверять.
+        # Проверка одна на модуль — `_predates_link` из tokens.py.
+        issued_at = _issued_at(token)
+        if issued_at is None or _predates_link(str(account.id), issued_at):
             return None
 
         resolved = resolve_account(account)

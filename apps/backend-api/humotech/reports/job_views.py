@@ -14,6 +14,7 @@ from rest_framework import serializers
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from humotech.analytics.metrics import check_date
 from humotech.core.api import ServiceViewSet, validated
 from humotech.core.clientip import client_ip
 from humotech.core.enums import EXPORT_JOB_STATUSES
@@ -163,6 +164,10 @@ class ExportJobCreateSerializer(ReportSpecSerializer):
             raise serializers.ValidationError(
                 {"date_to": ["Укажите обе даты периода"]}
             )
+        if attrs.get("date"):
+            # Один день тоже проверяется сразу: 9999-12-31 иначе
+            # становился заданием, которое умирает в исполнителе.
+            check_date(attrs["date"], "date")
         first, last = attrs.get("date_from"), attrs.get("date_to")
         if first and last:
             # Тот же предел, что и у построителя: одна проверка на два

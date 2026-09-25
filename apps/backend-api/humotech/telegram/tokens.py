@@ -27,6 +27,7 @@ import secrets
 from dataclasses import dataclass
 
 from django.core import signing
+from django.core.exceptions import ValidationError as DjangoValidationError
 
 # 32 байта случайности -> 43 символа в безопасном для URL алфавите.
 # Telegram кладёт полезную нагрузку `?start=` в 64 символа и принимает
@@ -115,18 +116,72 @@ def issue_mini_app_token(claims: MiniAppClaims) -> str:
     )
 
 
-def read_mini_app_token(token: str, *, max_age_seconds: int) -> MiniAppClaims | None:
-    """Разбирает токен. None — подпись не сошлась либо срок истёк.
+#: Длиннее честный токен не бывает: четыре коротких поля в base64 плюс
+#: подпись — около трёхсот символов. Разбирать мегабайт из заголовка
+#: незачем.
+MAX_TOKEN_LENGTH = 2048
 
-    Причина отказа наружу не выносится намеренно: клиенту в обоих случаях
-    делать одно и то же — открыть Mini App заново.
+
+def _issued_at(token: str) -> int | None:
+    """Момент выпуска из УЖЕ проверенного токена.
+
+    Формат `django.core.signing`: `<данные>:<время base62>:<подпись>`.
+    Время подписано вместе с данными, поэтому после успешного
+    `signing.loads` ему можно верить.
     """
     try:
-        data = signing.loads(token, salt=MINI_APP_SALT, max_age=max_age_seconds)
-    except signing.BadSignature:
+        return signing.b62_decode(token.rsplit(":", 2)[1])
+    except (IndexError, ValueError):
+        return None
+
+
+def _predates_link(telegram_account_id: str, issued_at: int) -> bool:
+    """Выпущен ли токен раньше текущей привязки.
+
+    Без этой проверки отзыв не был окончательным. Строка привязки
+    у сотрудника одна: после отключения и повторной привязки ТОГО ЖЕ
+    Telegram совпадают и `telegram_account_id`, и `telegram_user_id`,
+    и токен, снятый с украденного телефона до отзыва, снова открывал
+    кабинет до конца своих двенадцати часов.
+
+    Каждая активация (подтверждение HR, согласие в боте) переписывает
+    `connected_at`, поэтому всё, что выпущено раньше, отвергается.
+    Сравнение по целым секундам: время в токене без долей, и токен,
+    выданный в ту же секунду, что и привязка, должен остаться рабочим.
+    """
+    from humotech.telegram.models import TelegramAccount
+
+    connected_at = (
+        TelegramAccount.objects.filter(id=telegram_account_id)
+        .values_list("connected_at", flat=True)
+        .first()
+    )
+    if connected_at is None:
+        # Привязки нет — решать будет `resolve`, он её и не найдёт.
+        return False
+    return issued_at < int(connected_at.timestamp())
+
+
+def read_mini_app_token(token: str, *, max_age_seconds: int) -> MiniAppClaims | None:
+    """Разбирает токен. None — подпись не сошлась, срок истёк или токен
+    выпущен до текущей привязки.
+
+    Причина отказа наружу не выносится намеренно: клиенту во всех случаях
+    делать одно и то же — открыть Mini App заново.
+    """
+    if not token or len(token) > MAX_TOKEN_LENGTH:
         return None
     try:
-        return MiniAppClaims(
+        data = signing.loads(token, salt=MINI_APP_SALT, max_age=max_age_seconds)
+    except (signing.BadSignature, ValueError, TypeError):
+        # ValueError/TypeError — на случай мусора, который пройдёт проверку
+        # формата, но не декодирование; подпись к этому моменту уже
+        # сверена, так что сюда попадает только испорченная своя строка.
+        return None
+    if not isinstance(data, dict):
+        return None
+    try:
+        claims = MiniAppClaims(
             telegram_account_id=str(data["telegram_account_id"]),
             telegram_user_id=int(data["telegram_user_id"]),
             employee_id=str(data["employee_id"]),
@@ -135,3 +190,15 @@ def read_mini_app_token(token: str, *, max_age_seconds: int) -> MiniAppClaims | 
     except (KeyError, TypeError, ValueError):
         # Подпись своя, но состав не тот: старый формат или чужая цель.
         return None
+
+    issued_at = _issued_at(token)
+    if issued_at is None:
+        return None
+    try:
+        if _predates_link(claims.telegram_account_id, issued_at):
+            return None
+    except (ValueError, DjangoValidationError):
+        # Идентификатор привязки не UUID. Подписать такое можно только
+        # нашим ключом, но 500 из-за этого всё равно не нужен.
+        return None
+    return claims

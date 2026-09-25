@@ -8,9 +8,6 @@
 
 from __future__ import annotations
 
-from urllib.parse import quote
-
-from django.http import FileResponse
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema
 from rest_framework import serializers, status
@@ -23,8 +20,11 @@ from humotech.selfservice.views import EmployeeSelfView
 
 class QuestionMessageRequestSerializer(serializers.Serializer):
     text = serializers.CharField(max_length=4000)
+    # Границы bigint: число шире колонки иначе доходит до PostgreSQL и
+    # возвращается 500 «bigint out of range».
     telegram_message_id = serializers.IntegerField(
         required=False, allow_null=True,
+        min_value=-(2**63), max_value=2**63 - 1,
         help_text="Идентификатор сообщения Telegram: повтор не даёт дубля",
     )
 
@@ -81,9 +81,11 @@ class ReplyFileView(EmployeeSelfView):
     )
     def get(self, request, message_id):
         stream, meta = employee_reply_file(self.context, message_id)
-        answer = FileResponse(stream, content_type=meta.mime_type)
         # Имя по RFC 5987: бот берёт его для подписи файла в чате.
-        answer["Content-Disposition"] = (
-            "inline; filename*=UTF-8''" + quote(meta.original_filename or "file")
+        # scan_status, удаление и безопасные заголовки — одной проверкой.
+        from humotech.files.serving import EMPLOYEE, file_response
+
+        return file_response(
+            stream, meta, audience=EMPLOYEE,
+            filename=meta.original_filename or "file", rfc5987=True,
         )
-        return answer

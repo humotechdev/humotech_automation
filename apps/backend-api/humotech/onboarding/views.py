@@ -17,7 +17,8 @@
 
 from __future__ import annotations
 
-from django.http import FileResponse
+import uuid
+
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import status
@@ -27,7 +28,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from humotech.core.api import ServiceViewSet, validated
+from humotech.core.api import ServiceViewSet, query_int, validated
 from humotech.core.errors import NotFound, ValidationFailed
 from humotech.core.rbac import Actor
 from humotech.files.storage import is_viewable, open_stored, store
@@ -127,11 +128,36 @@ def _one_document(service, actor, row) -> dict:
     return _documents_json(service, actor, fresh)[0] if fresh else _document_json(row)
 
 
+#: Идентификатор в адресе — только UUID: иначе `abc` доходил до базы и
+#: возвращался как 500.
+UUID_PATTERN = (
+    "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+
+
+def _uuid_param(query, name: str) -> str | None:
+    raw = query.get(name) or None
+    if raw is None:
+        return None
+    try:
+        return str(uuid.UUID(str(raw)))
+    except ValueError:
+        raise ValidationFailed(
+            "Неверный идентификатор", details={"field": name},
+        ) from None
+
+
+def _limit(query) -> int | None:
+    # Общий разбор из core/api: мусор, огромные числа и ноль дают 400,
+    # а не 500 из голого `int()`.
+    return query_int(query, "limit", minimum=1)
+
+
 def _scope(query) -> dict:
     return {
-        "search": query.get("search") or None,
-        "office_id": query.get("office_id") or None,
-        "department_id": query.get("department_id") or None,
+        "search": (query.get("search") or None) and query.get("search")[:200],
+        "office_id": _uuid_param(query, "office_id"),
+        "department_id": _uuid_param(query, "department_id"),
     }
 
 
@@ -169,7 +195,7 @@ class OnboardingProgressView(APIView):
             status=query.get("status") or None,
             group=query.get("group") or None,
             **_scope(query),
-            limit=int(query["limit"]) if query.get("limit") else None,
+            limit=_limit(query),
             cursor=query.get("cursor") or None,
         )
         return Response({
@@ -327,6 +353,7 @@ class PolicyCategoryViewSet(ServiceViewSet):
     """Разделы материалов."""
 
     service_class = CategoryService
+    lookup_value_regex = UUID_PATTERN
     read_serializer_class = CategoryPatchSerializer
 
     @extend_schema(operation_id="policy_categories", summary="Разделы материалов",
@@ -364,6 +391,7 @@ class OnboardingSectionViewSet(ServiceViewSet):
     """Тексты десяти карточек. Правятся кадровиком, а не выкатом."""
 
     service_class = OnboardingContentService
+    lookup_value_regex = UUID_PATTERN
     read_serializer_class = CrmSectionSerializer
 
     @extend_schema(
@@ -412,6 +440,7 @@ class PolicyDocumentViewSet(ServiceViewSet):
     """Обязательные документы и их редакции."""
 
     service_class = PolicyService
+    lookup_value_regex = UUID_PATTERN
     read_serializer_class = DocumentSerializer
 
     @extend_schema(
@@ -538,6 +567,10 @@ class PolicyVersionFileView(APIView):
     def post(self, request, version_id):
         actor = Actor.from_user(request.user)
         service = PolicyService()
+        # Право — до приёма файла. Раньше файл ложился в хранилище и в
+        # таблицу `files` раньше проверки, и любой вошедший в CRM без
+        # единого права оставлял на диске сколько угодно файлов.
+        service.access.require(actor, "policies.publish")
         upload = request.FILES.get("document")
         if upload is None:
             raise ValidationFailed("Файл не приложен", details={"field": "document"})
@@ -579,14 +612,12 @@ class PolicyVersionFileView(APIView):
         ).first()
         if version is None or version.file_id is None:
             raise NotFound("Файл не найден")
-        if not is_viewable(version.file):
+        # scan_status, удаление и безопасные заголовки — одной проверкой.
+        from humotech.files.serving import STAFF, file_response
+
+        if not is_viewable(version.file, STAFF):
             raise NotFound("Файл документа недоступен")
-        return FileResponse(
-            open_stored(version.file),
-            as_attachment=False,
-            filename=version.file.original_filename,
-            content_type=version.file.mime_type,
-        )
+        return file_response(open_stored(version.file), version.file, audience=STAFF)
 
 
 __all__ = [

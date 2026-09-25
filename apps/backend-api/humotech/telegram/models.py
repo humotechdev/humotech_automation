@@ -143,6 +143,17 @@ class TelegramLinkInvitation(
     revoked_at = models.DateTimeField(null=True, blank=True)
     reviewed_at = models.DateTimeField(null=True, blank=True)
     consumed_by_telegram_user_id = models.BigIntegerField(null=True, blank=True)
+    #: Как погашено приглашение: `LINK` — персональной ссылкой (у человека
+    #: был токен), `USERNAME` — узнаванием по имени в Telegram. От этого
+    #: зависит, может ли сотрудник сам открыть себе доступ согласием с
+    #: условиями: владение ссылкой — да, совпадение имени — нет, имя в
+    #: Telegram можно занять, и такую привязку подтверждает только HR.
+    consumed_via = models.CharField(
+        max_length=20,
+        choices=[("LINK", "Ссылка"), ("USERNAME", "Имя в Telegram")],
+        null=True,
+        blank=True,
+    )
     created_by_user = models.ForeignKey(
         "accounts.User",
         on_delete=models.PROTECT,

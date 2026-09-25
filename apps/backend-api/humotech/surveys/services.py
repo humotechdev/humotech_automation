@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -28,9 +29,9 @@ from humotech.core.enums import (
     SURVEY_AUDIENCE_KINDS,
     SURVEY_QUESTION_KINDS,
 )
-from humotech.core.errors import Conflict, NotFound, ValidationFailed
+from humotech.core.errors import Conflict, NotFound, PermissionDenied, ValidationFailed
 from humotech.core.pagination import Page, paginate
-from humotech.core.rbac import Actor, snapshot
+from humotech.core.rbac import AccessControl, Actor, snapshot
 from humotech.core.service import BaseService
 from humotech.core.validation import clean_text
 from humotech.employees.models import Employee, EmployeeAssignment
@@ -57,6 +58,55 @@ SCALE_MIN, SCALE_MAX = 1, 5
 #: Тип уведомления приглашения. По нему очередь собирает кнопку.
 INVITE_TYPE = "survey.invite"
 THANKS_TYPE = "survey.completed"
+
+#: Меньше скольких завершивших анонимный опрос его ответы не показываются
+#: вовсе. Сводка по одному-двум ответам — это и есть ответ конкретного
+#: человека: кто прошёл опрос, видно в списке получателей.
+ANONYMOUS_MIN_RESPONSES = 3
+
+#: С чего начинается формула в Excel/LibreOffice. Ячейка CSV, которая
+#: начинается так, исполняется при открытии файла.
+FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+logger = logging.getLogger("humotech.surveys")
+
+
+def safe_cell(value) -> str:
+    """Ячейка CSV, которую табличный редактор не примет за формулу."""
+    text = "" if value is None else str(value)
+    if text.startswith(FORMULA_PREFIXES):
+        return "'" + text
+    return text
+
+
+def visible_employee_ids(access: AccessControl, actor: Actor):
+    """Сотрудники в области видимости актора. `None` — вся организация.
+
+    Именно `None` для «всех» и ПУСТАЯ выборка для «никого»: проверка
+    `if ids:` слила бы эти случаи и показала всю организацию тому, кому
+    выдан один офис. Правило то же, что у карточки сотрудника: человек
+    виден, если хоть одно его назначение — в доступном офисе.
+    """
+    visible = access.visible_office_ids(actor)
+    if visible is None:
+        return None
+    return EmployeeAssignment.objects.filter(
+        office_id__in=visible
+    ).values_list("employee_id", flat=True)
+
+
+def require_whole_organization(access: AccessControl, actor: Actor) -> None:
+    """Рассылать и править правила — только с доступом ко всей организации.
+
+    Круг рассылки («все», «должность», «отдел», правило автоматизации)
+    не привязан к офису, и кадровик одного офиса через него спрашивал бы
+    людей, которых сам не видит.
+    """
+    if not access.scope(actor).all_offices:
+        raise PermissionDenied(
+            "Рассылки опросов доступны только с доступом ко всей организации",
+            details={"reason": "scope_limited"},
+        )
 
 
 def _questions_payload(raw: list[dict] | None) -> list[dict]:
@@ -427,14 +477,18 @@ class SurveyCampaignService(BaseService):
         limit: int | None = None, cursor: str | None = None,
     ) -> Page:
         self.access.require(actor, "surveys.read")
+        # Счёт — только по людям в области: иначе у кадровика одного
+        # офиса «прошли 40 из 120» раскрывало бы всю организацию.
+        people = visible_employee_ids(self.access, actor)
+        seen = Q() if people is None else Q(recipients__employee_id__in=people)
         queryset = (
             SurveyCampaign.objects.filter(organization_id=actor.organization_id)
             .select_related("template")
             .annotate(
-                total=Count("recipients", distinct=True),
+                total=Count("recipients", filter=seen, distinct=True),
                 done=Count(
                     "recipients",
-                    filter=Q(recipients__status="COMPLETED"),
+                    filter=seen & Q(recipients__status="COMPLETED"),
                     distinct=True,
                 ),
             )
@@ -455,6 +509,7 @@ class SurveyCampaignService(BaseService):
         send_now: bool = False, is_anonymous: bool = False,
     ) -> SurveyCampaign:
         self.access.require(actor, "surveys.manage")
+        require_whole_organization(self.access, actor)
         template = SurveyTemplateService()._require(actor, template_id)
         if not template.questions.exists():
             raise Conflict("В шаблоне нет вопросов: отправлять нечего")
@@ -565,8 +620,16 @@ class SurveyCampaignService(BaseService):
             audience_kind=audience_kind,
             audience_ids=[str(one) for one in audience_ids] or None,
         )
+        people = audience_employees(probe)
+        # «Уже не работают» считается по всему кругу, до отбора по
+        # области: иначе люди соседнего офиса числились бы уволенными.
+        employed = len(people)
+        allowed = visible_employee_ids(self.access, actor)
+        if allowed is not None:
+            allowed = set(allowed)
+            people = [one for one in people if one.id in allowed]
         people = sorted(
-            audience_employees(probe),
+            people,
             key=lambda one: (one.last_name or "", one.first_name or ""),
         )
         reachable = _with_telegram([person.id for person in people])
@@ -574,7 +637,7 @@ class SurveyCampaignService(BaseService):
         # «выбрали пятерых — уйдёт четверым» без объяснения выглядит
         # как ошибка.
         gone = (
-            len({str(one) for one in audience_ids}) - len(people)
+            len({str(one) for one in audience_ids}) - employed
             if audience_kind == "EMPLOYEES" else 0
         )
         places = places_of([person.id for person in people[:200]])
@@ -609,6 +672,7 @@ class SurveyCampaignService(BaseService):
         опрос. Заведённую правилом тоже: её правят через само правило.
         """
         self.access.require(actor, "surveys.manage")
+        require_whole_organization(self.access, actor)
         campaign = self._require(actor, campaign_id)
         if campaign.status != "SCHEDULED":
             raise Conflict(
@@ -698,6 +762,9 @@ class SurveyCampaignService(BaseService):
         )
         if recipient_ids:
             rows = rows.filter(id__in=[str(one) for one in recipient_ids])
+        people = visible_employee_ids(self.access, actor)
+        if people is not None:
+            rows = rows.filter(employee_id__in=people)
         rows = list(rows)
         reachable = _with_telegram([row.employee_id for row in rows])
         day = moment.date().isoformat()
@@ -740,10 +807,12 @@ class SurveyCampaignService(BaseService):
             SurveyQuestion.objects.filter(template_id=campaign.template_id)
             .order_by("position")
         )
+        people = visible_employee_ids(self.access, actor)
         if campaign.is_anonymous:
-            return _anonymous_export(campaign, questions)
+            header, body = _anonymous_export(campaign, questions, people)
+            return [safe_cell(one) for one in header], body
         rows = list(
-            SurveyRecipient.objects.filter(campaign_id=campaign.id)
+            self._rows(campaign, people)
             .select_related("employee")
             .prefetch_related("answers")
             .order_by("employee__last_name", "employee__first_name")
@@ -782,15 +851,20 @@ class SurveyCampaignService(BaseService):
                     cells.append("; ".join(answer.options))
                 else:
                     cells.append(answer.text or "")
-            body.append(cells)
-        return header, body
+            body.append([safe_cell(cell) for cell in cells])
+        return [safe_cell(one) for one in header], body
 
     def send(self, actor: Actor, campaign_id: uuid.UUID) -> SurveyCampaign:
         """Отправить сейчас — в том числе запланированную раньше срока."""
         self.access.require(actor, "surveys.manage")
+        require_whole_organization(self.access, actor)
         campaign = self._require(actor, campaign_id)
         if campaign.status == "CANCELLED":
             raise Conflict("Рассылка отменена: отправлять нечего")
+        if campaign.status == "FINISHED":
+            # Приём закрыт сроком: повторная отправка вернула бы опрос
+            # в «идёт» и разослала приглашения на уже закрытый опрос.
+            raise Conflict("Приём ответов закрыт: рассылка завершена")
         with self.atomic():
             dispatch(campaign)
             self.audit.record(
@@ -804,6 +878,7 @@ class SurveyCampaignService(BaseService):
     def cancel(self, actor: Actor, campaign_id: uuid.UUID) -> SurveyCampaign:
         """Отменить: повторов больше не будет, ответы остаются."""
         self.access.require(actor, "surveys.manage")
+        require_whole_organization(self.access, actor)
         campaign = self._require(actor, campaign_id)
         before = snapshot(campaign, AUDITED_CAMPAIGN)
         with self.atomic():
@@ -823,7 +898,7 @@ class SurveyCampaignService(BaseService):
         self.access.require(actor, "surveys.read")
         campaign = self._require(actor, campaign_id)
         rows = (
-            SurveyRecipient.objects.filter(campaign_id=campaign.id)
+            self._rows(campaign, visible_employee_ids(self.access, actor))
             .select_related("employee")
             .order_by("employee__last_name", "employee__first_name")
         )
@@ -840,9 +915,8 @@ class SurveyCampaignService(BaseService):
             # кадровика. Сводка по вопросам — в `summary`.
             return []
         return list(
-            SurveyRecipient.objects.filter(
-                campaign_id=campaign.id, status="COMPLETED"
-            )
+            self._rows(campaign, visible_employee_ids(self.access, actor))
+            .filter(status="COMPLETED")
             .select_related("employee")
             .prefetch_related("answers", "answers__question")
             .order_by("completed_at")
@@ -856,12 +930,18 @@ class SurveyCampaignService(BaseService):
         """
         self.access.require(actor, "surveys.read")
         campaign = self._require(actor, campaign_id)
+        people = visible_employee_ids(self.access, actor)
         recipients = list(
-            SurveyRecipient.objects.filter(campaign_id=campaign.id)
+            self._rows(campaign, people)
             .select_related("employee")
             .prefetch_related("answers", "answers__question")
         )
         places = places_of([row.employee_id for row in recipients])
+        # Анонимный опрос с одним-двумя ответами: сводка по ним и есть
+        # ответ конкретного человека. Ключи остаются, значения пустеют.
+        suppressed = campaign.is_anonymous and sum(
+            1 for row in recipients if row.status == "COMPLETED"
+        ) < ANONYMOUS_MIN_RESPONSES
 
         questions = list(
             SurveyQuestion.objects.filter(template_id=campaign.template_id)
@@ -875,6 +955,8 @@ class SurveyCampaignService(BaseService):
                 for answer in row.answers.all()
                 if answer.question_id == question.id
             ]
+            if suppressed:
+                answers = []
             item: dict = {
                 "id": str(question.id),
                 "text": question.text,
@@ -899,15 +981,29 @@ class SurveyCampaignService(BaseService):
                         counts[option] = counts.get(option, 0) + 1
                 item["distribution"] = counts
             else:
-                item["texts"] = [a.text for a in answers if a.text]
+                # По алфавиту, а не в порядке строк получателей: тот
+                # порядок совпадает с порядком рассылки, и в анонимном
+                # опросе по нему текст сопоставлялся бы с человеком.
+                item["texts"] = sorted(a.text for a in answers if a.text)
             by_question.append(item)
 
         return {
-            "progress": progress_of(campaign),
+            "progress": progress_of(campaign, people),
             "questions": by_question,
             "offices": _group(recipients, places, "office"),
             "departments": _group(recipients, places, "department"),
+            "suppressed": suppressed,
+            "min_responses": (
+                ANONYMOUS_MIN_RESPONSES if campaign.is_anonymous else None
+            ),
         }
+
+    def _rows(self, campaign: SurveyCampaign, people):
+        """Получатели рассылки в области видимости (`None` — все)."""
+        rows = SurveyRecipient.objects.filter(campaign_id=campaign.id)
+        if people is not None:
+            rows = rows.filter(employee_id__in=people)
+        return rows
 
     # --- внутреннее ---------------------------------------------------------
 
@@ -925,25 +1021,30 @@ class SurveyCampaignService(BaseService):
 # --- отправка ----------------------------------------------------------------
 
 
-def _anonymous_export(campaign: SurveyCampaign, questions: list) -> tuple[list, list]:
+def _anonymous_export(
+    campaign: SurveyCampaign, questions: list, people=None,
+) -> tuple[list, list]:
     """Выгрузка анонимного опроса: только ответы, без людей.
 
     Ни имени, ни офиса, ни времени — по времени ответа человека узнать
-    так же легко, как по фамилии. Порядок строк — по хешу идентификатора,
-    а не по времени и не по алфавиту.
-    """
-    import hashlib
+    так же легко, как по фамилии. Порядок строк — по САМИМ ОТВЕТАМ.
+    Раньше он шёл по sha256 от id получателя, а эти id кадровик видит в
+    списке получателей: посчитав хеши, он сопоставлял строку с фамилией.
 
-    rows = list(
-        SurveyRecipient.objects.filter(campaign_id=campaign.id, status="COMPLETED")
-        .prefetch_related("answers")
-    )
-    rows.sort(key=lambda row: hashlib.sha256(str(row.id).encode()).hexdigest())
+    Меньше `ANONYMOUS_MIN_RESPONSES` ответов — строк нет вовсе: один
+    ответ в выгрузке и одна отметка «прошёл» в списке — это подпись.
+    """
+    rows = SurveyRecipient.objects.filter(campaign_id=campaign.id, status="COMPLETED")
+    if people is not None:
+        rows = rows.filter(employee_id__in=people)
+    rows = list(rows.prefetch_related("answers"))
     header = ["№"] + [question.text for question in questions]
-    body = []
-    for number, row in enumerate(rows, start=1):
+    if len(rows) < ANONYMOUS_MIN_RESPONSES:
+        return header, []
+    answers_only = []
+    for row in rows:
         by_question = {answer.question_id: answer for answer in row.answers.all()}
-        cells = [str(number)]
+        cells = []
         for question in questions:
             answer = by_question.get(question.id)
             if answer is None:
@@ -954,7 +1055,9 @@ def _anonymous_export(campaign: SurveyCampaign, questions: list) -> tuple[list, 
                 cells.append("; ".join(answer.options))
             else:
                 cells.append(answer.text or "")
-        body.append(cells)
+        answers_only.append([safe_cell(cell) for cell in cells])
+    answers_only.sort()
+    body = [[str(number), *cells] for number, cells in enumerate(answers_only, start=1)]
     return header, body
 
 
@@ -1173,20 +1276,44 @@ def dispatch_due(*, now: datetime | None = None) -> int:
     ).exclude(status="CANCELLED")
 
     sent = 0
-    for campaign in due:
-        with transaction.atomic():
-            sent += dispatch(campaign, now=moment)
+    for campaign_id in list(due.values_list("id", flat=True)):
+        # Строка перечитывается под блокировкой: очередь опрашивают
+        # несколько воркеров сразу, и без неё два из них рассылали бы
+        # одну рассылку одновременно. Сбой одной рассылки не должен
+        # останавливать остальные — этот вызов живёт внутри очереди
+        # уведомлений всех организаций.
+        try:
+            with transaction.atomic():
+                campaign = (
+                    SurveyCampaign.objects.select_for_update(skip_locked=True, of=("self",))
+                    .select_related("template")
+                    .filter(
+                        id=campaign_id, next_send_at__isnull=False,
+                        next_send_at__lte=moment,
+                    )
+                    .exclude(status="CANCELLED")
+                    .first()
+                )
+                if campaign is None:
+                    continue
+                sent += dispatch(campaign, now=moment)
+        except Exception:  # noqa: BLE001 — одна рассылка не валит очередь
+            logger.exception("survey dispatch failed: campaign=%s", campaign_id)
     return sent
 
 
-def progress_of(campaign: SurveyCampaign) -> dict:
+def progress_of(campaign: SurveyCampaign, people=None) -> dict:
     """Счёт по рассылке.
 
     Пропущенные считаются отдельно и не входят ни в отправленных, ни в
     доли прошедших: «прошли 6 из 10» при двух, до кого опрос не дошёл,
     занижает результат вдвое и ставит кадровику не тот вопрос.
+
+    `people` — область видимости (`None` — вся организация).
     """
     rows = SurveyRecipient.objects.filter(campaign_id=campaign.id)
+    if people is not None:
+        rows = rows.filter(employee_id__in=people)
     skipped = rows.filter(status="SKIPPED").count()
     total = rows.count()
     return {
@@ -1239,6 +1366,7 @@ def open_survey(*, employee_id: uuid.UUID, recipient_id: uuid.UUID) -> SurveyRec
     )
     if recipient is None:
         raise NotFound("Опрос не найден")
+    _refuse_if_not_invited(recipient)
     _refuse_if_closed(recipient)
     if recipient.status == "SENT":
         recipient.status = "STARTED"
@@ -1268,6 +1396,7 @@ def submit(
         raise NotFound("Опрос не найден")
     if recipient.status == "COMPLETED":
         raise Conflict("Этот опрос уже пройден")
+    _refuse_if_not_invited(recipient)
     _refuse_if_closed(recipient, now=moment)
 
     questions = {
@@ -1276,8 +1405,14 @@ def submit(
             template_id=recipient.campaign.template_id
         )
     }
+    if len(answers) > len(questions):
+        raise ValidationFailed(
+            "Ответов больше, чем вопросов в опросе",
+            details={"answers": len(answers), "questions": len(questions)},
+        )
     prepared: list[SurveyAnswer] = []
     seen: set[uuid.UUID] = set()
+    mentioned: set[uuid.UUID] = set()
 
     for item in answers:
         try:
@@ -1290,6 +1425,14 @@ def submit(
                 "Вопроса нет в этом опросе",
                 details={"question_id": str(question_id)},
             )
+        # Один вопрос — один ответ. Дубль раньше доходил до уникального
+        # ключа в базе и возвращался как 500.
+        if question_id in mentioned:
+            raise ValidationFailed(
+                "На вопрос ответили дважды",
+                details={"question_id": str(question_id)},
+            )
+        mentioned.add(question_id)
         value = _answer_value(question, item)
         if value is None:
             continue
@@ -1316,6 +1459,12 @@ def submit(
         )
 
     with transaction.atomic():
+        # Двойное нажатие «Отправить» приходит двумя запросами сразу.
+        # Под блокировкой второй увидит уже завершённый опрос и получит
+        # отказ, а не перепишет ответы первого.
+        locked = SurveyRecipient.objects.select_for_update().get(pk=recipient.pk)
+        if locked.status == "COMPLETED":
+            raise Conflict("Этот опрос уже пройден")
         SurveyAnswer.objects.filter(recipient_id=recipient.id).delete()
         SurveyAnswer.objects.bulk_create(prepared)
         recipient.status = "COMPLETED"
@@ -1335,6 +1484,20 @@ def submit(
             related_entity_id=recipient.id,
         )
     return recipient
+
+
+def _refuse_if_not_invited(recipient: SurveyRecipient) -> None:
+    """Отвечают только те, кому приглашение действительно ушло.
+
+    Строка «пропущен» (нет Telegram, уже не работает) и строка, ещё не
+    разосланная, — не приглашение: ответ по ним превратил бы «опрос до
+    человека не дошёл» в «прошёл» и испортил счёт рассылки.
+    """
+    if recipient.status not in ("SENT", "STARTED", "COMPLETED"):
+        raise Conflict(
+            "Этот опрос вам не отправлялся",
+            details={"status": recipient.status},
+        )
 
 
 def _refuse_if_closed(
@@ -1380,12 +1543,18 @@ def _answer_value(question: SurveyQuestion, item: dict) -> dict | None:
     chosen = [str(one) for one in (item.get("options") or []) if str(one).strip()]
     if not chosen:
         return None
+    if len(set(chosen)) != len(chosen):
+        # Повтор варианта считался бы в сводке дважды: один человек
+        # «голосовал» бы за вариант столько раз, сколько захочет.
+        raise ValidationFailed(
+            "Вариант выбран дважды", details={"options": chosen[:20]},
+        )
     allowed = set(question.options or [])
     unknown = [one for one in chosen if one not in allowed]
     if unknown:
         raise ValidationFailed(
             "Такого варианта у вопроса нет",
-            details={"options": unknown},
+            details={"options": [one[:200] for one in unknown[:20]]},
         )
     if question.kind == "SINGLE" and len(chosen) > 1:
         raise ValidationFailed(
@@ -1434,6 +1603,9 @@ __all__ = [
     "INVITE_TYPE",
     "THANKS_TYPE",
     "places_of",
+    "require_whole_organization",
+    "safe_cell",
+    "visible_employee_ids",
     "SurveyCampaignService",
     "SurveyTemplateService",
     "audience_employees",

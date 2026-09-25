@@ -140,8 +140,18 @@ class ExportJobService(BaseService):
         return rows
 
     def get(self, actor: Actor, job_id: uuid.UUID):
+        """Одно задание. Чужое — по тому же правилу, что и список.
+
+        Раньше по идентификатору открывалось любое задание организации:
+        список прятал чужие заказы, а карточка отдавала их фильтры, почту
+        заказчика и имя файла любому с `reports.export`.
+        """
         self.access.require(actor, "reports.export")
-        return self._require(actor, job_id)
+        job = self._require(actor, job_id)
+        if (job.requested_by_user_id != actor.user_id
+                and not self.access.has(actor, "audit.read")):
+            raise NotFound("Выгрузка не найдена")
+        return job
 
     def create(
         self, actor: Actor, *, kind: str, fmt: str, filters: dict | None = None,
@@ -184,6 +194,12 @@ class ExportJobService(BaseService):
                 "Для этого отчёта нужны параметры конструктора",
                 details={"kind": ["Укажите период и поля отчёта"]},
             )
+        else:
+            # Старый вид: право на данные, офис и регион — тоже сразу,
+            # как у конструктора. Сборка проверит их ещё раз.
+            from humotech.reports.sheets import _precheck
+
+            _precheck(kind, actor, filters or {})
 
         pending = ExportJob.objects.filter(
             organization_id=actor.organization_id,
@@ -546,7 +562,16 @@ def purge_expired(now=None) -> int:
     )
     removed = 0
     for job in stale:
-        storage.delete(job.storage_key)
+        try:
+            storage.delete(job.storage_key)
+        except OSError:
+            # Один файл, который не удаётся стереть, не должен оставлять
+            # лежать все остальные просроченные выгрузки.
+            import logging
+
+            logging.getLogger("humotech.reports.worker").warning(
+                "не удалось удалить просроченную выгрузку %s", job.id, exc_info=True)
+            continue
         job.storage_key = None
         job.size_bytes = None
         job.save(update_fields=["storage_key", "size_bytes", "updated_at"])

@@ -24,7 +24,6 @@ import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, time
-from zoneinfo import ZoneInfo
 
 from django.db.models import Count, Max
 from django.utils import timezone
@@ -34,6 +33,7 @@ from humotech.core.errors import Conflict, NotFound, ValidationFailed
 from humotech.core.pagination import Page, paginate
 from humotech.core.rbac import Actor, snapshot
 from humotech.core.service import BaseService
+from humotech.core.timeframes import zone as safe_zone
 from humotech.core.validation import clean_code, clean_text
 from humotech.qr_codes.models import OfficeQrPoint
 from humotech.qr_codes import stickers
@@ -97,8 +97,10 @@ def with_scans_today(points: list[OfficeQrPoint]) -> list[OfficeQrPoint]:
         by_zone.setdefault(point.office.timezone, []).append(point)
 
     for zone, group in by_zone.items():
-        local = now.astimezone(ZoneInfo(zone))
-        start = datetime.combine(local.date(), time.min, tzinfo=ZoneInfo(zone))
+        # Кривое имя пояса в карточке офиса не должно ронять список точек.
+        tz = safe_zone(zone)
+        local = now.astimezone(tz)
+        start = datetime.combine(local.date(), time.min, tzinfo=tz)
         counts = dict(
             AttendanceEvent.objects.filter(
                 qr_point_id__in=[point.id for point in group],
@@ -162,6 +164,12 @@ class QrPointService(BaseService):
         if is_active is not None:
             queryset = queryset.filter(is_active=is_active)
         if search:
+            if "\x00" in search:
+                # PostgreSQL не принимает NUL в параметре: без этой
+                # проверки `?search=%00` давал 500.
+                raise ValidationFailed(
+                    "Недопустимый символ в параметре", details={"field": "search"}
+                )
             pattern = search.strip()
             queryset = queryset.filter(name__icontains=pattern) | queryset.filter(
                 code__icontains=pattern

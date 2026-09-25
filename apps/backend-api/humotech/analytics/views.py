@@ -115,7 +115,7 @@ class DashboardView(APIView):
         actor = Actor.from_user(request.user)
         summary = DashboardService().summary(
             actor,
-            day=_date_param(request, "date"),
+            day=_bounded_date(request, "date"),
             office_id=_uuid_param(request, "office_id"),
             region_id=_uuid_param(request, "region_id"),
             department_id=_uuid_param(request, "department_id"),
@@ -242,8 +242,8 @@ class ComparisonView(APIView):
             right_id=_uuid_param(request, "right_id"),
             first=first,
             last=last,
-            right_first=_date_param(request, "right_first"),
-            right_last=_date_param(request, "right_last"),
+            right_first=_bounded_date(request, "right_first"),
+            right_last=_bounded_date(request, "right_last"),
         )
         return Response(result)
 
@@ -477,12 +477,23 @@ def _period(request):
 
     from humotech.core.timeframes import month_range
 
-    first = _date_param(request, "date_from")
-    last = _date_param(request, "date_to")
+    first = _bounded_date(request, "date_from")
+    last = _bounded_date(request, "date_to")
     if first and last:
         return first, last
     default_first, default_last = month_range(_date.today())
     return first or default_first, last or default_last
+
+
+def _bounded_date(request, name: str):
+    """Дата из строки запроса в пределах, где с ней можно считать.
+
+    0001-01-01 и 9999-12-31 — законный ISO, но «день до» и «день после»
+    них в Python не существуют: без этой проверки сервис падал с 500.
+    """
+    from humotech.analytics.metrics import check_date
+
+    return check_date(_date_param(request, name), name)
 
 
 def _series_wanted(request) -> bool:

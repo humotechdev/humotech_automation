@@ -76,6 +76,49 @@ from humotech.schedules.models import CalendarException, EmployeeScheduleAssignm
 #: выгрузка и `/analytics`.
 MAX_JOURNAL_DAYS = 31
 
+#: Какие даты вообще имеют смысл для посещаемости. Не бизнес-правило, а
+#: защита: `date(1, 1, 1)` в поясе +5 при переводе в UTC уходит за
+#: пределы календаря Python, `date(9999, 12, 31) + 1 день` — тоже, и оба
+#: превращались в 500 из `timeframes.day_bounds`.
+EARLIEST_DAY = date(2000, 1, 1)
+LATEST_DAY = date(2100, 12, 31)
+
+#: Ручная отметка «в будущем» — не факт, а заготовка, по которой потом
+#: посчитают рабочее время. Небольшой запас — на расхождение часов.
+MANUAL_FUTURE_GRACE = timedelta(minutes=15)
+
+
+def ensure_day_in_range(value: date | None, field: str) -> date | None:
+    """Дата внутри разумного окна либо `ValidationFailed` (400, не 500)."""
+    if value is None:
+        return None
+    if not EARLIEST_DAY <= value <= LATEST_DAY:
+        raise ValidationFailed(
+            "Дата вне допустимого диапазона",
+            details={
+                "field": field,
+                "value": value.isoformat(),
+                "min": EARLIEST_DAY.isoformat(),
+                "max": LATEST_DAY.isoformat(),
+            },
+        )
+    return value
+
+
+def ensure_no_nul(value: str | None, field: str) -> str | None:
+    """Строка фильтра без NUL-байта.
+
+    Параметры адреса не проходят через валидатор DRF, а PostgreSQL не
+    принимает `\\x00` в текстовом параметре и отвечает `DataError` —
+    то есть 500 на `?search=%00`.
+    """
+    if value is not None and "\x00" in value:
+        raise ValidationFailed(
+            "Недопустимый символ в параметре", details={"field": field}
+        )
+    return value
+
+
 PRESENCE_STATES = (
     "SICK_LEAVE",
     "VACATION",
@@ -219,6 +262,8 @@ class AttendanceHrService(BaseService):
         и карточки, и файл выгрузки.
         """
         self.access.require(actor, "attendance.read")
+        ensure_day_in_range(day, "date")
+        ensure_no_nul(search, "search")
         if state and state not in PRESENCE_STATES:
             raise ValidationFailed(
                 "Неизвестное состояние присутствия",
@@ -322,6 +367,8 @@ class AttendanceHrService(BaseService):
         # «нельзя» — иначе перебором идентификаторов считается чужой штат.
         self._require_employee_visible(actor, employee_id)
 
+        ensure_day_in_range(first, "date_from")
+        ensure_day_in_range(last, "date_to")
         if last < first:
             raise ValidationFailed(
                 "Конец периода раньше начала",
@@ -470,6 +517,9 @@ class AttendanceHrService(BaseService):
         нет и не должно появиться.
         """
         self.access.require(actor, "attendance.read")
+        ensure_no_nul(event_type, "event_type")
+        ensure_no_nul(source, "source")
+        ensure_no_nul(verification_status, "verification_status")
 
         queryset = AttendanceEvent.objects.filter(
             organization_id=actor.organization_id
@@ -507,6 +557,7 @@ class AttendanceHrService(BaseService):
     ) -> Page:
         """Рабочие сессии. `only_open=True` — незакрытые."""
         self.access.require(actor, "attendance.read")
+        ensure_no_nul(status, "status")
 
         queryset = AttendanceSession.objects.filter(
             organization_id=actor.organization_id
@@ -547,6 +598,8 @@ class AttendanceHrService(BaseService):
         одним курсором. Правила доступа те же, что у `corrections`.
         """
         self.access.require(actor, "attendance.read")
+        ensure_no_nul(status, "status")
+        ensure_no_nul(search, "search")
 
         queryset = AttendanceCorrectionRequest.objects.filter(
             organization_id=actor.organization_id
@@ -586,6 +639,7 @@ class AttendanceHrService(BaseService):
         cursor: str | None = None,
     ) -> Page:
         self.access.require(actor, "attendance.read")
+        ensure_no_nul(status, "status")
 
         queryset = AttendanceCorrectionRequest.objects.filter(
             organization_id=actor.organization_id
@@ -723,6 +777,15 @@ class AttendanceHrService(BaseService):
         self.access.require_office(actor, office_id)
         self._require_employee_visible(actor, employee_id)
 
+        # Отметка — факт, а не план. Будущий момент или год 1 превратились
+        # бы в рабочее время, которого не было, либо в 500 при расчёте суток.
+        if occurred_at > _now() + MANUAL_FUTURE_GRACE:
+            raise ValidationFailed(
+                "Ручная отметка не может быть в будущем",
+                details={"field": "occurred_at"},
+            )
+        ensure_day_in_range(occurred_at.date(), "occurred_at")
+
         with self.atomic():
             event = AttendanceEvent.objects.create(
                 organization_id=actor.organization_id,
@@ -842,6 +905,8 @@ class AttendanceHrService(BaseService):
     ) -> QuerySet:
         if not date_from and not date_to:
             return queryset
+        ensure_day_in_range(date_from, "date_from")
+        ensure_day_in_range(date_to, "date_to")
         if date_from and date_to and date_to < date_from:
             raise ValidationFailed(
                 "Конец периода раньше начала",

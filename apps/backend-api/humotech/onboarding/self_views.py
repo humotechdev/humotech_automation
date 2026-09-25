@@ -12,7 +12,6 @@
 
 from __future__ import annotations
 
-from django.http import FileResponse
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework.response import Response
@@ -224,17 +223,15 @@ class PolicyFileView(PolicyTextView):
         if version.file_id is None:
             raise NotFound("К документу не приложен файл")
         record = version.file
-        if not is_viewable(record):
+        # scan_status, удаление и безопасные заголовки — одной проверкой.
+        from humotech.files.serving import EMPLOYEE, file_response
+
+        if not is_viewable(record, EMPLOYEE):
             # Файл удалён или не прошёл проверку. Отдавать его нельзя,
             # а молчать — значит оставить человека перед кнопкой,
             # которая ничего не делает.
             raise NotFound("Файл документа недоступен")
-        return FileResponse(
-            open_stored(record),
-            as_attachment=False,
-            filename=record.original_filename,
-            content_type=record.mime_type,
-        )
+        return file_response(open_stored(record), record, audience=EMPLOYEE)
 
 
 __all__ = [

@@ -79,6 +79,18 @@ def check_location(office: Office) -> None:
             details={"latitude": ["Укажите обе координаты или ни одной."],
                      "longitude": ["Укажите обе координаты или ни одной."]},
         )
+    # Широта за ±90 или долгота за ±180 — не точка на Земле: геозона с
+    # ней молча не совпала бы ни с одной отметкой.
+    if office.latitude is not None and not -90 <= office.latitude <= 90:
+        raise ValidationFailed(
+            "Широта — от -90 до 90",
+            details={"latitude": ["Допустимо от -90 до 90."]},
+        )
+    if office.longitude is not None and not -180 <= office.longitude <= 180:
+        raise ValidationFailed(
+            "Долгота — от -180 до 180",
+            details={"longitude": ["Допустимо от -180 до 180."]},
+        )
     radius = office.geofence_radius_m
     if radius is not None and not GEOFENCE_MIN_M <= radius <= GEOFENCE_MAX_M:
         raise ValidationFailed(
@@ -178,7 +190,7 @@ class OfficeService(BaseService):
             )
 
         with self.atomic():
-            office = Office.objects.create(
+            office = Office(
                 organization_id=actor.organization_id,
                 region=region,
                 code=(
@@ -197,6 +209,10 @@ class OfficeService(BaseService):
                 status="ACTIVE",
                 **{k: extra.get(k) for k in SIMPLE_FIELDS if k in extra},
             )
+            # Те же правила точки и радиуса, что при правке: иначе
+            # полкоординаты или радиус в 0 м заводились при создании.
+            check_location(office)
+            office.save(force_insert=True)
             self.audit.record(
                 actor, action="office.create", entity_type="offices",
                 entity_id=office.id, after=snapshot(office, AUDITED_FIELDS),

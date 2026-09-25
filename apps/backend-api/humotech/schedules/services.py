@@ -29,7 +29,9 @@ from humotech.core.validation import (
     validate_day_interval,
     validate_timezone,
 )
+from humotech.departments.models import Department
 from humotech.employees.models import Employee, EmployeeAssignment
+from humotech.employees.selectors import require_visible_employee
 from humotech.schedules.models import (
     EmployeeScheduleAssignment,
     ScheduleBreak,
@@ -347,15 +349,28 @@ class WorkScheduleService(BaseService):
         прочим. Кто не получил и почему — в ответе.
         """
         self.access.require(actor, "schedules.manage")
+        # График и отдел проверяются ДО выборки состава: иначе чужой график
+        # отвечал бы «в отделе нет сотрудников» вместо «не найден», а отказ
+        # по области посреди цикла оставил бы половину назначений сделанной.
+        self.access.require_schedule(actor, schedule_id)
+        department = Department.objects.filter(
+            id=department_id, organization_id=actor.organization_id
+        ).first()
+        if department is None:
+            raise NotFound("Отдел не найден")
+        if department.office_id is not None:
+            self.access.require_office(actor, department.office_id)
 
-        today_staff = list(
-            EmployeeAssignment.objects.filter(
-                department_id=department_id, organization_id=actor.organization_id
-            )
-            .filter(Q(valid_to__isnull=True) | Q(valid_to__gte=valid_from))
-            .values_list("employee_id", flat=True)
-            .distinct()
-        )
+        staff = EmployeeAssignment.objects.filter(
+            department_id=department_id, organization_id=actor.organization_id
+        ).filter(Q(valid_to__isnull=True) | Q(valid_to__gte=valid_from))
+        # Общий отдел (без офиса) тянется через все регионы. Региональному
+        # HR достаются только люди его области: назначить график человеку
+        # чужого офиса по одному запросу он не может, и через отдел — тоже.
+        visible = self.access.visible_office_ids(actor)
+        if visible is not None:
+            staff = staff.filter(office_id__in=visible)
+        today_staff = list(staff.values_list("employee_id", flat=True).distinct())
         if not today_staff:
             raise Conflict(
                 "В отделе нет сотрудников: назначать график некому",
@@ -407,12 +422,12 @@ class WorkScheduleService(BaseService):
     # ------------------------------------------------------ внутренние правила
 
     def _require_employee(self, actor: Actor, employee_id: uuid.UUID) -> Employee:
-        employee = Employee.objects.filter(
-            id=employee_id, organization_id=actor.organization_id
-        ).first()
-        if employee is None:
-            raise NotFound("Сотрудник не найден")
-        return employee
+        """Сотрудник своей организации И своей области видимости.
+
+        Одной организации мало: региональный HR иначе назначал бы график
+        и читал историю графиков людей чужого региона.
+        """
+        return require_visible_employee(self.access, actor, employee_id)
 
     @staticmethod
     def _validate_days(days: list[DaySpec]) -> None:

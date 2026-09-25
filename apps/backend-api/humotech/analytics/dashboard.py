@@ -24,7 +24,6 @@ from datetime import date
 
 from django.db.models import Q
 
-from humotech.absences.models import AbsenceRequest
 from humotech.attendance.hr import AttendanceHrService
 from humotech.attendance.models import AttendanceSession
 from humotech.core.rbac import Actor
@@ -274,10 +273,13 @@ class DashboardService(BaseService):
         """
         if not self.access.has(actor, "absences.read"):
             return 0
-        return AbsenceRequest.objects.filter(
-            organization_id=actor.organization_id,
-            status__in=("SUBMITTED", "IN_REVIEW"),
-        ).count()
+        # Считает тот же `pending()`, на который ведёт карточка: с областью
+        # видимости. Раньше здесь был счёт по всей организации, и кадровик
+        # одного офиса видел число открытых заявок всей компании — и число
+        # не совпадало со списком, открывающимся по нажатию.
+        from humotech.absences.services import AbsenceService
+
+        return AbsenceService().pending(actor).count()
 
     @staticmethod
     def _warnings(report) -> list[dict]:

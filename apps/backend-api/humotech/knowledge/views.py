@@ -28,6 +28,17 @@ from humotech.core.enums import (
 from humotech.core.errors import ValidationFailed
 from humotech.knowledge.service import KnowledgeService
 
+#: Границы `priority` — колонка integer. Значение за ними давало
+#: `integer out of range` и пятисотку вместо понятного отказа.
+PRIORITY_LIMITS = {"min_value": -1_000_000, "max_value": 1_000_000}
+#: Документ целиком. Тело запроса и так ограничено настройкой Django,
+#: но явная граница даёт понятный отказ, а не обрыв на разборе.
+CONTENT_MAX = 500_000
+#: Вопрос FAQ сравнивается с вопросом сотрудника, а тот не длиннее 1000.
+QUESTION_MAX = 1000
+#: Утверждённый ответ уходит в Telegram как есть; сообщение там — до 4096.
+ANSWER_MAX = 3500
+
 
 def _uuid(request, name: str) -> uuid.UUID | None:
     raw = request.query_params.get(name)
@@ -128,7 +139,7 @@ class KnowledgeSourceCreateSerializer(serializers.Serializer):
     title = serializers.CharField(max_length=255)
     source_type = serializers.ChoiceField(choices=KNOWLEDGE_SOURCE_TYPES)
     language = serializers.CharField(max_length=10)
-    content = serializers.CharField()
+    content = serializers.CharField(max_length=CONTENT_MAX)
     office_id = serializers.UUIDField(required=False, allow_null=True)
     region_id = serializers.UUIDField(
         required=False,
@@ -139,7 +150,8 @@ class KnowledgeSourceCreateSerializer(serializers.Serializer):
     department_id = serializers.UUIDField(required=False, allow_null=True)
     effective_from = serializers.DateField(required=False, allow_null=True)
     effective_to = serializers.DateField(required=False, allow_null=True)
-    priority = serializers.IntegerField(required=False, default=0)
+    priority = serializers.IntegerField(required=False, default=0,
+                                        **PRIORITY_LIMITS)
     parent_source_id = serializers.UUIDField(
         required=False,
         allow_null=True,
@@ -149,8 +161,8 @@ class KnowledgeSourceCreateSerializer(serializers.Serializer):
 
 class KnowledgeSourceUpdateSerializer(serializers.Serializer):
     title = serializers.CharField(max_length=255, required=False)
-    content = serializers.CharField(required=False)
-    priority = serializers.IntegerField(required=False)
+    content = serializers.CharField(required=False, max_length=CONTENT_MAX)
+    priority = serializers.IntegerField(required=False, **PRIORITY_LIMITS)
     effective_from = serializers.DateField(required=False, allow_null=True)
     effective_to = serializers.DateField(required=False, allow_null=True)
 
@@ -424,19 +436,22 @@ class FaqCountsSerializer(serializers.Serializer):
 
 
 class FaqCreateSerializer(serializers.Serializer):
-    canonical_question = serializers.CharField()
-    approved_answer = serializers.CharField()
+    canonical_question = serializers.CharField(max_length=QUESTION_MAX)
+    approved_answer = serializers.CharField(max_length=ANSWER_MAX)
     language = serializers.CharField(max_length=10)
     source_id = serializers.UUIDField(required=False, allow_null=True)
     office_id = serializers.UUIDField(required=False, allow_null=True)
     region_id = serializers.UUIDField(required=False, allow_null=True)
-    priority = serializers.IntegerField(required=False, default=0)
+    priority = serializers.IntegerField(required=False, default=0,
+                                        **PRIORITY_LIMITS)
 
 
 class FaqUpdateSerializer(serializers.Serializer):
-    canonical_question = serializers.CharField(required=False)
-    approved_answer = serializers.CharField(required=False)
-    priority = serializers.IntegerField(required=False)
+    canonical_question = serializers.CharField(required=False,
+                                               max_length=QUESTION_MAX)
+    approved_answer = serializers.CharField(required=False,
+                                            max_length=ANSWER_MAX)
+    priority = serializers.IntegerField(required=False, **PRIORITY_LIMITS)
 
 
 @extend_schema(tags=["База знаний"])

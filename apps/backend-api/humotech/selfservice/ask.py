@@ -31,6 +31,7 @@ from drf_spectacular.utils import extend_schema
 from rest_framework import serializers
 from rest_framework.response import Response
 
+from humotech.ai_assistant.config import ai_settings
 from humotech.ai_assistant.container import build_container
 from humotech.ai_assistant.schemas import AnswerRequest, AnswerStatus, ScoreBand
 from humotech.core.api import validated
@@ -51,7 +52,12 @@ SURE_ENOUGH = (ScoreBand.HIGH, ScoreBand.MEDIUM)
 
 
 class AskRequestSerializer(serializers.Serializer):
-    text = serializers.CharField(max_length=4000)
+    # Граница та же, что у ассистента (`AI_QUERY_MAX_LENGTH`). Раньше здесь
+    # стояло 4000: вопрос длиннее 1000 проходил проверку, отказывался уже
+    # внутри конвейера, и человек читал «Ваш вопрос передан HR», хотя
+    # обращение не заводилось. Теперь это честный 400, и бот предлагает
+    # передать вопрос HR — там предел свой, 4000.
+    text = serializers.CharField(max_length=ai_settings.ai_query_max_length)
     client_request_id = serializers.CharField(
         max_length=100, required=False, allow_null=True,
         help_text="Повтор той же отправки не считается новым вопросом",

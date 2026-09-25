@@ -769,7 +769,32 @@ def _differences(left: Report, right: Report) -> list[dict]:
     return result
 
 
+#: Границы допустимых дат в параметрах отчётов и аналитики.
+#:
+#: Не бизнес-правило, а защита арифметики: 0001-01-01 и 9999-12-31 —
+#: законные даты ISO, но «сутки до» первой и «сутки после» второй
+#: в Python не существуют, и сервис отвечал OverflowError, то есть 500.
+#: Сравнение «с тем же периодом год назад» отступает ещё на год, поэтому
+#: запас с обеих сторон.
+DATE_MIN = date(1900, 1, 1)
+DATE_MAX = date(2200, 12, 31)
+
+
+def check_date(value: date | None, field: str) -> date | None:
+    """Дата из запроса — в пределах, где с ней можно считать."""
+    if value is not None and not (DATE_MIN <= value <= DATE_MAX):
+        raise ValidationFailed(
+            f"Дата вне допустимого диапазона {DATE_MIN.isoformat()} — "
+            f"{DATE_MAX.isoformat()}",
+            details={field: [f"Допустимы даты с {DATE_MIN.isoformat()} "
+                             f"по {DATE_MAX.isoformat()}"]},
+        )
+    return value
+
+
 def _validate_period(first: date, last: date) -> None:
+    check_date(first, "date_from")
+    check_date(last, "date_to")
     if last < first:
         raise ValidationFailed(
             "Конец периода раньше начала",

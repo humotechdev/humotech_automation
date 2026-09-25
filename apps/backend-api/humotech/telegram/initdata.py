@@ -48,6 +48,13 @@ from humotech.telegram.compare import constant_time_equal
 # Без него минутный сдвиг NTP превращается в «войти невозможно».
 CLOCK_SKEW_SECONDS = 60
 
+# Пределы разбора. Настоящая строка Telegram — около килобайта и
+# десятка полей (user, chat, auth_date, hash, signature, start_param…).
+# Всё, что сильно больше, — не запуск Mini App, а попытка заставить
+# сервер разбирать и хешировать мегабайты до проверки подписи.
+MAX_INIT_DATA_LENGTH = 8192
+MAX_FIELDS = 32
+
 
 class InitDataError(Exception):
     """Строка не прошла проверку.
@@ -109,16 +116,31 @@ def verify_init_data(
         # Отказ, а не «пропустим на этот раз»: без токена проверить нечем,
         # и молчаливый пропуск открыл бы вход кому угодно.
         raise InitDataError("bot_token_not_configured")
-    if not init_data:
+    if not init_data or not isinstance(init_data, str):
         raise InitDataError("empty")
+    if len(init_data) > MAX_INIT_DATA_LENGTH:
+        raise InitDataError("too_long")
+    try:
+        # Одиночный суррогат (`\ud800`) проходит JSON и доходит сюда
+        # строкой, но в байты для HMAC не превращается: без этой
+        # проверки UnicodeEncodeError ронял бы запрос в 500.
+        init_data.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise InitDataError("malformed") from exc
 
     try:
-        pairs = parse_qsl(init_data, strict_parsing=True, keep_blank_values=True)
+        pairs = parse_qsl(
+            init_data,
+            strict_parsing=True,
+            keep_blank_values=True,
+            max_num_fields=MAX_FIELDS,
+        )
     except ValueError as exc:
         raise InitDataError("malformed") from exc
 
     received_hash = None
     rest: list[tuple[str, str]] = []
+    seen: set[str] = set()
     for key, value in pairs:
         if key == "hash":
             # Двух `hash` быть не может: иначе непонятно, какой проверяем.
@@ -126,14 +148,25 @@ def verify_init_data(
                 raise InitDataError("duplicate_hash")
             received_hash = value
         else:
+            # Как и с `hash`: два `user` в одной строке — это вопрос
+            # «какой из них настоящий», а решение по подписанным данным
+            # не должно зависеть от того, какой возьмёт `dict()`.
+            if key in seen:
+                raise InitDataError("duplicate_field")
+            seen.add(key)
             rest.append((key, value))
 
     if not received_hash:
         raise InitDataError("hash_missing")
 
-    if not constant_time_equal(
-        _expected_hash(bot_token, _data_check_string(rest)), received_hash
-    ):
+    try:
+        expected = _expected_hash(bot_token, _data_check_string(rest))
+        signature_ok = constant_time_equal(expected, received_hash)
+    except UnicodeEncodeError as exc:
+        # Процентная кодировка раскодирована в суррогаты — те же байты
+        # не собрать, значит, и подпись не наша.
+        raise InitDataError("malformed") from exc
+    if not signature_ok:
         raise InitDataError("bad_signature")
 
     fields = dict(rest)
@@ -141,9 +174,16 @@ def verify_init_data(
     raw_auth_date = fields.get("auth_date")
     if not raw_auth_date:
         raise InitDataError("auth_date_missing")
+    # Только ASCII-цифры: `int()` принимает и «٣٤٥», и « 12 », и «1_000».
+    # Длина ограничена: 12 цифр — это далеко за пределами разумного срока,
+    # а больше `datetime` не переварит и бросит OverflowError.
+    if not (raw_auth_date.isascii() and raw_auth_date.isdigit()) or len(
+        raw_auth_date
+    ) > 12:
+        raise InitDataError("auth_date_malformed")
     try:
         auth_date = datetime.fromtimestamp(int(raw_auth_date), tz=timezone.utc)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, OverflowError, OSError) as exc:
         raise InitDataError("auth_date_malformed") from exc
 
     moment = now or datetime.now(tz=timezone.utc)
@@ -160,23 +200,32 @@ def verify_init_data(
         raise InitDataError("user_missing")
     try:
         user_data = json.loads(raw_user)
-    except json.JSONDecodeError as exc:
+    except (ValueError, RecursionError) as exc:
+        # ValueError шире JSONDecodeError: сюда же попадает число длиннее
+        # 4300 цифр, которое Python отказывается переводить в int.
         raise InitDataError("user_malformed") from exc
-    if not isinstance(user_data, dict) or not user_data.get("id"):
+    if not isinstance(user_data, dict):
         raise InitDataError("user_malformed")
-    try:
-        user_id = int(user_data["id"])
-    except (TypeError, ValueError) as exc:
-        raise InitDataError("user_malformed") from exc
+    user_id = user_data.get("id")
+    # Идентификатор Telegram — положительное целое. `True`, `1.5`, `"12"`
+    # и `-5` Telegram не присылает; принимать их значило бы искать
+    # в базе сотрудника по тому, что мы сами дорисовали.
+    if type(user_id) is not int or user_id <= 0:
+        raise InitDataError("user_malformed")
 
     return VerifiedInitData(
         user=TelegramUser(
             id=user_id,
-            username=user_data.get("username"),
-            first_name=user_data.get("first_name"),
-            last_name=user_data.get("last_name"),
-            language_code=user_data.get("language_code"),
+            username=_text(user_data.get("username")),
+            first_name=_text(user_data.get("first_name")),
+            last_name=_text(user_data.get("last_name")),
+            language_code=_text(user_data.get("language_code")),
         ),
         auth_date=auth_date,
-        chat_instance=fields.get("chat_instance"),
+        chat_instance=_text(fields.get("chat_instance")),
     )
+
+
+def _text(value) -> str | None:
+    """Строка или ничего: число или объект на месте имени не пропускаем."""
+    return value if isinstance(value, str) else None

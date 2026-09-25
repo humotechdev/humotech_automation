@@ -151,7 +151,9 @@ class CorrectionDecisionSerializer(serializers.Serializer):
     ту же заявку заново, и так по кругу.
     """
 
-    comment = serializers.CharField(required=False, allow_blank=True)
+    comment = serializers.CharField(
+        required=False, allow_blank=True, max_length=2000
+    )
 
 
 class ManualEventSerializer(serializers.Serializer):

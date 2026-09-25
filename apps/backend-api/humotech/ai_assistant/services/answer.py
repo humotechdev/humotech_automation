@@ -53,7 +53,8 @@ from humotech.ai_assistant.services.personal_data import (
     PersonalDataQueryService,
 )
 from humotech.ai_assistant.services.publishing import current_revision
-from humotech.ai_assistant.services.rate_limit import RateLimiter
+from humotech.ai_assistant.services.chunking import count_tokens
+from humotech.ai_assistant.services.rate_limit import DatabaseRateLimiter
 from humotech.ai_assistant.services.retrieval import (
     RetrievalResult,
     RetrievalService,
@@ -65,6 +66,20 @@ from humotech.ai_assistant.services.scoping import (
 )
 
 logger = logging.getLogger("humotech.ai.answer")
+
+
+def _trim_to_tokens(text: str, limit: int) -> str:
+    """Начало текста не длиннее `limit` токенов (по тому же счётчику)."""
+    if count_tokens(text) <= limit:
+        return text
+    low, high = 0, len(text)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if count_tokens(text[:middle]) <= limit:
+            low = middle
+        else:
+            high = middle - 1
+    return text[:low]
 
 
 def score_band(score: float | None) -> ScoreBand:
@@ -104,7 +119,7 @@ class AnswerService:
         cache: CacheService,
         personal_data_service: PersonalDataQueryService,
         settings: AiSettings | None = None,
-        rate_limiter: RateLimiter | None = None,
+        rate_limiter=None,
     ) -> None:
         self.llm = llm
         self.embeddings = embeddings
@@ -115,7 +130,7 @@ class AnswerService:
         self.router = PersonalDataQueryRouter()
         self.retrieval = RetrievalService(self.settings)
         self.escalation = QuestionEscalationService()
-        self.rate_limiter = rate_limiter or RateLimiter(
+        self.rate_limiter = rate_limiter or DatabaseRateLimiter(
             per_minute=self.settings.ai_rate_limit_per_minute,
             per_day=self.settings.ai_rate_limit_per_day,
         )
@@ -133,7 +148,9 @@ class AnswerService:
         language = self._resolve_language(request.language or scope.language)
 
         try:
-            self.rate_limiter.enforce(scope.employee_id)
+            self.rate_limiter.enforce(
+                scope.employee_id, organization_id=scope.organization_id
+            )
             check = check_question(
                 request.question, max_length=self.settings.ai_query_max_length
             )
@@ -343,6 +360,9 @@ class AnswerService:
             system_prompt=self.prompts.system_prompt,
             user_content=user_content,
             model=model,
+            # Потолок ответа: без него стоимость одного вопроса ограничена
+            # только умолчанием провайдера, а сотрудник читает с телефона.
+            max_output_tokens=self.settings.ai_max_output_tokens,
             response_schema=ANSWER_JSON_SCHEMA,
         )
         return self._parse(raw.text), raw
@@ -353,9 +373,16 @@ class AnswerService:
         try:
             data = json.loads(text)
             if isinstance(data, dict) and "answer" in data:
+                if not isinstance(data.get("answer"), str):
+                    return {"answer": "", "answered": False, "used_fragments": []}
                 return data
         except (json.JSONDecodeError, TypeError):
             pass
+        if (text or "").lstrip().startswith(("{", "[")):
+            # Похоже на JSON, но не разбирается — ответ обрезан потолком
+            # токенов или испорчен. Показать сотруднику сырой `{"answer": "…`
+            # нельзя: это не ответ, а повод передать вопрос HR.
+            return {"answer": "", "answered": False, "used_fragments": []}
         # модель вернула обычный текст — считаем его ответом
         return {"answer": text or "", "answered": bool(text), "used_fragments": []}
 
@@ -365,15 +392,30 @@ class AnswerService:
         Это и есть основная защита от prompt injection: содержимое документов
         физически не может оказаться в роли системной инструкции.
         """
-        blocks = [
-            self.prompts.context_item_template.format(
-                index=index + 1,
-                title=chunk.source_title,
-                version=chunk.source_version,
-                text=chunk.text,
+        # Бюджет контекста (`AI_MAX_CONTEXT_TOKENS`). Кусок режется по
+        # предложениям, и абзац без точек остаётся одним огромным куском:
+        # без бюджета шесть таких уходили бы в модель целиком, и цену
+        # вопроса определял бы самый длинный документ базы.
+        budget = max(0, int(self.settings.ai_max_context_tokens))
+        blocks: list[str] = []
+        for index, chunk in enumerate(result.chunks):
+            text = chunk.text
+            tokens = count_tokens(text)
+            if tokens > budget:
+                if blocks or budget <= 0:
+                    break
+                # первый же кусок не влезает — берём его начало, а не ничего
+                text = _trim_to_tokens(text, budget)
+                tokens = budget
+            budget -= tokens
+            blocks.append(
+                self.prompts.context_item_template.format(
+                    index=index + 1,
+                    title=chunk.source_title,
+                    version=chunk.source_version,
+                    text=text,
+                )
             )
-            for index, chunk in enumerate(result.chunks)
-        ]
         return self.prompts.user_template.format(
             question=question, context="\n".join(blocks)
         )

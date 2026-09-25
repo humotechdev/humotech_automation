@@ -22,7 +22,12 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from humotech.core.errors import NotFound, PermissionDenied
+from humotech.core.errors import (
+    Conflict,
+    NotFound,
+    PermissionDenied,
+    ValidationFailed,
+)
 from humotech.core.rbac import AccessControl, Actor, AuditTrail
 from humotech.ai_assistant.errors import PublishingError
 from humotech.ai_assistant.models import UnansweredQuestion
@@ -90,6 +95,61 @@ class KnowledgeAdminUseCases:
             raise NotFound("Источник знаний не найден")
         return source
 
+    def _require_area(
+        self,
+        actor: Actor,
+        *,
+        office_id: uuid.UUID | None,
+        region_id: uuid.UUID | None,
+        department_id: uuid.UUID | None = None,
+    ) -> None:
+        """Область действия правила — своя организация и своя видимость.
+
+        Без этой сверки в документ и FAQ записывались офис, регион и отдел
+        по любому идентификатору: ответ API тут же возвращал название
+        чужого офиса, а пользователь с правами на один офис заводил и
+        правил правила для соседнего.
+
+        Правило без офиса и региона действует на всю организацию, поэтому
+        заводить и менять его может только тот, кому видна вся
+        организация. Правило отдела без офиса — тоже на всю организацию:
+        отдел общий для всех офисов.
+        """
+        if office_id is not None and region_id is not None:
+            # 409, как и прежний отказ слоя публикации: клиенты его знают.
+            raise Conflict(
+                "Правило нельзя привязать одновременно к офису и к региону: "
+                "уровень области действия должен быть однозначным",
+                details={"field": "office_id"},
+            )
+        if office_id is not None:
+            self.access.require_office(actor, office_id)
+        if region_id is not None:
+            self.access.require_region(actor, region_id)
+        if department_id is not None:
+            from humotech.departments.models import Department
+
+            if not Department.objects.filter(
+                id=department_id, organization_id=actor.organization_id
+            ).exists():
+                raise NotFound("Отдел не найден")
+        if office_id is None and region_id is None:
+            if not self.access.scope(actor).all_offices:
+                raise PermissionDenied(
+                    "Правило для всей организации может менять только "
+                    "пользователь с доступом ко всей организации"
+                )
+
+    def _require_source_in_scope(
+        self, actor: Actor, source_id: uuid.UUID
+    ) -> KnowledgeSource:
+        """Источник своей организации И в области видимости актора."""
+        source = self._require_source(actor, source_id)
+        self._require_area(
+            actor, office_id=source.office_id, region_id=source.region_id
+        )
+        return source
+
     def _require_question(
         self, actor: Actor, question_id: uuid.UUID
     ) -> UnansweredQuestion:
@@ -119,11 +179,18 @@ class KnowledgeAdminUseCases:
 
     def create_draft(self, actor: Actor, **payload) -> KnowledgeSource:
         self._require(actor, "knowledge.write")
+        _require_priority(payload.get("priority"))
+        self._require_area(
+            actor,
+            office_id=payload.get("office_id"),
+            region_id=payload.get("region_id"),
+            department_id=payload.get("department_id"),
+        )
         parent_id = payload.get("parent_source_id")
         if parent_id is not None:
             # Новая версия чужого документа — тот же обход, только через
             # родителя: содержимое соседней организации попало бы в нашу.
-            self._require_source(actor, parent_id)
+            self._require_source_in_scope(actor, parent_id)
         source = self.publishing.create_draft(
             organization_id=actor.organization_id,
             created_by_user_id=actor.user_id,
@@ -140,7 +207,8 @@ class KnowledgeAdminUseCases:
         self, actor: Actor, source_id: uuid.UUID, **fields
     ) -> KnowledgeSource:
         self._require(actor, "knowledge.write")
-        before = self._require_source(actor, source_id)
+        _require_priority(fields.get("priority"))
+        before = self._require_source_in_scope(actor, source_id)
         old = {"title": before.title, "status": before.status}
         source = self.publishing.update_draft(source_id, **fields)
         self._audit(
@@ -154,7 +222,7 @@ class KnowledgeAdminUseCases:
 
     def start_indexing(self, actor: Actor, source_id: uuid.UUID) -> KnowledgeIndexJob:
         self._require(actor, "knowledge.index")
-        self._require_source(actor, source_id)
+        self._require_source_in_scope(actor, source_id)
         job = self.publishing.enqueue_indexing(source_id)
         self._audit(
             actor, action="knowledge.index.start",
@@ -188,7 +256,7 @@ class KnowledgeAdminUseCases:
 
     def publish(self, actor: Actor, source_id: uuid.UUID):
         self._require(actor, "knowledge.publish")
-        self._require_source(actor, source_id)
+        self._require_source_in_scope(actor, source_id)
         result = self.publishing.publish(source_id, approved_by_user_id=actor.user_id)
         self._audit(
             actor, action="knowledge.publish",
@@ -205,7 +273,7 @@ class KnowledgeAdminUseCases:
 
     def archive(self, actor: Actor, source_id: uuid.UUID) -> int:
         self._require(actor, "knowledge.publish")
-        self._require_source(actor, source_id)
+        self._require_source_in_scope(actor, source_id)
         revision = self.publishing.archive(source_id)
         self._audit(
             actor, action="knowledge.archive",
@@ -326,8 +394,21 @@ class KnowledgeAdminUseCases:
         Эмбеддинг вопроса здесь НЕ считается: его посчитает воркер индексации.
         До этого запись остаётся в статусе DRAFT и в поиск не попадает.
         """
+        from humotech.core.validation import clean_text
+
         self._require(actor, "questions.answer")
         self._require_question(actor, question_id)
+        canonical_question = clean_text(
+            canonical_question, field="canonical_question", required=True
+        )
+        approved_answer = clean_text(
+            approved_answer, field="approved_answer", required=True
+        )
+        _require_priority(priority)
+        # Та же сверка области, что и у документа: иначе черновик FAQ
+        # привязывался к офису другой организации, и ответ API возвращал
+        # его название.
+        self._require_area(actor, office_id=office_id, region_id=region_id)
         if source_id is not None:
             self._require_source(actor, source_id)
         faq = FaqEntry.objects.create(
@@ -414,3 +495,22 @@ class KnowledgeAdminUseCases:
             new_values={"status": record.status},
         )
         return record
+
+
+#: Границы колонки `priority` (PostgreSQL integer). Значение за ними
+#: давало `integer out of range` — пятисотку вместо отказа.
+PRIORITY_MIN = -1_000_000
+PRIORITY_MAX = 1_000_000
+
+
+def _require_priority(value) -> None:
+    if value is None:
+        return
+    if isinstance(value, bool) or not isinstance(value, int) or not (
+        PRIORITY_MIN <= value <= PRIORITY_MAX
+    ):
+        raise ValidationFailed(
+            f"Приоритет должен быть целым числом от {PRIORITY_MIN} "
+            f"до {PRIORITY_MAX}",
+            details={"field": "priority"},
+        )

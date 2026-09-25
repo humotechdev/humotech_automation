@@ -88,6 +88,10 @@ LIVE_ABSENCE_STATUSES = ("PLANNED", "ACTIVE", "COMPLETED")
 
 MINUTES_PER_WORKING_DAY = 8 * 60
 
+# Какие даты вообще принимаются в период отсутствия.
+EARLIEST_DAY = date(2000, 1, 1)
+LATEST_DAY = date(2100, 12, 31)
+
 # Чего не хватает, чтобы подтвердить больничный. Три пункта, и все три
 # делает кадровик: принять справку, подтвердить, что подписанное
 # заявление пришло по почте, и проставить фактические даты по справке.
@@ -182,6 +186,11 @@ def approval_blockers(request: AbsenceRequest) -> tuple[str, ...]:
     все три пункта уже прошла.
     """
     missing = []
+    if request.request_kind == "CANCEL":
+        # Просьба снять подтверждённое отсутствие. Её подтверждение
+        # ничего не пишет в табель, а только снимает родителя: ни бумаг,
+        # ни периода ей не нужно.
+        return ()
     if request.absence_type.requires_document and request.request_kind == "CREATE":
         if certificate_state(request) != "VERIFIED":
             missing.append("certificate")
@@ -437,6 +446,22 @@ def raise_on_overlap(
             "last_day": clash.last_day.isoformat(),
         },
     )
+
+
+def _parse_day(value, field: str) -> date:
+    """Дата фильтра из строки запроса. Кривая — 400, а не 500.
+
+    Раньше строка уходила в ORM как есть, и «2026-02-30» или любой мусор
+    роняли очередь внутренней ошибкой из `DateField.to_python`.
+    """
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value).strip())
+    except ValueError:
+        raise ValidationFailed(
+            "Дата в формате ГГГГ-ММ-ДД", details={"field": field}
+        ) from None
 
 
 def _period_words(request, tz) -> str:
@@ -811,6 +836,9 @@ class AbsenceService(BaseService):
             )
 
         current_end = parent.requested_end_at
+        # Та же граница, что у подачи: без неё 9999-12-31 давал 500, а
+        # продление на десятилетия — долгий обход дней ниже.
+        self._check_period(context, new_last_day, new_last_day)
         _, new_end = closed_range_bounds(
             new_last_day, new_last_day, context.timezone
         )
@@ -829,6 +857,7 @@ class AbsenceService(BaseService):
         extra_start, _ = closed_range_bounds(
             first_extra_day, new_last_day, context.timezone
         )
+        # Обход дней ниже ограничен: год `new_last_day` проверен выше.
         extra_days = self._working_days(context, first_extra_day, new_last_day)
         if parent.absence_type.deducts_leave_balance:
             # Продление отпуска стоит остатка ровно так же, как сам отпуск.
@@ -837,9 +866,26 @@ class AbsenceService(BaseService):
             self._check_balance(
                 context, parent.absence_type, extra_days, policy, extra_start
             )
+        # Длина добавленного куска — по тому же правилу, что у заявки.
+        # После остатка: нехватка дней — более точный ответ, чем «длинно».
+        self._check_period(context, first_extra_day, new_last_day)
 
         with self.atomic():
             lock_employee(context.employee.id)
+            # Проверки выше были до замка: за это время исходную могли
+            # отменить, а второе касание — уже подать продление. Под
+            # замком — ещё раз, по свежей строке.
+            parent = self._locked_request(parent.id)
+            if parent.status != "APPROVED":
+                raise Conflict(
+                    "Продлить можно только подтверждённое отсутствие",
+                    details={"reason": "not_approved"},
+                )
+            if self._pending_extension(parent) is not None:
+                raise Conflict(
+                    "Продление уже отправлено и ждёт решения",
+                    details={"reason": "extension_pending"},
+                )
             # Продление задевает новые сутки, и на них может стоять уже
             # оформленный отпуск. Исходная заявка и её отсутствие из
             # проверки исключены: продлевают именно их.
@@ -900,6 +946,18 @@ class AbsenceService(BaseService):
             )
 
         with self.atomic():
+            # Кадровик мог решить заявку между проверкой выше и этой
+            # строкой. Без повторной проверки под замком отмена ложилась
+            # поверх подтверждения и возвращала дни не туда: из резерва,
+            # которого уже нет, вместо израсходованного.
+            lock_employee(request.employee_id)
+            fresh = self._locked_request(request.id)
+            if fresh.status != request.status:
+                raise Conflict(
+                    "Заявку только что рассмотрели. Обновите страницу.",
+                    details={"reason": "status_changed", "status": fresh.status},
+                )
+            request = fresh
             before = snapshot(request, REQUEST_AUDIT_FIELDS)
             previous = request.status
             request.status = "CANCELLED"
@@ -964,15 +1022,7 @@ class AbsenceService(BaseService):
         self.access.require(actor, "absences.approve")
         moment = now or timezone.now()
 
-        request = (
-            AbsenceRequest.objects.filter(
-                id=request_id, organization_id=actor.organization_id
-            )
-            .select_related("absence_type", "employee", "parent_request")
-            .first()
-        )
-        if request is None:
-            raise NotFound("Заявка не найдена")
+        request = self._hr_request(actor, request_id)
         if request.status not in OPEN_STATUSES:
             raise Conflict(
                 "Заявка уже рассмотрена", details={"status": request.status}
@@ -981,7 +1031,7 @@ class AbsenceService(BaseService):
 
         try:
             return self._decide(
-                actor, request, approve=approve, comment=comment,
+                actor, request.id, approve=approve, comment=comment,
                 override_marks=override_marks, moment=moment,
             )
         except Conflict as error:
@@ -996,10 +1046,21 @@ class AbsenceService(BaseService):
             ) from error
 
     def _decide(
-        self, actor, request, *, approve, comment, override_marks, moment,
+        self, actor, request_id, *, approve, comment, override_marks, moment,
     ) -> AbsenceRequest:
-        """Само решение. Вынесено, чтобы отказ базы ловить снаружи."""
+        """Само решение. Вынесено, чтобы отказ базы ловить снаружи.
+
+        Заявка перечитывается под замком сотрудника и строки: всё, что
+        прочитано до него, — прошлое. Второй кадровик мог отклонить её,
+        сотрудник — отменить, а справку — отклонить, пока этот запрос
+        шёл; решение по устаревшей копии записалось бы поверх.
+        """
         with self.atomic():
+            request = self._locked_request(request_id, lock_employee_first=True)
+            if request.status not in OPEN_STATUSES:
+                raise Conflict(
+                    "Заявка уже рассмотрена", details={"status": request.status}
+                )
             before = snapshot(request, REQUEST_AUDIT_FIELDS)
             previous = request.status
             if approve:
@@ -1030,7 +1091,12 @@ class AbsenceService(BaseService):
                 )
                 self._release(_ContextFromRequest(request), request, moment)
 
-            self._notify(request, "approved" if approve else "rejected")
+            if approve and request.request_kind == "CANCEL":
+                # Подтверждена просьба об отмене: человеку — «отменено»,
+                # а не «подтверждено», иначе он решит, что отпуск в силе.
+                self._notify(request, "cancelled")
+            else:
+                self._notify(request, "approved" if approve else "rejected")
             self.audit.record(
                 actor,
                 action="absence.request.approve" if approve else
@@ -1066,20 +1132,15 @@ class AbsenceService(BaseService):
         """
         self.access.require(actor, "absences.approve")
         moment = now or timezone.now()
-        request = (
-            AbsenceRequest.objects.filter(
-                id=request_id, organization_id=actor.organization_id
-            )
-            .select_related("absence_type", "employee")
-            .first()
-        )
-        if request is None:
-            raise NotFound("Заявка не найдена")
+        request = self._hr_request(actor, request_id)
         if request.status not in OPEN_STATUSES:
             raise Conflict(
                 "Период правится до решения по заявке",
                 details={"status": request.status},
             )
+        # Период — один из трёх пунктов замка больничного. Поставить его
+        # собственной заявке значит наполовину подтвердить её самому.
+        self._forbid_self_approval(actor, request)
 
         context = _ContextFromRequest(request)
         self._check_period(context, first_day, last_day)
@@ -1088,7 +1149,13 @@ class AbsenceService(BaseService):
         )
 
         with self.atomic():
-            lock_employee(request.employee_id)
+            request = self._locked_request(request.id, lock_employee_first=True)
+            if request.status not in OPEN_STATUSES:
+                raise Conflict(
+                    "Период правится до решения по заявке",
+                    details={"status": request.status},
+                )
+            context = _ContextFromRequest(request)
             # Период из справки может лечь поверх чужого отсутствия:
             # человек оформил отпуск на осень, а больничный оказался
             # длиннее, чем думал. Молча наложить одно на другое нельзя —
@@ -1159,13 +1226,23 @@ class AbsenceService(BaseService):
         """
         self.access.require(actor, "absences.documents")
         moment = now or timezone.now()
-        request = AbsenceRequest.objects.filter(
-            id=request_id, organization_id=actor.organization_id
-        ).select_related("absence_type", "employee").first()
-        if request is None:
-            raise NotFound("Заявка не найдена")
+        request = self._hr_request(actor, request_id)
+        self._forbid_self_approval(actor, request)
 
         with self.atomic():
+            # Под замком сотрудника: подтверждение смотрит на эту отметку,
+            # и снятая в ту же секунду, что идёт подтверждение, она не
+            # должна проскочить мимо него.
+            request = self._locked_request(request.id, lock_employee_first=True)
+            # У решённой заявки отметка — часть истории решения. Снять её
+            # после подтверждения значит получить подтверждённый
+            # больничный без заявления, который ни одна проверка уже не
+            # остановит.
+            if request.status not in OPEN_STATUSES:
+                raise Conflict(
+                    "Заявка уже рассмотрена: отметку о заявлении не меняют",
+                    details={"status": request.status},
+                )
             before = snapshot(request, REQUEST_AUDIT_FIELDS)
             request.application_received_at = moment if received else None
             request.save(
@@ -1189,16 +1266,17 @@ class AbsenceService(BaseService):
         """Отмена уже подтверждённого отсутствия — только отделом кадров."""
         self.access.require(actor, "absences.approve")
         moment = now or timezone.now()
-        request = AbsenceRequest.objects.filter(
-            id=request_id, organization_id=actor.organization_id
-        ).select_related("absence_type", "employee").first()
-        if request is None:
-            raise NotFound("Заявка не найдена")
+        request = self._hr_request(actor, request_id)
         if request.status != "APPROVED":
             raise Conflict("Отменять нечего: заявка не подтверждена")
 
-        context = _ContextFromRequest(request)
         with self.atomic():
+            # Две одновременные отмены иначе обе проходили проверку и
+            # дважды возвращали дни в остаток.
+            request = self._locked_request(request.id, lock_employee_first=True)
+            if request.status != "APPROVED":
+                raise Conflict("Отменять нечего: заявка не подтверждена")
+            context = _ContextFromRequest(request)
             before = snapshot(request, REQUEST_AUDIT_FIELDS)
             request.status = "CANCELLED"
             request.reviewed_by_user_id = actor.user_id
@@ -1288,9 +1366,13 @@ class AbsenceService(BaseService):
                 | Q(employee__employee_number__icontains=pattern)
             )
         if date_from:
-            queryset = queryset.filter(requested_end_at__date__gte=date_from)
+            queryset = queryset.filter(
+                requested_end_at__date__gte=_parse_day(date_from, "date_from")
+            )
         if date_to:
-            queryset = queryset.filter(requested_start_at__date__lte=date_to)
+            queryset = queryset.filter(
+                requested_start_at__date__lte=_parse_day(date_to, "date_to")
+            )
 
         visible = self._scope_ids(actor, office_id=office_id, region_id=region_id)
         if visible is not None:
@@ -1453,6 +1535,10 @@ class AbsenceService(BaseService):
                 details={"document_type": document.document_type},
             )
 
+        # Принять справку к собственному больничному — наполовину
+        # подтвердить его самому.
+        self._forbid_self_approval(actor, document.absence_request)
+
         text = (comment or "").strip() or None
         if not accept and not text:
             raise ValidationFailed(
@@ -1462,6 +1548,10 @@ class AbsenceService(BaseService):
 
         request = document.absence_request
         with self.atomic():
+            # Тот же замок, что у подтверждения: решение по справке и
+            # подтверждение, пришедшие одновременно, идут по очереди, и
+            # подтверждение видит уже итог решения по бумаге.
+            lock_employee(request.employee_id)
             document.verification_status = "VERIFIED" if accept else "REJECTED"
             document.verified_by_user_id = actor.user_id
             document.verified_at = timezone.now()
@@ -1580,13 +1670,20 @@ class AbsenceService(BaseService):
     def pending(self, actor: Actor):
         """Заявки, ждущие решения. Для будущего интерфейса HR."""
         self.access.require(actor, "absences.read")
-        return (
+        rows = (
             AbsenceRequest.objects.filter(
                 organization_id=actor.organization_id, status__in=OPEN_STATUSES
             )
             .select_related("absence_type", "employee", "parent_request")
             .order_by("submitted_at")
         )
+        # Та же область, что у очереди и у одной заявки. Без неё
+        # кадровик офиса и читатель с одним `absences.read` видели
+        # заявки всей организации вместе с комментариями сотрудников.
+        visible = self._scope_ids(actor)
+        if visible is not None:
+            rows = rows.filter(employee_id__in=visible)
+        return rows
 
     # ------------------------------------------------------------- внутри
 
@@ -1603,12 +1700,31 @@ class AbsenceService(BaseService):
         больничным дни, в которые человек отмечался. Без него такой
         период не подтверждается вовсе.
         """
+        if request.request_kind == "CANCEL":
+            # Подтверждение просьбы об отмене снимает РОДИТЕЛЯ. Общим путём
+            # оно писало бы в табель второе отсутствие на те же дни.
+            self._approve_cancellation(
+                context, request, actor=actor, comment=comment, now=now,
+            )
+            return None
+
         missing = approval_blockers(request)
         if missing:
             raise Conflict(
                 "Нельзя подтвердить: не хватает "
                 + ", ".join(MISSING_NAMES[one] for one in missing),
                 details={"missing": list(missing)},
+            )
+        if request.request_kind == "EXTEND" and (
+            request.parent_request is None
+            or request.parent_request.status != "APPROVED"
+        ):
+            # Исходное отсутствие сняли, пока продление ждало решения.
+            # Подтвердить его — значит получить «подтверждённое»
+            # продление того, чего больше нет.
+            raise Conflict(
+                "Исходное отсутствие уже не действует: продлевать нечего",
+                details={"reason": "parent_not_approved"},
             )
 
         tz = context.timezone
@@ -1718,6 +1834,46 @@ class AbsenceService(BaseService):
             self._consume_reservation(request, now)
         return absence
 
+    def _approve_cancellation(self, context, request, *, actor, comment, now) -> None:
+        """Подтвердить просьбу об отмене: снять исходное отсутствие.
+
+        Сама просьба становится `APPROVED`, исходная заявка — `CANCELLED`
+        вместе с её отсутствием, а израсходованные дни возвращаются в
+        остаток — ровно как у `cancel_approved`.
+        """
+        parent = (
+            AbsenceRequest.objects.select_for_update(of=("self",))
+            .select_related("absence_type", "employee")
+            .filter(id=request.parent_request_id)
+            .first()
+        )
+        if parent is None or parent.status != "APPROVED":
+            raise Conflict(
+                "Отменять нечего: исходная заявка не подтверждена",
+                details={"reason": "parent_not_approved"},
+            )
+
+        previous = request.status
+        request.status = "APPROVED"
+        request.reviewed_at = now
+        request.review_comment = comment or None
+        fields = ["status", "reviewed_at", "review_comment", "updated_at"]
+        if actor is not None:
+            request.reviewed_by_user_id = actor.user_id
+            fields.append("reviewed_by_user")
+        request.save(update_fields=fields)
+        self._act(context, request, "APPROVED", previous, "APPROVED",
+                  actor=actor, comment=comment)
+
+        parent.status = "CANCELLED"
+        parent.save(update_fields=["status", "updated_at"])
+        self._act(context, parent, "CANCELLED", "APPROVED", "CANCELLED",
+                  actor=actor, comment=comment)
+        EmployeeAbsence.objects.filter(
+            origin_request=parent, status__in=("PLANNED", "ACTIVE")
+        ).update(status="CANCELLED", cancelled_at=now)
+        self._release(context, parent, now, was_approved=True)
+
     def _view(self, context, request: AbsenceRequest) -> RequestView:
         absence = next(
             (a for a in request.absences.all()
@@ -1762,6 +1918,59 @@ class AbsenceService(BaseService):
         if absence_type is None:
             raise NotFound("Такой вид отсутствия недоступен")
         return absence_type
+
+    def _hr_request(self, actor: Actor, request_id) -> AbsenceRequest:
+        """Заявка для действия кадровика: своя организация и своя область.
+
+        Чужой офис отвечает так же, как несуществующая заявка, — иначе
+        по ответу перебирают, какие заявки есть. Раньше решения и шаги
+        проверки смотрели только на организацию: кадровик офиса Б
+        подтверждал больничный сотрудника офиса А, которого даже не видит.
+        """
+        request = (
+            AbsenceRequest.objects.filter(
+                id=request_id, organization_id=actor.organization_id
+            )
+            .select_related("absence_type", "employee", "parent_request")
+            .first()
+        )
+        if request is None:
+            raise NotFound("Заявка не найдена")
+        visible = self._scope_ids(actor)
+        if visible is not None and not visible.filter(
+            employee_id=request.employee_id
+        ).exists():
+            raise NotFound("Заявка не найдена")
+        return request
+
+    def _locked_request(
+        self, request_id, *, lock_employee_first: bool = False
+    ) -> AbsenceRequest:
+        """Свежая строка заявки под `SELECT … FOR UPDATE`.
+
+        Только внутри транзакции. `lock_employee_first` — сперва занять
+        сотрудника: все проверки отсутствий держатся на этом замке, и
+        брать его после строки заявки значило бы брать замки в разном
+        порядке в разных местах.
+        """
+        if lock_employee_first:
+            employee_id = (
+                AbsenceRequest.objects.filter(id=request_id)
+                .values_list("employee_id", flat=True)
+                .first()
+            )
+            if employee_id is None:
+                raise NotFound("Заявка не найдена")
+            lock_employee(employee_id)
+        request = (
+            AbsenceRequest.objects.select_for_update(of=("self",))
+            .select_related("absence_type", "employee", "parent_request")
+            .filter(id=request_id)
+            .first()
+        )
+        if request is None:
+            raise NotFound("Заявка не найдена")
+        return request
 
     def _require_own(self, context, request_id: uuid.UUID) -> AbsenceRequest:
         request = (
@@ -1814,6 +2023,19 @@ class AbsenceService(BaseService):
         )
 
     def _check_period(self, context, first_day: date, last_day: date) -> None:
+        # Границы календаря. Без них 9999-12-31 роняло перевод суток в
+        # UTC (`OverflowError` → 500), а 0001-01-01 — то же в обратную
+        # сторону. Кадровому табелю вне этих лет делать нечего.
+        for day in (first_day, last_day):
+            if not (EARLIEST_DAY <= day <= LATEST_DAY):
+                raise ValidationFailed(
+                    "Дата вне допустимого диапазона",
+                    details={
+                        "reason": "out_of_range",
+                        "min": EARLIEST_DAY.isoformat(),
+                        "max": LATEST_DAY.isoformat(),
+                    },
+                )
         if last_day < first_day:
             raise ValidationFailed(
                 "Конец периода раньше начала", details={"reason": "bad_range"}
@@ -2091,6 +2313,11 @@ class AbsenceService(BaseService):
         сотрудник насовсем теряет отпуск, которого не было.
         """
         if not request.absence_type.deducts_leave_balance:
+            return
+        if request.request_kind == "CANCEL":
+            # Просьба об отмене ничего не резервировала: у неё те же даты
+            # и тот же вид, что у родителя, и «вернуть» её дни значило бы
+            # освободить чужой резерв — другой поданной заявки на отпуск.
             return
         if not (request.requested_start_at and request.requested_end_at):
             return

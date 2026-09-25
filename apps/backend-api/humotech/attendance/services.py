@@ -400,6 +400,11 @@ def _location_verdict(qr_point, latitude, longitude, accuracy_m) -> str | None:
         except (ArithmeticError, TypeError, ValueError):
             return RejectionReason.LOCATION_TOO_VAGUE
         ceiling = settings.QR["MAX_LOCATION_ACCURACY_M"]
+        # Потолок точки может только ужесточить общий, но не ослабить:
+        # иначе настройка в карточке точки была бы видимостью.
+        own = getattr(qr_point, "allowed_location_accuracy_m", None)
+        if own and own > 0:
+            ceiling = min(ceiling, own)
         if not accuracy.is_finite() or accuracy <= 0 or accuracy > ceiling:
             return RejectionReason.LOCATION_TOO_VAGUE
 

@@ -97,6 +97,11 @@ REOPEN_WINDOW = timedelta(days=3)
 #: Бот держит тот же префикс (`REPLY_PREFIX` в его текстах).
 REPLY_HEADER = "💬 Ответ HR по обращению №{number}"
 
+#: Предел сообщения Telegram — в единицах UTF-16, а не в символах Python.
+TELEGRAM_TEXT_LIMIT = 4096
+#: Сколько слов поиска сверяется с ФИО.
+SEARCH_NAME_WORDS = 5
+
 QUICK_FILTERS = ("all", "unanswered", "mine", "urgent")
 REPLY_AFTER = ("KEEP", "WAIT", "CLOSE")
 
@@ -603,6 +608,14 @@ class InboxService(BaseService):
                 raise TelegramUnavailable(
                     "Telegram сотрудника не подключён — сообщение не отправлено",
                     details={"reason": telegram["reason"]},
+                )
+            if _telegram_length(_reply_body(question, body)) > TELEGRAM_TEXT_LIMIT:
+                # 4000 символов проходят проверку формы, но эмодзи и
+                # редкие знаки Telegram считает за два: такой ответ он не
+                # принял бы, а в CRM висел бы «в очереди» навсегда.
+                raise ValidationFailed(
+                    "Ответ не помещается в одно сообщение Telegram — сократите его",
+                    details={"field": "text", "max_length": TELEGRAM_TEXT_LIMIT},
                 )
 
             stored = None
@@ -1176,7 +1189,9 @@ def _search(raw: str) -> Q:
     number = needle.lstrip("#№ ").strip()
     if number.isdigit() and len(number) < 10:
         condition |= Q(number=int(number))
-    words = needle.split()
+    # ФИО — не больше трёх-четырёх слов; каждое слово — три ILIKE, и без
+    # предела длинная строка из однобуквенных слов строила бы огромный запрос.
+    words = needle.split()[:SEARCH_NAME_WORDS]
     if words:
         names = Q()
         for word in words:
@@ -1385,12 +1400,20 @@ def _encode(rank: int, last: datetime, row_id: uuid.UUID) -> str:
 def _decode(raw: str) -> tuple[int, datetime, uuid.UUID]:
     try:
         payload = json.loads(base64.urlsafe_b64decode(raw.encode()))
+        moment = datetime.fromisoformat(payload["t"])
+        if moment.tzinfo is None:
+            # Свои курсоры сервер всегда пишет с поясом; наивное время —
+            # подделка, и сравнение с ним сдвинуло бы страницу на пояс.
+            raise ValueError("naive cursor time")
         return (
             int(payload["r"]),
-            datetime.fromisoformat(payload["t"]),
+            moment,
             uuid.UUID(payload["id"]),
         )
-    except (binascii.Error, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+    except (
+        binascii.Error, ValueError, KeyError, TypeError, OverflowError,
+        json.JSONDecodeError,
+    ) as exc:
         raise ValidationFailed(
             "Некорректный курсор постраничного вывода", details={"cursor": raw}
         ) from exc
@@ -1444,6 +1467,16 @@ def _reply_body(question, answer: str) -> str:
     head = REPLY_HEADER.format(number=question.number)
     if asked:
         short = asked if len(asked) <= 120 else asked[:117].rstrip() + "…"
-        head += f"\n\nВы спрашивали: «{short}»"
+        quoted = head + f"\n\nВы спрашивали: «{short}»"
+        # Ответ кадровика до 4000 символов плюс шапка и цитата вылезали за
+        # предел сообщения Telegram, и ответ не доходил вовсе. Цитата —
+        # подсказка, ответ — суть: при нехватке места жертвуем цитатой.
+        if not answer or _telegram_length(f"{quoted}\n\n{answer}") <= TELEGRAM_TEXT_LIMIT:
+            head = quoted
     # Файл без слов: подпись к документу — только шапка с номером.
     return f"{head}\n\n{answer}" if answer else head
+
+
+def _telegram_length(text: str) -> int:
+    """Длина так, как её считает Telegram: в единицах UTF-16."""
+    return len(text.encode("utf-16-le")) // 2

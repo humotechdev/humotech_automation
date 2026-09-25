@@ -25,7 +25,7 @@ from rest_framework import serializers, status
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.throttling import ScopedRateThrottle
+from humotech.core.throttling import SharedScopedRateThrottle as ScopedRateThrottle
 from rest_framework.views import APIView
 
 from humotech.core.api import ServiceViewSet, validated
@@ -537,9 +537,14 @@ class BotOutboxView(APIView):
         tags=["Telegram"],
     )
     def post(self, request):
+        import uuid as _uuid
+
         from humotech.notifications.outbox import mark_failed, mark_sent
 
-        results = request.data.get("results")
+        # Тело может оказаться списком, строкой или `null`: у них нет
+        # `.get`, и без проверки это 500, а не понятный отказ.
+        data = request.data if isinstance(request.data, dict) else {}
+        results = data.get("results")
         if not isinstance(results, list):
             return Response(
                 {
@@ -552,15 +557,34 @@ class BotOutboxView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # `accepted` — сколько отчётов реально изменили строку. Отчёт
+        # о строке, которую бот не держит (чужая, уже закрытая, снятая
+        # человеком, несуществующая), ничего не меняет и не считается.
         accepted = 0
         for item in results[:200]:
-            if not isinstance(item, dict) or not item.get("id"):
+            if not isinstance(item, dict):
                 continue
-            if item.get("sent"):
-                mark_sent(item["id"])
-            else:
+            raw_id = item.get("id")
+            if not isinstance(raw_id, str) or len(raw_id) > 64:
+                continue
+            try:
+                notification_id = _uuid.UUID(raw_id)
+            except ValueError:
+                continue
+            sent = item.get("sent")
+            # Только настоящий `true`/`false`: строка `"false"` непуста
+            # и раньше засчитывалась как успех.
+            if sent is True:
+                changed = mark_sent(notification_id)
+            elif sent is False:
                 # Текст ошибки от Telegram может содержать эхо запроса,
                 # то есть само уведомление. Наружу берём только код.
-                mark_failed(item["id"], error=str(item.get("error") or "unknown"))
-            accepted += 1
+                error = item.get("error")
+                changed = mark_failed(
+                    notification_id,
+                    error=error if isinstance(error, str) and error else "unknown",
+                )
+            else:
+                continue
+            accepted += int(bool(changed))
         return Response({"accepted": accepted})

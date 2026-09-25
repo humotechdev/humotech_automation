@@ -557,6 +557,16 @@ class EmployeeOnboardingService(BaseService):
         telegram_user_id: int,
         username: str | None,
     ) -> TelegramOutcome:
+        # Рабочая привязка без подтверждения сотрудника — решение того,
+        # кому доверено управлять Telegram. Одного `employees.manage` мало:
+        # иначе кадровик без права на Telegram привязывал бы к новичку
+        # чужой (свой) Telegram и отмечался бы за него. Приём при этом не
+        # срывается — привязку сделают позже из карточки.
+        if not self.access.has(actor, "telegram.manage"):
+            return TelegramOutcome(
+                state="SKIPPED",
+                message="Нет права telegram.manage: Telegram привяжут из карточки сотрудника",
+            )
         if TelegramAccount.objects.filter(
             organization_id=actor.organization_id,
             telegram_user_id=telegram_user_id,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from rest_framework.decorators import action
 
-from humotech.core.api import ServiceViewSet, validated
+from humotech.core.api import ServiceViewSet, query_uuid, validated
 from humotech.offices.serializers import (
     OfficeCloseSerializer,
     OfficeCreateSerializer,
@@ -20,7 +20,8 @@ class OfficeViewSet(ServiceViewSet):
 
     def list(self, request):
         params = self.list_params()
-        region_id = request.query_params.get("region_id")
+        # Кривой UUID — 400, а не 500 из ORM.
+        region_id = query_uuid(request.query_params, "region_id")
         if region_id:
             params["region_id"] = region_id
         return self.page_response(self.service.list(self.actor, **params))

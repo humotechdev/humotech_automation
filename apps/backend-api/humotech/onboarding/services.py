@@ -689,12 +689,21 @@ class OnboardingService(BaseService):
         for one in self._decorate(actor, rows):
             if group and one.group != group:
                 continue
+            # Строки уходят прямо в CSV (его собирает CRM). Имя или отдел,
+            # начинающиеся с `=`/`+`/`-`/`@`, Excel исполнил бы как формулу.
+            from humotech.surveys.services import safe_cell
+
             built.append({
-                "employee_number": one.employee.employee_number,
-                "full_name": _full_name(one.employee),
-                "office": one.office_name,
-                "department": one.department_name,
-                "position": one.position_name,
+                "employee_number": (
+                    safe_cell(one.employee.employee_number)
+                    if one.employee.employee_number else None
+                ),
+                "full_name": safe_cell(_full_name(one.employee)),
+                "office": safe_cell(one.office_name) if one.office_name else None,
+                "department": (
+                    safe_cell(one.department_name) if one.department_name else None
+                ),
+                "position": safe_cell(one.position_name) if one.position_name else None,
                 "telegram": one.telegram_state,
                 "status": one.progress.status,
                 "sections": (

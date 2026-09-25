@@ -15,7 +15,7 @@ from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import serializers, status
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
-from django.http import FileResponse, HttpResponse
+from django.http import HttpResponse
 from rest_framework.response import Response
 
 from humotech.absences.services import MINUTES_PER_WORKING_DAY, AbsenceService
@@ -230,8 +230,10 @@ class AbsenceListView(EmployeeSelfView):
     )
     def get(self, request):
         service = AbsenceService()
-        limit = min(max(int(request.query_params.get("limit") or 20), 1), 100)
-        offset = max(int(request.query_params.get("offset") or 0), 0)
+        limit = min(max(_int_param(request, "limit", 20), 1), 100)
+        # Потолок смещения: у сотрудника нет и не будет сотни тысяч заявок,
+        # а огромное OFFSET — лишняя работа базы и путь к переполнению.
+        offset = min(max(_int_param(request, "offset", 0), 0), 100_000)
         views, total = service.requests(self.context, limit=limit, offset=offset)
         return Response(
             {
@@ -375,13 +377,14 @@ class AbsenceDocumentView(EmployeeSelfView):
     )
     def get(self, request, request_id):
         stream, meta = AbsenceService().own_document(self.context, request_id)
-        answer = FileResponse(stream, content_type=meta.mime_type)
         # `inline`: чаще справку просто смотрят на экране, а не
         # сохраняют — снимок из камеры открывается прямо в вебвью.
-        answer["Content-Disposition"] = (
-            f'inline; filename="certificate-{request_id}"'
+        # scan_status, удаление и безопасные заголовки — одной проверкой.
+        from humotech.files.serving import EMPLOYEE, file_response
+
+        return file_response(
+            stream, meta, audience=EMPLOYEE, filename=f"certificate-{request_id}",
         )
-        return answer
 
 
 @extend_schema(tags=["Личный кабинет"])
@@ -522,6 +525,19 @@ class LeaveBalanceView(EmployeeSelfView):
                 ]
             }
         )
+
+
+def _int_param(request, name: str, default: int) -> int:
+    """Целое из строки запроса. Мусор — 400, а не 500 из `int()`."""
+    raw = request.query_params.get(name)
+    if raw in (None, ""):
+        return default
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        raise ValidationFailed(
+            "Ожидается целое число", details={"field": name}
+        ) from None
 
 
 def _days(minutes: int) -> float:

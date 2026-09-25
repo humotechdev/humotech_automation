@@ -120,6 +120,25 @@ class MiniAppAuthentication(authentication.BaseAuthentication):
         return self.keyword
 
 
+#: Самый большой идентификатор, который помещается в колонку `bigint`.
+_TELEGRAM_ID_MAX = 2**63 - 1
+
+
+def parse_telegram_user_id(raw: str | None) -> int | None:
+    """Telegram ID из заголовка — только десятичные цифры ASCII.
+
+    `int()` сам по себе слишком щедр: он принимает `" 7 "`, `"7_000"`,
+    `"-7"` и цифры других алфавитов (`"７"`). Идентификатор — не текст для
+    разбора, а ключ, и у одного человека должна быть ровно одна запись.
+    """
+    if not raw or len(raw) > 19 or not (raw.isascii() and raw.isdigit()):
+        return None
+    value = int(raw)
+    if value < 1 or value > _TELEGRAM_ID_MAX:
+        return None
+    return value
+
+
 class BotEmployeeAuthentication(authentication.BaseAuthentication):
     """Бот действует за сотрудника: общий секрет + подтверждённый Telegram ID.
 
@@ -143,10 +162,9 @@ class BotEmployeeAuthentication(authentication.BaseAuthentication):
             # означал бы, что представиться кем угодно может кто угодно.
             raise AuthenticationFailed("Запрос отклонён")
 
-        try:
-            telegram_user_id = int(raw_id)
-        except (TypeError, ValueError):
-            raise AuthenticationFailed("Запрос отклонён") from None
+        telegram_user_id = parse_telegram_user_id(raw_id)
+        if telegram_user_id is None:
+            raise AuthenticationFailed("Запрос отклонён")
 
         resolved = resolve_by_telegram_user_id(telegram_user_id)
         if isinstance(resolved, AccessDenied):

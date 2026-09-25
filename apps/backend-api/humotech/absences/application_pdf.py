@@ -177,6 +177,13 @@ def build(application: Application, *, today: date | None = None) -> bytes:
             y -= 4 * mm
             continue
         for part in _wrap(page, line, right_edge - LEFT, FONT, 11):
+            # Длинная причина (до 2000 знаков от сотрудника) раньше
+            # уходила ниже края листа и наезжала на строку подписи. Не
+            # влезает над местом подписи — новая страница.
+            if y < BOTTOM + 45 * mm:
+                page.showPage()
+                page.setFont(FONT, 11)
+                y = height - TOP
             page.drawString(LEFT, y, part)
             y -= 6 * mm
 

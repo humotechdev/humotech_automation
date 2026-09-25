@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from django.http import FileResponse, HttpResponse
+from django.http import HttpResponse
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import serializers
@@ -390,6 +390,14 @@ class AbsenceDecisionView(APIView):
         responses={200: HrAbsenceRequestSerializer},
     )
     def post(self, request, request_id, decision):
+        # Слово решения — из закрытого списка. Раньше всё, что не
+        # `cancel`, уходило в `decide(approve=decision == "approve")`, и
+        # опечатка в адресе («APPROVE», «approved») молча ОТКЛОНЯЛА заявку.
+        if decision not in ("approve", "reject", "cancel"):
+            raise ValidationFailed(
+                "Решение может быть только approve, reject или cancel",
+                details={"decision": decision[:50]},
+            )
         actor = Actor.from_user(request.user)
         data = validated(DecisionSerializer, request.data)
         comment = data.get("comment") or None
@@ -509,12 +517,10 @@ class AbsenceDocumentDownloadView(APIView):
     def get(self, request, request_id, document_id):
         actor = Actor.from_user(request.user)
         stream, record = AbsenceService().open_document(actor, request_id, document_id)
-        return FileResponse(
-            stream,
-            as_attachment=False,
-            filename=record.original_filename,
-            content_type=record.mime_type,
-        )
+        # scan_status, удаление и безопасные заголовки — одной проверкой.
+        from humotech.files.serving import STAFF, file_response
+
+        return file_response(stream, record, audience=STAFF)
 
 
 class DocumentDecisionSerializer(serializers.Serializer):

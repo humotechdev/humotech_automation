@@ -48,6 +48,18 @@ class EmployeeNotificationFeedSerializer(serializers.Serializer):
     items = EmployeeNotificationSerializer(many=True)
 
 
+def _limit(raw: str | None) -> int:
+    """Размер ленты из запроса. Мусор — это значение по умолчанию, а не 500.
+
+    `int("abc")` падал исключением, и любой кривой параметр от клиента
+    превращался в ошибку сервера. Только ASCII-цифры и не длиннее трёх
+    знаков: `"²".isdigit()` истинно, а `int("²")` падает.
+    """
+    if not raw or not raw.isascii() or not raw.isdigit() or len(raw) > 3:
+        return DEFAULT_LIMIT
+    return min(max(int(raw), 1), MAX_LIMIT)
+
+
 def _json(row: Notification) -> dict:
     return {
         "id": str(row.id),
@@ -75,10 +87,7 @@ class NotificationListView(EmployeeSelfView):
         responses={200: EmployeeNotificationFeedSerializer},
     )
     def get(self, request):
-        limit = min(
-            max(int(request.query_params.get("limit") or DEFAULT_LIMIT), 1),
-            MAX_LIMIT,
-        )
+        limit = _limit(request.query_params.get("limit"))
         mine = Notification.objects.filter(
             employee_id=self.context.employee.id,
             organization_id=self.context.organization_id,

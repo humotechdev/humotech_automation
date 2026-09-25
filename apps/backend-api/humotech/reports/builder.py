@@ -289,11 +289,18 @@ class Scope:
             require_visible_employee(access, actor, spec.employee_id)
             if spec.employee_id else None
         )
+        departments = Department.objects.filter(
+            organization_id=actor.organization_id, id__in=spec.department_ids
+        )
+        visible_ids = access.visible_office_ids(actor)
+        if visible_ids is not None:
+            # Отдел, привязанный к чужому офису, в сводку не называется:
+            # иначе перебором идентификаторов читались бы названия отделов
+            # за пределами области. Общие для всех офисов (без офиса) видны.
+            departments = departments.filter(
+                Q(office_id__isnull=True) | Q(office_id__in=visible_ids))
         self.departments = list(
-            Department.objects.filter(
-                organization_id=actor.organization_id, id__in=spec.department_ids
-            ).order_by("name")
-        ) if spec.department_ids else []
+            departments.order_by("name")) if spec.department_ids else []
 
         self._assignments: dict | None = None
 
@@ -1198,7 +1205,8 @@ def file_value(value, column: Column, *, csv_mode: bool):
         hours = round(int(value) / 3600, 2)
         return str(hours).replace(".", ",") if csv_mode else hours
     if kind == "status":
-        return STATUS_TITLES.get(value, (value,))[0]
+        title = STATUS_TITLES.get(value, (value,))[0]
+        return safe_text(title) if isinstance(title, str) else title
     if kind == "bool":
         return "да" if value else "нет"
     if isinstance(value, str):
@@ -1253,7 +1261,10 @@ def xlsx_bytes(report: Report, progress: Progress) -> bytes:
         _write_table(book.create_sheet(table.title[:31]), table)
 
     for key, value in report.summary(rows=count):
-        summary.append([key, value if isinstance(value, (int, float)) else safe_text(str(value))])
+        # Подпись тоже текст из базы («Дней: <вид отсутствия>»), и тоже
+        # проходит через safe_text.
+        summary.append([safe_text(str(key)),
+                        value if isinstance(value, (int, float)) else safe_text(str(value))])
     summary.column_dimensions["A"].width = 30
     summary.column_dimensions["B"].width = 80
     from openpyxl.styles import Font

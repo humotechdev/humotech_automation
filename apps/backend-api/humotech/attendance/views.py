@@ -357,6 +357,11 @@ class CorrectionDecisionView(APIView):
     )
     def post(self, request, request_id, decision):
         actor = Actor.from_user(request.user)
+        if decision not in ("approve", "reject"):
+            raise ValidationFailed(
+                "Решение может быть только approve или reject",
+                details={"decision": decision[:50]},
+            )
         payload = validated(CorrectionDecisionSerializer, request.data)
         result = AttendanceHrService().review_correction(
             actor,

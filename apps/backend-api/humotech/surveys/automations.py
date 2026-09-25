@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import date, datetime, time, timedelta
 
@@ -34,7 +35,20 @@ from humotech.surveys.models import (
     SurveyRecipient,
     SurveyTemplate,
 )
-from humotech.surveys.services import dispatch
+from humotech.surveys.services import (
+    dispatch,
+    require_whole_organization,
+    visible_employee_ids,
+)
+
+logger = logging.getLogger("humotech.surveys")
+
+#: Ключи условия правила и потолок длины каждого списка.
+SCOPE_KEYS = ("office_ids", "department_ids", "position_ids")
+SCOPE_MAX_IDS = 500
+#: Сдвиг от события — не больше десяти лет. Больше не имеет смысла, а
+#: миллион дней валил расчёт даты прямо в очереди уведомлений.
+MAX_OFFSET_DAYS = 3650
 
 AUDITED = (
     "title", "trigger_kind", "offset_days", "send_hour", "send_minute",
@@ -71,7 +85,9 @@ class SurveyAutomationService(BaseService):
 
     def create(self, actor: Actor, payload: dict) -> SurveyAutomation:
         self.access.require(actor, "surveys.manage")
+        require_whole_organization(self.access, actor)
         template = self._template(actor, payload.get("template_id"))
+        scope = self._scope(actor, payload.get("scope"))
         kind = self._kind(payload)
         repeat = self._repeat(kind, payload.get("repeat_months"))
         hour, minute = self._clock(payload)
@@ -80,7 +96,7 @@ class SurveyAutomationService(BaseService):
             row = SurveyAutomation.objects.create(
                 organization_id=actor.organization_id,
                 title=(
-                    clean_text(payload.get("title"), field="title", max_length=255)
+                    self._title(payload.get("title"))
                     or f"{template.title}: {TRIGGER_TITLES[kind].lower()}"
                 ),
                 template=template,
@@ -89,7 +105,7 @@ class SurveyAutomationService(BaseService):
                 send_hour=hour,
                 send_minute=minute,
                 repeat_months=repeat,
-                scope=payload.get("scope") or None,
+                scope=scope,
                 is_active=bool(payload.get("is_active", True)),
                 created_by_user_id=actor.user_id,
             )
@@ -112,6 +128,7 @@ class SurveyAutomationService(BaseService):
         снимок получателей и своя редакция вопросов.
         """
         self.access.require(actor, "surveys.manage")
+        require_whole_organization(self.access, actor)
         row = self._require(actor, automation_id)
         kind = self._kind(payload) if "trigger_kind" in payload else row.trigger_kind
         hour, minute = self._clock(payload, default=(row.send_hour, row.send_minute))
@@ -121,11 +138,9 @@ class SurveyAutomationService(BaseService):
             if "template_id" in payload:
                 row.template = self._template(actor, payload["template_id"])
             if "title" in payload:
-                row.title = clean_text(
-                    payload["title"], field="title", max_length=255
-                ) or row.title
+                row.title = self._title(payload["title"]) or row.title
             if "scope" in payload:
-                row.scope = payload["scope"] or None
+                row.scope = self._scope(actor, payload["scope"])
             if "offset_days" in payload:
                 row.offset_days = self._offset(payload["offset_days"])
             row.trigger_kind = kind
@@ -154,6 +169,7 @@ class SurveyAutomationService(BaseService):
         удалять правило ради паузы значило бы потерять её вместе с ним.
         """
         self.access.require(actor, "surveys.manage")
+        require_whole_organization(self.access, actor)
         row = self._require(actor, automation_id)
         with self.atomic():
             before = snapshot(row, AUDITED)
@@ -185,8 +201,12 @@ class SurveyAutomationService(BaseService):
         moment = now or timezone.now()
         since = moment - timedelta(days=30)
 
+        mine = SurveyRecipient.objects.filter(campaign__automation=row)
+        people = visible_employee_ids(self.access, actor)
+        if people is not None:
+            mine = mine.filter(employee_id__in=people)
         recipients = list(
-            SurveyRecipient.objects.filter(campaign__automation=row)
+            mine
             .select_related("employee", "campaign")
             .order_by("-campaign__scheduled_at", "employee__last_name")[:limit]
         )
@@ -213,9 +233,7 @@ class SurveyAutomationService(BaseService):
                 "completed_at": one.completed_at.isoformat() if one.completed_at else None,
             })
 
-        recent = SurveyRecipient.objects.filter(
-            campaign__automation=row, campaign__sent_at__gte=since,
-        )
+        recent = mine.filter(campaign__sent_at__gte=since)
         stats = {
             "fired": SurveyCampaign.objects.filter(
                 automation=row, sent_at__gte=since,
@@ -230,6 +248,7 @@ class SurveyAutomationService(BaseService):
 
     def delete(self, actor: Actor, automation_id: uuid.UUID) -> None:
         self.access.require(actor, "surveys.manage")
+        require_whole_organization(self.access, actor)
         row = self._require(actor, automation_id)
         if row.campaigns.exists():
             raise Conflict(
@@ -263,7 +282,7 @@ class SurveyAutomationService(BaseService):
         У события период не просто лишний, а противоречив: «раз в три
         месяца по окончании стажировки» не значит ничего.
         """
-        value = int(raw) if raw else None
+        value = _int(raw, "repeat_months") if raw else None
         if kind != "SCHEDULE":
             return None
         if not value:
@@ -279,8 +298,8 @@ class SurveyAutomationService(BaseService):
         return value
 
     def _clock(self, payload: dict, default: tuple[int, int] = (10, 0)):
-        hour = int(payload.get("send_hour", default[0]) or 0)
-        minute = int(payload.get("send_minute", default[1]) or 0)
+        hour = _int(payload.get("send_hour", default[0]) or 0, "send_hour")
+        minute = _int(payload.get("send_minute", default[1]) or 0, "send_minute")
         if not (0 <= hour <= 23) or not (0 <= minute <= 59):
             raise ValidationFailed(
                 "Такого времени не бывает", details={"field": "send_hour"}
@@ -293,13 +312,78 @@ class SurveyAutomationService(BaseService):
         Назад сдвигать нечего: спрашивать об итогах стажировки за три
         дня до её конца — значит спрашивать о том, чего ещё не было.
         """
-        value = int(raw or 0)
+        value = _int(raw or 0, "offset_days")
         if value < 0:
             raise ValidationFailed(
                 "Опрос отправляют в день события или после него",
                 details={"field": "offset_days"},
             )
+        if value > MAX_OFFSET_DAYS:
+            raise ValidationFailed(
+                f"Сдвиг — не больше {MAX_OFFSET_DAYS} дней",
+                details={"field": "offset_days"},
+            )
         return value
+
+    def _title(self, raw) -> str | None:
+        if raw is not None and not isinstance(raw, str):
+            raise ValidationFailed("Название — строка", details={"field": "title"})
+        return clean_text(raw, field="title", max_length=255)
+
+    def _scope(self, actor: Actor, raw) -> dict | None:
+        """Условие правила: офисы, отделы, должности своей организации.
+
+        Строгая проверка здесь, а не «как-нибудь разберётся очередь»:
+        правило исполняется внутри опроса очереди уведомлений для ВСЕХ
+        организаций, и строка, которую нельзя разобрать, раньше роняла
+        её целиком. Чужие идентификаторы тоже отклоняются: условие с
+        офисом соседней организации — признак подстановки, а не ошибки.
+        """
+        if raw in (None, {}, ""):
+            return None
+        if not isinstance(raw, dict):
+            raise ValidationFailed(
+                "Условие правила — объект с office_ids, department_ids, position_ids",
+                details={"field": "scope"},
+            )
+        unknown = [key for key in raw if key not in SCOPE_KEYS]
+        if unknown:
+            raise ValidationFailed(
+                "Неизвестное условие правила",
+                details={"field": "scope", "allowed": list(SCOPE_KEYS)},
+            )
+        from humotech.departments.models import Department
+        from humotech.offices.models import Office
+        from humotech.positions.models import Position
+
+        models = {"office_ids": Office, "department_ids": Department,
+                  "position_ids": Position}
+        cleaned: dict[str, list[str]] = {}
+        for key, values in raw.items():
+            if values in (None, []):
+                continue
+            if not isinstance(values, list) or len(values) > SCOPE_MAX_IDS:
+                raise ValidationFailed(
+                    "Условие правила — список идентификаторов",
+                    details={"field": f"scope.{key}", "max": SCOPE_MAX_IDS},
+                )
+            try:
+                ids = sorted({str(uuid.UUID(str(one))) for one in values})
+            except (ValueError, TypeError, AttributeError):
+                raise ValidationFailed(
+                    "Идентификатор в условии не распознан",
+                    details={"field": f"scope.{key}"},
+                ) from None
+            found = models[key].objects.filter(
+                organization_id=actor.organization_id, id__in=ids,
+            ).count()
+            if found != len(ids):
+                raise ValidationFailed(
+                    "В условии правила есть чужие или несуществующие записи",
+                    details={"field": f"scope.{key}"},
+                )
+            cleaned[key] = ids
+        return cleaned or None
 
     def _template(self, actor: Actor, template_id) -> SurveyTemplate:
         row = SurveyTemplate.objects.filter(
@@ -343,30 +427,57 @@ def run_due(*, now: datetime | None = None) -> int:
         .filter(is_active=True, template__status="PUBLISHED")
         .select_related("template")
     ):
-        tz = organization_zone(automation.organization_id)
-        today = moment.astimezone(tz).date()
-        # До назначенного часа не трогаем: правило обещает «в 10:00»,
-        # и отправка в 00:05 была бы другим обещанием.
-        send_at = datetime.combine(
-            today, time(automation.send_hour, automation.send_minute), tzinfo=tz
-        )
-        if moment < send_at:
-            continue
-
-        fired = 0
-        for event_day, people in _due_for(automation, today, tz).items():
-            if _send(automation, event_day, people, send_at):
-                fired += 1
-
-        if fired:
-            # Отметка о срабатывании — для показа кадровику, и пишется
-            # она только когда правило действительно сработало. Писать
-            # её каждым тиком значило бы обновлять строку несколько раз
-            # в секунду ради поля, на которое никто не смотрит.
-            automation.last_run_at = moment
-            automation.save(update_fields=["last_run_at", "updated_at"])
-        made += fired
+        # Одно сломанное правило не останавливает остальные: вызов идёт
+        # из очереди уведомлений всех организаций, и исключение здесь
+        # раньше оставляло без рассылок всех сразу.
+        try:
+            # Точка отката: сбой базы на одном правиле не должен оставить
+            # транзакцию вызывающего сломанной для следующих.
+            with transaction.atomic():
+                made += _run_one(automation, moment)
+        except Exception:  # noqa: BLE001
+            logger.exception("survey automation failed: automation=%s", automation.id)
     return made
+
+
+def _run_one(automation: SurveyAutomation, moment: datetime) -> int:
+    """Одно правило на один тик очереди. Возвращает число срабатываний."""
+    tz = organization_zone(automation.organization_id)
+    today = moment.astimezone(tz).date()
+    # До назначенного часа не трогаем: правило обещает «в 10:00»,
+    # и отправка в 00:05 была бы другим обещанием.
+    send_at = datetime.combine(
+        today, time(automation.send_hour, automation.send_minute), tzinfo=tz
+    )
+    if moment < send_at:
+        return 0
+
+    fired = 0
+    for event_day, people in _due_for(automation, today, tz).items():
+        if _send(automation, event_day, people, send_at):
+            fired += 1
+
+    if fired:
+        # Отметка о срабатывании — для показа кадровику, и пишется
+        # она только когда правило действительно сработало. Писать
+        # её каждым тиком значило бы обновлять строку несколько раз
+        # в секунду ради поля, на которое никто не смотрит.
+        automation.last_run_at = moment
+        automation.save(update_fields=["last_run_at", "updated_at"])
+    return fired
+
+
+def _int(raw, field: str) -> int:
+    """Целое из запроса — или понятный отказ вместо 500."""
+    if isinstance(raw, bool):
+        raise ValidationFailed("Ожидалось число", details={"field": field})
+    try:
+        value = int(raw)
+    except (TypeError, ValueError, OverflowError):
+        raise ValidationFailed("Ожидалось число", details={"field": field}) from None
+    if abs(value) > 1_000_000:
+        raise ValidationFailed("Слишком большое число", details={"field": field})
+    return value
 
 
 def _due_for(

@@ -21,9 +21,15 @@ import time
 
 from django.core.management.base import BaseCommand
 
+from humotech.attendance import heartbeat
 from humotech.attendance.reminders import run_once
 
 logger = logging.getLogger("humotech.attendance.reminders")
+
+#: Файл признака жизни. Healthcheck:
+#: `python -m humotech.attendance.heartbeat <файл> <2*пауза+300>`.
+HEARTBEAT_ENV = "ATTENDANCE_REMINDERS_HEARTBEAT"
+HEARTBEAT_DEFAULT = "/tmp/attendance-reminders.heartbeat"
 
 #: Пауза по умолчанию. Пять минут — компромисс: напоминание приходит
 #: не позже чем через пять минут после допуска опоздания, а база
@@ -46,12 +52,14 @@ class Command(BaseCommand):
             self.stdout.write(f"поставлено напоминаний: {run_once()}")
             return
 
-        self.stdout.write(f"проверка каждые {pause} с; выход по Ctrl+C")
-        while True:
-            try:
-                run_once()
-            except Exception:
-                # Упавший проход не должен уносить с собой весь процесс:
-                # следующий пройдёт через минуту и, скорее всего, успешно.
-                logger.exception("проход напоминаний не удался")
-            time.sleep(pause)
+        path = heartbeat.resolve_path(HEARTBEAT_ENV, HEARTBEAT_DEFAULT)
+        self.stdout.write(
+            f"проверка каждые {pause} с; признак жизни {path} "
+            f"(допустимый возраст {heartbeat.max_age_for(pause)} с); выход по Ctrl+C"
+        )
+        # Упавший проход не уносит с собой процесс, но и признак жизни
+        # не обновляет: цикл на одних ошибках healthcheck видит мёртвым.
+        heartbeat.run_loop(
+            run_once, pause=pause, path=path, what="напоминания о начале дня",
+            sleep=time.sleep,
+        )

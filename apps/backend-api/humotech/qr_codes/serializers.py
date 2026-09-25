@@ -195,7 +195,7 @@ class QrPointCreateSerializer(serializers.Serializer):
     require_geolocation = serializers.BooleanField(default=False)
     require_office_network = serializers.BooleanField(default=False)
     allowed_location_accuracy_m = serializers.IntegerField(
-        required=False, allow_null=True, min_value=1
+        required=False, allow_null=True, min_value=1, max_value=10_000
     )
 
 
@@ -211,5 +211,5 @@ class QrPointUpdateSerializer(serializers.Serializer):
     require_geolocation = serializers.BooleanField(required=False)
     require_office_network = serializers.BooleanField(required=False)
     allowed_location_accuracy_m = serializers.IntegerField(
-        required=False, min_value=1
+        required=False, min_value=1, max_value=10_000
     )

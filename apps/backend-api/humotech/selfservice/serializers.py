@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 
 from rest_framework import serializers
@@ -71,6 +72,8 @@ class PeriodSerializer(serializers.Serializer):
 
     PERIODS = ("today", "week", "month")
     MAX_DAYS = 366
+    EARLIEST = date(2000, 1, 1)
+    LATEST = date(2100, 12, 31)
 
     period = serializers.ChoiceField(choices=PERIODS, required=False)
     date_from = serializers.DateField(required=False)
@@ -84,6 +87,13 @@ class PeriodSerializer(serializers.Serializer):
             # на пустой запрос ошибкой было бы придирчиво.
             attrs["period"] = "month"
             return attrs
+        for field in ("date_from", "date_to"):
+            if not self.EARLIEST <= attrs[field] <= self.LATEST:
+                # Год 1 или 9999 — не период, а способ получить 500 при
+                # переводе границ суток в UTC.
+                raise serializers.ValidationError(
+                    {field: "Дата вне допустимого диапазона"}
+                )
         if attrs["date_to"] < attrs["date_from"]:
             raise serializers.ValidationError(
                 {"date_to": "Конец периода раньше начала"}

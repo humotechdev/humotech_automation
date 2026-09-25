@@ -87,6 +87,15 @@ def claim_job(now: datetime | None = None) -> ExportJob | None:
 
 def process_job(job: ExportJob) -> bool:
     """Собрать файл и записать его. Возвращает True при успехе."""
+    requester = job.requested_by_user
+    if requester is None or not requester.is_active:
+        # Роли в `user_role_scopes` о статусе учётной записи не знают:
+        # заблокированный кадровик сохранял бы все права для исполнителя,
+        # и его заказ собрался бы в файл, который скачивает коллега
+        # с `reports.download_any`.
+        _fail(job, PermissionDenied("Учётная запись заказчика отключена"),
+              permanent=True)
+        return False
     if is_builder_order(job.filters):
         return _process_builder_job(job)
     try:
@@ -140,9 +149,18 @@ def reclaim_stale(now: datetime | None = None) -> int:
     deadline = moment - timedelta(
         seconds=settings.EXPORTS["LOCK_TIMEOUT_SECONDS"]
     )
-    return ExportJob.objects.filter(
-        status="RUNNING", locked_at__lt=deadline
-    ).update(
+    stale = ExportJob.objects.filter(status="RUNNING", locked_at__lt=deadline)
+    # Задание, которое уже исчерпало попытки и снова повисло, скорее всего
+    # само роняет процесс (память, бесконечная сборка). Вернуть его в
+    # очередь значило бы ронять исполнитель по кругу вечно: `claim_job`
+    # предела попыток не проверяет.
+    stale.filter(attempts__gte=settings.EXPORTS["MAX_ATTEMPTS"]).update(
+        status="FAILED", locked_at=None, next_attempt_at=None,
+        finished_at=moment, updated_at=moment,
+        error_message="Выгрузка не собралась за отведённое число попыток. "
+                      "Возьмите период короче или меньше офисов",
+    )
+    return stale.filter(status="RUNNING").update(
         status="QUEUED", locked_at=None, next_attempt_at=moment,
         updated_at=moment,
     )

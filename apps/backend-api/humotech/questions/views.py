@@ -10,9 +10,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date
-from urllib.parse import quote
 
-from django.http import FileResponse
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import serializers
@@ -34,7 +32,12 @@ from humotech.core.enums import (
 )
 from humotech.attendance.hr import PRESENCE_STATES
 from humotech.core.errors import ValidationFailed
-from humotech.knowledge.views import FaqSerializer
+from humotech.knowledge.views import (
+    ANSWER_MAX,
+    PRIORITY_LIMITS,
+    QUESTION_MAX,
+    FaqSerializer,
+)
 from humotech.questions.inbox import QUICK_FILTERS, REPLY_AFTER, InboxFilters, InboxService
 from humotech.questions.service import QuestionService
 
@@ -49,6 +52,40 @@ def _uuid(request, name: str) -> uuid.UUID | None:
         raise ValidationFailed(
             f"Параметр «{name}» должен быть UUID", details={"field": name}
         ) from exc
+
+
+#: Идентификатор в адресе — только настоящий UUID. Без этого маршрутизатор
+#: DRF пропускает любую строку, `filter(id="abc")` бросает ValidationError
+#: Django, и вместо 404 получается 500.
+UUID_PATTERN = (
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+
+#: Предел строки поиска. ФИО, табельный номер или кусок фразы — это
+#: десятки символов; тысячи слов дали бы запрос из тысяч ILIKE.
+SEARCH_MAX_LENGTH = 200
+
+
+def _text(request, name: str, *, max_length: int) -> str | None:
+    """Строковый параметр запроса без NUL и без мегабайтов.
+
+    Сериализаторы DRF NUL отсекают сами, а сырые параметры адреса — нет:
+    PostgreSQL на `\\x00` в строке отвечает ошибкой, то есть 500.
+    """
+    raw = (request.query_params.get(name) or "").strip()
+    if not raw:
+        return None
+    if "\x00" in raw:
+        raise ValidationFailed(
+            f"Параметр «{name}» содержит недопустимый символ",
+            details={"field": name},
+        )
+    if len(raw) > max_length:
+        raise ValidationFailed(
+            f"Параметр «{name}» длиннее {max_length} символов",
+            details={"field": name, "max_length": max_length},
+        )
+    return raw
 
 
 def _date(request, name: str) -> date | None:
@@ -106,13 +143,18 @@ class CloseUnansweredSerializer(serializers.Serializer):
 
 
 class FaqFromQuestionSerializer(serializers.Serializer):
-    canonical_question = serializers.CharField()
-    approved_answer = serializers.CharField()
+    # Пределы те же, что у FAQ в базе знаний: запись одна и та же, и
+    # обходной путь через кластер не должен принимать больше. Приоритет
+    # шире int4 иначе доходил до PostgreSQL и возвращал 500.
+    canonical_question = serializers.CharField(max_length=QUESTION_MAX)
+    approved_answer = serializers.CharField(max_length=ANSWER_MAX)
     language = serializers.CharField(max_length=10)
     source_id = serializers.UUIDField(required=False, allow_null=True)
     office_id = serializers.UUIDField(required=False, allow_null=True)
     region_id = serializers.UUIDField(required=False, allow_null=True)
-    priority = serializers.IntegerField(required=False, default=0)
+    priority = serializers.IntegerField(
+        required=False, default=0, **PRIORITY_LIMITS,
+    )
 
 
 @extend_schema(tags=["Вопросы"])
@@ -125,6 +167,7 @@ class UnansweredQuestionViewSet(ServiceViewSet):
 
     service_class = QuestionService
     read_serializer_class = UnansweredQuestionSerializer
+    lookup_value_regex = UUID_PATTERN
 
     @extend_schema(
         summary="Чего не знает ассистент",
@@ -140,11 +183,13 @@ class UnansweredQuestionViewSet(ServiceViewSet):
         responses={200: UnansweredPageSerializer},
     )
     def list(self, request):
+        params = self.list_params()
+        params["search"] = _text(request, "search", max_length=SEARCH_MAX_LENGTH)
         return self.page_response(
             self.service.list_unanswered(
                 self.actor,
-                **self.list_params(),
-                language=request.query_params.get("language") or None,
+                **params,
+                language=_text(request, "language", max_length=10),
             )
         )
 
@@ -530,7 +575,7 @@ def _filters(request) -> InboxFilters:
         priority=query.get("priority") or None,
         date_from=_date(request, "date_from"),
         date_to=_date(request, "date_to"),
-        search=(query.get("search") or "").strip() or None,
+        search=_text(request, "search", max_length=SEARCH_MAX_LENGTH),
         quick=query.get("quick") or None,
     )
 
@@ -548,6 +593,7 @@ class EscalationViewSet(ServiceViewSet):
 
     service_class = InboxService
     read_serializer_class = InboxDetailSerializer
+    lookup_value_regex = UUID_PATTERN
 
     @extend_schema(
         summary="Очередь обращений",
@@ -662,18 +708,20 @@ class EscalationViewSet(ServiceViewSet):
     )
     @action(
         detail=True, methods=["get"],
-        url_path=r"messages/(?P<message_id>[0-9a-f-]{36})/file",
+        url_path=rf"messages/(?P<message_id>{UUID_PATTERN})/file",
     )
     def message_file(self, request, pk=None, message_id=None):
         stream, meta = self.service.message_file(
             self.actor, pk, uuid.UUID(message_id),
         )
-        answer = FileResponse(stream, content_type=meta.mime_type)
         # Имя по RFC 5987: кириллица в заголовке как есть не проходит.
-        answer["Content-Disposition"] = (
-            "inline; filename*=UTF-8''" + quote(meta.original_filename or "file")
+        # scan_status, удаление и безопасные заголовки — одной проверкой.
+        from humotech.files.serving import STAFF, file_response
+
+        return file_response(
+            stream, meta, audience=STAFF,
+            filename=meta.original_filename or "file", rfc5987=True,
         )
-        return answer
 
     @extend_schema(summary="Ждём сотрудника", request=None)
     @action(detail=True, methods=["post"])

@@ -207,6 +207,9 @@ class QrDisplayService(BaseService):
         queryset = QrDisplayDevice.objects.filter(
             organization_id=actor.organization_id
         ).select_related("qr_point", "qr_point__office")
+        visible = self.access.visible_office_ids(actor)
+        if visible is not None:
+            queryset = queryset.filter(qr_point__office_id__in=visible)
         if qr_point_id is not None:
             queryset = queryset.filter(qr_point_id=qr_point_id)
         return queryset.order_by("qr_point__code", "name")
@@ -386,6 +389,10 @@ class QrDisplayService(BaseService):
         if point is None:
             # Чужая организация отвечает так же, как отсутствие записи.
             raise NotFound("Точка отметки не найдена")
+        # Область офиса — как у самих точек (`QrPointService._require_point`).
+        # Без неё администратор одного офиса заводил экран у двери чужого
+        # и получал поток действующих кодов этой двери.
+        self.access.require_office(actor, point.office_id)
         return point
 
     def _require_device(self, actor: Actor, device_id: uuid.UUID) -> QrDisplayDevice:
@@ -396,6 +403,8 @@ class QrDisplayService(BaseService):
         )
         if device is None:
             raise NotFound("Экран не найден")
+        # Перевыпуск кода сопряжения чужого экрана — это захват его двери.
+        self.access.require_office(actor, device.qr_point.office_id)
         return device
 
 

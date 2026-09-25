@@ -80,6 +80,11 @@ class EmployeeAttachmentService(BaseService):
             id__in=file_ids,
             organization_id=actor.organization_id,
             deleted_at__isnull=True,
+            # Только кадровые загрузки (`upload` выше кладёт их под
+            # `employees/`). Иначе по UUID к «документам» сотрудника
+            # привязывалась бы чужая справка больничного или файл
+            # обращения — и скачивалась бы мимо `absences.read`.
+            storage_key__startswith="employees/",
         )
         found = {row.id: row for row in rows}
         missing = [str(one) for one in file_ids if one not in found]
@@ -115,7 +120,9 @@ class EmployeeAttachmentService(BaseService):
         self.access.require(actor, "employees.manage")
         employee = require_visible_employee(self.access, actor, employee_id)
         stored = self.take(actor, [file_id])[file_id]
-        name = (title or "").strip() or stored.original_name or "Документ"
+        # Поле модели — `original_filename`; прежнее `original_name` роняло
+        # каждое прикрепление без заголовка в 500.
+        name = (title or "").strip() or stored.original_filename or "Документ"
 
         row = None
         if kind != "OTHER":
@@ -214,6 +221,10 @@ class EmployeeAttachmentService(BaseService):
 
     def open_photo(self, actor: Actor, employee_id: uuid.UUID):
         self.access.require(actor, "employees.read")
+        # Та же проверка, что у карточки: организация И область. Одной
+        # организации мало — фото человека чужого региона закрыто так же,
+        # как его карточка.
+        require_visible_employee(self.access, actor, employee_id)
         employee = (
             Employee.objects.filter(
                 id=employee_id, organization_id=actor.organization_id
@@ -229,6 +240,7 @@ class EmployeeAttachmentService(BaseService):
         self, actor: Actor, employee_id: uuid.UUID, document_id: uuid.UUID
     ):
         self.access.require(actor, "employees.read")
+        require_visible_employee(self.access, actor, employee_id)
         document = (
             EmployeeDocument.objects.filter(
                 id=document_id,

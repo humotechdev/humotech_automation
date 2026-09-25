@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import date
 
-from django.http import FileResponse
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework.decorators import action
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 
-from humotech.core.api import ServiceViewSet, validated
+from humotech.core.api import UUID_PATTERN, ServiceViewSet, validated
 from humotech.core.errors import ValidationFailed
 from humotech.employees.attachments import EmployeeAttachmentService
 from humotech.employees.onboarding import EmployeeOnboardingService
@@ -35,6 +35,32 @@ from humotech.employees.serializers import (
     TerminateSerializer,
 )
 from humotech.employees.services import EmployeeService
+
+
+#: Идентификатор бумаги в адресе — только UUID (pk уже ограничен
+#: `ServiceViewSet.lookup_value_regex`). Кривое значение — 404 маршрута.
+UUID_RE = UUID_PATTERN
+
+#: Сдвиг страницы. Больше сотрудников в одной организации не бывает, а
+#: значение за пределами bigint роняло запрос в базе (DataError → 500).
+MAX_OFFSET = 1_000_000
+
+#: Даты, на которые имеет смысл смотреть состав. `0001-01-01` ронял
+#: расчёт «новичков за 30 дней» (OverflowError → 500).
+AT_MIN, AT_MAX = date(1900, 1, 1), date(2100, 12, 31)
+
+
+def parse_uuid_list(name: str, values: list[str]) -> list[uuid.UUID]:
+    """Значения фильтра — UUID; иначе понятный 400 вместо 500."""
+    parsed = []
+    for raw in values:
+        try:
+            parsed.append(uuid.UUID(raw))
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise ValidationFailed(
+                f"Параметр «{name}» должен быть UUID", details={"field": name}
+            ) from exc
+    return parsed
 
 
 class EmployeeViewSet(ServiceViewSet):
@@ -66,10 +92,10 @@ class EmployeeViewSet(ServiceViewSet):
                     "Параметр «offset» должен быть числом",
                     details={"field": "offset", "value": raw},
                 ) from exc
-            if offset < 0:
+            if offset < 0 or offset > MAX_OFFSET:
                 raise ValidationFailed(
-                    "Параметр «offset» не может быть отрицательным",
-                    details={"field": "offset", "value": raw},
+                    f"Параметр «offset» должен быть от 0 до {MAX_OFFSET}",
+                    details={"field": "offset", "value": raw[:30]},
                 )
             params["offset"] = offset
         return self.page_response(
@@ -125,7 +151,7 @@ class EmployeeViewSet(ServiceViewSet):
                 continue
             values = [part.strip() for part in str(value).split(",") if part.strip()]
             if values:
-                found[name] = values
+                found[name] = parse_uuid_list(name, values)
         return found
 
     def retrieve(self, request, pk=None):
@@ -147,12 +173,18 @@ class EmployeeViewSet(ServiceViewSet):
         if not raw:
             return None
         try:
-            return date.fromisoformat(raw)
+            value = date.fromisoformat(raw)
         except ValueError as exc:
             raise ValidationFailed(
                 "Параметр «at» должен быть датой в формате ГГГГ-ММ-ДД",
-                details={"at": raw},
+                details={"at": raw[:30]},
             ) from exc
+        if not AT_MIN <= value <= AT_MAX:
+            raise ValidationFailed(
+                f"Параметр «at» должен быть между {AT_MIN} и {AT_MAX}",
+                details={"at": raw},
+            )
+        return value
 
     # --------------------------------------------------------------- изменение
 
@@ -214,12 +246,10 @@ class EmployeeViewSet(ServiceViewSet):
         `inline` — картинку открывают, а не скачивают.
         """
         stream, record = EmployeeAttachmentService().open_photo(self.actor, pk)
-        return FileResponse(
-            stream,
-            as_attachment=False,
-            filename=record.original_filename,
-            content_type=record.mime_type,
-        )
+        # scan_status, удаление и безопасные заголовки — одной проверкой.
+        from humotech.files.serving import STAFF, file_response
+
+        return file_response(stream, record, audience=STAFF)
 
     @extend_schema(
         summary="Приложить бумагу заведённому сотруднику",
@@ -254,7 +284,7 @@ class EmployeeViewSet(ServiceViewSet):
     @action(
         detail=True,
         methods=["delete"],
-        url_path="documents/(?P<document_id>[^/.]+)",
+        url_path=f"documents/(?P<document_id>{UUID_RE})",
     )
     def document_detach(self, request, pk=None, document_id=None):
         EmployeeAttachmentService().detach_document(self.actor, pk, document_id)
@@ -284,7 +314,7 @@ class EmployeeViewSet(ServiceViewSet):
     @action(
         detail=True,
         methods=["get"],
-        url_path="documents/(?P<document_id>[^/.]+)/download",
+        url_path=f"documents/(?P<document_id>{UUID_RE})/download",
     )
     def document_download(self, request, pk=None, document_id=None):
         """Открыть или скачать приложенную бумагу."""
@@ -294,12 +324,10 @@ class EmployeeViewSet(ServiceViewSet):
         # PDF и картинки браузер показывает сам; прочее он всё равно
         # предложит сохранить. `inline` не мешает скачиванию — кнопка
         # «сохранить» есть и в просмотрщике.
-        return FileResponse(
-            stream,
-            as_attachment=False,
-            filename=record.original_filename,
-            content_type=record.mime_type,
-        )
+        # scan_status, удаление и безопасные заголовки — одной проверкой.
+        from humotech.files.serving import STAFF, file_response
+
+        return file_response(stream, record, audience=STAFF)
 
     def partial_update(self, request, pk=None):
         payload = validated(EmployeeUpdateSerializer, request.data)

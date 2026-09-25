@@ -84,7 +84,9 @@ FINAL_STATUSES = ("TERMINATED", "ARCHIVED")
 
 def _normalize_search_query(value: str | None) -> str:
     """Единая нормализация строки поиска без опасной транслитерации."""
-    return " ".join((value or "").strip().lower().replace("ё", "е").split())
+    # NUL PostgreSQL в строке не принимает: без чистки `q=%00` давал 500.
+    cleaned = (value or "").replace("\x00", "")[:200]
+    return " ".join(cleaned.strip().lower().replace("ё", "е").split())
 
 
 def current_primary_assignment_filter(at: date) -> Q:
@@ -311,10 +313,12 @@ class EmployeeService(BaseService):
         if status:
             # Вкладка «Уволенные» покрывает два состояния сразу, поэтому
             # список, а не одно значение.
-            values = [part for part in str(status).split(",") if part]
+            values = [part for part in str(status).replace("\x00", "").split(",") if part]
             queryset = queryset.filter(employment_status__in=values)
 
-        if search:
+        # NUL PostgreSQL в строке не принимает: `search=%00` давал 500.
+        search = (search or "").replace("\x00", "")[:200]
+        if search.strip():
             pattern = search.strip()
             queryset = queryset.filter(
                 Q(first_name__icontains=pattern)

@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import re
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from drf_spectacular.types import OpenApiTypes
@@ -24,6 +25,7 @@ from humotech.attendance import reminders
 from humotech.attendance.scanning import scan
 from humotech.core.api import validated
 from humotech.core.clientip import client_ip
+from humotech.core.errors import ValidationFailed
 from humotech.selfservice.presentation import (
     day_json,
     session_json,
@@ -346,9 +348,8 @@ class HistoryView(EmployeeSelfView):
         params = validated(PeriodSerializer, request.query_params)
         report = _report(self.context, params)
 
-        offset = max(int(request.query_params.get("offset") or 0), 0)
-        limit = min(max(int(request.query_params.get("limit") or 31), 1),
-                    self.MAX_DAYS)
+        offset = max(_int_param(request, "offset", 0), 0)
+        limit = min(max(_int_param(request, "limit", 31), 1), self.MAX_DAYS)
 
         # Показываем только дни, о которых есть что сказать: пустые
         # выходные посреди истории — это шум, через который приходится
@@ -379,6 +380,24 @@ class HistoryView(EmployeeSelfView):
                 "has_more": offset + limit < len(meaningful),
             }
         )
+
+
+def _int_param(request, name: str, default: int) -> int:
+    """Целое из адреса: мусор — 400, а не 500 из `int()`.
+
+    Длина ограничена: `int("9" * 100000)` — это уже работа процессора,
+    а не разбор параметра.
+    """
+    raw = (request.query_params.get(name) or "").strip()
+    if not raw:
+        return default
+    # Только ASCII: `"²".isdigit()` истинно, а `int("²")` падает.
+    if not re.fullmatch(r"-?[0-9]{1,9}", raw):
+        raise ValidationFailed(
+            f"Параметр «{name}» должен быть целым числом",
+            details={"field": name},
+        )
+    return int(raw)
 
 
 def _report(context, params):

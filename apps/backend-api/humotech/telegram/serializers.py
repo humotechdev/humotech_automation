@@ -102,13 +102,32 @@ class InvitationCreateSerializer(serializers.Serializer):
     )
 
 
+#: Границы идентификаторов Telegram. Колонки — `bigint`, и число вне его
+#: диапазона доходило до базы и возвращалось 500-й вместо отказа.
+#: Идентификатор пользователя всегда положителен; идентификатор чата
+#: у групп и каналов отрицателен, поэтому у него граница с обеих сторон.
+BIGINT_MAX = 2**63 - 1
+
+
+def telegram_user_id_field(**extra) -> serializers.IntegerField:
+    return serializers.IntegerField(min_value=1, max_value=BIGINT_MAX, **extra)
+
+
+def telegram_chat_id_field(**extra) -> serializers.IntegerField:
+    return serializers.IntegerField(
+        min_value=-BIGINT_MAX, max_value=BIGINT_MAX, **extra
+    )
+
+
 class BotRecognizeSerializer(serializers.Serializer):
     """Что бот сообщает о человеке, открывшем его без ссылки."""
 
-    telegram_user_id = serializers.IntegerField()
-    telegram_chat_id = serializers.IntegerField()
+    telegram_user_id = telegram_user_id_field()
+    telegram_chat_id = telegram_chat_id_field()
+    # Имя в Telegram — до 32 знаков; 255 — ширина колонки. Длиннее не
+    # бывает, и такая строка не должна доходить до базы.
     telegram_username = serializers.CharField(
-        required=False, allow_blank=True, allow_null=True
+        max_length=255, required=False, allow_blank=True, allow_null=True
     )
     language_code = serializers.CharField(
         max_length=10, required=False, allow_blank=True, allow_null=True
@@ -143,8 +162,8 @@ class BotConsumeSerializer(serializers.Serializer):
     """
 
     token = serializers.CharField(max_length=128, trim_whitespace=True)
-    telegram_user_id = serializers.IntegerField(min_value=1)
-    telegram_chat_id = serializers.IntegerField()
+    telegram_user_id = telegram_user_id_field()
+    telegram_chat_id = telegram_chat_id_field()
     telegram_username = serializers.CharField(
         max_length=255, required=False, allow_null=True, allow_blank=True
     )
@@ -155,7 +174,7 @@ class BotConsumeSerializer(serializers.Serializer):
 
 class BotLinkAcceptSerializer(serializers.Serializer):
     """Согласие сотрудника с условиями после перехода по персональной ссылке."""
-    telegram_user_id = serializers.IntegerField(min_value=1)
+    telegram_user_id = telegram_user_id_field()
 
 
 class MiniAppAuthSerializer(serializers.Serializer):

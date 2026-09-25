@@ -79,18 +79,27 @@ class SurveyListSerializer(serializers.Serializer):
 
 
 class AnswerInputSerializer(serializers.Serializer):
+    # Пределы — те же, что у шаблона: ответ длиннее вопроса или
+    # вариант длиннее допустимого — это не ответ, а мусор в базе.
     question_id = serializers.UUIDField()
-    text = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    number = serializers.IntegerField(required=False, allow_null=True)
+    text = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True, max_length=2000,
+    )
+    number = serializers.IntegerField(
+        required=False, allow_null=True, min_value=-1000, max_value=1000,
+    )
     options = serializers.ListField(
-        child=serializers.CharField(), required=False, allow_null=True,
+        child=serializers.CharField(max_length=200),
+        required=False, allow_null=True, max_length=50,
     )
 
 
 class SubmitSerializer(serializers.Serializer):
     """Ответы целиком: опрос проходят за раз, а не по одному вопросу."""
 
-    answers = AnswerInputSerializer(many=True)
+    answers = serializers.ListField(
+        child=AnswerInputSerializer(), max_length=services.MAX_QUESTIONS,
+    )
 
 
 class SubmittedSerializer(serializers.Serializer):

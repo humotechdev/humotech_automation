@@ -17,6 +17,35 @@ from humotech.core.enums import (
 from humotech.employees.models import Employee, EmployeeAssignment
 
 
+def plausible_birth_date(value):
+    """Дата рождения человека, который может работать.
+
+    Без границ `0001-01-01` проходил в базу, а дальше ломал расчёты
+    возраста и именинников; дата из будущего — очевидная опечатка.
+    """
+    from datetime import date
+
+    if value is None:
+        return value
+    if value < date(1900, 1, 1) or value > date.today():
+        raise serializers.ValidationError(
+            "Дата рождения должна быть между 1900-01-01 и сегодняшним днём"
+        )
+    return value
+
+
+class LanguageField(serializers.RegexField):
+    """Код языка вида `ru`, `uz`, `tg`, `en-US`.
+
+    Не закрытый список: CRM это поле не шлёт, бот и Mini App берут
+    `ru` по умолчанию, а новые языки добавятся без правки сервера.
+    Произвольный текст (HTML, пробелы, 10 символов мусора) — отказ.
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(r"^[a-z]{2,3}(-[A-Za-z]{2,4})?$", max_length=10, **kwargs)
+
+
 class AssignmentSerializer(serializers.ModelSerializer):
     office_code = serializers.CharField(source="office.code", read_only=True)
     office_name = serializers.CharField(source="office.name", read_only=True)
@@ -292,9 +321,9 @@ class EmployeeCreateSerializer(serializers.Serializer):
                                             allow_null=True)
     personal_email = serializers.CharField(max_length=255, required=False,
                                            allow_null=True)
-    birth_date = serializers.DateField(required=False, allow_null=True)
-    preferred_language = serializers.CharField(max_length=10, required=False,
-                                               default="ru")
+    birth_date = serializers.DateField(required=False, allow_null=True,
+                                       validators=[plausible_birth_date])
+    preferred_language = LanguageField(required=False, default="ru")
     employment_status = serializers.CharField(max_length=30, required=False,
                                               default="ACTIVE")
 
@@ -316,14 +345,18 @@ class EmployeeUpdateSerializer(serializers.Serializer):
                                             allow_null=True)
     personal_email = serializers.CharField(max_length=255, required=False,
                                            allow_null=True)
-    birth_date = serializers.DateField(required=False, allow_null=True)
-    preferred_language = serializers.CharField(max_length=10, required=False)
+    birth_date = serializers.DateField(required=False, allow_null=True,
+                                       validators=[plausible_birth_date])
+    preferred_language = LanguageField(required=False)
     employee_number = serializers.CharField(max_length=100, required=False)
     # Анкетные поля: правятся вместе с остальными данными человека.
-    gender = serializers.CharField(max_length=20, required=False,
-                                   allow_null=True, allow_blank=True)
-    marital_status = serializers.CharField(max_length=20, required=False,
-                                           allow_null=True, allow_blank=True)
+    # Выбор из списка, как в форме приёма: свободная строка длиннее
+    # колонки (10 символов у пола) падала в базе DataError → 500.
+    gender = serializers.ChoiceField(choices=GENDERS, required=False,
+                                     allow_null=True, allow_blank=True)
+    marital_status = serializers.ChoiceField(choices=MARITAL_STATUSES,
+                                             required=False, allow_null=True,
+                                             allow_blank=True)
     # Срок стажировки: обе даты необязательны и по отдельности тоже.
     probation_from = serializers.DateField(required=False, allow_null=True)
     probation_to = serializers.DateField(required=False, allow_null=True)
@@ -396,7 +429,8 @@ class EmployeeOnboardSerializer(serializers.Serializer):
     first_name = serializers.CharField(max_length=100)
     middle_name = serializers.CharField(max_length=100, required=False,
                                         allow_null=True, allow_blank=True)
-    birth_date = serializers.DateField(required=False, allow_null=True)
+    birth_date = serializers.DateField(required=False, allow_null=True,
+                                       validators=[plausible_birth_date])
     pinfl = serializers.CharField(max_length=32)
     phone = serializers.CharField(max_length=30)
     corporate_email = serializers.CharField(max_length=255, required=False,
@@ -425,8 +459,7 @@ class EmployeeOnboardSerializer(serializers.Serializer):
     probation_from = serializers.DateField(required=False, allow_null=True)
     probation_to = serializers.DateField(required=False, allow_null=True)
     schedule_id = serializers.UUIDField()
-    preferred_language = serializers.CharField(max_length=10, required=False,
-                                               default="ru")
+    preferred_language = LanguageField(required=False, default="ru")
 
     gender = serializers.ChoiceField(choices=GENDERS, required=False,
                                      allow_null=True, allow_blank=True)
@@ -471,7 +504,8 @@ class AttachedFileSerializer(serializers.Serializer):
 class DocumentAttachSerializer(serializers.Serializer):
     """Бумага, приложенная уже заведённому сотруднику."""
 
-    kind = serializers.CharField(max_length=30)
+    # Вид из справочника: иначе опечатка доходила до CHECK в базе.
+    kind = serializers.ChoiceField(choices=EMPLOYEE_DOCUMENT_KINDS)
     file_id = serializers.UUIDField()
     title = serializers.CharField(max_length=255, required=False,
                                   allow_null=True, allow_blank=True)

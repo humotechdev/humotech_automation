@@ -21,13 +21,13 @@ from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_sche
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.throttling import ScopedRateThrottle
+from humotech.core.throttling import SharedScopedRateThrottle as ScopedRateThrottle
 from rest_framework.views import APIView
 
 from rest_framework.decorators import action
 
 from humotech.core.api import ServiceViewSet, validated
-from humotech.core.errors import PermissionDenied
+from humotech.core.errors import NotFound, PermissionDenied
 from humotech.core.rbac import Actor
 from humotech.qr_codes.points import QrPointService
 from humotech.qr_codes.serializers import (
@@ -163,7 +163,7 @@ class QrDeviceListView(APIView):
     def get(self, request):
         actor = Actor.from_user(request.user)
         devices = QrDisplayService().list_devices(
-            actor, qr_point_id=request.query_params.get("qr_point_id") or None
+            actor, qr_point_id=_uuid_or_none(request, "qr_point_id")
         )
         return Response(DeviceSerializer(devices, many=True).data)
 
@@ -227,6 +227,10 @@ class QrDeviceActionView(APIView):
         if action == "revoke":
             device = service.revoke_device(actor, device_id)
             return Response(DeviceSerializer(device).data)
+        if action != "reissue":
+            # Раньше любое другое слово в пути молча перевыпускало код
+            # сопряжения — и снимало рабочий credential экрана у двери.
+            raise NotFound("Нет такого действия с экраном")
         issued = service.reissue_pairing(actor, device_id)
         return Response(IssuedDeviceSerializer(issued).data)
 

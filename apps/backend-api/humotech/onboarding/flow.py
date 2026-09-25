@@ -253,10 +253,13 @@ class OnboardingFlow:
                     },
                 )
 
+            # Документ, убранный в архив, ни к чему не обязывает: согласие
+            # с ним — запись о том, чего от человека уже не требуют.
             version = PolicyDocumentVersion.objects.select_related("document").filter(
                 id=version_id,
                 organization_id=row.organization_id,
                 status="PUBLISHED",
+                document__archived_at__isnull=True,
             ).first()
             if version is None:
                 raise Conflict(

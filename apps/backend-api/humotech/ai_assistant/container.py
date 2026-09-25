@@ -29,7 +29,7 @@ from humotech.ai_assistant.services.personal_data import (
 from humotech.ai_assistant.services.personal_data_service import (
     SqlPersonalDataQueryService,
 )
-from humotech.ai_assistant.services.rate_limit import RateLimiter
+from humotech.ai_assistant.services.rate_limit import DatabaseRateLimiter
 from humotech.ai_assistant.use_cases.bot import (
     AnswerUseCase,
     FeedbackUseCase,
@@ -37,15 +37,16 @@ from humotech.ai_assistant.use_cases.bot import (
 )
 from humotech.ai_assistant.use_cases.crm import KnowledgeAdminUseCases
 
-# Лимитер общий на процесс: счётчики должны переживать отдельный запрос.
-_shared_rate_limiter: RateLimiter | None = None
+# Лимитер считает по журналу обращений, а не в памяти процесса: при
+# нескольких воркерах счётчики в памяти умножали лимит на их число.
+_shared_rate_limiter: DatabaseRateLimiter | None = None
 
 
-def get_rate_limiter(settings: AiSettings | None = None) -> RateLimiter:
+def get_rate_limiter(settings: AiSettings | None = None) -> DatabaseRateLimiter:
     global _shared_rate_limiter
     settings = settings or ai_settings
     if _shared_rate_limiter is None:
-        _shared_rate_limiter = RateLimiter(
+        _shared_rate_limiter = DatabaseRateLimiter(
             per_minute=settings.ai_rate_limit_per_minute,
             per_day=settings.ai_rate_limit_per_day,
         )

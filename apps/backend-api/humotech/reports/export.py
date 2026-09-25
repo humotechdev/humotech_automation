@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Iterable, Iterator
@@ -172,14 +173,22 @@ def formula_meta(ratios) -> list[tuple[str, str]]:
 #: формулой без всякого участия с нашей стороны.
 FORMULA_STARTERS = ("=", "+", "-", "@", "\t", "\r")
 
+#: Управляющие символы, которых не бывает в XML. `openpyxl` на них
+#: бросает `IllegalCharacterError`, и один сотрудник с «\x0b» в фамилии
+#: (вставил из Word) ронял бы выгрузку XLSX всей организации. Табуляция,
+#: перевод строки и возврат каретки допустимы и остаются.
+_ILLEGAL_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f￾￿]")
+
 
 def safe_text(value: str) -> str:
     """Текст, который таблица покажет как текст.
 
     Опасное начало гасится апострофом — тем же приёмом, которым это
     делает сама Excel. Значение остаётся читаемым, но перестаёт быть
-    выражением.
+    выражением. Управляющие символы убираются: в XLSX они ломают книгу,
+    а в CSV смысла не несут.
     """
+    value = _ILLEGAL_CONTROL.sub("", value)
     return f"'{value}" if value.startswith(FORMULA_STARTERS) else value
 
 

@@ -30,8 +30,15 @@ from humotech.core.enums import (
     SURVEY_TRIGGER_KINDS,
 )
 from humotech.surveys.automations import (
+    MAX_OFFSET_DAYS,
     SurveyAutomationService,
     next_run,
+)
+
+#: Идентификатор в адресе — только UUID. Иначе `abc` доходил до запроса
+#: в базу и возвращался как 500.
+UUID_PATTERN = (
+    "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 )
 from humotech.surveys.services import (
     SurveyCampaignService,
@@ -228,6 +235,16 @@ class RecipientSerializer(serializers.Serializer):
             self.context.get("places", {}).get(row.employee_id) or {}
         ).get("department")
 
+    def to_representation(self, row):
+        data = super().to_representation(row)
+        if self.context.get("anonymous"):
+            # В анонимном опросе время открытия и завершения по людям
+            # не отдаётся: сверив его со сводкой, ответ сопоставляют с
+            # человеком так же легко, как по фамилии.
+            data["started_at"] = None
+            data["completed_at"] = None
+        return data
+
 
 class AnswerSerializer(serializers.Serializer):
     question_id = serializers.UUIDField()
@@ -254,6 +271,7 @@ class SurveyTemplateViewSet(ServiceViewSet):
     """Шаблоны опросов: набор вопросов, который переиспользуют."""
 
     service_class = SurveyTemplateService
+    lookup_value_regex = UUID_PATTERN
     read_serializer_class = TemplateSerializer
 
     def list(self, request):
@@ -341,12 +359,29 @@ class AutomationWriteSerializer(serializers.Serializer):
     title = serializers.CharField(max_length=255, required=False, allow_blank=True)
     template_id = serializers.UUIDField()
     trigger_kind = serializers.ChoiceField(choices=SURVEY_TRIGGER_KINDS)
-    offset_days = serializers.IntegerField(required=False, min_value=0)
+    offset_days = serializers.IntegerField(
+        required=False, min_value=0, max_value=MAX_OFFSET_DAYS,
+    )
     send_hour = serializers.IntegerField(required=False, min_value=0, max_value=23)
     send_minute = serializers.IntegerField(required=False, min_value=0, max_value=59)
-    repeat_months = serializers.IntegerField(required=False, allow_null=True)
+    repeat_months = serializers.IntegerField(
+        required=False, allow_null=True, min_value=1, max_value=12,
+    )
+    #: Строение условия проверяет сервис: ключи, списки, своя организация.
     scope = serializers.JSONField(required=False, allow_null=True)
     is_active = serializers.BooleanField(required=False, default=True)
+
+
+class AutomationPatchSerializer(AutomationWriteSerializer):
+    """Правка правила: всё необязательно, но всё проверено.
+
+    Раньше PATCH уходил в сервис сырым `request.data`, и строка вместо
+    числа давала 500, а кривое условие сохранялось и роняло очередь.
+    """
+
+    template_id = serializers.UUIDField(required=False)
+    trigger_kind = serializers.ChoiceField(choices=SURVEY_TRIGGER_KINDS, required=False)
+    is_active = serializers.BooleanField(required=False)
 
 
 class SurveyAutomationViewSet(ServiceViewSet):
@@ -357,6 +392,7 @@ class SurveyAutomationViewSet(ServiceViewSet):
     """
 
     service_class = SurveyAutomationService
+    lookup_value_regex = UUID_PATTERN
     read_serializer_class = AutomationSerializer
 
     def list(self, request):
@@ -373,8 +409,9 @@ class SurveyAutomationViewSet(ServiceViewSet):
         )
 
     def partial_update(self, request, pk=None):
+        payload = validated(AutomationPatchSerializer, request.data)
         return self.item_response(
-            self.service.update(self.actor, pk, request.data)
+            self.service.update(self.actor, pk, payload)
         )
 
     def destroy(self, request, pk=None):
@@ -404,6 +441,7 @@ class SurveyCampaignViewSet(ServiceViewSet):
     """Рассылки: кому отправили, кто прошёл и что ответил."""
 
     service_class = SurveyCampaignService
+    lookup_value_regex = UUID_PATTERN
     read_serializer_class = CampaignSerializer
 
     def list(self, request):
@@ -490,10 +528,12 @@ class SurveyCampaignViewSet(ServiceViewSet):
         rows = self.service.recipients(
             self.actor, pk, status=request.query_params.get("status") or None,
         )
+        campaign = self.service.get(self.actor, pk)
         places = places_of([row.employee_id for row in rows])
         return Response({
             "items": RecipientSerializer(
-                rows, many=True, context={"places": places},
+                rows, many=True,
+                context={"places": places, "anonymous": campaign.is_anonymous},
             ).data
         })
 
