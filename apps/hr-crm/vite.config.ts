@@ -7,6 +7,15 @@ const TRUSTED_ORIGIN =
 
 export default defineConfig({
   plugins: [react()],
+  /*
+   * Прод-сборка: без карт исходников (они выдали бы весь код с
+   * комментариями любому, кто откроет `/assets/*.js.map`). Прокси,
+   * подмена `Origin` и снятие `Secure` ниже живут только в `server`,
+   * то есть в dev-сервере, и в `dist/` не попадают.
+   */
+  build: {
+    sourcemap: false,
+  },
   server: {
     port: 5173,
     host: true,
@@ -36,7 +45,19 @@ export default defineConfig({
           // Подменяем `Origin` и `Referer` на доверенный адрес. Это
           // настройка dev-сервера: в сборку она не попадает, backend
           // и его список доверенных адресов не меняются.
-          proxy.on('proxyReq', (proxyReq) => {
+          proxy.on('proxyReq', (proxyReq, req) => {
+            // Адрес клиента задаёт не клиент. Dev-сервер открыт в
+            // локальную сеть, и присланный `X-Forwarded-For` доходил до
+            // шлюза как есть: любой мог выбрать себе IP для лимита
+            // попыток входа. Чужие заголовки снимаем и ставим адрес
+            // сокета — единственное, что здесь известно наверняка.
+            for (const name of ['x-forwarded-for', 'x-real-ip', 'forwarded',
+              'x-forwarded-host', 'x-forwarded-proto', 'x-forwarded-port', 'x-client-ip']) {
+              proxyReq.removeHeader(name);
+            }
+            const peer = (req.socket.remoteAddress ?? '').replace(/^::ffff:/, '');
+            if (peer) proxyReq.setHeader('x-forwarded-for', peer);
+
             if (!proxyReq.getHeader('origin')) return;
             proxyReq.setHeader('origin', TRUSTED_ORIGIN);
             proxyReq.setHeader('referer', `${TRUSTED_ORIGIN}/`);

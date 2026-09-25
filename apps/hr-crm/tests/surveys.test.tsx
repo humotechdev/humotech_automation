@@ -630,7 +630,11 @@ describe('мастер рассылки', () => {
       template_id: 't-1',
       audience_kind: 'ALL',
       send_now: true,
+      // Анонимность — явный выбор HR; по умолчанию опрос именной, и
+      // мастер говорит это серверу прямо, а не молчанием.
+      is_anonymous: false,
     });
+    expect(sent?.body).not.toHaveProperty('employee_ids');
   });
 
   test('последний шаг показывает, что именно уйдёт', async () => {

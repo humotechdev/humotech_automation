@@ -43,6 +43,7 @@ import {
   todayIso,
   type Tab,
 } from '../features/employee/model';
+import { internalPath } from '../utils/internal-path';
 
 type Person = Record<string, unknown>;
 
@@ -77,7 +78,9 @@ export function EmployeePage() {
   const tab: Tab = isTab(raw) ? raw : 'overview';
   // Адрес списка сохраняется целиком: возврат обязан вернуть человека
   // к его поиску и фильтрам, а не к первой странице.
-  const back = params.get('back') ?? '';
+  // Только путь внутри CRM: `?back=https://…` из присланной ссылки
+  // превращал «Назад» в переход на чужой сайт.
+  const back = internalPath(params.get('back'), '');
 
   const [attempt, setAttempt] = useState(0);
   const reload = useCallback(() => setAttempt((n) => n + 1), []);

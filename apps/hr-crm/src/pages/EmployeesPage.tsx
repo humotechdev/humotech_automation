@@ -621,7 +621,7 @@ function PersonCard({ person, today, plan, onOpen }: {
             <Bit icon="clock" text={scheduleLine(person.current_schedule)} />
             {telegram
               ? <Bit icon="send" text={`@${telegram}`} tone="link"
-                     href={`https://t.me/${telegram.replace(/^@/, '')}`} />
+                     href={`https://t.me/${encodeURIComponent(telegram.replace(/^@/, ''))}`} />
               : <Bit icon="doc" text={telegramShort(person.telegram_state)} />}
             {/* Строка появляется только у тех, кого позвали: у
                 остальных она означала бы «не прошёл», а они и не

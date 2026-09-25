@@ -6,7 +6,8 @@
  * CRM принадлежит одной организации, и берётся она из переменной сборки.
  */
 
-import { request } from './client';
+import { csrfToken, request } from './client';
+import { ApiFailure } from './errors';
 
 export type CurrentUser = {
   id: string;
@@ -28,8 +29,18 @@ export type CurrentUser = {
 export const organizationCode = (): string =>
   (import.meta.env['VITE_ORGANIZATION_CODE'] as string | undefined) ?? '';
 
-export function login(email: string, password: string): Promise<CurrentUser> {
-  return request<CurrentUser>('/auth/login', {
+/**
+ * Вход проверяет CSRF, как и любой изменяющий запрос.
+ *
+ * Cookie `csrftoken` ставит `GET /auth/me`, который приложение делает при
+ * запуске. Но cookie может не оказаться: её стёрли, она истекла, пока
+ * форма была открыта, или первый `/auth/me` не дошёл. Поэтому перед
+ * входом без cookie токен сначала запрашивается, а отказ именно по CSRF
+ * повторяется один раз со свежим токеном — человеку незачем знать, что
+ * такое CSRF, и незачем вводить пароль дважды.
+ */
+export async function login(email: string, password: string): Promise<CurrentUser> {
+  const send = () => request<CurrentUser>('/auth/login', {
     method: 'POST',
     body: {
       organization_code: organizationCode(),
@@ -37,6 +48,23 @@ export function login(email: string, password: string): Promise<CurrentUser> {
       password,
     },
   });
+  if (!csrfToken()) await primeCsrf();
+  try {
+    return await send();
+  } catch (failure) {
+    if (!(failure instanceof ApiFailure) || failure.kind !== 'csrf') throw failure;
+    await primeCsrf();
+    return send();
+  }
+}
+
+/** Получить cookie `csrftoken`. Ответ неважен: 403 без сессии — норма. */
+async function primeCsrf(): Promise<void> {
+  try {
+    await currentUser();
+  } catch {
+    /* cookie ставится и на отказ; если сети нет — скажет сам вход */
+  }
 }
 
 export function logout(): Promise<void> {

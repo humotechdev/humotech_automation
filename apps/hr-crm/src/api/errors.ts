@@ -37,6 +37,11 @@ export type FailureKind =
   | 'ai_disabled'
   /** Рубильник включён, но провайдер не настроен до конца. */
   | 'ai_unconfigured'
+  /**
+   * Слишком много попыток (429). Сервер ждёт паузы, а не другого
+   * пароля: срок — в `retryAfter`, из заголовка `Retry-After`.
+   */
+  | 'throttled'
   /** Сервер ответил ошибкой или чем-то неразобранным. */
   | 'server';
 
@@ -118,10 +123,44 @@ const MESSAGES: Record<FailureKind, string> = {
   ai_unconfigured:
     'AI-провайдер не настроен. Материалы редактируются, но индексация '
     + 'недоступна',
+  throttled: 'Слишком много попыток. Попробуйте позже',
   server: 'Сервер временно недоступен. Попробуйте позже',
 };
 
+/** «через 1 минуту», «через 3 минуты», «через 15 минут». */
+function inMinutes(seconds: number): string {
+  const n = Math.max(1, Math.ceil(seconds / 60));
+  const tail = n % 100 >= 11 && n % 100 <= 14 ? 'минут'
+    : n % 10 === 1 ? 'минуту'
+      : n % 10 >= 2 && n % 10 <= 4 ? 'минуты' : 'минут';
+  return `через ${n} ${tail}`;
+}
+
+/** Секунды ожидания: заголовок `Retry-After`, иначе `details.retry_after`. */
+export function retryAfterOf(error: ApiFailure): number | null {
+  const raw = error.details['retry_after'];
+  const value = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw) : NaN;
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+/**
+ * Отказ по области видимости: у кадровика доступ к части офисов, а
+ * рассылки и автоматизации опросов адресуются всей организации.
+ */
+export const SCOPE_LIMITED =
+  'Рассылки и автоматизации опросов доступны только с доступом ко всей '
+  + 'организации. У вас доступ к части офисов — обратитесь к администратору.';
+
 export function messageFor(error: unknown): string {
+  if (error instanceof ApiFailure && error.reason === 'scope_limited') return SCOPE_LIMITED;
+  if (error instanceof ApiFailure && error.kind === 'throttled') {
+    // Свой текст со сроком, а не фраза сервера: срок из заголовка точнее,
+    // а текст сервера мы не проверяем на то, что он для человека.
+    const wait = retryAfterOf(error);
+    return wait === null
+      ? MESSAGES.throttled
+      : `Слишком много попыток. Попробуйте ${inMinutes(wait)}`;
+  }
   return error instanceof ApiFailure ? MESSAGES[error.kind] : MESSAGES.server;
 }
 
@@ -136,6 +175,7 @@ export function messageFor(error: unknown): string {
  * значит прятать от кадровика единственное, что ему нужно знать.
  */
 export function reasonFor(error: unknown): string {
+  if (error instanceof ApiFailure && error.reason === 'scope_limited') return SCOPE_LIMITED;
   if (error instanceof ApiFailure && error.detail) return error.detail;
   return messageFor(error);
 }

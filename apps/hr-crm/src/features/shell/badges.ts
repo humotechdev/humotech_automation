@@ -33,12 +33,17 @@ function publish(next: Badges) {
   for (const listener of listeners) listener(next);
 }
 
+/** Растёт при каждом сбросе: ответ, начатый до выхода, после него не публикуется. */
+let generation = 0;
+
 async function load(): Promise<void> {
+  const started = generation;
   const [queue, talks] = await Promise.allSettled([
     api.queueCounts({}),
     api.questionCounts({}),
   ]);
 
+  if (started !== generation) return;
   const next: Badges = { ...current };
   if (queue.status === 'fulfilled') {
     // «Требуют решения» — то же число, что на вкладке очереди заявок.
@@ -86,6 +91,8 @@ export function useBadges(): Badges {
 
 /** Сбросить кэш — например, после выхода из системы. */
 export function forgetBadges(): void {
+  generation += 1;
+  loading = null;
   loadedAt = 0;
   publish({});
 }

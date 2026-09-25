@@ -12,7 +12,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 
-import { ApiFailure, messageFor } from '../../api/errors';
+import { reasonFor } from '../../api/errors';
 import { AppIcon } from '../AppIcon';
 
 /** Шапка раздела: куда вернуться, что это и главное действие. */
@@ -251,8 +251,9 @@ export function Refusal({ text }: { text: string | null }) {
  * причины не назвал.
  */
 export function refusalText(error: unknown): string {
-  if (error instanceof ApiFailure) return error.detail ?? messageFor(error);
-  return messageFor(error);
+  // `reasonFor` — то же правило плюс свои тексты для известных причин
+  // (`scope_limited`), где фраза сервера не говорит, что делать.
+  return reasonFor(error);
 }
 
 /** Состояние «сохраняем» с защитой от двойного нажатия. */

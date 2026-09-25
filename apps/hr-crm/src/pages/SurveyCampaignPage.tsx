@@ -530,6 +530,12 @@ export function SurveyCampaignPage() {
                   ? 'Анонимный опрос: видна только сводка по вопросам — ответов по людям и имён в выгрузке нет.'
                   : 'Опрос именной: сводка по вопросам не делает опрос анонимным — у каждого текстового ответа стоит имя.'}
               </p>
+              {summary.state === 'ready' && summary.data.suppressed && (
+                <p className="sv-note" role="status">
+                  <AppIcon name="info" size={16} />
+                  {suppressedText(summary.data.min_responses)}
+                </p>
+              )}
               {summary.state !== 'ready' ? <Loading /> : summary.data.questions.map((one, index) => (
                 <section key={one.id} className="sv-panel" aria-label={one.text}>
                   <div className="sv-qresult__head">
@@ -542,7 +548,9 @@ export function SurveyCampaignPage() {
                       <span className="sv-qresult__avg">{String(one.average).replace('.', ',')}<small>из 5</small></span>
                     )}
                   </div>
-                  {one.answered === 0 ? (
+                  {summary.data.suppressed ? (
+                    <p className="sv-panel__about">Итоги скрыты для анонимности.</p>
+                  ) : one.answered === 0 ? (
                     <p className="sv-panel__about">На этот вопрос ещё не ответили.</p>
                   ) : one.kind === 'TEXT' ? (
                     <ul className="sv-said">
@@ -794,4 +802,14 @@ function EditScheduled({ row, zone, onClose, onSaved }: {
       </div>
     </div>
   );
+}
+
+/**
+ * Почему у анонимного опроса нет итогов. «Ещё не ответили» здесь было бы
+ * неправдой: ответы есть, их просто слишком мало, чтобы не выдать людей.
+ */
+export function suppressedText(min: number | null | undefined): string {
+  const words: Record<number, string> = { 2: 'двух', 3: 'трёх', 4: 'четырёх', 5: 'пяти' };
+  const n = min ?? 3;
+  return `Ответов пока меньше ${words[n] ?? n} — итоги скрыты для анонимности.`;
 }

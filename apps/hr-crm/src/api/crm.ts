@@ -3402,6 +3402,13 @@ export type SurveySummary = {
   }>;
   offices: Array<{ name: string; total: number; completed: number }>;
   departments: Array<{ name: string; total: number; completed: number }>;
+  /**
+   * Анонимный опрос, где ответов меньше порога: сервер отдаёт вопросы
+   * без значений — сводка по одному-двум ответам и есть чей-то ответ.
+   */
+  suppressed?: boolean;
+  /** Порог анонимной сводки; `null` у именного опроса. */
+  min_responses?: number | null;
 };
 
 export const surveySummary = (id: string, signal?: AbortSignal) =>

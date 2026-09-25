@@ -309,7 +309,9 @@ describe('команда и стажировки', () => {
 
     const table = await screen.findByRole('table', { name: 'Стажёры сейчас' });
     expect(within(table).getByText('3 дня')).toBeTruthy();
-    expect(screen.queryByText('Наставник')).toBeNull();
+    // Колонка «Наставник» есть — сервер отдаёт наставника. Но если его
+    // не назначили, в строке честное «не назначен», а не выдуманное имя.
+    expect(within(table).getByText('не назначен')).toBeTruthy();
     expect(screen.getByText(/Конверсия в найм — 75%/)).toBeTruthy();
   });
 });

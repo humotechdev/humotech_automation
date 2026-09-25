@@ -30,6 +30,25 @@ export function csrfToken(source: string = document.cookie): string | null {
  */
 export const apiUrl = (path: string) => `${BASE}${path}`;
 
+/**
+ * Путь запроса не должен выходить из того адреса, который собрал код.
+ *
+ * Идентификаторы в путь попадают из адреса страницы (`/requests/:id`,
+ * `/employees/:id`), а маршрутизатор раскодирует `%2F` в `/`. Ссылка
+ * вида `/requests/..%2Femployees%2F<id>%2Fterminate%3F` превращала
+ * «Одобрить» в POST на совсем другой маршрут — с CSRF-токеном, который
+ * клиент кладёт в каждый изменяющий запрос. Браузер схлопывает `..`,
+ * `%2e%2e` и обратную косую черту сам, поэтому проверяется именно это.
+ */
+export function isSafePath(path: string): boolean {
+  const pathname = path.split(/[?#]/, 1)[0] ?? '';
+  if (pathname.includes('\\')) return false;
+  return pathname.split('/').every((segment) => {
+    const plain = segment.replace(/%2e/gi, '.');
+    return plain !== '.' && plain !== '..';
+  });
+}
+
 type Options = {
   // DELETE есть ровно у одной операции — отзыва назначения роли. Строку
   // он при этом не удаляет: сервер закрывает срок, чтобы в истории
@@ -48,6 +67,7 @@ type Options = {
  */
 export async function request<T>(path: string, options: Options = {}): Promise<T> {
   const method = options.method ?? 'GET';
+  if (!isSafePath(path)) throw new ApiFailure('validation', 400);
   const headers: Record<string, string> = {};
   if (options.body !== undefined) headers['Content-Type'] = 'application/json';
   if (method !== 'GET') {
@@ -92,6 +112,7 @@ export async function upload<T>(
   form: FormData,
   signal?: AbortSignal,
 ): Promise<T> {
+  if (!isSafePath(path)) throw new ApiFailure('validation', 400);
   const headers: Record<string, string> = {};
   const token = csrfToken();
   if (token) headers['X-CSRFToken'] = token;
@@ -123,6 +144,19 @@ export async function upload<T>(
 /** Отказ сервера в одном виде — и для JSON, и для файлов. */
 async function failure(response: Response): Promise<ApiFailure> {
   const body = await safeBody(response);
+  const details: Record<string, unknown> =
+    body.details && typeof body.details === 'object' && !Array.isArray(body.details)
+      ? { ...(body.details as Record<string, unknown>) }
+      : {};
+  // Заголовок главнее тела: его ставит тот же ограничитель, что и отказ.
+  // Дата вместо секунд (RFC 9110 допускает и её) пересчитывается в секунды.
+  const header = response.headers.get('Retry-After');
+  if (response.status === 429 && header) {
+    const seconds = /^\d+$/.test(header.trim())
+      ? Number(header.trim())
+      : Math.ceil((Date.parse(header) - Date.now()) / 1000);
+    if (Number.isFinite(seconds) && seconds > 0) details['retry_after'] = seconds;
+  }
   return new ApiFailure(
     kindOf(response.status, body),
     response.status,
@@ -130,9 +164,7 @@ async function failure(response: Response): Promise<ApiFailure> {
     fieldOf(body),
     typeof body.code === 'string' ? body.code : null,
     typeof body.message === 'string' && body.message.trim() ? body.message : null,
-    body.details && typeof body.details === 'object'
-      ? (body.details as Record<string, unknown>)
-      : {},
+    details,
   );
 }
 
@@ -153,6 +185,9 @@ function kindOf(status: number, body: ErrorBody): FailureKind {
   if (status === 401) return 'credentials';
   if (status === 400) return 'validation';
   if (status === 409) return 'conflict';
+  // 429 — «подождите», а не «сервер упал»: иначе человек с правильным
+  // паролем уходит чинить сеть, пока блокировка ещё идёт.
+  if (status === 429 || body.code === 'too_many_attempts') return 'throttled';
   // Выключенный ассистент и ненастроенный провайдер отвечают 503 — тем
   // же кодом, что и упавший сервер. Различает их только `code`: первое
   // чинит тот, кто принимал решение, второе — тот, у кого есть ключ,

@@ -885,10 +885,14 @@ const COLUMNS: Array<[string, string]> = [
   ['completed_at', 'Завершено'],
 ];
 
-function toCsv(rows: Record<string, string | number | null>[]): string {
+export function toCsv(rows: Record<string, string | number | null>[]): string {
   const escape = (value: string | number | null) => {
-    const text = value === null || value === undefined ? '' : String(value);
-    return /[";\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    let text = value === null || value === undefined ? '' : String(value);
+    // Имя, офис, отдел вводят люди. Строка с `=`, `+`, `-`, `@`, табуляции
+    // или перевода каретки в начале для Excel — формула (`=HYPERLINK(…)`,
+    // DDE). Апостроф делает её текстом. Числа не трогаем: `-3` — число.
+    if (typeof value === 'string' && /^[=+\-@\t\r]/.test(text)) text = `'${text}`;
+    return /[";\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
   };
   const head = COLUMNS.map(([, title]) => title).join(';');
   const body = rows.map((row) => COLUMNS.map(([key]) => escape(row[key] ?? null)).join(';'));

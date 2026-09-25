@@ -1,0 +1,29 @@
+# Что не должно попадать в контекст сборки CRM.
+#
+# node_modules собран на хосте (Windows) или в dev-контейнере; в образе
+# зависимости ставятся заново `npm ci` под Linux.
+node_modules/
+dist/
+coverage/
+.vite/
+*.log
+tsconfig.tsbuildinfo
+
+# Секреты и локальные настройки. Значения VITE_* приходят аргументами
+# сборки, а не файлами: случайный .env.local с VITE_DEMO_MODE=true не
+# должен тихо попасть в серверную сборку.
+.env
+.env.*
+
+# Тесты и страницы предпросмотра на подставных данных — не часть сборки.
+tests/
+preview-*.html
+src/dev/
+
+.git/
+.gitignore
+.dockerignore
+Dockerfile
+*.md
+*.pem
+*.key

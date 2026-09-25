@@ -183,6 +183,13 @@ export const ACTIONS: Record<string, string> = {
   'user_role_scope.assign': 'Выдана роль',
   'user_role_scope.revoke': 'Отозвана роль',
   'user_role_scope.validity': 'Изменён срок назначения',
+  'auth.login': 'Вход в систему',
+  'auth.login_failed': 'Неудачная попытка входа',
+  'auth.login_locked': 'Вход временно заблокирован',
+  'auth.logout': 'Выход из системы',
+  // Прежние названия тех же событий: старые записи журнала остаются.
+  'auth.login.succeeded': 'Вход в систему',
+  'auth.login.failed': 'Неудачная попытка входа',
 };
 
 export const actionTitle = (action: string): string =>
@@ -205,6 +212,7 @@ export const ENTITIES: Record<string, string> = {
   absence_requests: 'Заявка на отсутствие',
   qr_display_devices: 'Экран показа QR',
   employee_questions: 'Обращение сотрудника',
+  organizations: 'Организация',
 };
 
 export const entityTitle = (entity: string): string =>
@@ -214,6 +222,7 @@ export const entityTitle = (entity: string): string =>
 export const AUDIT_FILTERS = [
   { key: '', title: 'Все действия' },
   { key: 'user.', title: 'Учётные записи' },
+  { key: 'auth.', title: 'Входы и выходы' },
   { key: 'user_role_scope.', title: 'Назначения ролей' },
   { key: 'role.', title: 'Роли' },
   { key: 'employee', title: 'Сотрудники' },
