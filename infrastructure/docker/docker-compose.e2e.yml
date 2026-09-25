@@ -23,7 +23,9 @@ name: humotech_e2e
 
 x-backend-env: &backend_env
   DJANGO_SETTINGS_MODULE: config.settings.e2e
-  DJANGO_DATABASE_URL: postgresql://humotech:humotech_e2e@postgres-e2e:5432/humotech_e2e
+  # Пароль стенда — из infrastructure/docker/.env (E2E_POSTGRES_PASSWORD),
+  # не из файла в Git. URL-безопасный: он подставляется в строку подключения.
+  DJANGO_DATABASE_URL: postgresql://humotech:${E2E_POSTGRES_PASSWORD:?нужен E2E_POSTGRES_PASSWORD в infrastructure/docker/.env}@postgres-e2e:5432/humotech_e2e
   DJANGO_ALLOWED_HOSTS: backend-e2e,localhost,127.0.0.1
   DJANGO_SECRET_KEY: e2e-only-not-a-real-secret-key
   # Общий секрет бота — свой у стенда. Рабочий сюда не переносится:
@@ -54,7 +56,8 @@ services:
     container_name: humotech_e2e_postgres
     environment:
       POSTGRES_USER: humotech
-      POSTGRES_PASSWORD: humotech_e2e
+      # Читается только при создании тома e2e_postgres.
+      POSTGRES_PASSWORD: ${E2E_POSTGRES_PASSWORD:?нужен E2E_POSTGRES_PASSWORD в infrastructure/docker/.env}
       POSTGRES_DB: humotech
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
     volumes:

@@ -142,7 +142,7 @@ backend на хост. Мостом служит сам контейнер с de
 # 2. backend с рабочим деревом. Имя БЕЗ подчёркиваний: Django
 #    отвергает Host, не проходящий RFC 1034/1035, и запрос через
 #    dev-прокси получил бы 400 ещё до всякой авторизации.
-docker run -d --name humotech-e2e-live --network humotech_e2e_e2e   -v "$PWD/../../apps/backend-api:/app" -w /app   -e DJANGO_SETTINGS_MODULE=config.settings.e2e   -e DJANGO_DATABASE_URL=postgresql://humotech:humotech_e2e@postgres-e2e:5432/humotech_e2e   -e DJANGO_ALLOWED_HOSTS=backend-e2e,humotech-e2e-live,localhost,127.0.0.1   -e DJANGO_SECRET_KEY=e2e-only-not-a-real-secret-key   -e TELEGRAM_BOT_API_SECRET=e2e-bot-secret -e TELEGRAM_BOT_TOKEN=   -e AI_ASSISTANT_ENABLED=false -e HUMOTECH_TEST_STAND=1   --entrypoint python humotech/backend:local   -m gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2
+docker run -d --name humotech-e2e-live --network humotech_e2e_e2e   -v "$PWD/../../apps/backend-api:/app" -w /app   -e DJANGO_SETTINGS_MODULE=config.settings.e2e   -e DJANGO_DATABASE_URL="postgresql://humotech:${E2E_POSTGRES_PASSWORD}@postgres-e2e:5432/humotech_e2e"   -e DJANGO_ALLOWED_HOSTS=backend-e2e,humotech-e2e-live,localhost,127.0.0.1   -e DJANGO_SECRET_KEY=e2e-only-not-a-real-secret-key   -e TELEGRAM_BOT_API_SECRET=e2e-bot-secret -e TELEGRAM_BOT_TOKEN=   -e AI_ASSISTANT_ENABLED=false -e HUMOTECH_TEST_STAND=1   --entrypoint python humotech/backend:local   -m gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2
 
 # 3. CRM. Адрес НЕ localhost: cookie не различают порт, и вход на
 #    стенде снял бы сессию рабочего стенда на localhost:5173.

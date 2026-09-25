@@ -1,0 +1,373 @@
+# Тестовый сервер HUMOTECH.
+#
+#   cd deploy/test-server
+#   cp .env.example .env      # заполнить, см. README.md
+#   docker compose build
+#   docker compose up -d
+#
+# Отличия от локального стенда (infrastructure/docker):
+#   - нет ngrok и нет dev-сервера Vite: CRM собирается `vite build` и
+#     раздаётся статикой (apps/hr-crm/Dockerfile);
+#   - вход снаружи — Caddy с HTTPS (Let's Encrypt), домены из .env;
+#   - PostgreSQL только во внутренней сети без выхода наружу и без ports;
+#   - все секреты обязательны: пустая переменная останавливает `compose`
+#     до запуска чего-либо, а не превращается в пароль по умолчанию.
+#
+# Сети:
+#   edge  — Caddy, шлюз, CRM. Подсеть и адрес Caddy закреплены: шлюз
+#           верит X-Forwarded-For только этому адресу.
+#   app   — шлюз, backend, бот, рабочие процессы. Выход наружу есть
+#           (боту нужен api.telegram.org).
+#   db    — PostgreSQL и те, кому нужна база. internal: маршрута наружу
+#           нет, опубликовать базу из неё нельзя.
+
+name: humotech_test
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-backend-image: &backend_image
+  build:
+    context: ../../apps/backend-api
+  # Тег обязателен и живёт только в .env. Умолчание здесь означало бы,
+  # что `up -d <сервис>` из новой оболочки молча соберёт образ из текущего
+  # дерева под другим тегом, пересоздаст backend и прогонит миграции.
+  image: humotech/backend:${HUMOTECH_TAG:?нужен HUMOTECH_TAG в .env}
+
+x-backend-env: &backend_env
+  DJANGO_SETTINGS_MODULE: config.settings.production
+  DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?нужен DJANGO_SECRET_KEY}
+  # Пароль подставляется из той же переменной, что и у PostgreSQL, —
+  # разойтись им негде. Поэтому пароль — без символов, требующих
+  # экранирования в URL (secrets.token_urlsafe подходит).
+  DJANGO_DATABASE_URL: postgresql://humotech:${POSTGRES_PASSWORD:?нужен POSTGRES_PASSWORD}@postgres:5432/humotech_django
+  # `gateway` — имя, под которым к API ходит бот внутри сети.
+  DJANGO_ALLOWED_HOSTS: ${API_DOMAIN:?нужен API_DOMAIN},${CRM_DOMAIN:?нужен CRM_DOMAIN},gateway
+  DJANGO_CSRF_TRUSTED_ORIGINS: https://${CRM_DOMAIN:?нужен CRM_DOMAIN},https://${API_DOMAIN:?нужен API_DOMAIN}
+  # Перед backend ровно один наш прокси — шлюз, и он перезаписывает
+  # X-Forwarded-For адресом клиента. Та же единица — NUM_PROXIES у DRF.
+  TRUSTED_PROXY_COUNT: "1"
+  TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?нужен TELEGRAM_BOT_TOKEN}
+  TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:?нужен TELEGRAM_BOT_USERNAME}
+  TELEGRAM_BOT_API_SECRET: ${TELEGRAM_BOT_API_SECRET:?нужен TELEGRAM_BOT_API_SECRET}
+  TELEGRAM_MINI_APP_URL: https://${API_DOMAIN:?нужен API_DOMAIN}
+  # Mini App и API на одном origin: CORS не нужен и закрыт.
+  TELEGRAM_MINI_APP_ALLOWED_ORIGINS: ""
+  QR_SIGNING_SECRET: ${QR_SIGNING_SECRET:?нужен QR_SIGNING_SECRET}
+  QR_DISPLAY_ALLOWED_ORIGINS: ""
+  FILES_PRIVATE_ROOT: /app/private-media
+  EXPORTS_PRIVATE_ROOT: /app/private-exports
+  AI_ASSISTANT_ENABLED: "false"
+  # Потолок длины ответа модели (зона ai). Действует, если ассистент включён.
+  AI_MAX_OUTPUT_TOKENS: ${AI_MAX_OUTPUT_TOKENS:-800}
+  LOG_LEVEL: INFO
+
+# Проверка «процесс может работать»: настройки читаются и база отвечает.
+# Для рабочих процессов без HTTP-порта и без собственного признака жизни.
+x-db-healthcheck: &db_healthcheck
+  test:
+    - CMD
+    - python
+    - -c
+    - "import django; django.setup(); from django.db import connection; connection.ensure_connection()"
+  interval: 60s
+  timeout: 20s
+  start_period: 40s
+  retries: 3
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg18
+    environment:
+      POSTGRES_USER: humotech
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?нужен POSTGRES_PASSWORD}
+      POSTGRES_DB: humotech
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    # ports нет намеренно: база доступна только из сети db.
+    volumes:
+      - postgres_data:/var/lib/postgresql
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U humotech -d humotech_django"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks:
+      - db
+    restart: unless-stopped
+    shm_size: 256mb
+    logging: *logging
+
+  migrate:
+    <<: *backend_image
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        python manage.py migrate --noinput
+        python manage.py collectstatic --noinput
+    environment: *backend_env
+    volumes:
+      - static_files:/app/staticfiles
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - db
+    restart: "no"
+    logging: *logging
+
+  backend:
+    <<: *backend_image
+    environment: *backend_env
+    volumes:
+      - static_files:/app/staticfiles
+      - private_media:/app/private-media
+      - private_exports:/app/private-exports
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - -fsS
+        - -o
+        - /dev/null
+        - -H
+        - "Host: gateway"
+        - -H
+        - "X-Forwarded-Proto: https"
+        - http://127.0.0.1:8000/readyz
+      interval: 15s
+      timeout: 10s
+      start_period: 40s
+      retries: 5
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - app
+      - db
+    restart: unless-stopped
+    stop_signal: SIGTERM
+    stop_grace_period: 40s
+    logging: *logging
+
+  export-worker:
+    <<: *backend_image
+    command: ["python", "manage.py", "run_export_worker", "--loop=5"]
+    environment: *backend_env
+    volumes:
+      - private_exports:/app/private-exports
+    healthcheck:
+      test: ["CMD", "python", "-m", "humotech.reports.heartbeat"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - db
+    restart: unless-stopped
+    stop_grace_period: 30s
+    logging: *logging
+
+  attendance-reminders:
+    <<: *backend_image
+    command: ["python", "manage.py", "attendance_reminders", "--loop=300"]
+    environment: *backend_env
+    # Признак жизни — только после удачного прохода; порог 900 с =
+    # 2 паузы + 300 (humotech/attendance/heartbeat.py).
+    healthcheck:
+      test: ["CMD", "python", "-m", "humotech.attendance.heartbeat",
+             "/tmp/attendance-reminders.heartbeat", "900"]
+      interval: 60s
+      timeout: 10s
+      start_period: 120s
+      retries: 3
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - db
+    restart: unless-stopped
+    stop_grace_period: 20s
+    logging: *logging
+
+  onboarding-reminders:
+    <<: *backend_image
+    command: ["python", "manage.py", "onboarding_reminders", "--loop=3600"]
+    environment: *backend_env
+    # Порог 7500 с = 2 паузы по часу + 300.
+    healthcheck:
+      test: ["CMD", "python", "-m", "humotech.attendance.heartbeat",
+             "/tmp/onboarding-reminders.heartbeat", "7500"]
+      interval: 60s
+      timeout: 10s
+      start_period: 120s
+      retries: 3
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - db
+    restart: unless-stopped
+    stop_grace_period: 20s
+    logging: *logging
+
+  bot:
+    build:
+      context: ../../apps/employee-telegram-bot
+    image: humotech/bot:${HUMOTECH_TAG:?нужен HUMOTECH_TAG в .env}
+    environment:
+      BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?нужен TELEGRAM_BOT_TOKEN}
+      BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:?нужен TELEGRAM_BOT_USERNAME}
+      BACKEND_BOT_SECRET: ${TELEGRAM_BOT_API_SECRET:?нужен TELEGRAM_BOT_API_SECRET}
+      # Через шлюз: он ставит X-Forwarded-Proto, без которого боевые
+      # настройки Django отвечали бы редиректом на https.
+      # :8080 — внутренний вход шлюза только для бота; Caddy смотрит на
+      # :80, где пути бота снаружи закрыты.
+      BACKEND_API_URL: http://gateway:8080/api/v1
+      MINI_APP_URL: https://${API_DOMAIN:?нужен API_DOMAIN}
+      LOG_LEVEL: INFO
+    healthcheck:
+      test: ["CMD", "python", "-m", "src.check_config"]
+      interval: 60s
+      timeout: 15s
+      start_period: 20s
+      retries: 3
+    depends_on:
+      gateway:
+        condition: service_healthy
+    networks:
+      - app
+    restart: unless-stopped
+    stop_grace_period: 40s
+    logging: *logging
+
+  # Шлюз: Mini App + /api/ + /health/*. Конфигурация — та же, что у
+  # локального стенда (infrastructure/docker/gateway), меняются только
+  # переменные: доверенный прокси здесь — Caddy, и только он.
+  gateway:
+    build:
+      context: ../../apps/employee-mini-app
+    image: humotech/gateway:${HUMOTECH_TAG:?нужен HUMOTECH_TAG в .env}
+    environment:
+      GATEWAY_TRUSTED_PROXIES: ${EDGE_CADDY_IP:-172.31.250.10}
+      # Пусто по умолчанию: /admin/ закрыт для всех (403).
+      GATEWAY_ADMIN_ALLOW: ${GATEWAY_ADMIN_ALLOW:-}
+    volumes:
+      - ../../infrastructure/docker/gateway/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ../../infrastructure/docker/gateway/proxy-headers.inc:/etc/nginx/conf.d/proxy-headers.inc:ro
+      - ../../infrastructure/docker/gateway/40-humotech-gateway.sh:/opt/humotech/40-humotech-gateway.sh:ro
+      - static_files:/srv/static:ro
+    command:
+      - sh
+      - -c
+      - sh /opt/humotech/40-humotech-gateway.sh && exec /docker-entrypoint.sh nginx -g 'daemon off;'
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1/gateway-health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - edge
+      - app
+    restart: unless-stopped
+    logging: *logging
+
+  crm:
+    build:
+      context: ../../apps/hr-crm
+      args:
+        VITE_API_URL: /api/v1
+        VITE_ORGANIZATION_CODE: ${CRM_ORGANIZATION_CODE:?нужен CRM_ORGANIZATION_CODE}
+        VITE_GOOGLE_MAPS_KEY: ${CRM_GOOGLE_MAPS_KEY:-}
+        VITE_DEMO_MODE: "false"
+    image: humotech/crm:${HUMOTECH_TAG:?нужен HUMOTECH_TAG в .env}
+    volumes:
+      - ./crm/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1/crm-health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    networks:
+      - edge
+    restart: unless-stopped
+    logging: *logging
+
+  caddy:
+    image: caddy:2.8-alpine
+    environment:
+      API_DOMAIN: ${API_DOMAIN:?нужен API_DOMAIN}
+      CRM_DOMAIN: ${CRM_DOMAIN:?нужен CRM_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?нужен ACME_EMAIL}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    healthcheck:
+      # Админ-API Caddy слушает только 127.0.0.1:2019 внутри контейнера.
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    depends_on:
+      gateway:
+        condition: service_healthy
+      crm:
+        condition: service_healthy
+    networks:
+      edge:
+        ipv4_address: ${EDGE_CADDY_IP:-172.31.250.10}
+    restart: unless-stopped
+    logging: *logging
+
+volumes:
+  postgres_data:
+  static_files:
+  # Справки, больничные и готовые выгрузки — кадровые данные. Только
+  # тома: ни шлюз, ни CRM их не монтируют, раздаёт их view после проверки
+  # прав. В бэкап входят вместе с базой.
+  private_media:
+  private_exports:
+  caddy_data:
+  caddy_config:
+
+networks:
+  edge:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${EDGE_SUBNET:-172.31.250.0/24}
+          # Динамические адреса — только из верхней половины. Закреплённый
+          # адрес Caddy (.10) в неё не входит, и пересозданный gateway или
+          # crm не займёт его раньше Caddy.
+          ip_range: ${EDGE_DYNAMIC_RANGE:-172.31.250.128/25}
+  app:
+    driver: bridge
+  db:
+    driver: bridge
+    internal: true

@@ -1,0 +1,13 @@
+[Unit]
+Description=HUMOTECH: резервная копия базы и файлов
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+Environment=BACKUP_CONFIG=/etc/humotech/backup.env
+ExecStart=/opt/humotech/infrastructure/backup/backup.sh
+# Копия не должна отнимать процессор у рабочих сервисов.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

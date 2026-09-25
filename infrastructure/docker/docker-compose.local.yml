@@ -25,10 +25,9 @@ services:
     # Docker слушает на всех интерфейсах, и база оказывается доступна
     # из чужого Wi-Fi вместе с ноутбуком.
     #
-    # `!override` обязателен: списки портов из двух файлов compose по
-    # умолчанию СКЛАДЫВАЕТ, и без этого рядом с петлевой привязкой
-    # осталась бы открытая всем из базового файла — то есть настройка
-    # выглядела бы сделанной, ничего не изменив.
+    # `!override` оставлен как страховка: списки портов из двух файлов
+    # compose по умолчанию СКЛАДЫВАЮТСЯ, и если порт однажды вернут в
+    # базовый файл, рядом с петлевой привязкой не появится открытая всем.
     ports: !override
       - "127.0.0.1:5433:5432"
     networks:
@@ -67,7 +66,16 @@ services:
       # Какая база у стенда — решает `.env`, а не файл: одна установка
       # работает с демонстрационными данными, другая с рабочими, и
       # переключение не должно быть правкой compose.
-      DJANGO_DATABASE_URL: ${DJANGO_DATABASE_URL:-postgresql://humotech:humotech_local@postgres:5432/humotech_django}
+      # Умолчания нет: строка с паролем в файле из Git — это пароль,
+      # известный всем, а молчаливый откат на неё прятал бы забытую
+      # настройку.
+      DJANGO_DATABASE_URL: ${DJANGO_DATABASE_URL:?нужен DJANGO_DATABASE_URL в infrastructure/docker/.env}
+      # Перед backend ровно один наш прокси — gateway, и он ПЕРЕЗАПИСЫВАЕТ
+      # X-Forwarded-For адресом клиента (см. gateway/proxy-headers.inc).
+      # Единица здесь и у DRF (NUM_PROXIES) берёт именно эту запись.
+      # Ноль означал бы «все клиенты — это gateway»: общий счётчик
+      # попыток входа, который один человек выбирает за всех.
+      TRUSTED_PROXY_COUNT: "1"
       # Публичное имя и внутреннее. Второе обязательно: бот ходит к API
       # внутри сети Docker, и в его запросах Host — это `gateway`, а не
       # адрес снаружи. Без него каждый запрос бота получает 400 от
@@ -157,7 +165,11 @@ services:
       # без него — и вместо ответа бот получает редирект на
       # https://backend:8000, которого не существует. Заголовок ставит
       # nginx, поэтому дорога у бота та же, что у браузера.
-      BACKEND_API_URL: http://gateway/api/v1
+      #
+      # Порт 8080 — внутренний вход шлюза только для бота: ngrok смотрит
+      # на :80, где пути /api/v1/telegram/bot/ снаружи закрыты, а
+      # X-Bot-Token у внешних запросов вырезается (gateway/nginx.conf).
+      BACKEND_API_URL: http://gateway:8080/api/v1
       # Постоянный адрес. Бот сверяет с ним кнопку меню на старте и
       # переписывает её, только если она смотрит не туда.
       MINI_APP_URL: https://${NGROK_DOMAIN:?нужен NGROK_DOMAIN в infrastructure/docker/.env}
@@ -244,6 +256,16 @@ services:
         condition: service_completed_successfully
     networks:
       - humotech
+    # Признак жизни обновляется только после удачного прохода (см.
+    # humotech/attendance/heartbeat.py). Порог 900 с = 2 паузы + 300:
+    # зависший цикл или цикл на одних ошибках становится unhealthy.
+    healthcheck:
+      test: ["CMD", "python", "-m", "humotech.attendance.heartbeat",
+             "/tmp/attendance-reminders.heartbeat", "900"]
+      interval: 60s
+      timeout: 10s
+      start_period: 120s
+      retries: 3
     restart: unless-stopped
     # Проход короткий: прерывать его на середине нечем, но дать ему
     # закончиться дешевле, чем разбираться в половинчатом состоянии.
@@ -276,6 +298,14 @@ services:
         condition: service_completed_successfully
     networks:
       - humotech
+    # Порог 7500 с = 2 паузы по часу + 300: см. attendance-reminders.
+    healthcheck:
+      test: ["CMD", "python", "-m", "humotech.attendance.heartbeat",
+             "/tmp/onboarding-reminders.heartbeat", "7500"]
+      interval: 60s
+      timeout: 10s
+      start_period: 120s
+      retries: 3
     restart: unless-stopped
     stop_grace_period: 20s
     logging: *logging
@@ -288,10 +318,30 @@ services:
       context: ../../apps/employee-mini-app
     image: humotech/gateway:local
     container_name: humotech_gateway
+    environment:
+      # Кому шлюз верит в X-Forwarded-For. Здесь это агент ngrok, но его
+      # адрес в сети Docker не закреплён, поэтому доверены частные сети:
+      # порт шлюза не публикуется, и из частных адресов до него доходят
+      # только контейнеры этого стенда. Опубликовать порт шлюза — значит
+      # сломать это допущение.
+      GATEWAY_TRUSTED_PROXIES: ${GATEWAY_TRUSTED_PROXIES:-10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
+      # С каких адресов открыт /admin/. Пусто — закрыт для всех (403).
+      # Пример: GATEWAY_ADMIN_ALLOW=203.0.113.10/32 в infrastructure/docker/.env.
+      GATEWAY_ADMIN_ALLOW: ${GATEWAY_ADMIN_ALLOW:-}
     volumes:
       - ./gateway/nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - ./gateway/proxy-headers.inc:/etc/nginx/conf.d/proxy-headers.inc:ro
+      # Пишет списки доступа из двух переменных выше до старта nginx.
+      - ./gateway/40-humotech-gateway.sh:/opt/humotech/40-humotech-gateway.sh:ro
       - static_files:/srv/static:ro
+    # Скрипт запускается через `sh`, а не из /docker-entrypoint.d: там
+    # entrypoint образа молча пропускает файл без бита исполнения, а бит
+    # у файла с Windows-диска или из git-checkout не гарантирован. Ошибка
+    # в переменных роняет старт — это заметнее, чем тихо открытый /admin/.
+    command:
+      - sh
+      - -c
+      - sh /opt/humotech/40-humotech-gateway.sh && exec /docker-entrypoint.sh nginx -g 'daemon off;'
     depends_on:
       backend:
         condition: service_healthy

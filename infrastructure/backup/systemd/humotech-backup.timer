@@ -1,0 +1,12 @@
+[Unit]
+Description=HUMOTECH: ежедневная резервная копия
+
+[Timer]
+# 02:30 по времени сервера: ночью нет отметок и выгрузок.
+OnCalendar=*-*-* 02:30:00
+RandomizedDelaySec=10min
+# Сервер был выключен в 02:30 — копия снимется сразу после запуска.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

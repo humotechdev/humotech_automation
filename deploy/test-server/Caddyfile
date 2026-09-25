@@ -1,0 +1,73 @@
+# Внешний вход тестового сервера HUMOTECH: TLS и маршрутизация по доменам.
+#
+# Сертификаты Let's Encrypt Caddy получает и продлевает сам; для этого
+# оба домена должны указывать на сервер, а порты 80 и 443 быть открыты.
+#
+#   API_DOMAIN — Mini App сотрудника и API (сюда смотрит кнопка бота);
+#   CRM_DOMAIN — HR CRM; её /api/* уходит на тот же шлюз, поэтому CRM и
+#                API для браузера — один origin, cookie сессии first-party.
+#
+# X-Forwarded-For. Caddy НЕ доверяет входящим X-Forwarded-* (trusted_proxies
+# не задан): он перезаписывает их адресом соединения. Шлюз верит в этом
+# заголовке только Caddy (закреплённый адрес в сети edge) и берёт из него
+# одну самую правую запись. Подделать адрес клиента заголовком нельзя ни
+# на одном из двух шагов.
+
+{
+	email {$ACME_EMAIL}
+	servers {
+		timeouts {
+			read_header 15s
+			read_body 60s
+			write 150s
+			idle 60s
+		}
+		# HTTP/3 выключен: UDP 443 открывать не обязательно.
+		protocols h1 h2
+	}
+}
+
+(common) {
+	encode zstd gzip
+	# Справка о болезни — фотография с телефона; шлюз и Django режут
+	# своё, здесь — внешняя граница с тем же пределом.
+	request_body {
+		max_size 25MB
+	}
+	header {
+		# Без includeSubDomains: домен стенда может оказаться апексом, и
+		# тогда HSTS навязал бы HTTPS всем чужим поддоменам.
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+		-Via
+	}
+	log {
+		output stdout
+		format console
+	}
+}
+
+{$API_DOMAIN} {
+	import common
+	reverse_proxy gateway:80 {
+		transport http {
+			read_timeout 130s
+			write_timeout 130s
+		}
+	}
+}
+
+{$CRM_DOMAIN} {
+	import common
+	handle /api/* {
+		reverse_proxy gateway:80 {
+			transport http {
+				read_timeout 130s
+				write_timeout 130s
+			}
+		}
+	}
+	handle {
+		reverse_proxy crm:80
+	}
+}
