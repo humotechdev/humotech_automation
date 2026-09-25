@@ -15,6 +15,7 @@ from datetime import date
 
 import pytest
 from django.core.management import call_command
+from django.utils import timezone
 
 from humotech.absences.models import AbsenceRequest, EmployeeAbsence
 from humotech.absences.services import approval_blockers, stage_of
@@ -82,7 +83,11 @@ def test_seed_builds_the_company_and_keeps_the_rules(stand):
     assert EmployeeAssignment.objects.filter(employee=keep).count() == 0
 
 
-def test_second_run_gives_the_same_base_and_reset_removes_only_the_demo(stand):
+def test_second_run_gives_the_same_base_and_reset_removes_only_the_demo(stand, monkeypatch):
+    # Оба запуска — в один и тот же момент. Иначе между ними может пройти
+    # чьё-то время ухода, и у второго запуска окажется одной отметкой больше.
+    moment = timezone.now()
+    monkeypatch.setattr(timezone, "now", lambda: moment)
     keep = outsider(stand)
     call_command("seed_demo_hr_data", "--code", stand.code)
     first = (Employee.objects.filter(organization=stand).count(), AttendanceEvent.objects.filter(organization=stand).count())

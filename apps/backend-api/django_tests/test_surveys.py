@@ -566,23 +566,34 @@ class TestWhatHrSees:
         assert places[employee.id]["office"] == office.name
 
     def test_anonymous_survey_shows_only_the_summary(
-        self, campaigns, hr_actor, template, employee, office,
+        self, campaigns, hr_actor, template, employee, office, organization,
     ):
-        """Анонимный опрос: ни ответов по людям, ни имён в выгрузке."""
+        """Анонимный опрос: ни ответов по людям, ни имён в выгрузке.
+
+        Отвечают трое: меньше `ANONYMOUS_MIN_RESPONSES` ответов не
+        показываются вовсе — один ответ в выгрузке и есть подпись.
+        """
+        others = [
+            second_employee(organization, office, number=f"EMP-AN{i}")
+            for i in range(2)
+        ]
         campaign = campaigns.create(
             hr_actor, template_id=template.id, audience_kind="OFFICE",
             audience_ids=[str(office.id)], send_now=True, is_anonymous=True,
         )
-        recipient = SurveyRecipient.objects.get(campaign_id=campaign.id)
         rows = list(template.questions.order_by("position"))
-        services.submit(
-            employee_id=employee.id, recipient_id=recipient.id,
-            answers=[
-                {"question_id": str(rows[0].id), "number": 4},
-                {"question_id": str(rows[1].id), "options": ["Коллеги"]},
-                {"question_id": str(rows[2].id), "text": "Хорошо"},
-            ],
-        )
+        for person in [employee, *others]:
+            recipient = SurveyRecipient.objects.get(
+                campaign_id=campaign.id, employee_id=person.id,
+            )
+            services.submit(
+                employee_id=person.id, recipient_id=recipient.id,
+                answers=[
+                    {"question_id": str(rows[0].id), "number": 4},
+                    {"question_id": str(rows[1].id), "options": ["Коллеги"]},
+                    {"question_id": str(rows[2].id), "text": "Хорошо"},
+                ],
+            )
 
         assert campaigns.answers(hr_actor, campaign.id) == []
         header, body = campaigns.export(hr_actor, campaign.id)
@@ -590,7 +601,7 @@ class TestWhatHrSees:
         assert all(employee.last_name not in cell for row in body for cell in row)
         assert body[0][1] == "4"
         summary = campaigns.summary(hr_actor, campaign.id)
-        assert summary["progress"]["completed"] == 1
+        assert summary["progress"]["completed"] == 3
 
     def test_progress_separates_sent_started_and_done(
         self, campaigns, hr_actor, template, employee, office, organization,

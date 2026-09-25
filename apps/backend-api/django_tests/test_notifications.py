@@ -364,7 +364,9 @@ def test_a_stuck_message_is_reclaimed(context, sick_leave, notification_settings
 
     assert outbox.reclaim_stale() == 1
     assert Notification.objects.get(id=item.id).status == "PENDING"
-    assert len(outbox.claim()) == 1
+    # Зависание — это попытка: строка возвращается с паузой, а не сразу.
+    assert Notification.objects.get(id=item.id).attempts == 1
+    assert len(outbox.claim(now=timezone.now() + timedelta(hours=1))) == 1
 
 
 def test_the_error_text_is_truncated(context, sick_leave, notification_settings):
