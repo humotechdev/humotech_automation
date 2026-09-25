@@ -147,7 +147,14 @@ class FeedView(APIView):
             FeedService().page(
                 Actor.from_user(request.user),
                 scope=request.query_params.get("scope") or None,
-                limit=int(limit) if limit and limit.isdigit() else None,
+                # Только ASCII-цифры: `"²".isdigit()` истинно, а
+                # `int("²")` падает — это был 500 от одного символа.
+                limit=(
+                    int(limit)
+                    if limit and limit.isascii() and limit.isdigit()
+                    and len(limit) <= 6
+                    else None
+                ),
                 cursor=request.query_params.get("cursor") or None,
             )
         )

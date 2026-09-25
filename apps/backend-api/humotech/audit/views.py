@@ -136,13 +136,13 @@ class AuditLogView(APIView):
             organization_id=actor.organization_id
         ).select_related("actor_user")
 
-        action = request.query_params.get("action")
+        action = _text_param(request, "action")
         if action:
             # Префиксом тоже: `attendance.` находит все действия по
             # посещаемости, не заставляя перечислять их поимённо.
             queryset = queryset.filter(action__startswith=action)
 
-        entity_type = request.query_params.get("entity_type")
+        entity_type = _text_param(request, "entity_type")
         if entity_type:
             queryset = queryset.filter(entity_type=entity_type)
 
@@ -273,6 +273,20 @@ def _uuid_list(request, name: str) -> list[uuid.UUID] | None:
             f"Параметр «{name}» должен быть списком UUID через запятую",
             details={"field": name, "value": raw},
         ) from exc
+
+
+def _text_param(request, name: str) -> str | None:
+    """Строковый фильтр. Длина колонок — 100 символов, нулевой байт
+    PostgreSQL не принимает: и то и другое — отказ, а не 500.
+    """
+    raw = request.query_params.get(name)
+    if not raw:
+        return None
+    if "\x00" in raw or len(raw) > 100:
+        raise ValidationFailed(
+            f"Недопустимое значение параметра «{name}»", details={"field": name}
+        )
+    return raw
 
 
 def _limit(request) -> int | None:

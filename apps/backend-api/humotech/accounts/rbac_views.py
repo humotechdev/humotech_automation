@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import uuid
 
+from django.contrib.auth import update_session_auth_hash
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiExample, OpenApiParameter, extend_schema
 from rest_framework import serializers
@@ -408,9 +409,13 @@ class CrmUserViewSet(ServiceViewSet):
     @action(detail=True, methods=["post"], url_path="set-password")
     def set_password(self, request, pk=None):
         payload = validated(SetPasswordSerializer, request.data)
-        return self.item_response(
-            self.service.set_password(self.actor, pk, **payload)
-        )
+        user = self.service.set_password(self.actor, pk, **payload)
+        if user.id == request.user.id:
+            # Сменил пароль себе: остальные его сессии оборваны сервисом,
+            # а эту переоформляем на новый отпечаток — выкидывать человека
+            # из окна, где он только что сменил пароль, незачем.
+            update_session_auth_hash(request, user)
+        return self.item_response(user)
 
     @extend_schema(summary="Включить учётную запись", responses={200: CrmUserSerializer})
     @action(detail=True, methods=["post"])

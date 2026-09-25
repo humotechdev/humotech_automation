@@ -80,14 +80,30 @@ def database_from_url(url: str) -> dict:
 #
 # Django работает со своей базой. Старая база Alembic (`humotech`) не трогается:
 # на время перехода это две независимые схемы.
-DATABASES = {
-    "default": database_from_url(
-        env(
-            "DJANGO_DATABASE_URL",
-            "postgresql://humotech:humotech_local@127.0.0.1:5433/humotech_django",
-        )
+#
+# DJANGO_DATABASE_URL обязателен везде, кроме development и test. Раньше
+# отсутствующая переменная молча превращалась в строку с паролем из Git,
+# и забытая настройка сервера выглядела как рабочая. Для разработки и
+# тестов остаётся адрес БЕЗ пароля: пароль тогда берётся из PGPASSWORD
+# или ~/.pgpass, а не из репозитория.
+_LOCAL_SETTINGS_MODULES = ("config.settings.development", "config.settings.test")
+_DEV_DATABASE_URL = "postgresql://humotech@127.0.0.1:5433/humotech_django"
+
+
+def _database_url() -> str:
+    url = env("DJANGO_DATABASE_URL")
+    if url:
+        return url
+    if os.environ.get("DJANGO_SETTINGS_MODULE", "") in _LOCAL_SETTINGS_MODULES:
+        return _DEV_DATABASE_URL
+    raise RuntimeError(
+        "Переменная окружения DJANGO_DATABASE_URL обязательна и не задана "
+        f"(DJANGO_SETTINGS_MODULE={os.environ.get('DJANGO_SETTINGS_MODULE', '')!r}). "
+        f"См. {BASE_DIR / '.env.example'}"
     )
-}
+
+
+DATABASES = {"default": database_from_url(_database_url())}
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -246,10 +262,16 @@ REST_FRAMEWORK = {
     # что и раньше: {"error": {"code", "message", "details"}}.
     "EXCEPTION_HANDLER": "humotech.core.exceptions.domain_exception_handler",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
-    # Частота обращений к чувствительным endpoint'ам. Считает LocMemCache,
-    # то есть на процесс: при нескольких рабочих процессах фактический предел
-    # умножается на их число. Это защита от перебора, а не от нагрузки;
-    # общий счётчик появится вместе с Redis.
+    # Сколько прокси стоит перед приложением — то же число, что и
+    # `TRUSTED_PROXY_COUNT` ниже. Без него DRF считает частоту по ВСЕЙ
+    # строке `X-Forwarded-For`, как её прислал клиент, и любой предел
+    # обходится новым значением заголовка на каждый запрос. С нулём
+    # заголовок не читается вовсе, с N берётся адрес, записанный самым
+    # дальним из наших прокси.
+    "NUM_PROXIES": int(env("TRUSTED_PROXY_COUNT", "0")),
+    # Частота обращений к чувствительным endpoint'ам. Считает общий для всех
+    # воркеров счётчик в PostgreSQL (`core/throttling.py`), а не кэш процесса.
+    # Это защита от перебора, а не от нагрузки.
     "DEFAULT_THROTTLE_RATES": {
         # Обмен initData на внутренний токен: сюда приходит каждый запуск
         # Mini App, поэтому предел щедрый, но конечный.
@@ -276,6 +298,42 @@ REST_FRAMEWORK = {
         "qr_display_code": env("THROTTLE_QR_DISPLAY_CODE", "60/min"),
     },
 }
+
+# --- Предел попыток входа в CRM ---
+#
+# (попыток, окно в секундах, блокировка в секундах). Счётчики лежат в
+# PostgreSQL и общие для всех воркеров — см. `humotech/core/throttling.py`
+# и `humotech/accounts/security.py`. Капчи и лишних экранов нет: человек,
+# ошибившийся пять раз подряд, ждёт пятнадцать минут или просит HR задать
+# новый пароль — это снимает блокировку сразу.
+LOGIN_THROTTLE = {
+    # Одна учётная запись с одного адреса.
+    "ACCOUNT_IP": (int(env("LOGIN_THROTTLE_ACCOUNT_IP_HITS", "5")), 900, 900),
+    # Одна учётная запись с любых адресов: перебор с многих машин.
+    "ACCOUNT": (int(env("LOGIN_THROTTLE_ACCOUNT_HITS", "20")), 3600, 900),
+    # Один адрес по любым учётным записям: «частый пароль по всем почтам».
+    # Удачные входы в счёт не идут, поэтому офис за одним адресом
+    # в него не упирается.
+    "IP": (int(env("LOGIN_THROTTLE_IP_HITS", "30")), 900, 900),
+}
+
+# --- Сессии CRM ---
+#
+# Двенадцать часов со скольжением: каждый запрос продлевает срок, так что
+# рабочий день HR не прерывается, а брошенная на чужом компьютере вкладка
+# перестаёт работать к утру. Раньше было две недели по умолчанию Django.
+# Сессии лежат в базе: выход и отключение учётки удаляют их на сервере.
+SESSION_ENGINE = "django.contrib.sessions.backends.db"
+SESSION_COOKIE_AGE = int(env("DJANGO_SESSION_COOKIE_AGE", str(12 * 60 * 60)))
+SESSION_SAVE_EVERY_REQUEST = True
+SESSION_EXPIRE_AT_BROWSER_CLOSE = False
+SESSION_COOKIE_HTTPONLY = True
+# Lax, а не Strict: со Strict переход в CRM по ссылке из Telegram или
+# почты приходил бы без cookie, и человек видел бы форму входа.
+SESSION_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SAMESITE = "Lax"
+# CSRF-токен CRM читает из cookie скриптом — HttpOnly ему ставить нельзя.
+CSRF_COOKIE_HTTPONLY = False
 
 def _origin_list(name: str) -> list[str]:
     """Список origin'ов из переменной окружения через запятую.
@@ -492,10 +550,19 @@ LOGGING = {
             "format": "%(asctime)s %(levelname)-8s %(name)s: %(message)s",
         },
     },
+    # Маскирование секретов в тексте сообщения: токен бота, `password=…`,
+    # `Bearer …`, пароль в DSN. Страховка на случай, когда секрет попал
+    # в строку лога по ошибке (например, адрес запроса к Telegram API).
+    "filters": {
+        "redact_secrets": {
+            "()": "humotech.audit.redaction.SecretRedactingFilter",
+        },
+    },
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
             "formatter": "standard",
+            "filters": ["redact_secrets"],
         },
     },
     "root": {"handlers": ["console"], "level": env("LOG_LEVEL", "INFO")},

@@ -130,9 +130,20 @@ def day_bounds(day: date, tz: ZoneInfo) -> tuple[datetime, datetime]:
     «00:00 этого дня», а как «полночь, приведённая к реальному времени»:
     `astimezone` разложит несуществующий момент в ближайший существующий.
     """
-    start = datetime.combine(day, time.min, tzinfo=tz)
-    end = datetime.combine(day + timedelta(days=1), time.min, tzinfo=tz)
-    return start.astimezone(UTC), end.astimezone(UTC)
+    try:
+        start = datetime.combine(day, time.min, tzinfo=tz)
+        end = datetime.combine(day + timedelta(days=1), time.min, tzinfo=tz)
+        return start.astimezone(UTC), end.astimezone(UTC)
+    except OverflowError as exc:
+        # Край календаря: у 9999-12-31 нет «следующих суток», а 0001-01-01
+        # в восточном поясе в UTC уходит в нулевой год. Даты приходят
+        # из query-параметров, и такой ввод — ошибка клиента, а не 500.
+        from humotech.core.errors import ValidationFailed
+
+        raise ValidationFailed(
+            "Дата вне поддерживаемого диапазона",
+            details={"date": day.isoformat()},
+        ) from exc
 
 
 def range_bounds(first: date, last: date, tz: ZoneInfo) -> tuple[datetime, datetime]:
@@ -170,12 +181,16 @@ def closed_range_bounds(
 def week_range(day: date) -> tuple[date, date]:
     """Понедельник и воскресенье недели, в которую попал день."""
     first = day - timedelta(days=(day.weekday() - WEEK_STARTS_ON) % 7)
+    if first > date.max - timedelta(days=6):  # последняя неделя календаря
+        return first, date.max
     return first, first + timedelta(days=6)
 
 
 def month_range(day: date) -> tuple[date, date]:
     """Первое и последнее число месяца, в который попал день."""
     first = day.replace(day=1)
+    if first.year == date.max.year and first.month == 12:
+        return first, date.max
     if first.month == 12:
         next_first = first.replace(year=first.year + 1, month=1)
     else:
@@ -188,6 +203,8 @@ def days_in(first: date, last: date):
     current = first
     while current <= last:
         yield current
+        if current == date.max:  # у последнего дня календаря нет «завтра»
+            return
         current += timedelta(days=1)
 
 

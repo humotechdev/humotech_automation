@@ -180,8 +180,8 @@ class RequestQueueView(APIView):
             office_id=_uuid_param(request, "office_id"),
             region_id=_uuid_param(request, "region_id"),
             search=request.query_params.get("search") or None,
-            date_from=request.query_params.get("date_from") or None,
-            date_to=request.query_params.get("date_to") or None,
+            date_from=_date_text(request, "date_from"),
+            date_to=_date_text(request, "date_to"),
             request_kind=request.query_params.get("request_kind") or None,
         )
         rows = list(_before(queryset, position)[: size + 1])
@@ -243,8 +243,8 @@ class RequestCountsView(APIView):
             "search": request.query_params.get("search") or None,
         }
         dates = {
-            "date_from": request.query_params.get("date_from") or None,
-            "date_to": request.query_params.get("date_to") or None,
+            "date_from": _date_text(request, "date_from"),
+            "date_to": _date_text(request, "date_to"),
         }
         absences = AbsenceService()
         corrections = AttendanceHrService()
@@ -307,6 +307,20 @@ def _before(queryset, position):
 
 def _position(cursor: str | None):
     return Cursor.decode(cursor) if cursor else None
+
+
+def _date_text(request, name: str) -> str | None:
+    """Дата фильтра, проверенная здесь, а не в базе.
+
+    Сервис очереди отсутствий кладёт строку в `__date__gte` как есть, и
+    «garbage» или «2026-02-30» долетали до Django-валидации поля внутри
+    запроса — это 500, а не 400.
+    """
+    from humotech.analytics.metrics import check_date
+    from humotech.attendance.views import _date_param
+
+    value = check_date(_date_param(request, name), name)
+    return value.isoformat() if value else None
 
 
 def _int_param(request, name: str) -> int | None:

@@ -106,8 +106,14 @@ class AccessControl:
         from humotech.accounts.models import UserRoleScope
 
         moment = at or timezone.now()
+        # Заблокированная или архивная учётка прав не имеет вовсе. Вход
+        # таких не пускает, но фоновые задачи (выгрузки, рассылки)
+        # действуют от имени пользователя без request.user — и без этого
+        # условия сохраняли бы права уволенного администратора.
         return UserRoleScope.objects.filter(
-            user_id=actor.user_id, valid_from__lte=moment
+            user_id=actor.user_id, valid_from__lte=moment,
+            user__status="ACTIVE", user__archived_at__isnull=True,
+            organization_id=actor.organization_id,
         ).filter(Q(valid_to__isnull=True) | Q(valid_to__gte=moment))
 
     def scope(self, actor: Actor, at: datetime | None = None) -> Scope:

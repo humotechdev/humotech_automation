@@ -46,6 +46,15 @@ class OrganizationEmailBackend(BaseBackend):
         return user
 
     def get_user(self, user_id):
-        return (
+        """Пользователь по сессии — только действующий.
+
+        Отключённая или архивная учётная запись не должна продолжать
+        работать по уже выданной cookie: иначе «отключить» означало бы
+        «не пускать завтра», а сегодняшняя сессия жила бы до своего срока.
+        """
+        user = (
             User.objects.filter(pk=user_id).select_related("organization").first()
         )
+        if user is None or not user.is_active:
+            return None
+        return user

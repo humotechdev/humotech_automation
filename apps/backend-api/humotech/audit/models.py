@@ -13,6 +13,10 @@ from humotech.core.functions import TransactionNow
 from humotech.core.models import OrganizationScopedModel, UUIDPrimaryKeyModel
 
 
+class AuditLogImmutable(RuntimeError):
+    """Попытка изменить или удалить запись журнала через модель."""
+
+
 class AuditLog(UUIDPrimaryKeyModel, OrganizationScopedModel, models.Model):
     # админа можно заблокировать или удалить — запись аудита обязана остаться
     actor_user = models.ForeignKey(
@@ -64,3 +68,24 @@ class AuditLog(UUIDPrimaryKeyModel, OrganizationScopedModel, models.Model):
 
     def __str__(self) -> str:
         return f"{self.action} {self.entity_type}"
+
+    def save(self, *args, **kwargs):
+        """Только вставка, и только с замаскированными секретами.
+
+        Маскирование здесь, а не у вызывающего: запись может прийти из
+        любого сервиса, и полагаться на добросовестность каждого нельзя.
+        Правка существующей строки отклоняется — журнал, который можно
+        переписать тем же кодом, что делает изменения, ничего не доказывает.
+        """
+        if not self._state.adding:
+            raise AuditLogImmutable("Запись журнала аудита не изменяется")
+        from humotech.audit.redaction import redact_values
+
+        self.old_values = redact_values(self.old_values)
+        self.new_values = redact_values(self.new_values)
+        if self.user_agent:
+            self.user_agent = self.user_agent[:1000]
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise AuditLogImmutable("Запись журнала аудита не удаляется")

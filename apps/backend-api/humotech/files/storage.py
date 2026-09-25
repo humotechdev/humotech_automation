@@ -24,6 +24,11 @@
 не смог бы открыть ни одну справку, то есть к неработающей функции при
 видимости безопасности. Когда сканер появится, флаг включается, и
 непроверенные файлы перестают отдаваться сами собой.
+
+Отдача — только через `humotech.files.serving.file_response`: там одна
+на все view проверка статуса и удаления (PENDING — только кадровику и
+только вложением; INFECTED, FAILED и удалённые — никому) и одни
+безопасные заголовки. Собирать `FileResponse` по месту нельзя.
 """
 
 from __future__ import annotations
@@ -70,6 +75,12 @@ BY_EXTENSION = {
 
 # Сколько байт достаточно, чтобы узнать формат.
 SNIFF_BYTES = 16
+
+# Предел площади картинки. Сто мегапикселей — больше, чем у любой
+# обычной съёмки телефоном, и меньше порога, на котором сам Pillow
+# считает файл «бомбой распаковки». Переопределяется
+# `FILES["MAX_IMAGE_PIXELS"]`.
+MAX_IMAGE_PIXELS = 100_000_000
 
 
 @dataclass(frozen=True)
@@ -140,6 +151,22 @@ def store(
         # но принимать файл, о котором нам солгали, незачем.
         raise ValidationFailed("Содержимое файла не соответствует его типу")
 
+    # «Бомба распаковки»: PNG в сотню килобайт, который разворачивается в
+    # картинку 50 000 × 50 000. Сервер его не декодирует, но CRM покажет
+    # его кадровику в <img>, и вкладка браузера упадёт, съев гигабайты.
+    # Размер читается из заголовка, без декодирования.
+    if declared in ("image/png", "image/jpeg"):
+        dimensions = _image_dimensions(upload, declared)
+        upload.seek(0)
+        limit = int(settings.FILES.get("MAX_IMAGE_PIXELS", MAX_IMAGE_PIXELS))
+        if dimensions is not None:
+            width, height = dimensions
+            if width <= 0 or height <= 0 or width * height > limit:
+                raise ValidationFailed(
+                    "Изображение слишком большое по размеру в точках",
+                    details={"max_pixels": limit},
+                )
+
     digest = hashlib.sha256()
     for chunk in upload.chunks():
         digest.update(chunk)
@@ -172,9 +199,18 @@ def open_stored(record: File):
     return private_storage().open(record.storage_key, "rb")
 
 
-def is_viewable(record: File) -> bool:
-    """Можно ли вообще показывать этот файл."""
-    return record.deleted_at is None and record.scan_status == "CLEAN"
+def is_viewable(record: File, audience: str | None = None) -> bool:
+    """Можно ли вообще показывать этот файл.
+
+    Без `audience` — строгое правило: только CLEAN и не удалён. С ним —
+    правило выдачи из `humotech.files.serving.viewable_for` (PENDING
+    кадровику вложением).
+    """
+    if audience is None:
+        return record.deleted_at is None and record.scan_status == "CLEAN"
+    from humotech.files.serving import viewable_for
+
+    return viewable_for(record, audience)
 
 
 def _looks_like(head: bytes, mime: str) -> bool:
@@ -185,11 +221,77 @@ def _looks_like(head: bytes, mime: str) -> bool:
 
 
 def _safe_name(name: str | None) -> str:
-    """Исходное имя — только для показа человеку, и в урезанном виде."""
-    if not name:
-        return "документ"
-    cleaned = Path(name).name.replace("\x00", "")
-    return cleaned[:255] or "документ"
+    """Исходное имя — только для показа человеку, и в урезанном виде.
+
+    Без каталогов, управляющих символов (NUL, CR, LF) и символов
+    направления текста: имя уходит в заголовок `Content-Disposition` и
+    в подпись файла в чате. См. `humotech.files.serving.display_name`.
+    """
+    from humotech.files.serving import display_name
+
+    return display_name(name)
+
+
+def _image_dimensions(upload, mime: str) -> tuple[int, int] | None:
+    """Ширина и высота из заголовка PNG или JPEG. `None` — не разобрали.
+
+    Не разобрали — не повод отказать: у части камер заголовок необычный,
+    а сигнатура уже проверена. Отказ только по разобранному размеру.
+    """
+    try:
+        upload.seek(0)
+        if mime == "image/png":
+            head = upload.read(24)
+            if len(head) < 24 or head[12:16] != b"IHDR":
+                return None
+            return (int.from_bytes(head[16:20], "big"),
+                    int.from_bytes(head[20:24], "big"))
+        return _jpeg_dimensions(upload)
+    except (OSError, ValueError):
+        return None
+    finally:
+        upload.seek(0)
+
+
+# Маркеры SOF: в них лежит размер кадра. C4, C8 и CC — не кадры.
+_SOF_MARKERS = frozenset(range(0xC0, 0xD0)) - {0xC4, 0xC8, 0xCC}
+
+
+def _jpeg_dimensions(upload) -> tuple[int, int] | None:
+    if upload.read(2) != b"\xff\xd8":
+        return None
+    # Не больше сотни сегментов: EXIF и миниатюры стоят до кадра, но
+    # бесконечно перебирать испорченный файл незачем.
+    for _ in range(100):
+        byte = upload.read(1)
+        # В правильном JPEG маркер стоит сразу за сегментом. Искать его
+        # побайтно по мусору — это десять миллионов вызовов на файл в
+        # десять мегабайт; незачем, такой файл просто не разбираем.
+        if byte != b"\xff":
+            return None
+        while byte == b"\xff":
+            byte = upload.read(1)
+        if not byte:
+            return None
+        marker = byte[0]
+        if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
+            continue
+        if marker in (0xD9, 0xDA):
+            return None
+        length_bytes = upload.read(2)
+        if len(length_bytes) < 2:
+            return None
+        length = int.from_bytes(length_bytes, "big")
+        if length < 2:
+            return None
+        if marker in _SOF_MARKERS:
+            body = upload.read(5)
+            if len(body) < 5:
+                return None
+            return (int.from_bytes(body[3:5], "big"),
+                    int.from_bytes(body[1:3], "big"))
+        upload.seek(length - 2, 1)
+    return None
 
 
 __all__ = ["StoredFile", "is_viewable", "open_stored", "private_storage", "store"]

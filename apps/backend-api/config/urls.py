@@ -15,6 +15,14 @@ from drf_spectacular.views import (
 
 from humotech.core.views import healthz, readyz
 
+# Ошибки вне DRF (несуществующий путь, SuspiciousOperation, необработанное
+# исключение) — тем же JSON-конвертом, что и остальной API, и без
+# трейсбеков. См. `humotech/core/views.py`.
+handler400 = "humotech.core.views.bad_request"
+handler403 = "humotech.core.views.permission_denied"
+handler404 = "humotech.core.views.page_not_found"
+handler500 = "humotech.core.views.server_error"
+
 urlpatterns = [
     # Django Admin — закрытый технический интерфейс, не основная CRM.
     path("admin/", admin.site.urls),
