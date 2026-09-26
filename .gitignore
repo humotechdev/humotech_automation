@@ -50,6 +50,7 @@ private-exports/
 # Настройки резервного копирования с паролями и ключами (образец —
 # backup.env.example рядом). Шаблон `.env` выше такое имя не закрывает.
 infrastructure/backup/backup.env
+deploy/test-server/backup.env
 *.env.local
 
 # Дампы базы — все кадровые данные разом. В репозиторий не попадают

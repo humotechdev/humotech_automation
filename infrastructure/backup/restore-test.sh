@@ -18,7 +18,9 @@
 #   4. миграции по приложениям и расширения (vector, btree_gist) совпадают;
 #   5. если задан BACKUP_VERIFY_APP_IMAGE — `manage.py migrate --check`
 #      образом приложения: схема восстановленной базы соответствует коду;
-#   6. архивы томов читаются, число файлов совпадает с манифестом.
+#   6. файлы томов ВОССТАНАВЛИВАЮТСЯ во временные тома Docker, и каждый
+#      файл сверяется по SHA-256 со списком, снятым при копировании;
+#      число файлов совпадает с манифестом.
 #
 # Код выхода 0 — копия пригодна. Любое расхождение — код 1 и строка
 # «ПРОВЕРКА НЕ ПРОЙДЕНА» в журнале.
@@ -37,6 +39,8 @@ if [ -z "$set_dir" ]; then
     set_dir="$BACKUP_DIR/$latest"
 fi
 [ -f "$set_dir/manifest.tsv" ] || die "$set_dir: нет manifest.tsv"
+grep -q $'^meta\tstatus\tcomplete$' "$set_dir/manifest.tsv" \
+    || die "$set_dir: в манифесте нет отметки complete — копия незавершённая или старого формата"
 
 suffix_rand="$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')"
 container="humotech_restore_test_$suffix_rand"
@@ -45,11 +49,14 @@ db="restore_check"
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/humotech-restore.XXXXXX")"
 failures=0
 
+restore_volumes=()
 cleanup() {
     # -v: у образа postgres анонимный том данных; без флага восстановленная
     # копия (с персональными данными) оставалась бы на диске после проверки.
     docker rm -f -v "$container" >/dev/null 2>&1 || true
     docker network rm "$network" >/dev/null 2>&1 || true
+    local v
+    for v in "${restore_volumes[@]}"; do docker volume rm -f "$v" >/dev/null 2>&1 || true; done
     rm -rf "$tmp"
 }
 trap cleanup EXIT
@@ -140,20 +147,51 @@ else
     log "migrate --check пропущен (BACKUP_VERIFY_APP_IMAGE не задан)"
 fi
 
-# --- 6. Тома -----------------------------------------------------------------
-while IFS=$'\t' read -r kind vol expected; do
+# --- 6. Файлы томов -----------------------------------------------------------
+# Архив распаковывается во временный том (как при настоящем восстановлении),
+# затем внутри контейнера `sha256sum -c` сверяет каждый файл со списком.
+volumes_seen=0
+while IFS=$'\t' read -r kind key vol expected; do
     [ "$kind" = "volume" ] || continue
-    [ "$expected" = "missing" ] && { log "том $vol: при копировании отсутствовал"; continue; }
-    arch="$(ls -1 "$set_dir" | grep -E "^volume-$vol\.tar\.gz(\.age|\.gpg)?$" | head -n 1)"
-    [ -n "$arch" ] || { fail "нет архива тома $vol"; continue; }
+    volumes_seen=$((volumes_seen + 1))
+    arch="$(ls -1 "$set_dir" | grep -E "^volume-$key\.tar\.gz(\.age|\.gpg)?$" | head -n 1)"
+    sums="$(ls -1 "$set_dir" | grep -E "^volume-$key\.sha256(\.age|\.gpg)?$" | head -n 1)"
+    [ -n "$arch" ] || { fail "нет архива тома $key"; continue; }
+    [ -n "$sums" ] || { fail "нет списка контрольных сумм тома $key"; continue; }
     decrypt_file "$set_dir/$arch" "$tmp/vol.tar.gz"
-    got=$(tar -tzf "$tmp/vol.tar.gz" | grep -vc '/$' || true)
-    rm -f "$tmp/vol.tar.gz"
-    [ "$got" = "$expected" ] && log "том $vol: файлов $got — совпадает" || fail "том $vol: файлов $got, ожидалось $expected"
+    decrypt_file "$set_dir/$sums" "$tmp/vol.sha256"
+    target="${container}_vol_$key"
+    docker volume create --label humotech.purpose=restore-test "$target" >/dev/null
+    restore_volumes+=("$target")
+    if ! docker run --rm -i --network none -v "$target:/dst" "$BACKUP_HELPER_IMAGE"             tar -xzf - -C /dst < "$tmp/vol.tar.gz"; then
+        fail "том $key: архив не распаковался"; rm -f "$tmp/vol.tar.gz" "$tmp/vol.sha256"; continue
+    fi
+    got="$(docker run --rm --network none -v "$target:/dst:ro" "$BACKUP_HELPER_IMAGE" sh -c 'find /dst -type f | wc -l' | tr -dc '0-9')"
+    if [ ! -s "$tmp/vol.sha256" ]; then
+        # Пустой том: сверять нечего (sha256sum -c на пустом списке —
+        # ошибка), важно лишь, что и восстановилось ноль файлов.
+        sums_ok=1
+    elif docker run --rm -i --network none -v "$target:/dst:ro" "$BACKUP_HELPER_IMAGE"             sh -c 'cd /dst && sha256sum --quiet -c -' < "$tmp/vol.sha256" >/dev/null 2>&1; then
+        sums_ok=1
+    else
+        sums_ok=0
+    fi
+    rm -f "$tmp/vol.tar.gz" "$tmp/vol.sha256"
+    docker volume rm -f "$target" >/dev/null 2>&1 || true
+    if [ "$sums_ok" -ne 1 ]; then
+        fail "том $key: восстановленные файлы не совпадают с контрольными суммами"
+    elif [ "$got" != "$expected" ]; then
+        fail "том $key: восстановлено файлов $got, ожидалось $expected"
+    elif [ "$got" = 0 ]; then
+        log "том $key ($vol): пуст, как и при копировании"
+    else
+        log "том $key ($vol): восстановлено файлов $got, SHA-256 всех совпали"
+    fi
 done < "$set_dir/manifest.tsv"
+[ "$volumes_seen" -gt 0 ] || fail "в манифесте нет ни одного тома с файлами"
 
 if [ "$failures" -gt 0 ]; then
     log "ПРОВЕРКА НЕ ПРОЙДЕНА: расхождений $failures"
     exit 1
 fi
-log "ПРОВЕРКА ПРОЙДЕНА: копия $(basename "$set_dir") восстанавливается полностью"
+log "ПРОВЕРКА ПРОЙДЕНА: копия $(basename "$set_dir") восстанавливается полностью (база и файлы)"
