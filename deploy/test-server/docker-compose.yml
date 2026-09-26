@@ -40,6 +40,10 @@ x-backend-image: &backend_image
 x-backend-env: &backend_env
   DJANGO_SETTINGS_MODULE: config.settings.production
   DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?нужен DJANGO_SECRET_KEY}
+  # Пусто по умолчанию. После утечки ключа FALLBACKS остаётся пустым,
+  # а хэш утёкшего ключа — в REVOKED (docs/security/rotate-telegram-token.md).
+  DJANGO_SECRET_KEY_FALLBACKS: ${DJANGO_SECRET_KEY_FALLBACKS:-}
+  DJANGO_REVOKED_SECRET_KEY_SHA256: ${DJANGO_REVOKED_SECRET_KEY_SHA256:-}
   # Пароль подставляется из той же переменной, что и у PostgreSQL, —
   # разойтись им негде. Поэтому пароль — без символов, требующих
   # экранирования в URL (secrets.token_urlsafe подходит).
