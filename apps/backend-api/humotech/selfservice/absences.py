@@ -15,19 +15,26 @@ from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import serializers, status
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
+from django.http import HttpResponse
 from rest_framework.response import Response
 
 from humotech.absences.services import MINUTES_PER_WORKING_DAY, AbsenceService
 from humotech.core.api import validated
+from humotech.core.errors import ValidationFailed
 from humotech.selfservice.views import EmployeeSelfView
 
 
 class AbsenceCreateSerializer(serializers.Serializer):
-    """Заявка. `employee_id` здесь нет и быть не может."""
+    """Заявка. `employee_id` здесь нет и быть не может.
+
+    Даты необязательны: заболевший не знает, когда выйдет, и требовать
+    от него число значит получить выдуманное. Что делать с пустым
+    периодом, решает сервис — у отпуска он его не примет.
+    """
 
     absence_type_code = serializers.CharField(max_length=50)
-    first_day = serializers.DateField()
-    last_day = serializers.DateField()
+    first_day = serializers.DateField(required=False, allow_null=True)
+    last_day = serializers.DateField(required=False, allow_null=True)
     comment = serializers.CharField(
         max_length=2000, required=False, allow_blank=True
     )
@@ -63,6 +70,9 @@ class AbsenceRequestSerializer(serializers.Serializer):
     kind = serializers.CharField()
     absence_type = AbsenceTypeSerializer()
     status = serializers.CharField()
+    stage = serializers.CharField()
+    certificate_status = serializers.CharField(allow_null=True)
+    certificate_comment = serializers.CharField(allow_null=True)
     extension_pending = serializers.BooleanField(
         help_text=(
             "Производное состояние, которого нет в схеме отдельным "
@@ -163,6 +173,20 @@ def request_json(view) -> dict:
             "deducts_leave_balance": request.absence_type.deducts_leave_balance,
         },
         "status": request.status,
+        # Состояние словами человека: «ожидаем документы», «на проверке
+        # HR», «нужны исправления». Считается на сервере и приходит
+        # готовым — иначе каждый клиент собирал бы его по-своему и
+        # однажды назвал бы неподтверждённый больничный подтверждённым.
+        "stage": view.stage,
+        # Судьба справки: PENDING, VERIFIED, REJECTED или null. По ней
+        # приложение решает, показывать ли «Прикрепить справку»: после
+        # отказа кадровика бумагу нужно принести заново, а счётчик
+        # документов об этом не знает.
+        "certificate_status": view.certificate_status,
+        # Что кадровик сказал о справке. Уходит человеку дословно и
+        # остаётся на карточке: сообщение в чате теряется в переписке
+        # к следующему дню, а заявка лежит перед глазами.
+        "certificate_comment": view.certificate_comment,
         # Производное состояние, которого нет в схеме отдельным статусом:
         # продление — это дочерняя заявка, а не поле у родительской.
         "extension_pending": view.extension_pending,
@@ -206,8 +230,10 @@ class AbsenceListView(EmployeeSelfView):
     )
     def get(self, request):
         service = AbsenceService()
-        limit = min(max(int(request.query_params.get("limit") or 20), 1), 100)
-        offset = max(int(request.query_params.get("offset") or 0), 0)
+        limit = min(max(_int_param(request, "limit", 20), 1), 100)
+        # Потолок смещения: у сотрудника нет и не будет сотни тысяч заявок,
+        # а огромное OFFSET — лишняя работа базы и путь к переполнению.
+        offset = min(max(_int_param(request, "offset", 0), 0), 100_000)
         views, total = service.requests(self.context, limit=limit, offset=offset)
         return Response(
             {
@@ -236,8 +262,8 @@ class AbsenceListView(EmployeeSelfView):
         view = AbsenceService().create(
             self.context,
             absence_type_code=data["absence_type_code"],
-            first_day=data["first_day"],
-            last_day=data["last_day"],
+            first_day=data.get("first_day"),
+            last_day=data.get("last_day"),
             comment=data.get("comment") or None,
             # Справка приходит тем же запросом, если организация её требует.
             document=request.FILES.get("document"),
@@ -344,6 +370,82 @@ class AbsenceDocumentView(EmployeeSelfView):
         view = AbsenceService().attach_document(self.context, request_id, document)
         return Response(request_json(view), status=status.HTTP_201_CREATED)
 
+    @extend_schema(
+        operation_id="me_absence_document",
+        summary="Приложенная справка",
+        responses={(200, "application/octet-stream"): OpenApiTypes.BINARY},
+    )
+    def get(self, request, request_id):
+        stream, meta = AbsenceService().own_document(self.context, request_id)
+        # `inline`: чаще справку просто смотрят на экране, а не
+        # сохраняют — снимок из камеры открывается прямо в вебвью.
+        # scan_status, удаление и безопасные заголовки — одной проверкой.
+        from humotech.files.serving import EMPLOYEE, file_response
+
+        return file_response(
+            stream, meta, audience=EMPLOYEE, filename=f"certificate-{request_id}",
+        )
+
+
+@extend_schema(tags=["Личный кабинет"])
+class AbsenceApplicationView(EmployeeSelfView):
+    """Печатное заявление по заявке.
+
+    Отдаётся файлом, а не ссылкой на хранилище: бланк собирается из
+    самой заявки на каждое обращение. Сохранить его однажды значило бы
+    получить бумагу, которая молча разошлась с продлённой заявкой.
+    """
+
+    @extend_schema(
+        operation_id="me_absence_application",
+        summary="Заявление для печати",
+        responses={(200, "application/pdf"): OpenApiTypes.BINARY},
+    )
+    def get(self, request, request_id):
+        pdf = AbsenceService().application(self.context, request_id)
+        answer = HttpResponse(pdf, content_type="application/pdf")
+        # `inline`, а не `attachment`: человек сперва смотрит заявление
+        # на экране и печатает уже оттуда.
+        answer["Content-Disposition"] = (
+            f'inline; filename="application-{request_id}.pdf"'
+        )
+        return answer
+
+
+@extend_schema(tags=["Личный кабинет"])
+class AbsencePaperView(EmployeeSelfView):
+    """Прислать бумагу по заявке в чат.
+
+    Кабинет не отдаёт файл сам: вебвью Telegram не даёт сохранить его, и
+    нажатие «скачать» заканчивается ничем. Бумагу присылает бот
+    сообщением — оттуда её и пересылают, и печатают, и она остаётся в
+    переписке.
+    """
+
+    @extend_schema(
+        operation_id="me_absence_send_paper",
+        summary="Прислать бумагу в чат",
+        parameters=[
+            OpenApiParameter(
+                "request_id", OpenApiTypes.UUID, location=OpenApiParameter.PATH
+            ),
+            OpenApiParameter(
+                "paper", OpenApiTypes.STR, location=OpenApiParameter.PATH,
+                description="application — заявление, certificate — справка",
+            ),
+        ],
+        request=None,
+        responses={202: None},
+    )
+    def post(self, request, request_id, paper):
+        if paper not in ("application", "certificate"):
+            raise ValidationFailed(
+                "Такой бумаги по заявке не бывает",
+                details={"field": "paper"},
+            )
+        AbsenceService().send_paper(self.context, request_id, what=paper)
+        return Response(status=status.HTTP_202_ACCEPTED)
+
 
 @extend_schema(tags=["Личный кабинет"])
 class AbsenceOptionsView(EmployeeSelfView):
@@ -423,6 +525,19 @@ class LeaveBalanceView(EmployeeSelfView):
                 ]
             }
         )
+
+
+def _int_param(request, name: str, default: int) -> int:
+    """Целое из строки запроса. Мусор — 400, а не 500 из `int()`."""
+    raw = request.query_params.get(name)
+    if raw in (None, ""):
+        return default
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        raise ValidationFailed(
+            "Ожидается целое число", details={"field": name}
+        ) from None
 
 
 def _days(minutes: int) -> float:

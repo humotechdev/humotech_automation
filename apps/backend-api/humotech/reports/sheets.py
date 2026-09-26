@@ -21,10 +21,10 @@ from __future__ import annotations
 from datetime import date
 
 from humotech.absences.services import AbsenceService
-from humotech.analytics.metrics import AnalyticsService
+from humotech.analytics.metrics import AnalyticsService, check_date
 from humotech.attendance.hr import AttendanceHrService
 from humotech.core.errors import ValidationFailed
-from humotech.core.rbac import Actor
+from humotech.core.rbac import AccessControl, Actor
 from humotech.core.timeframes import days_in, month_range
 from humotech.employees.services import EmployeeService
 from humotech.reports.export import Sheet, base_meta, formula_meta
@@ -61,7 +61,43 @@ def build_sheet(
             "Неизвестный отчёт",
             details={"kind": kind, "allowed": list(EXPORT_KINDS)},
         )
+    _precheck(kind, actor, filters)
     return builder(actor, filters, author)
+
+
+#: Право на сами данные каждого старого вида — то же, что спросит сервис.
+DATA_PERMISSIONS = {
+    "employees": "employees.read",
+    "attendance": "attendance.read",
+    "sessions": "attendance.read",
+    "summary": "analytics.read",
+    "lateness": "attendance.read",
+    "absences": "absences.read",
+}
+
+
+def _precheck(kind: str, actor: Actor, filters: dict) -> None:
+    """Права, область и даты — ДО первой строки файла.
+
+    Строки собираются лениво, а CSV отдаётся потоком: без этой проверки
+    отказ сервиса случался уже после заголовков «200 OK». Человек без
+    права на данные получал «успешный» обрывок файла с шапкой отчёта,
+    а чужой офис в фильтре — тот же обрывок вместо 404. Сервисы при
+    сборке проверят всё ещё раз: это не замена их проверок.
+    """
+    access = AccessControl()
+    access.require(actor, DATA_PERMISSIONS[kind])
+    if filters.get("office_id"):
+        access.require_office(actor, filters["office_id"])
+    if filters.get("region_id"):
+        access.require_region(actor, filters["region_id"])
+    for name in ("date", "date_from", "date_to"):
+        value = filters.get(name)
+        if isinstance(value, date):
+            check_date(value, name)
+    first, last = filters.get("date_from"), filters.get("date_to")
+    if isinstance(first, date) and isinstance(last, date):
+        check_period(first, last)
 
 
 def _employees(actor: Actor, filters: dict, author: str) -> Sheet:
@@ -488,6 +524,8 @@ def _period(filters: dict, *, fallback_single_day: bool) -> tuple[date, date]:
 
 def check_period(first: date, last: date) -> None:
     """Порядок дат и длина периода. Ошибка — на поле, а не в общий текст."""
+    check_date(first, "date_from")
+    check_date(last, "date_to")
     if last < first:
         raise ValidationFailed(
             "Конец периода раньше начала",

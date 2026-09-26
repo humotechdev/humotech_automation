@@ -24,7 +24,7 @@ from humotech.core.enums import (
     NOTIFICATION_CHANNELS,
     NOTIFICATION_STATUSES,
 )
-from humotech.core.errors import ValidationFailed
+from humotech.core.errors import NotFound, ValidationFailed
 from humotech.notifications.service import (
     CANCELLABLE,
     MAX_BULK_RETRY,
@@ -174,6 +174,17 @@ def _uuid(request, name: str) -> uuid.UUID | None:
         ) from exc
 
 
+def _pk(raw) -> uuid.UUID:
+    """Идентификатор из адреса. Не UUID — значит, такой записи нет.
+
+    Без разбора строка уходила в запрос к UUID-колонке и давала 500.
+    """
+    try:
+        return uuid.UUID(str(raw))
+    except (ValueError, TypeError) as exc:
+        raise NotFound("Уведомление не найдено") from exc
+
+
 @extend_schema(tags=["Уведомления"])
 class NotificationViewSet(ServiceViewSet):
     """Очередь отправки сообщений сотрудникам.
@@ -259,7 +270,7 @@ class NotificationViewSet(ServiceViewSet):
 
     @extend_schema(summary="Одно уведомление")
     def retrieve(self, request, pk=None):
-        return self.item_response(self.service.get(self.actor, pk))
+        return self.item_response(self.service.get(self.actor, _pk(pk)))
 
     @extend_schema(
         summary="История попыток отправки",
@@ -281,7 +292,7 @@ class NotificationViewSet(ServiceViewSet):
     )
     @action(detail=True)
     def attempts(self, request, pk=None):
-        rows, kept = self.service.attempts(self.actor, pk)
+        rows, kept = self.service.attempts(self.actor, _pk(pk))
         return Response(
             {
                 "items": NotificationAttemptSerializer(rows, many=True).data,
@@ -315,7 +326,7 @@ class NotificationViewSet(ServiceViewSet):
     )
     @action(detail=True, methods=["post"])
     def retry(self, request, pk=None):
-        return self.item_response(self.service.retry(self.actor, pk))
+        return self.item_response(self.service.retry(self.actor, _pk(pk)))
 
     @extend_schema(
         summary="Снять с отправки",
@@ -329,7 +340,7 @@ class NotificationViewSet(ServiceViewSet):
     )
     @action(detail=True, methods=["post"])
     def cancel(self, request, pk=None):
-        return self.item_response(self.service.cancel(self.actor, pk))
+        return self.item_response(self.service.cancel(self.actor, _pk(pk)))
 
     @extend_schema(
         summary="Повторить всё, что упало",

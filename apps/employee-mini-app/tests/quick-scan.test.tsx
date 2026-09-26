@@ -24,7 +24,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App, { isQuickScanRoute, QUICK_SCAN_PATH } from '../src/App';
 import { forgetToken } from '../src/auth';
 import { CLOSE_AFTER_MS } from '../src/screens/QuickScan';
-import { profile as profileStub, session, status as statusStub } from './fixtures';
+import { TZ, profile as profileStub, session, status as statusStub } from './fixtures';
 
 afterEach(() => {
   cleanup();
@@ -33,6 +33,10 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.useRealTimers();
   delete (window as unknown as Record<string, unknown>).Telegram;
+  // Геолокацию ставит тест, которому она нужна. Оставить её включённой
+  // после себя значит подсунуть следующему тесту место, которого он не
+  // просил, — и он пройдёт по чужой причине.
+  nowhere();
   window.history.replaceState({}, '', '/');
 });
 
@@ -191,6 +195,85 @@ describe('сканирование', () => {
     ]) {
       expect(body).not.toHaveProperty(forbidden);
     }
+  });
+
+  it('печатный код уходит вместе с координатами', async () => {
+    // Наклейка у двери висит круглосуточно и сама по себе не значит
+    // ничего: её можно сфотографировать и показать из дома. Сервер
+    // принимает такой код ТОЛЬКО с местоположением — значит, спросить
+    // его должно приложение, иначе отметка отказывается всегда.
+    const scanner = openTelegram();
+    const { calls } = stubApi();
+    somewhere({ latitude: 41.3111234567, longitude: 69.2405678912, accuracy: 18.4 });
+    atScanRoute();
+
+    render(<App />);
+    await waitFor(() => expect(scanner.show).toHaveBeenCalled());
+    scanner.emit(STICKER);
+
+    await screen.findByText('Вход отмечен');
+    const body = JSON.parse(
+      String(posted(calls, '/me/attendance/scan')[0].init?.body),
+    );
+    // Шесть знаков после запятой, не тринадцать: поле на сервере
+    // объявлено с такой точностью и лишние знаки не отбрасывает, а
+    // отвергает запрос целиком.
+    expect(body.latitude).toBe(41.311123);
+    expect(body.longitude).toBe(69.240568);
+    expect(body.accuracy_m).toBe(18.4);
+  });
+
+  it('без координат печатный код не отправляется вовсе', async () => {
+    // Запрос, заведомо уходящий в отказ, — это лишние секунды у двери
+    // и невнятное «нужно разрешить геопозицию» вместо объяснения.
+    const scanner = openTelegram();
+    const { calls } = stubApi();
+    nowhere();
+    atScanRoute();
+
+    render(<App />);
+    await waitFor(() => expect(scanner.show).toHaveBeenCalled());
+    scanner.emit(STICKER);
+
+    await screen.findByText(/Телефон не сообщил, где вы/);
+    expect(posted(calls, '/me/attendance/scan')).toHaveLength(0);
+  });
+
+  it('коду с экрана координаты не нужны', async () => {
+    // У меняющегося кода собственный срок жизни, и сервер принимает
+    // его без места. Требовать координаты и здесь значило бы сломать
+    // отметку там, где она работает.
+    const scanner = openTelegram();
+    const { calls } = stubApi();
+    nowhere();
+    atScanRoute();
+
+    render(<App />);
+    await waitFor(() => expect(scanner.show).toHaveBeenCalled());
+    scanner.emit('HT1.код-с-экрана');
+
+    await screen.findByText('Вход отмечен');
+    expect(posted(calls, '/me/attendance/scan')).toHaveLength(1);
+  });
+
+  it('«слишком далеко» называет расстояние, а не спорит', async () => {
+    const scanner = openTelegram();
+    stubApi({
+      scan: {
+        ...refusal('OUTSIDE_GEOFENCE'),
+        distance_m: 342,
+        radius_m: 100,
+      },
+    });
+    somewhere();
+    atScanRoute();
+
+    render(<App />);
+    await waitFor(() => expect(scanner.show).toHaveBeenCalled());
+    scanner.emit(STICKER);
+
+    await screen.findByText('Вы слишком далеко от офиса');
+    expect(screen.getByText(/342 м.*100 м/)).toBeTruthy();
   });
 
   it('чужой код в кадре не закрывает сканер и не уходит на сервер', async () => {
@@ -494,6 +577,37 @@ function exitResult() {
   };
 }
 
+/** Печатный код: ссылка на бота с нагрузкой `qr_…` под наклейкой. */
+const STICKER = `https://t.me/humotech_bot?start=qr_${'a'.repeat(43)}`;
+
+/** Телефон знает, где человек. По умолчанию — у ташкентского офиса. */
+function somewhere(
+  {
+    latitude = 41.304151,
+    longitude = 69.332442,
+    accuracy = 12,
+  }: { latitude?: number; longitude?: number; accuracy?: number } = {},
+) {
+  Object.defineProperty(window.navigator, 'geolocation', {
+    configurable: true,
+    value: {
+      getCurrentPosition: (ok: (position: unknown) => void) =>
+        ok({ coords: { latitude, longitude, accuracy } }),
+    },
+  });
+}
+
+/**
+ * Телефон не отдаёт место: доступ закрыт или устройство не умеет.
+ *
+ * Свойство именно УДАЛЯЕТСЯ, а не подменяется на `undefined`: jsdom
+ * отдаёт один `navigator` на всё окружение, и оставленная подмена
+ * достаётся следующему тесту, который её не просил.
+ */
+function nowhere() {
+  Reflect.deleteProperty(window.navigator as unknown as object, 'geolocation');
+}
+
 function refusal(status: string) {
   return {
     status,
@@ -527,6 +641,21 @@ function stubApi({
       return json(statusStub({ state: 'OUTSIDE', open_session: session() }));
     }
     if (address.includes('/me/profile')) return json(profileStub);
+    if (address.includes('/me/history')) {
+      return json({
+        period: { first: '2026-09-04', last: '2026-09-04', timezone: TZ },
+        days: [],
+        total: 0,
+        offset: 0,
+        limit: 30,
+        has_more: false,
+      });
+    }
+    if (address.includes('/me/statistics')) return json({ summary: null, days: [] });
+    if (address.includes('/me/notifications')) {
+      return json({ unread: 0, items: [] });
+    }
+    if (address.includes('/me/absences')) return json({ requests: [], total: 0 });
     return json({});
   });
 

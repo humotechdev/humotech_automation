@@ -45,14 +45,45 @@ class OfficeQrPoint(
     qr_mode = models.CharField(
         max_length=20, choices=choices(QR_MODES), db_default="ROTATING"
     )
-    # Только хеш статического токена: сам токен в базе не лежит.
+    # Хеш статического токена — по нему узнаётся отсканированный код.
     static_token_hash = models.TextField(null=True, blank=True)
+    # Сам токен наклейки.
+    #
+    # Раньше его не хранили вовсе, и код показывался ровно один раз, при
+    # выпуске. На деле это значило: потерял картинку — меняй код и бегай
+    # переклеивать наклейку у каждой двери. Кадровик должен уметь
+    # открыть и распечатать код офиса в любой день.
+    #
+    # Что это даёт тому, кто добрался до базы: ровно то же, что снимок
+    # наклейки на стене. Отметку по печатному коду сервер принимает
+    # только с координатами внутри радиуса офиса, поэтому знание кода
+    # само по себе отметиться из дома не позволяет.
+    #
+    # У точек, выпущенных до этой колонки, здесь пусто: восстановить
+    # прежний код неоткуда, его заменяют новым.
+    static_token = models.TextField(null=True, blank=True)
     rotation_seconds = models.IntegerField(null=True, blank=True)
     token_version = models.IntegerField(db_default=1)
     require_geolocation = models.BooleanField(db_default=False)
     require_office_network = models.BooleanField(db_default=False)
     allowed_location_accuracy_m = models.IntegerField(null=True, blank=True)
     is_active = models.BooleanField(db_default=True)
+    # Для HR: где висит точка и зачем она. На проверку отметки не влияет.
+    description = models.TextField(null=True, blank=True)
+    # Кто завёл точку. SET NULL: учётную запись HR можно отключить, а
+    # точка у двери от этого работать не перестаёт.
+    created_by_user = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,
+        db_column="created_by_user_id",
+        db_index=False,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    # Когда последний раз перевыпускали код. `token_version` отвечает на
+    # «сколько раз», а на «когда» — только эта колонка.
+    rotated_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "office_qr_points"

@@ -14,6 +14,9 @@ from datetime import datetime
 from datetime import timezone as dt_timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+# Всё, что пришло с сервера, экранируется: сообщения уходят с HTML-разметкой.
+from src.utils.safe import escape
+
 # Из стандартной библиотеки, а не из `zoneinfo`: базы часовых поясов
 # в системе может не быть вовсе (Windows), и падать на импорте модуля
 # с текстами из-за этого нельзя. Пояс офиса всё равно приходит по имени,
@@ -54,6 +57,22 @@ PRESENCE = {
 
 # --- статусы заявок --------------------------------------------------------
 
+# Состояние заявки словами человека. Считает его сервер и присылает
+# полем `stage` — бот только называет. Собирать подпись по `status`
+# здесь значило бы, что чат, кабинет и кадровая система по-разному
+# отвечают на вопрос «подтверждён ли больничный».
+REQUEST_STAGE = {
+    "WAITING_DOCUMENTS": "ожидаем документы",
+    "HR_REVIEW": "на проверке HR",
+    "NEEDS_FIX": "нужны исправления",
+    "PENDING": "на согласовании",
+    "APPROVED": "подтверждён",
+    "REJECTED": "отклонён",
+    "CANCELLED": "отменён",
+}
+
+# Запасной словарь на случай, если сервер стадию не прислал: бот
+# переживает старый backend, но не молчит о состоянии заявки.
 REQUEST_STATUS = {
     "DRAFT": "черновик",
     "SUBMITTED": "ожидает решения",
@@ -72,7 +91,9 @@ HELP = (
     "🕘 <b>История посещений</b> — входы и выходы по дням.\n"
     "🤒 <b>Больничный</b> и 🏖 <b>Отпуск</b> — оформляются в личном кабинете: "
     "там есть календарь и подсказки.\n"
-    "📄 <b>Мои заявки</b> — что подано и что с ним стало.\n\n"
+    "📄 <b>Мои заявки</b> — что подано и что с ним стало.\n"
+    "✍️ <b>Написать в HR</b> — вопрос отделу кадров. Ответ придёт в этот "
+    "чат; чтобы дописать, ответьте на сообщение HR или нажмите кнопку снова.\n\n"
     "<b>Как отметиться</b>\n"
     "Откройте личный кабинет и наведите камеру на экран у входа. "
     "Вход это или выход, определяет сервер — выбирать ничего не нужно.\n\n"
@@ -103,16 +124,78 @@ CABINET_UNAVAILABLE = (
     "Всё остальное в меню работает."
 )
 
+ASK_HR_PROMPT = (
+    "Напишите вопрос одним сообщением.\n\n"
+    "Сначала поищу ответ в правилах компании — если он там есть, придёт "
+    "сразу. Если нет, предложу передать вопрос в отдел кадров.\n\n"
+    "Передумали — нажмите «Отмена»."
+)
+ASK_HR_CANCELLED = "Хорошо, ничего не отправлено."
+ASK_HR_EMPTY = "Пришлите вопрос текстом — файлы и стикеры HR пока не получает."
+ASK_HR_FAILED = (
+    "Не получилось передать вопрос: сервер не ответил. Ничего не отправлено — "
+    "попробуйте ещё раз чуть позже."
+)
+
+# --- ответ ассистента ------------------------------------------------------
+
+#: Что бот говорит, когда ответа в базе знаний нет.
+#:
+#: «У меня нет точного ответа» — а не выдуманный ответ и не молчание.
+#: Ассистент, который отвечает наугад, хуже отсутствующего: человек
+#: поступит по неверному ответу и узнает об этом от кадровика.
+ASK_NO_ANSWER = "У меня нет точного ответа. Передать вопрос HR?"
+ASK_ESCALATE_BUTTON = "Передать HR"
+ASK_ESCALATED = (
+    "Вопрос передан в отдел кадров. Ответ придёт сюда же, в этот чат."
+)
+ASK_ESCALATE_LOST = (
+    "Не помню этот вопрос — бот успел перезапуститься. Напишите его "
+    "ещё раз, и я передам."
+)
+ASK_ESCALATE_FAILED = (
+    "Не получилось передать вопрос: сервер не ответил. Попробуйте ещё раз "
+    "чуть позже."
+)
+
+
+def ask_answered(answer: str, sources: list[str]) -> str:
+    """Ответ ассистента с источником.
+
+    Источник называется всегда, когда он есть: ответ без ссылки на
+    правило — это мнение, а мнению в кадровом вопросе верить нельзя.
+    Человек должен знать, на чём ответ основан, и куда смотреть, если
+    он расходится с тем, что ему сказали устно.
+    """
+    # Ответ ассистента — чужой текст: на него влияют и вопрос человека,
+    # и содержимое базы знаний. Без экранирования `<a href=…>` в нём
+    # стал бы ссылкой, а знак «<» сорвал бы отправку.
+    text = escape(answer.strip())
+    if sources:
+        text += "\n\nИсточник: " + ", ".join(escape(one) for one in sources[:3])
+    return text
+
+
+def ask_hr_sent(result: dict) -> str:
+    """Подтверждение с номером: по нему человек и HR говорят об одном."""
+    number = escape(result.get("number"))
+    if result.get("created"):
+        return (
+            f"Вопрос передан в отдел кадров, номер обращения — №{number}.\n"
+            "Ответ придёт в этот чат."
+        )
+    return f"Добавили сообщение в обращение №{number}. Отдел кадров его увидит."
+
 
 def greet(profile: dict) -> str:
     employee = profile.get("employee") or {}
     office = profile.get("office") or {}
     position = profile.get("position") or {}
-    lines = [f"<b>{employee.get('full_name', 'Сотрудник')}</b>"]
+    lines = [f"<b>{escape(employee.get('full_name') or 'Сотрудник')}</b>"]
     if position.get("name"):
-        lines.append(position["name"])
+        lines.append(escape(position["name"]))
     if office.get("name"):
-        lines.append(f"Офис: {office['name']}")
+        lines.append(f"Офис: {escape(office['name'])}")
     return "\n".join(lines)
 
 
@@ -137,14 +220,14 @@ def presence(status: dict) -> str:
     if status.get("absence_name") and status["state"] in (
         "SICK_LEAVE", "VACATION", "OTHER_ABSENCE"
     ):
-        lines.append(status["absence_name"])
+        lines.append(escape(status["absence_name"]))
 
     lines.append(f"Сегодня в офисе: {duration(status.get('seconds_today', 0))}")
 
     if status.get("scheduled_start") and status.get("scheduled_end"):
         lines.append(
-            f"График на сегодня: {status['scheduled_start'][:5]}–"
-            f"{status['scheduled_end'][:5]}"
+            f"График на сегодня: {escape(status['scheduled_start'][:5])}–"
+            f"{escape(status['scheduled_end'][:5])}"
         )
     if status.get("last_entry_at"):
         lines.append(f"Последний вход: {_moment(status['last_entry_at'], tz)}")
@@ -204,9 +287,9 @@ def history(body: dict) -> str:
             where = session.get("office_name")
             point = session.get("entry_point_name")
             if where and point:
-                lines.append(f"  {where}, {point}")
+                lines.append(f"  {escape(where)}, {escape(point)}")
         if day.get("absence_name"):
-            lines.append(f"  {day['absence_name']}")
+            lines.append(f"  {escape(day['absence_name'])}")
         lines.append("")
 
     if body.get("has_more"):
@@ -224,16 +307,24 @@ def requests(body: dict) -> str:
 
     lines = ["<b>Мои заявки</b>", ""]
     for row in rows:
-        kind = row["absence_type"]["name"]
-        status = REQUEST_STATUS.get(row["status"], row["status"].lower())
-        lines.append(
-            f"<b>{kind}</b>: {_date(row['first_day'])} — {_date(row['last_day'])}"
+        kind = escape(row["absence_type"]["name"])
+        stage = REQUEST_STAGE.get(row.get("stage") or "") or REQUEST_STATUS.get(
+            row["status"], escape(row["status"].lower())
         )
-        lines.append(f"  {status}, рабочих дней: {row['working_days']}")
+        if row.get("first_day"):
+            period = f"{_date(row['first_day'])} — {_date(row['last_day'])}"
+        else:
+            # Больничный подают в первый день болезни, не зная, когда
+            # выйдешь. Прочерк вместо периода честнее выдуманных дат:
+            # настоящие проставит кадровик по справке.
+            period = "период уточняется"
+        lines.append(f"<b>{kind}</b>: {period}")
+        lines.append(f"  {stage}, рабочих дней: {escape(row['working_days'])}")
         if row.get("extension_pending"):
             lines.append("  продление ждёт решения")
         if row.get("review_comment"):
-            lines.append(f"  комментарий: {row['review_comment']}")
+            # Комментарий кадровика — свободный текст из CRM.
+            lines.append(f"  комментарий: {escape(row['review_comment'])}")
         lines.append("")
     return "\n".join(lines).strip()
 
@@ -243,7 +334,7 @@ def balance_line(body: dict) -> str:
     if not rows:
         return ""
     parts = [
-        f"{row['absence_type']['name']}: {row['available_days']:g} дн."
+        f"{escape(row['absence_type']['name'])}: {row['available_days']:g} дн."
         for row in rows
     ]
     return "Остаток: " + "; ".join(parts)

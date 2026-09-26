@@ -96,6 +96,12 @@ _CONSTRAINT_MESSAGES: dict[str, str] = {
     "uq_employees_org_number": (
         "Сотрудник с таким табельным номером в организации уже есть"
     ),
+    "uq_employees_org_pinfl": (
+        "Сотрудник с таким ПИНФЛ в организации уже есть"
+    ),
+    "uq_employee_onboarding_keys": (
+        "Этот сотрудник уже добавлен по данному запросу"
+    ),
     "uq_regions_org_code": "Регион с таким кодом в организации уже есть",
     "uq_offices_org_code": "Офис с таким кодом в организации уже есть",
     "uq_departments_office_code": "Отдел с таким кодом в офисе уже есть",

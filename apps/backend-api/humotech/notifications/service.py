@@ -87,6 +87,25 @@ STATUS_GROUPS: dict[str, tuple[str, ...]] = {
 #: на десяти тысячах строк — это десять тысяч сообщений в чаты людей.
 MAX_BULK_RETRY = 500
 
+#: Потолок длины строки поиска и префикса типа. Длиннее не бывает ни
+#: у текста уведомления, который помнит человек, ни у типа.
+MAX_FILTER_LENGTH = 200
+
+
+def _text(raw: str, field: str) -> str:
+    """Строковый фильтр: обрезать пробелы, отказать на мусоре.
+
+    Нулевой байт PostgreSQL не принимает в тексте вовсе — без проверки
+    это 500 вместо понятного отказа.
+    """
+    value = raw.strip()
+    if "\x00" in value or len(value) > MAX_FILTER_LENGTH:
+        raise ValidationFailed(
+            f"Недопустимое значение параметра «{field}»",
+            details={"field": field},
+        )
+    return value
+
 
 class NotificationService(BaseService):
     """Чтение по `notifications.read`, изменение по `notifications.manage`."""
@@ -260,7 +279,9 @@ class NotificationService(BaseService):
                 queryset = self._limit_to_scope(actor, queryset)
             if notification_type:
                 queryset = queryset.filter(
-                    notification_type__startswith=notification_type.strip()
+                    notification_type__startswith=_text(
+                        notification_type, "notification_type"
+                    )
                 )
 
             rows = list(
@@ -343,10 +364,12 @@ class NotificationService(BaseService):
             queryset = queryset.filter(channel=self._known(channel, "channel"))
         if notification_type:
             queryset = queryset.filter(
-                notification_type__startswith=notification_type.strip()
+                notification_type__startswith=_text(
+                    notification_type, "notification_type"
+                )
             )
         if search:
-            needle = search.strip()
+            needle = _text(search, "search")
             # Ищется и текст сообщения, и человек: кадровик одинаково
             # часто помнит либо одно, либо другое.
             queryset = queryset.filter(

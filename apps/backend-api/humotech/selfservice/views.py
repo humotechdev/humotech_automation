@@ -12,15 +12,20 @@
 
 from __future__ import annotations
 
+import re
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from humotech.attendance import statistics
+from humotech.attendance import reminders
 from humotech.attendance.scanning import scan
 from humotech.core.api import validated
 from humotech.core.clientip import client_ip
+from humotech.core.errors import ValidationFailed
 from humotech.selfservice.presentation import (
     day_json,
     session_json,
@@ -34,8 +39,13 @@ from humotech.selfservice.responses import (
     ScanResultSerializer,
     StatisticsSerializer,
 )
-from humotech.selfservice.serializers import PeriodSerializer, ScanRequestSerializer
+from humotech.selfservice.serializers import (
+    DayNoticeSerializer,
+    PeriodSerializer,
+    ScanRequestSerializer,
+)
 from humotech.selfservice.throttling import EmployeeRateThrottle, ScanRateThrottle
+from humotech.onboarding.flow import OnboardingFlow
 from humotech.telegram.auth import (
     BotEmployeeAuthentication,
     IsLinkedEmployee,
@@ -49,6 +59,17 @@ class EmployeeSelfView(APIView):
     Держит в одном месте то, что иначе пришлось бы повторять в каждом view
     и однажды забыть: два способа входа, требование живой привязки
     и ограничение частоты.
+
+    **Ознакомление доступа НЕ закрывает.** Одно время здесь стояла
+    проверка «пока не дочитал — нельзя». Она следовала из задания
+    буквально, но означала, что новичок в первый день не может
+    отметиться на входе, пока не прочтёт десять карточек.
+    Незавершённое ознакомление — повод напомнить человеку и показать
+    его кадровику, а не повод отобрать отметку присутствия.
+
+    Прогресс при этом никуда не делся: он считается, приходит в
+    профиле, напоминается ботом и разбирается кадровиком в разделе
+    «Ознакомление».
     """
 
     authentication_classes = [MiniAppAuthentication, BotEmployeeAuthentication]
@@ -67,6 +88,11 @@ class ProfileView(EmployeeSelfView):
     Отдаёт ровно то, что человек и так про себя знает. Ни идентификаторов
     чужих сотрудников, ни данных руководителя, ни оклада здесь нет: экран
     существует, чтобы человек убедился, что система видит его правильно.
+
+    Блок `onboarding` в ответе — то, из чего бот собирает ненавязчивое
+    напоминание «Пройти ознакомление: 3 из 10». Прав он не ограничивает:
+    бот спрашивает этот адрес на каждом обновлении, и решения о допуске
+    по нему не принимаются.
     """
 
     @extend_schema(
@@ -122,6 +148,11 @@ class ProfileView(EmployeeSelfView):
                     "status": context.account.status,
                     "username": context.account.telegram_username,
                 },
+                # Что человеку сейчас доступно. Бот собирает меню по
+                # этому блоку, а не по собственной памяти: кнопка,
+                # нарисованная по вчерашнему состоянию, обещала бы то,
+                # на что сервер ответит отказом.
+                "onboarding": _onboarding_block(employee),
             }
         )
 
@@ -171,6 +202,15 @@ class ScanView(EmployeeSelfView):
                 "occurred_at": (
                     outcome.occurred_at.isoformat() if outcome.occurred_at else None
                 ),
+                "occurred_at_local": _local_time(
+                    outcome.occurred_at, outcome.office_timezone
+                ),
+                "point_mode": outcome.point_mode,
+                "distance_m": (
+                    round(outcome.distance_m) if outcome.distance_m is not None
+                    else None
+                ),
+                "radius_m": outcome.radius_m,
                 "session": (
                     {
                         "id": str(session.id),
@@ -185,6 +225,52 @@ class ScanView(EmployeeSelfView):
                     else None
                 ),
             }
+        )
+
+
+def _local_time(moment, zone: str | None) -> str | None:
+    """«09:02» в часовом поясе офиса.
+
+    Считает сервер, а не бот и не телефон: у них нет ни пояса офиса, ни
+    права решать, который час был при отметке.
+    """
+    if moment is None:
+        return None
+    try:
+        local = moment.astimezone(ZoneInfo(zone)) if zone else moment
+    except (ZoneInfoNotFoundError, ValueError):
+        local = moment
+    return local.strftime("%H:%M")
+
+
+@extend_schema(tags=["Личный кабинет"])
+class DayNoticeView(EmployeeSelfView):
+    """Ответ на напоминание о начале дня.
+
+    Это НЕ заявка. «Не приду» не оформляет ни отпуска, ни больничного:
+    они проходят согласование и живут своими адресами. Здесь человек
+    только объясняет пустую строку в табеле, и кадровик видит разницу
+    между «предупредил» и «пропал».
+
+    Строка одна на человека и день: сказавший «опаздываю», а потом «не
+    приду», обновляет прежний ответ, а не заводит второй.
+    """
+
+    @extend_schema(
+        operation_id="me_day_notice",
+        summary="Опаздываю или не приду",
+        request=DayNoticeSerializer,
+        responses={200: DayNoticeSerializer},
+    )
+    def post(self, request):
+        data = validated(DayNoticeSerializer, request.data)
+        row = reminders.notice(
+            employee=self.context.employee,
+            kind=data["kind"],
+            comment=data.get("comment"),
+        )
+        return Response(
+            {"kind": row.kind, "comment": row.comment, "day": row.day.isoformat()}
         )
 
 
@@ -262,9 +348,8 @@ class HistoryView(EmployeeSelfView):
         params = validated(PeriodSerializer, request.query_params)
         report = _report(self.context, params)
 
-        offset = max(int(request.query_params.get("offset") or 0), 0)
-        limit = min(max(int(request.query_params.get("limit") or 31), 1),
-                    self.MAX_DAYS)
+        offset = max(_int_param(request, "offset", 0), 0)
+        limit = min(max(_int_param(request, "limit", 31), 1), self.MAX_DAYS)
 
         # Показываем только дни, о которых есть что сказать: пустые
         # выходные посреди истории — это шум, через который приходится
@@ -297,6 +382,24 @@ class HistoryView(EmployeeSelfView):
         )
 
 
+def _int_param(request, name: str, default: int) -> int:
+    """Целое из адреса: мусор — 400, а не 500 из `int()`.
+
+    Длина ограничена: `int("9" * 100000)` — это уже работа процессора,
+    а не разбор параметра.
+    """
+    raw = (request.query_params.get(name) or "").strip()
+    if not raw:
+        return default
+    # Только ASCII: `"²".isdigit()` истинно, а `int("²")` падает.
+    if not re.fullmatch(r"-?[0-9]{1,9}", raw):
+        raise ValidationFailed(
+            f"Параметр «{name}» должен быть целым числом",
+            details={"field": name},
+        )
+    return int(raw)
+
+
 def _report(context, params):
     """Готовый период по имени либо произвольный по датам."""
     period = params.get("period")
@@ -307,6 +410,36 @@ def _report(context, params):
     if period == "month":
         return statistics.for_month(context)
     return statistics.for_period(context, params["date_from"], params["date_to"])
+
+
+def _onboarding_block(employee) -> dict:
+    """Состояние ознакомления в ответе профиля.
+
+    `enrolled=False` — человека в программу не звали: он работает как
+    прежде, и никаких кнопок про ознакомление ему показывать не надо.
+    """
+    progress = OnboardingFlow().state_or_none(employee.id)
+    if progress is None:
+        return {
+            "enrolled": False, "required": False, "completed": True,
+            "status": None, "stage": "DONE",
+            "sections_done": 0, "sections_total": 0,
+            "policies_done": 0, "policies_total": 0,
+        }
+    return {
+        "enrolled": True,
+        # «Требуется» значит «не закончено», а не «закрыто». Доступ к
+        # рабочим функциям от этого поля не зависит вовсе: по нему бот
+        # решает, показывать ли напоминание.
+        "required": not progress.completed,
+        "completed": progress.completed,
+        "status": progress.status,
+        "stage": progress.stage,
+        "sections_done": progress.sections_done,
+        "sections_total": progress.sections_total,
+        "policies_done": progress.policies_done,
+        "policies_total": progress.policies_total,
+    }
 
 
 def full_name(employee) -> str:

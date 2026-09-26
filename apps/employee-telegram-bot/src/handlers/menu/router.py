@@ -25,6 +25,7 @@ from src.api.errors import ApiError
 from src.api.selfservice import SelfServiceClient
 from src.config.settings import settings
 from src.keyboards import employee as kb
+from src.keyboards import onboarding as ob
 from src.utils.menu_button import drop_chat_override
 from src.messages import employee as text
 from src.middlewares.employee import REASON_UNAVAILABLE
@@ -45,6 +46,34 @@ DENIAL_TEXT = {
 }
 
 
+def onboarding_state(employee) -> dict:
+    """Блок ознакомления из ответа профиля.
+
+    Терпим к тому, что придёт не словарь: сюда попадает и `True` из
+    старого вызова, и профиль без этого блока — например, от backend,
+    который ещё не обновили. В обоих случаях правильный ответ —
+    «ознакомление ни при чём», а не падение на `.get`.
+    """
+    if not isinstance(employee, dict):
+        return {}
+    block = employee.get("onboarding")
+    return block if isinstance(block, dict) else {}
+
+
+def onboarding_done(employee) -> bool:
+    """Закончил ли человек ознакомление.
+
+    Доступа это не касается: рабочие разделы открыты в любом случае.
+    От ответа зависит одно — показывать ли пункт «Продолжить
+    ознакомление» и напоминание под меню.
+
+    По умолчанию — «закончил». Отсутствие блока означает, что сервер
+    про ознакомление ничего не сказал, и приставать к человеку на этом
+    основании не за что.
+    """
+    return bool(onboarding_state(employee).get("completed", True))
+
+
 def build_menu(
     employee, message: Message | None = None, *, launch_apps: bool | None = None
 ) -> ReplyKeyboardMarkup:
@@ -53,6 +82,11 @@ def build_menu(
     Тип чата важен: `web_app` у кнопки нижней клавиатуры Telegram
     разрешает только в личном чате, и в группе такая клавиатура — ошибка
     запроса целиком, то есть человек остался бы вообще без кнопок.
+
+    Набор ПОЛНЫЙ с первого дня. Пока ознакомление не завершено, сверху
+    добавляется «Продолжить ознакомление» — но остальное не прячется:
+    отметка присутствия нужна человеку в первое же утро, а ознакомление
+    лечится напоминанием, а не запертой дверью.
     """
     if not employee:
         return kb.help_only_menu()
@@ -60,7 +94,8 @@ def build_menu(
     if launch_apps is None:
         launch_apps = settings.keyboard_launch_buttons
     markup = kb.employee_menu(
-        settings.mini_app_url, private=private, launch_apps=launch_apps
+        settings.mini_app_url, private=private, launch_apps=launch_apps,
+        onboarding=not onboarding_done(employee),
     )
     describe(markup, who=message)
     return markup
@@ -97,8 +132,32 @@ def describe(markup: ReplyKeyboardMarkup, *, who: Message | None = None) -> None
     )
 
 
+async def remind_about_onboarding(message: Message, employee) -> None:
+    """Ненавязчивый блок под меню: сколько пройдено и кнопка продолжить.
+
+    Отдельным сообщением, а не строкой в меню: нижняя клавиатура и
+    inline-кнопка на одном сообщении Telegram не уживаются, а кнопка
+    нужна — без неё человеку пришлось бы искать, куда нажимать.
+
+    Молчит у тех, кого в программу не звали, и у тех, кто закончил:
+    напоминание о сделанном — это шум.
+    """
+    if onboarding_done(employee):
+        return
+    from src.messages import onboarding as onboarding_text
+
+    state = onboarding_state(employee)
+    await message.answer(
+        onboarding_text.nudge(state), reply_markup=ob.nudge(state)
+    )
+
+
 async def _guard(message: Message, employee, denial) -> bool:
     """Есть ли доступ. Если нет — объясняет и возвращает False.
+
+    Незавершённое ознакомление доступом НЕ считается: человек
+    отмечается и подаёт заявки с первого дня. Проверка «пока не
+    дочитал — нельзя» здесь стояла и была снята намеренно.
 
     Неудача backend отделена от отказа в доступе намеренно: сказать
     «нет доступа» из-за упавшего сервера значит отправить человека
@@ -110,6 +169,9 @@ async def _guard(message: Message, employee, denial) -> bool:
     неизвестно: правильный ответ — не менять то, что у него уже есть.
     """
     if employee is not None:
+        # Незавершённое ознакомление рабочим разделам не мешает: оно
+        # напоминает о себе кнопкой в меню и отдельным сообщением, а не
+        # отказом на входе.
         return True
     if denial == REASON_UNAVAILABLE:
         logger.info(
@@ -144,6 +206,7 @@ async def start(message: Message, employee, denial) -> None:
         f"{text.greet(employee)}\n\n{text.CABINET_HINT}",
         reply_markup=_menu(employee, message),
     )
+    await remind_about_onboarding(message, employee)
 
 
 @router.message(F.text == kb.BTN_OPEN)
@@ -195,6 +258,7 @@ async def menu(
         getattr(sent, "message_id", None),
         plain,
     )
+    await remind_about_onboarding(message, employee)
 
 
 @router.message(F.text == kb.BTN_SCAN)
@@ -347,4 +411,7 @@ async def help_handler(message: Message, employee, denial) -> None:
     await message.answer(text.HELP, reply_markup=_menu(employee, message))
 
 
-__all__ = ["router"]
+__all__ = [
+    "build_menu", "onboarding_done", "onboarding_state",
+    "remind_about_onboarding", "router",
+]

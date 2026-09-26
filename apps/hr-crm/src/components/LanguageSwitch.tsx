@@ -9,7 +9,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 
-import { ChevronIcon, GlobeIcon } from './icons';
+import { AppIcon, ICON_SIZE } from './AppIcon';
 
 const LANGUAGES = [{ code: 'RU', title: 'Русский' }] as const;
 
@@ -41,9 +41,9 @@ export function LanguageSwitch() {
         aria-label="Язык интерфейса: русский"
         onClick={() => setOpen((was) => !was)}
       >
-        <GlobeIcon className="lang__globe" />
+        <AppIcon name="globe" size={ICON_SIZE.action} className="lang__globe" />
         <span>RU</span>
-        <ChevronIcon className="lang__chevron" />
+        <AppIcon name="chevron" size={16} className="lang__chevron" />
       </button>
 
       {open && (

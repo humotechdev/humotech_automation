@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import uuid
 
+from django.contrib.auth import update_session_auth_hash
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiExample, OpenApiParameter, extend_schema
 from rest_framework import serializers
@@ -43,7 +44,7 @@ class ShortGrantSerializer(serializers.Serializer):
 
 class CrmUserSerializer(serializers.Serializer):
     id = serializers.UUIDField()
-    email = serializers.CharField()
+    email = serializers.CharField(help_text="Логин для входа")
     status = serializers.ChoiceField(choices=USER_STATUSES)
     mfa_enabled = serializers.BooleanField()
     employee_id = serializers.UUIDField(allow_null=True)
@@ -64,11 +65,16 @@ class CrmUserSerializer(serializers.Serializer):
     )
 
     def get_full_name(self, user) -> str | None:
+        # У привязанной записи имя берут из карточки сотрудника: там оно
+        # ведётся кадровиком и меняется вместе с человеком. Собственное
+        # имя записи — для тех, у кого карточки нет.
         employee = getattr(user, "employee", None)
-        if employee is None:
-            return None
-        parts = [employee.last_name, employee.first_name, employee.middle_name]
-        return " ".join(part for part in parts if part) or None
+        if employee is not None:
+            parts = [employee.last_name, employee.first_name, employee.middle_name]
+            name = " ".join(part for part in parts if part)
+            if name:
+                return name
+        return user.full_name or None
 
 
 class CrmUserCountsSerializer(serializers.Serializer):
@@ -83,12 +89,29 @@ class CrmUserCountsSerializer(serializers.Serializer):
 
 
 class CrmUserCreateSerializer(serializers.Serializer):
-    email = serializers.EmailField()
+    """Заведение администратора.
+
+    `email` — это логин. Имя поля историческое: оно совпадает с колонкой
+    в базе. Адресом почты оно быть не обязано — `malika.hr` ничем не
+    хуже, и требовать почту там, где её нет, значит требовать выдумать её.
+    """
+
+    email = serializers.CharField(max_length=255)
+    full_name = serializers.CharField(
+        max_length=255, required=False, allow_blank=True
+    )
+    password = serializers.CharField(
+        max_length=256, required=False, allow_blank=True, write_only=True,
+        help_text="Без пароля запись создаётся отключённой",
+    )
     employee_id = serializers.UUIDField(required=False, allow_null=True)
 
 
 class CrmUserUpdateSerializer(serializers.Serializer):
-    email = serializers.EmailField(required=False)
+    email = serializers.CharField(max_length=255, required=False)
+    full_name = serializers.CharField(
+        max_length=255, required=False, allow_blank=True
+    )
     employee_id = serializers.UUIDField(required=False, allow_null=True)
     unlink_employee = serializers.BooleanField(
         required=False,
@@ -155,6 +178,10 @@ class RoleSerializer(serializers.Serializer):
     description = serializers.CharField(allow_null=True)
     is_system = serializers.BooleanField()
     permissions = serializers.ListField(child=serializers.CharField())
+    offered = serializers.BooleanField(
+        required=False,
+        help_text="Предлагается ли роль в форме выдачи доступа",
+    )
     grantable = serializers.BooleanField(
         help_text="Может ли ЭТОТ пользователь выдать эту роль",
     )
@@ -382,9 +409,13 @@ class CrmUserViewSet(ServiceViewSet):
     @action(detail=True, methods=["post"], url_path="set-password")
     def set_password(self, request, pk=None):
         payload = validated(SetPasswordSerializer, request.data)
-        return self.item_response(
-            self.service.set_password(self.actor, pk, **payload)
-        )
+        user = self.service.set_password(self.actor, pk, **payload)
+        if user.id == request.user.id:
+            # Сменил пароль себе: остальные его сессии оборваны сервисом,
+            # а эту переоформляем на новый отпечаток — выкидывать человека
+            # из окна, где он только что сменил пароль, незачем.
+            update_session_auth_hash(request, user)
+        return self.item_response(user)
 
     @extend_schema(summary="Включить учётную запись", responses={200: CrmUserSerializer})
     @action(detail=True, methods=["post"])

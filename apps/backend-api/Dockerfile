@@ -18,8 +18,11 @@ ENV PYTHONUNBUFFERED=1 \
 # curl нужен healthcheck'у: без него проверка готовности внутри
 # контейнера невозможна, а от неё зависит запуск бота и рабочих
 # процессов через `depends_on: service_healthy`.
+# fonts-dejavu-core нужен печатным заявлениям: во встроенных шрифтах
+# PDF кириллицы нет вовсе, и без TTF заявление вышло бы из пустых
+# прямоугольников. Пакет маленький и без зависимостей.
 RUN apt-get update \
-    && apt-get install --no-install-recommends -y curl \
+    && apt-get install --no-install-recommends -y curl fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

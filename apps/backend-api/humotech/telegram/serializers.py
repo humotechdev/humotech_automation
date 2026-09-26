@@ -93,6 +93,64 @@ class IssuedInvitationSerializer(serializers.Serializer):
 
 class InvitationCreateSerializer(serializers.Serializer):
     employee_id = serializers.UUIDField()
+    replace = serializers.BooleanField(
+        required=False, default=False,
+        help_text=(
+            "true — «отправить повторно»: действующая ссылка отзывается и "
+            "тут же выдаётся новая. Прежняя перестаёт работать"
+        ),
+    )
+
+
+#: Границы идентификаторов Telegram. Колонки — `bigint`, и число вне его
+#: диапазона доходило до базы и возвращалось 500-й вместо отказа.
+#: Идентификатор пользователя всегда положителен; идентификатор чата
+#: у групп и каналов отрицателен, поэтому у него граница с обеих сторон.
+BIGINT_MAX = 2**63 - 1
+
+
+def telegram_user_id_field(**extra) -> serializers.IntegerField:
+    return serializers.IntegerField(min_value=1, max_value=BIGINT_MAX, **extra)
+
+
+def telegram_chat_id_field(**extra) -> serializers.IntegerField:
+    return serializers.IntegerField(
+        min_value=-BIGINT_MAX, max_value=BIGINT_MAX, **extra
+    )
+
+
+class BotRecognizeSerializer(serializers.Serializer):
+    """Что бот сообщает о человеке, открывшем его без ссылки."""
+
+    telegram_user_id = telegram_user_id_field()
+    telegram_chat_id = telegram_chat_id_field()
+    # Имя в Telegram — до 32 знаков; 255 — ширина колонки. Длиннее не
+    # бывает, и такая строка не должна доходить до базы.
+    telegram_username = serializers.CharField(
+        max_length=255, required=False, allow_blank=True, allow_null=True
+    )
+    language_code = serializers.CharField(
+        max_length=10, required=False, allow_blank=True, allow_null=True
+    )
+
+
+class WelcomeSerializer(serializers.Serializer):
+    """Чем бот здоровается с узнанным сотрудником.
+
+    Ровно то, что человек и так про себя знает: имя, где работает и по
+    какому графику. Ни зарплаты, ни документов, ни чужих данных — бот
+    здесь ничего не сообщает сверх того, что кадровик уже сказал вслух.
+    """
+
+    status = serializers.CharField(help_text="Состояние привязки: PENDING")
+    full_name = serializers.CharField()
+    employment_status = serializers.CharField()
+    hire_date = serializers.DateField(allow_null=True)
+    office_name = serializers.CharField(allow_null=True)
+    department_name = serializers.CharField(allow_null=True)
+    position_name = serializers.CharField(allow_null=True)
+    schedule_name = serializers.CharField(allow_null=True)
+    manager_name = serializers.CharField(allow_null=True)
 
 
 class BotConsumeSerializer(serializers.Serializer):
@@ -104,14 +162,19 @@ class BotConsumeSerializer(serializers.Serializer):
     """
 
     token = serializers.CharField(max_length=128, trim_whitespace=True)
-    telegram_user_id = serializers.IntegerField(min_value=1)
-    telegram_chat_id = serializers.IntegerField()
+    telegram_user_id = telegram_user_id_field()
+    telegram_chat_id = telegram_chat_id_field()
     telegram_username = serializers.CharField(
         max_length=255, required=False, allow_null=True, allow_blank=True
     )
     language_code = serializers.CharField(
         max_length=10, required=False, allow_null=True, allow_blank=True
     )
+
+
+class BotLinkAcceptSerializer(serializers.Serializer):
+    """Согласие сотрудника с условиями после перехода по персональной ссылке."""
+    telegram_user_id = telegram_user_id_field()
 
 
 class MiniAppAuthSerializer(serializers.Serializer):

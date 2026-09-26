@@ -24,13 +24,15 @@ from datetime import date
 
 from django.db.models import Q
 
-from humotech.absences.models import AbsenceRequest
 from humotech.attendance.hr import AttendanceHrService
 from humotech.attendance.models import AttendanceSession
 from humotech.core.rbac import Actor
 from humotech.core.service import BaseService
 from humotech.employees.models import Employee, EmployeeAssignment
-from humotech.employees.services import current_primary_assignment_filter
+from humotech.employees.services import (
+    WORKING_STATUSES,
+    current_primary_assignment_filter,
+)
 
 
 @dataclass(frozen=True)
@@ -127,7 +129,11 @@ class DashboardService(BaseService):
                     region_id=region_id,
                 ),
                 endpoint="/api/v1/employees",
-                params=_clean({"status": "ACTIVE", "office_id": office_id,
+                # Перечислением, а не одним значением: список принимает
+                # статусы через запятую, и ссылка обязана открыть ровно
+                # тех, кого карточка посчитала.
+                params=_clean({"status": ",".join(WORKING_STATUSES),
+                               "office_id": office_id,
                                "region_id": region_id}),
             ),
             Card(
@@ -232,7 +238,9 @@ class DashboardService(BaseService):
 
         return Employee.objects.filter(
             organization_id=actor.organization_id,
-            employment_status="ACTIVE",
+            # Тот же набор, что и в составе смены: разойдись они —
+            # «в офисе» оказалось бы больше, чем всего работающих.
+            employment_status__in=WORKING_STATUSES,
             id__in=employee_ids,
         ).count()
 
@@ -265,10 +273,13 @@ class DashboardService(BaseService):
         """
         if not self.access.has(actor, "absences.read"):
             return 0
-        return AbsenceRequest.objects.filter(
-            organization_id=actor.organization_id,
-            status__in=("SUBMITTED", "IN_REVIEW"),
-        ).count()
+        # Считает тот же `pending()`, на который ведёт карточка: с областью
+        # видимости. Раньше здесь был счёт по всей организации, и кадровик
+        # одного офиса видел число открытых заявок всей компании — и число
+        # не совпадало со списком, открывающимся по нажатию.
+        from humotech.absences.services import AbsenceService
+
+        return AbsenceService().pending(actor).count()
 
     @staticmethod
     def _warnings(report) -> list[dict]:

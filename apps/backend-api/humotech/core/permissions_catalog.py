@@ -38,6 +38,19 @@ PERMISSIONS: tuple[tuple[str, str, str], ...] = (
      "Видеть состояние привязки и заявки, ожидающие подтверждения"),
     ("telegram.manage", "Управление привязками Telegram",
      "Выдавать ссылки, подтверждать, отклонять и отключать привязку"),
+    # первичное ознакомление
+    #
+    # Три права, а не одно, потому что это три разных решения.
+    # Посмотреть, кто на каком разделе, — безобидно. Разослать
+    # напоминания и переоткрыть ссылку — действие, доходящее до людей.
+    # А публикация редакции обязательного документа закрывает бота всем,
+    # кто её ещё не подтвердил: это решение юриста, а не дежурного HR.
+    ("onboarding.read", "Просмотр ознакомления",
+     "Видеть прогресс сотрудников, разделы и обязательные документы"),
+    ("onboarding.manage", "Управление ознакомлением",
+     "Править разделы, слать напоминания и повторные приглашения"),
+    ("policies.publish", "Публикация обязательных документов",
+     "Выпускать новые редакции: до их подтверждения бот закрыт"),
     # отметки
     ("attendance.read", "Просмотр отметок", "Видеть события и рабочие сессии"),
     ("attendance.correct", "Исправление отметок", "Рассматривать заявки на корректировку"),
@@ -54,6 +67,13 @@ PERMISSIONS: tuple[tuple[str, str, str], ...] = (
     ("absences.read", "Просмотр отсутствий", "Видеть заявки и подтверждённые периоды"),
     ("absences.approve", "Согласование отсутствий", "Одобрять и отклонять заявки"),
     ("absences.manage_types", "Типы отсутствий", "Настраивать справочник типов"),
+    # Опросы: чтение и рассылка — разные права. Читать ответы значит
+    # видеть, кто что написал про руководителя; это не то же самое,
+    # что право завести опрос.
+    ("surveys.read", "Просмотр опросов",
+     "Видеть шаблоны, рассылки и именные ответы сотрудников"),
+    ("surveys.manage", "Управление опросами",
+     "Создавать шаблоны и рассылать опросы сотрудникам"),
     ("absences.documents", "Проверка документов", "Проверять справки и больничные листы"),
     ("leave_balances.manage", "Балансы отпусков", "Начислять и корректировать баланс"),
     # знания и вопросы
@@ -77,6 +97,12 @@ PERMISSIONS: tuple[tuple[str, str, str], ...] = (
     # аналитика и администрирование
     ("analytics.read", "Аналитика", "Дашборды и сводные показатели"),
     ("reports.export", "Выгрузка отчётов", "Экспорт данных в файлы"),
+    # Чужой файл собран по чужой области видимости. Право скачивать его —
+    # отдельное решение, а не побочный эффект чтения журнала: `audit.read`
+    # открывает строку истории, но не содержимое файла.
+    ("reports.download_any", "Скачивание чужих выгрузок",
+     "Скачивать отчёты других пользователей, если область видимости "
+     "покрывает все данные отчёта"),
     ("users.manage", "Управление пользователями", "Создавать учётные записи CRM"),
     ("roles.manage", "Управление ролями", "Назначать роли и области видимости"),
     ("settings.manage", "Настройки организации", "Изменять organization_settings"),
@@ -94,6 +120,11 @@ SYSTEM_ROLES: tuple[tuple[str, str, str], ...] = (
     ("MANAGER", "Руководитель", "Отметки и заявки своих подчинённых"),
     ("ACCOUNTANT", "Бухгалтер", "Чтение отметок и выгрузка отчётов"),
     ("TECH_ADMIN", "Технический администратор", "Учётные записи, роли, настройки, аудит"),
+    # Наблюдатель: смотреть можно, менять нельзя. Ближайшая роль,
+    # ACCOUNTANT, умеет выгружать отчёты — то есть уносить персональные
+    # данные наружу, а это уже действие, а не просмотр.
+    ("VIEWER", "Просмотр",
+     "Только чтение: списки, карточки и аналитика, без изменений и выгрузок"),
 )
 
 _HR_FULL = (
@@ -101,6 +132,7 @@ _HR_FULL = (
     "departments.manage", "positions.manage",
     "employees.read", "employees.manage", "employees.archive", "employees.access",
     "telegram.read", "telegram.manage",
+    "onboarding.read", "onboarding.manage", "policies.publish",
     "attendance.read", "attendance.correct", "attendance.manual",
     "qr_points.read", "qr_points.manage",
     "schedules.read", "schedules.manage", "calendar.manage",
@@ -108,8 +140,9 @@ _HR_FULL = (
     "absences.documents", "leave_balances.manage",
     "knowledge.read", "knowledge.write", "knowledge.publish", "knowledge.index",
     "questions.read", "questions.answer",
-    "analytics.read", "reports.export", "ai.metrics.read",
+    "analytics.read", "reports.export", "reports.download_any", "ai.metrics.read",
     "notifications.read", "notifications.manage",
+    "surveys.read", "surveys.manage",
     # Кадровый администратор читает журнал изменений — но только своей
     # организации: область проверяется отдельно от разрешения. Прав на
     # учётные записи, роли и настройки здесь по-прежнему нет: управление
@@ -126,6 +159,7 @@ ROLE_PERMISSIONS: dict[str, tuple[str, ...]] = {
     "REGIONAL_HR": (
         "offices.read", "employees.read", "employees.manage", "employees.access",
         "telegram.read", "telegram.manage",
+        "onboarding.read", "onboarding.manage",
         "attendance.read", "attendance.correct",
         "qr_points.read",
         "schedules.read", "schedules.manage",
@@ -136,6 +170,7 @@ ROLE_PERMISSIONS: dict[str, tuple[str, ...]] = {
     ),
     "OFFICE_ADMIN": (
         "offices.read", "employees.read", "telegram.read",
+        "onboarding.read",
         "attendance.read", "attendance.correct", "attendance.manual",
         "qr_points.read", "qr_points.manage", "qr_display.start",
         "schedules.read", "absences.read",
@@ -155,5 +190,13 @@ ROLE_PERMISSIONS: dict[str, tuple[str, ...]] = {
         "offices.read", "qr_points.read", "qr_points.manage",
         "knowledge.index", "ai.metrics.read",
         "notifications.read", "notifications.manage",
+    ),
+    # Ни одного `manage`, `approve` или `export`: выгрузка уносит
+    # персональные данные за пределы системы, и для наблюдателя это уже
+    # действие. Ответы опросов читать можно — рассылать нельзя.
+    "VIEWER": (
+        "employees.read", "offices.read", "attendance.read",
+        "schedules.read", "absences.read", "knowledge.read",
+        "analytics.read", "surveys.read", "onboarding.read",
     ),
 }

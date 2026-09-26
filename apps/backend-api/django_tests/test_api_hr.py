@@ -168,6 +168,37 @@ def _create_employee(client, office, **overrides) -> dict:
     return response.json()
 
 
+def test_global_employee_search_returns_a_safe_ranked_shortlist(hr_client, office):
+    exact = _create_employee(
+        hr_client, office, employee_number="EMP-991", first_name="Елена",
+        last_name="Миронова", corporate_email="elena.private@humotech.tj",
+    )
+    _create_employee(
+        hr_client, office, employee_number="EMP-992", first_name="Елена",
+        last_name="Мирошникова",
+    )
+
+    response = hr_client.get(f"{API}/employees/search/", {"q": " emp-991 "})
+    assert response.status_code == 200, response.json()
+    body = response.json()
+    assert [row["id"] for row in body["items"]][:1] == [exact["id"]]
+    assert body["items"][0]["full_name"] == "Миронова Елена"
+    assert "corporate_email" not in body["items"][0]
+    assert "phone" not in body["items"][0]
+
+
+def test_global_employee_search_has_minimum_query_and_hard_limit(hr_client, office):
+    assert hr_client.get(f"{API}/employees/search/", {"q": "m"}).json() == {"items": []}
+    for index in range(11):
+        _create_employee(
+            hr_client, office, employee_number=f"MIR-{index}",
+            first_name=f"Мира{index}", last_name=f"Поиск{index}",
+        )
+    response = hr_client.get(f"{API}/employees/search/", {"q": "mir", "limit": "200"})
+    assert response.status_code == 200
+    assert len(response.json()["items"]) == 10
+
+
 def test_employee_lifecycle_through_api(hr_client, office, other_office):
     card = _create_employee(hr_client, office)
     assert card["full_name"] == "Петров Пётр"

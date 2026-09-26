@@ -124,6 +124,17 @@ class TelegramLinkInvitation(
     # у него 256 бит случайности, перебор невозможен, а проверка выполняется
     # на каждом переходе по ссылке.
     token_hash = models.CharField(max_length=64)
+    #: Имя в Telegram, которое кадровик указал в карточке при приёме.
+    #:
+    #: Это ПОДСКАЗКА для узнавания, а не удостоверение личности. Имя
+    #: меняется и передаётся другому человеку, поэтому само по себе оно
+    #: доступа не даёт: узнанный по нему приходит к тому же окну
+    #: подтверждения, что и перешедший по ссылке, и решает всё равно
+    #: кадровик.
+    #:
+    #: Живёт на приглашении, а не на карточке сотрудника: подсказка
+    #: временная и истекает вместе с ним.
+    expected_username = models.CharField(max_length=255, null=True, blank=True)
     status = models.CharField(
         max_length=30, choices=choices(TELEGRAM_INVITATION_STATUSES)
     )
@@ -132,6 +143,17 @@ class TelegramLinkInvitation(
     revoked_at = models.DateTimeField(null=True, blank=True)
     reviewed_at = models.DateTimeField(null=True, blank=True)
     consumed_by_telegram_user_id = models.BigIntegerField(null=True, blank=True)
+    #: Как погашено приглашение: `LINK` — персональной ссылкой (у человека
+    #: был токен), `USERNAME` — узнаванием по имени в Telegram. От этого
+    #: зависит, может ли сотрудник сам открыть себе доступ согласием с
+    #: условиями: владение ссылкой — да, совпадение имени — нет, имя в
+    #: Telegram можно занять, и такую привязку подтверждает только HR.
+    consumed_via = models.CharField(
+        max_length=20,
+        choices=[("LINK", "Ссылка"), ("USERNAME", "Имя в Telegram")],
+        null=True,
+        blank=True,
+    )
     created_by_user = models.ForeignKey(
         "accounts.User",
         on_delete=models.PROTECT,

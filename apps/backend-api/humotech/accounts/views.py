@@ -7,20 +7,60 @@
 from __future__ import annotations
 
 from django.contrib.auth import authenticate, login, logout
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import ensure_csrf_cookie
 from drf_spectacular.utils import OpenApiExample, OpenApiResponse, extend_schema
-from rest_framework import serializers, status
+from rest_framework import exceptions, serializers, status
+from rest_framework.authentication import CSRFCheck
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from humotech.accounts.security import LoginGuard, audit_logout
 from humotech.accounts.selectors import active_role_codes, permission_codes
 from humotech.core.timeframes import organization_zone
 
 
 class LoginSerializer(serializers.Serializer):
+    # Пределы длины — не только про базу: без них стокилобайтный «пароль»
+    # честно хешировался бы argon2. Одиночные суррогаты и NUL-байты
+    # отсекают встроенные проверки CharField, JSON-объект вместо строки —
+    # он же: всё это 400, а не 500.
     organization_code = serializers.CharField(max_length=50)
     email = serializers.CharField(max_length=255)
     password = serializers.CharField(max_length=256, write_only=True)
+
+
+def _enforce_csrf(request) -> None:
+    """CSRF и для входа.
+
+    DRF снимает проверку CSRF со всех своих view и возвращает её только
+    вошедшему по сессии. Вход — запрос анонимный, и без явной проверки
+    чужая страница могла бы тихо войти в браузере кадровика под учёткой
+    злоумышленника («login CSRF»): дальше всё, что человек введёт,
+    окажется у того. Cookie `csrftoken` CRM получает раньше — её ставит
+    `GET /auth/me`, который CRM вызывает при каждой загрузке.
+    """
+    check = CSRFCheck(lambda _request: None)
+    check.process_request(request)
+    reason = check.process_view(request, None, (), {})
+    if reason:
+        raise exceptions.PermissionDenied(f"CSRF Failed: {reason}")
+
+
+def _too_many(retry_after: int) -> Response:
+    minutes = max(1, (retry_after + 59) // 60)
+    response = Response(
+        {"error": {"code": "too_many_attempts",
+                   "message": (
+                       "Слишком много неудачных попыток входа. "
+                       f"Повторите через {minutes} мин."
+                   ),
+                   "details": {"retry_after": retry_after}}},
+        status=status.HTTP_429_TOO_MANY_REQUESTS,
+    )
+    response["Retry-After"] = str(retry_after)
+    return response
 
 
 class CurrentUserSerializer(serializers.Serializer):
@@ -98,6 +138,15 @@ class LoginView(APIView):
                     "записи существуют."
                 ),
             ),
+            429: OpenApiResponse(
+                response=ErrorSerializer,
+                description=(
+                    "Слишком много неудачных попыток: по этой учётной записи "
+                    "с этого адреса, по учётной записи вообще или с адреса. "
+                    "Одинаково для существующих и несуществующих учётных "
+                    "записей. Срок — в заголовке Retry-After."
+                ),
+            ),
         },
         examples=[
             OpenApiExample(
@@ -109,9 +158,17 @@ class LoginView(APIView):
         ],
     )
     def post(self, request):
+        _enforce_csrf(request)
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
+
+        # Попытка засчитывается ДО проверки пароля: иначе параллельные
+        # запросы успевают перебрать пароли, пока первый дописывает неудачу.
+        guard = LoginGuard(request, data["organization_code"], data["email"])
+        retry_after = guard.admit()
+        if retry_after:
+            return _too_many(retry_after)
 
         user = authenticate(
             request,
@@ -120,6 +177,7 @@ class LoginView(APIView):
             organization_code=data["organization_code"],
         )
         if user is None:
+            guard.failed()
             # Одно сообщение на все причины: иначе по разнице ответов можно
             # перебором узнать, какие учётные записи существуют.
             return Response(
@@ -129,7 +187,10 @@ class LoginView(APIView):
                 status=status.HTTP_401_UNAUTHORIZED,
             )
 
+        # `login` сам меняет ключ сессии и CSRF-токен: ключ, подсунутый
+        # до входа (session fixation), после входа ничего не открывает.
         login(request, user)
+        guard.succeeded(user)
         return Response(_describe(user))
 
 
@@ -144,7 +205,9 @@ class LogoutView(APIView):
         responses={204: None},
     )
     def post(self, request):
+        user = request.user
         logout(request)
+        audit_logout(request, user)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -158,6 +221,12 @@ class CurrentUserView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
+
+    # Cookie `csrftoken` нужна CRM ещё до входа: вход тоже проверяет CSRF.
+    # Этот запрос CRM делает при каждой загрузке, в том числе анонимно.
+    @method_decorator(ensure_csrf_cookie)
+    def dispatch(self, request, *args, **kwargs):
+        return super().dispatch(request, *args, **kwargs)
 
     @extend_schema(
         summary="Текущий пользователь",

@@ -12,6 +12,8 @@
  */
 
 import mark from '../assets/humotech-mark.png';
+import lockupDark from '../assets/humotech-lockup-dark.png';
+import markDark from '../assets/humotech-mark-dark.png';
 
 type Props = {
   /** Сторона белого квадрата в пикселях. */
@@ -35,6 +37,24 @@ export function Logo({ size = 72, className }: Props) {
     >
       <img src={mark} alt="" width={size} height={size} />
     </span>
+  );
+}
+
+/**
+ * Знак с надписью для тёмного фона — боковое меню CRM.
+ *
+ * Файл фирменный, присланный как есть: синий круг, белая H, белая
+ * надпись, прозрачный фон. Ни перерисовки шрифтом, ни CSS-фильтра —
+ * фильтр перекрасил бы круг вместе с буквами.
+ */
+export function BrandLockup() {
+  return (
+    <>
+      <img className="brand__full" src={lockupDark} alt="HUMOTECH" />
+      {/* Узкое меню сжимается до полосы иконок: там остаётся один знак,
+          вырезанный из того же файла, а не уменьшённая надпись. */}
+      <img className="brand__mark" src={markDark} alt="HUMOTECH" aria-hidden="true" />
+    </>
   );
 }
 

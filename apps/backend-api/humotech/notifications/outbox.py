@@ -45,6 +45,8 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
+from humotech.audit.redaction import redact_text
+from humotech.notifications.isolation import is_demo_chat_id
 from humotech.notifications.models import Notification, NotificationAttempt
 from humotech.telegram.identity import AccessDenied, resolve_account
 from humotech.telegram.models import TelegramAccount
@@ -83,6 +85,25 @@ def _log_attempt(
     )
 
 
+#: Уведомления, к которым полагается вложение, и какое именно.
+#:
+#: Файл не кладётся в очередь: он собирается из заявки на каждое
+#: обращение, и сохранённая копия молча разошлась бы с продлённой
+#: заявкой. В очереди только признак — бот по нему скачивает бумагу
+#: тем же запросом, что и человек из кабинета.
+ATTACHMENTS = {
+    "absence.created": "absence_application",
+    # То же самое по просьбе человека: он нажал «прислать» в кабинете.
+    # Скачать файл прямо в вебвью Telegram нельзя — оно не даёт
+    # сохранить blob, — поэтому бумага приходит сообщением в чат,
+    # откуда её и пересылают, и печатают.
+    "absence.application.copy": "absence_application",
+    "absence.certificate.copy": "absence_certificate",
+    # Файл, который кадровик приложил к ответу на обращение.
+    "question.reply.file": "question_file",
+}
+
+
 @dataclass(frozen=True)
 class Outgoing:
     """Сообщение, готовое к отправке."""
@@ -92,6 +113,16 @@ class Outgoing:
     text: str
     notification_type: str
     attempts: int
+    #: На что ссылается уведомление. Нужно там, где к сообщению
+    #: прикладывают кнопку: без идентификатора бот знает, что опрос
+    #: пришёл, но не знает какой.
+    related_entity_id: str | None = None
+    #: Что приложить к сообщению. `None` — обычный текст.
+    attachment: str | None = None
+    #: От чьего имени бот запросит вложение. Совпадает с `chat_id` в
+    #: личном чате, но полагаться на это нельзя: они разные величины,
+    #: и однажды разойдутся.
+    telegram_user_id: int | None = None
 
 
 def enqueue(
@@ -175,6 +206,10 @@ def claim(*, limit: int = 20, now: datetime | None = None) -> list[Outgoing]:
             blocked = account is None or (
                 isinstance(resolved, AccessDenied) and not about_binding
             )
+            # Демонстрационная привязка: отправлять некому по построению.
+            if account is not None and is_demo_chat_id(account.telegram_chat_id):
+                blocked = True
+                resolved = AccessDenied("demo_account")
             if blocked:
                 # Адресата нет или доступ закрыт. Это не ошибка отправки:
                 # повторять нечего, и держать строку в очереди вечно
@@ -208,32 +243,59 @@ def claim(*, limit: int = 20, now: datetime | None = None) -> list[Outgoing]:
                     text=row.body,
                     notification_type=row.notification_type,
                     attempts=row.attempts,
+                    related_entity_id=(
+                        str(row.related_entity_id)
+                        if row.related_entity_id else None
+                    ),
+                    # Вложение только там, где есть на что сослаться:
+                    # без записи скачивать нечего.
+                    attachment=(
+                        ATTACHMENTS.get(row.notification_type)
+                        if row.related_entity_id else None
+                    ),
+                    telegram_user_id=account.telegram_user_id,
                 )
             )
     return ready
 
 
-def mark_sent(notification_id, *, now: datetime | None = None) -> None:
+def mark_sent(notification_id, *, now: datetime | None = None) -> bool:
+    """Успех. Возвращает, изменил ли отчёт строку.
+
+    Принимается для RUNNING и для строки, которую уборка вернула в
+    очередь как зависшую (`STALE_LOCK`), но ещё никто не взял снова:
+    отправщик отправил и отчитался позже срока. Отбросить такой отчёт
+    значило бы отправить сообщение второй раз. Строку, которую снял
+    или повторил человек, поздний отчёт не трогает — у неё другая причина.
+    """
     moment = now or timezone.now()
     # Условие в самом UPDATE: из двух одновременных отчётов строку
     # переводит ровно один, и попытку записывает тоже он.
     with transaction.atomic():
         changed = Notification.objects.filter(
-            id=notification_id, status="RUNNING"
+            Q(status="RUNNING")
+            | Q(
+                status__in=("PENDING", "FAILED"),
+                error_message=STALE_LOCK,
+                locked_at__isnull=True,
+            ),
+            id=notification_id,
         ).update(
-            status="SENT", sent_at=moment, locked_at=None, error_message=None
+            status="SENT", sent_at=moment, locked_at=None, error_message=None,
+            next_attempt_at=None,
         )
         if not changed:
             # Строку уже кто-то перевёл: попытки не было, записывать нечего.
-            return
+            return False
         row = Notification.objects.filter(id=notification_id).first()
         if row is not None:
             _log_attempt(row, outcome="SENT", reason=None, moment=moment)
+        return True
 
 
 def mark_failed(
     notification_id, *, error: str, now: datetime | None = None
-) -> None:
+) -> bool:
     """Неудачная попытка: назад в очередь с паузой либо окончательный отказ.
 
     Пауза растёт по степеням двойки. Сервер Telegram, ответивший ошибкой,
@@ -246,17 +308,26 @@ def mark_failed(
     # читают RUNNING, оба пишут попытку, и в истории появляется
     # событие, которого не было.
     with transaction.atomic():
-        _fail(notification_id, error=error, moment=moment)
+        return _fail(notification_id, error=error, moment=moment)
 
 
-def _fail(notification_id, *, error: str, moment: datetime) -> None:
+#: Причины, при которых повтор ничего не изменит: строка сразу FAILED.
+#: Вложение, которое backend отказался отдать (файл не прошёл проверку
+#: или удалён — ответ 404), не появится от того, что бот спросит ещё раз.
+#: Для остальных причин повторы и так конечны (`MAX_ATTEMPTS`), но тут
+#: и пяти попыток с растущей паузой незачем. Человек, устранив причину,
+#: повторяет вручную из CRM.
+PERMANENT_ERRORS = frozenset({"attachment_rejected", "attachment_not_found"})
+
+
+def _fail(notification_id, *, error: str, moment: datetime) -> bool:
     row = (
         Notification.objects.select_for_update()
         .filter(id=notification_id)
         .first()
     )
     if row is None or row.status != "RUNNING":
-        return
+        return False
 
     attempts = row.attempts + 1
     limit = settings.NOTIFICATIONS["MAX_ATTEMPTS"]
@@ -264,9 +335,10 @@ def _fail(notification_id, *, error: str, moment: datetime) -> None:
     row.locked_at = None
     # Только безопасный текст: ответ Telegram может содержать эхо запроса,
     # а в запросе — текст уведомления целиком.
-    row.error_message = error[:200]
+    # Ещё и маскирование: в эхе может оказаться адрес API с токеном бота.
+    row.error_message = redact_text(str(error or "unknown"))[:200]
 
-    if attempts >= limit:
+    if attempts >= limit or row.error_message in PERMANENT_ERRORS:
         row.status = "FAILED"
         row.next_attempt_at = None
         logger.warning(
@@ -283,6 +355,13 @@ def _fail(notification_id, *, error: str, moment: datetime) -> None:
         ]
     )
     _log_attempt(row, outcome="FAILED", reason=row.error_message, moment=moment)
+    return True
+
+
+#: Причина, с которой уборка возвращает зависшую строку. По ней же
+#: поздний отчёт об успехе узнаёт строку, которую отправщик на самом
+#: деле успел отправить (см. `mark_sent`).
+STALE_LOCK = "stale_lock"
 
 
 def reclaim_stale(*, now: datetime | None = None) -> int:
@@ -291,14 +370,26 @@ def reclaim_stale(*, now: datetime | None = None) -> int:
     Процесс отправщика мог упасть между захватом и результатом. Блокировка
     строки снимется сама, статус — нет; без этой уборки такое сообщение
     не ушло бы никогда.
+
+    Зависание — это ПОПЫТКА: сообщение, возможно, уже ушло в Telegram.
+    Поэтому уборка тратит её так же, как `mark_failed`: счётчик растёт,
+    пауза растёт, после `MAX_ATTEMPTS` строка становится FAILED. Иначе
+    отправщик, который падает на одном и том же сообщении, крутил бы его
+    вечно, и человек получал бы его каждые несколько минут.
     """
     moment = now or timezone.now()
     deadline = moment - timedelta(
         seconds=settings.NOTIFICATIONS["LOCK_TIMEOUT_SECONDS"]
     )
-    return Notification.objects.filter(
-        status="RUNNING", locked_at__lt=deadline
-    ).update(status="PENDING", locked_at=None, next_attempt_at=moment)
+    with transaction.atomic():
+        ids = list(
+            Notification.objects.select_for_update(skip_locked=True)
+            .filter(status="RUNNING", locked_at__lt=deadline)
+            .values_list("id", flat=True)[:500]
+        )
+        for notification_id in ids:
+            _fail(notification_id, error=STALE_LOCK, moment=moment)
+    return len(ids)
 
 
 def _backoff(attempts: int) -> timedelta:
@@ -310,6 +401,8 @@ def _backoff(attempts: int) -> timedelta:
 __all__ = [
     "NotificationAttempt",
     "Outgoing",
+    "PERMANENT_ERRORS",
+    "STALE_LOCK",
     "claim",
     "enqueue",
     "mark_failed",

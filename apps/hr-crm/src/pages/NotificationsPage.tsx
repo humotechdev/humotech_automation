@@ -1,8 +1,17 @@
 /**
- * Уведомления: что уходило сотрудникам и что с этим стало.
+ * Уведомления: события кадровика и очередь отправки сотрудникам.
  *
- * Страница отвечает на два вопроса, и оба — про правду, а не про
- * оформление:
+ * Две вкладки, потому что это два разных вопроса.
+ *
+ *   ЛЕНТА СОБЫТИЙ — что произошло в кадровом контуре и ждёт человека:
+ *   заявки, справки, исправления отметок, незакрытые выходы, обращения.
+ *   То же самое показывает колокольчик в шапке, здесь — целиком;
+ *
+ *   ОЧЕРЕДЬ ОТПРАВКИ — что уходило сотрудникам в Telegram и что с этим
+ *   стало. Своя область данных, свои права (`notifications.read`) и своя
+ *   ответственность, поэтому она осталась ровно такой, какой была.
+ *
+ * Про очередь — два вопроса, и оба про правду, а не про оформление:
  *
  *   УШЛО ЛИ. Статус берётся из очереди, а не выводится из нажатия.
  *   Успешный ответ отправщика означает «передано в Telegram», и
@@ -17,29 +26,36 @@
  * только просит сервер вернуть строку в очередь.
  */
 
-import { useCallback, useMemo, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 
 import * as api from '../api/crm';
 import { ApiFailure, messageFor } from '../api/errors';
 import { AppShell } from '../components/AppShell';
-import { Icon } from '../components/nav-icons';
+import { AppIcon } from '../components/AppIcon';
+import { AppSegmentedControl, AppSelectField } from '../components/AppSelect';
+import { AppDateRangePicker } from '../components/DateRangePicker';
+import { FeedCard, FeedRow } from '../components/FeedParts';
+import { FEED_FILTERS, filterTitle } from '../features/notifications/feed-model';
 import { useFeed } from '../features/live/feed';
 import {
   CHANNEL, STATUS, TABS, attemptTitle, cancelBlockedBecause, deliveryNote,
   eventTitle, moving, reasonTitle, relatedLink, retryBlockedBecause, tabCount,
   type Tab,
 } from '../features/notifications/model';
-import { useBlock, type Block } from '../features/dashboard/data';
-import { useSession } from '../features/auth/session';
+import { today, useBlock, type Block } from '../features/dashboard/data';
 import { clock, moment } from '../features/time/zone';
+import { useStickyState } from '../features/shell/sticky';
 
 const PAGE = '20';
 
 export function NotificationsPage() {
-  const session = useSession();
-  const can = (code: string) =>
-    session.status === 'authenticated' && session.user.permissions.includes(code);
+  /*
+   * Прав в интерфейсе нет: администратор один, и ему открыто всё.
+   * Проверку исполняет сервер — он и ответит отказом, если когда-нибудь
+   * появится учётная запись с урезанным доступом.
+   */
+  const can = (_code: string) => true;
   const mayRead = can('notifications.read');
   const mayManage = can('notifications.manage');
 
@@ -52,6 +68,11 @@ export function NotificationsPage() {
   const picked = params.get('id') ?? '';
   const tab = (TABS.find((item) => item.key === params.get('tab'))?.key ??
     'all') as Tab;
+  // Вкладка страницы. Отдельный параметр от `tab`: тот уже занят
+  // состояниями очереди, и ссылки вида `?tab=failed` обязаны продолжать
+  // работать — они разосланы по системе и стоят в старых уведомлениях.
+  const view = params.get('view') === 'delivery' ? 'delivery' : 'feed';
+  const onQueue = view === 'delivery';
 
   const [updated, setUpdated] = useState<Date | null>(null);
   const [acting, setActing] = useState(false);
@@ -86,7 +107,7 @@ export function NotificationsPage() {
         offices: o.items.filter((item) => item.status === 'ACTIVE'),
       })),
     'notifications-directory',
-    mayRead,
+    mayRead && onQueue,
   );
   const scope = directory.state === 'ready'
     ? directory.data
@@ -144,7 +165,7 @@ export function NotificationsPage() {
   const { live, loadMore, more: tail, replace, refresh } = useFeed<
     api.Notification,
     api.NotificationCounts
-  >({ key, load, more, waiting: moving, onFresh, enabled: mayRead });
+  >({ key, load, more, waiting: moving, onFresh, enabled: mayRead && onQueue });
 
   const counts = live.state === 'ready' ? live.data.counts : null;
   const zone = counts?.timezone ?? '';
@@ -155,12 +176,12 @@ export function NotificationsPage() {
   const [card] = useBlock(
     (signal) => api.notification(picked, signal),
     `card|${picked}|${attempt}`,
-    mayRead && Boolean(picked),
+    mayRead && onQueue && Boolean(picked),
   );
   const [attempts] = useBlock(
     (signal) => api.notificationAttempts(picked, signal),
     `attempts|${picked}|${attempt}`,
-    mayRead && Boolean(picked),
+    mayRead && onQueue && Boolean(picked),
   );
 
   // --- действия --------------------------------------------------------------
@@ -198,6 +219,25 @@ export function NotificationsPage() {
     }
   }
 
+  const tabs = <AppSegmentedControl className="tabs tabs--page" role="tablist" label="Раздел уведомлений" value={onQueue ? 'delivery' : 'feed'}
+    options={[{ value: 'feed', label: 'Лента событий' }, { value: 'delivery', label: 'Очередь отправки' }]}
+    onChange={(value) => patch({ view: value === 'feed' ? null : 'delivery', id: null })} />;
+
+  if (!onQueue) {
+    return (
+      <AppShell breadcrumb="Уведомления" section="notifications">
+        <header className="head head--tight">
+          <div>
+            <h1 className="head__title">Уведомления</h1>
+            <p className="head__sub">События, которые ждут кадровика</p>
+          </div>
+        </header>
+        {tabs}
+        <FeedBoard opened={picked} onOpen={(id) => patch({ id: id || null })} />
+      </AppShell>
+    );
+  }
+
   if (!mayRead) {
     return (
       <AppShell breadcrumb="Уведомления" section="notifications">
@@ -207,9 +247,11 @@ export function NotificationsPage() {
             <p className="head__sub">История сообщений сотрудникам и статусы отправки</p>
           </div>
         </header>
+        {tabs}
         <p className="empty empty--bad">
-          Нет права на просмотр уведомлений. В них видно, что писали конкретным
-          людям, поэтому это отдельное разрешение — попросите его у администратора.
+          Нет права на просмотр очереди отправки. В ней видно, что писали
+          конкретным людям, поэтому это отдельное разрешение — попросите его
+          у администратора.
         </p>
       </AppShell>
     );
@@ -223,22 +265,12 @@ export function NotificationsPage() {
           <p className="head__sub">История сообщений сотрудникам и статусы отправки</p>
         </div>
         <div className="head__actions">
-          <label className="pick pick--date">
-            <Icon name="calendar" size={16} />
-            <span className="visually-hidden">Начало периода</span>
-            <input type="date" value={from} max={to || undefined}
-                   aria-label="Начало периода"
-                   onChange={(event) => patch({ date_from: event.target.value || null })} />
-          </label>
-          <label className="pick pick--date">
-            <span className="visually-hidden">Конец периода</span>
-            <input type="date" value={to} min={from || undefined}
-                   aria-label="Конец периода"
-                   onChange={(event) => patch({ date_to: event.target.value || null })} />
-          </label>
+          <AppDateRangePicker className="head__date-range" label="Период уведомлений" now={today()} from={from} to={to}
+            onFromChange={(value) => patch({ date_from: value || null })}
+            onToChange={(value) => patch({ date_to: value || null })} />
           <button type="button" className="tool" aria-label="Обновить список"
                   onClick={refresh}>
-            <Icon name="refresh" size={18} />
+            <AppIcon name="refresh" size={18} />
           </button>
           <p className="head__stamp">
             {/* Время двигается только после УДАЧНОГО ответа. */}
@@ -248,6 +280,8 @@ export function NotificationsPage() {
           </p>
         </div>
       </header>
+
+      {tabs}
 
       <ul className="summary" aria-label="Сводка по состояниям">
         <Tile icon="doc" title="Всего" value={counts?.total} />
@@ -261,29 +295,24 @@ export function NotificationsPage() {
         <section className="panel panel--list">
           <div className="toolbar">
             <label className="find find--wide">
-              <Icon name="search" size={16} />
+              <AppIcon name="search" size={16} />
               <input type="search" value={search}
                      placeholder="Поиск сообщения или сотрудника"
                      aria-label="Поиск сообщения или сотрудника"
                      onChange={(event) => patch({ search: event.target.value || null })} />
             </label>
-            <label className="pick">
-              <span className="visually-hidden">Регион</span>
-              <select value={region} aria-label="Регион"
-                      onChange={(event) =>
+            <AppSelectField label="Регион" className="notifications-select" value={region}
+                      onChange={(value) =>
                         // Смена региона сбрасывает офис: показанное
                         // обязано совпадать с отправляемым.
-                        patch({ region_id: event.target.value || null, office_id: null })}>
+                        patch({ region_id: value || null, office_id: null })}>
                 <option value="">Все регионы</option>
                 {scope.regions.map((item) => (
                   <option key={item.id} value={item.id}>{item.name}</option>
                 ))}
-              </select>
-            </label>
-            <label className="pick">
-              <span className="visually-hidden">Офис</span>
-              <select value={office} aria-label="Офис"
-                      onChange={(event) => patch({ office_id: event.target.value || null })}>
+            </AppSelectField>
+            <AppSelectField label="Офис" className="notifications-select" value={office}
+                      onChange={(value) => patch({ office_id: value || null })}>
                 <option value="">Все офисы</option>
                 {(region
                   ? scope.offices.filter((item) => item.region_id === region)
@@ -291,25 +320,12 @@ export function NotificationsPage() {
                 ).map((item) => (
                   <option key={item.id} value={item.id}>{item.name}</option>
                 ))}
-              </select>
-            </label>
+            </AppSelectField>
           </div>
 
-          <div className="tabs" role="tablist" aria-label="Состояние отправки">
-            {TABS.map((item) => {
-              const on = item.key === tab;
-              const number = tabCount(item.key, counts);
-              return (
-                <button key={item.key} type="button" role="tab" aria-selected={on}
-                        className={on ? 'tab tab--on' : 'tab'}
-                        onClick={() =>
-                          patch({ tab: item.key === 'all' ? null : item.key, id: null })}>
-                  {item.title}
-                  {number !== null && <span className="tab__count">{number}</span>}
-                </button>
-              );
-            })}
-          </div>
+          <AppSegmentedControl className="tabs" role="tablist" label="Состояние отправки" value={tab}
+            options={TABS.map((item) => ({ value: item.key, label: item.title, count: tabCount(item.key, counts) }))}
+            onChange={(key) => patch({ tab: key === 'all' ? null : key, id: null })} />
 
           {live.state === 'loading' && <p className="empty">Загружаем историю…</p>}
           {live.state === 'denied' && (
@@ -335,7 +351,7 @@ export function NotificationsPage() {
                 <p className="empty">{emptyText(search, tab, Boolean(from || to))}</p>
               ) : (
                 <div className="scroller">
-                  <table className="people">
+                  <table className="people table-cards">
                     <thead>
                       <tr>
                         <th>Сообщение / получатель</th>
@@ -357,7 +373,7 @@ export function NotificationsPage() {
                             }}>
                           <td className="grid-table__name">
                             <span className="who">
-                              <Icon name={eventIcon(row.notification_type)} size={16} />
+                              <AppIcon name={eventIcon(row.notification_type)} size={16} />
                               <span className="two">
                                 <b>{eventTitle(row)}</b>
                                 <span className="two__second">
@@ -366,9 +382,9 @@ export function NotificationsPage() {
                               </span>
                             </span>
                           </td>
-                          <td>{row.office_name ?? '—'}</td>
-                          <td><StatusPill status={row.status} /></td>
-                          <td className="num">{moment(row.created_at, zone, from === to && Boolean(from))}</td>
+                          <td data-label="Офис">{row.office_name ?? '—'}</td>
+                          <td data-label="Статус"><StatusPill status={row.status} /></td>
+                          <td className="num" data-label="Создано">{moment(row.created_at, zone, from === to && Boolean(from))}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -391,7 +407,7 @@ export function NotificationsPage() {
                     </button>
                   )}
                   <span className="muted sheet__lock">
-                    <Icon name="alert" size={15} />
+                    <AppIcon name="alert" size={16} />
                     Статус отправки не подтверждает прочтение сотрудником
                   </span>
                 </span>
@@ -451,7 +467,7 @@ function Card({
     <>
       <header className="view__head">
         <span className="view__icon" aria-hidden="true">
-          <Icon name="bell" size={22} />
+          <AppIcon name="bell" size={20} />
         </span>
         <div className="view__who">
           <h2 className="view__title">Уведомление</h2>
@@ -461,7 +477,7 @@ function Card({
           </p>
         </div>
         <button type="button" className="tool" aria-label="Закрыть карточку" onClick={onClose}>
-          <Icon name="cross" size={18} />
+          <AppIcon name="cross" size={18} />
         </button>
       </header>
 
@@ -493,7 +509,7 @@ function Card({
         {link ? (
           <p className="message__link">
             <Link to={link.to}>{link.title}</Link>
-            <Icon name="arrow" size={15} />
+            <AppIcon name="arrow" size={16} />
           </p>
         ) : row.related_entity_type ? (
           // Вид объекта сервер знает, а страницы для него в CRM нет.
@@ -506,7 +522,7 @@ function Card({
 
         {reason && (
           <p className="note note--dim" role="status">
-            <Icon name="alert" size={15} />
+            <AppIcon name="alert" size={16} />
             {reason}
           </p>
         )}
@@ -520,14 +536,14 @@ function Card({
                   disabled={Boolean(noRetry) || acting}
                   title={noRetry ? `Сейчас нельзя: ${noRetry}` : undefined}
                   onClick={() => onRetry(row)}>
-            <Icon name="refresh" size={16} />
+            <AppIcon name="refresh" size={16} />
             {acting ? 'Отправляем запрос…' : 'Повторить отправку'}
           </button>
           <button type="button" className="btn"
                   disabled={Boolean(noCancel) || acting}
                   title={noCancel ? `Сейчас нельзя: ${noCancel}` : undefined}
                   onClick={() => onCancel(row)}>
-            <Icon name="archive" size={16} />
+            <AppIcon name="archive" size={16} />
             Снять с отправки
           </button>
         </div>
@@ -538,8 +554,8 @@ function Card({
           </p>
         )}
         <p className="view__foot-link">
-          <Link to={`/employees?employee=${row.employee_id}`}>Карточка сотрудника</Link>
-          <Icon name="arrow" size={15} />
+          <Link to={`/employees/${row.employee_id}`}>Карточка сотрудника</Link>
+          <AppIcon name="arrow" size={16} />
         </p>
       </footer>
     </>
@@ -577,7 +593,7 @@ function Attempts({ block, zone }: {
       <ol className="attempts">
         {items.map((item) => (
           <li key={item.number}>
-            <Icon name={item.outcome === 'SENT' ? 'check' : 'alert'} size={16} />
+            <AppIcon name={item.outcome === 'SENT' ? 'check' : 'alert'} size={16} />
             <span className="attempts__time">{moment(item.attempted_at, zone, false)}</span>
             <span className="attempts__what">{attemptTitle(item)}</span>
           </li>
@@ -589,14 +605,205 @@ function Attempts({ block, zone }: {
 
 // --- мелочи -----------------------------------------------------------------
 
+/**
+ * Лента событий целиком — то же, что в колокольчике, но без потолка в
+ * семь строк и с подгрузкой по курсору.
+ *
+ * Выбранное событие держится в адресе: ссылку на разбор можно переслать
+ * коллеге, и она откроет ровно то же самое. Отметка прочтения ставится
+ * при нажатии на строку, и только для того, кто нажал.
+ */
+const BOARD_PAGE = '20';
+
+function FeedBoard({
+  opened,
+  onOpen,
+}: {
+  opened: string;
+  onOpen: (id: string) => void;
+}) {
+  const navigate = useNavigate();
+  const [filter, setFilter] = useStickyState<string>('notifications.filter', 'all');
+  const [page, setPage] = useState<api.FeedPage | null>(null);
+  const [rows, setRows] = useState<api.FeedEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [tail, setTail] = useState(false);
+  const [card, setCard] = useState<api.FeedDetail | null>(null);
+  const [cardFailed, setCardFailed] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    const stop = new AbortController();
+    setLoading(true);
+    api
+      .feed({ scope: filter, limit: BOARD_PAGE }, stop.signal)
+      .then((data) => {
+        setPage(data);
+        setRows(data.items);
+        setFailed(null);
+      })
+      .catch((error: unknown) => {
+        if (stop.signal.aborted) return;
+        setFailed(messageFor(error));
+      })
+      .finally(() => {
+        if (!stop.signal.aborted) setLoading(false);
+      });
+    return () => stop.abort();
+  }, [filter, attempt]);
+
+  useEffect(() => {
+    if (!opened) {
+      setCard(null);
+      return;
+    }
+    const stop = new AbortController();
+    setCardFailed(null);
+    api
+      .feedEvent(opened, stop.signal)
+      .then(setCard)
+      .catch((error: unknown) => {
+        if (stop.signal.aborted) return;
+        setCard(null);
+        setCardFailed(
+          error instanceof ApiFailure && error.status === 404
+            ? 'Событие больше недоступно: запись изменилась или закрыта'
+            : messageFor(error),
+        );
+      });
+    return () => stop.abort();
+  }, [opened]);
+
+  function choose(event: api.FeedEvent) {
+    onOpen(event.id);
+    if (event.read_at) return;
+    const before = rows;
+    const moment = new Date().toISOString();
+    setRows((was) =>
+      was.map((one) => (one.id === event.id ? { ...one, read_at: moment } : one)),
+    );
+    setPage((was) =>
+      was ? { ...was, counts: { ...was.counts, unread: Math.max(0, was.counts.unread - 1) } } : was,
+    );
+    setNote(null);
+    void api.readFeedEvent(event.id).catch((error: unknown) => {
+      // Возврат к прежнему состоянию: показывать прочитанным то, что
+      // сервер прочитанным не считает, нельзя.
+      setRows(before);
+      setNote(messageFor(error));
+    });
+  }
+
+  function readAll() {
+    setNote(null);
+    void api
+      .readAllFeed()
+      .then(() => setAttempt((n) => n + 1))
+      .catch((error: unknown) => setNote(messageFor(error)));
+  }
+
+  function loadMore() {
+    const cursor = page?.next_cursor;
+    if (!cursor) return;
+    setTail(true);
+    api
+      .feed({ scope: filter, limit: BOARD_PAGE, cursor })
+      .then((data) => {
+        setPage(data);
+        setRows((was) => [...was, ...data.items]);
+      })
+      .catch((error: unknown) => setNote(messageFor(error)))
+      .finally(() => setTail(false));
+  }
+
+  const counts = page?.counts ?? null;
+  const unread = counts?.unread ?? 0;
+
+  return (
+    <div className="nf nf--page">
+      <div className="nf__pageHead">
+        <div className="tabs" role="tablist" aria-label="Отбор событий">
+          {FEED_FILTERS.map((one) => {
+            const on = one.key === filter;
+            const count = counts ? counts[one.key] : null;
+            return (
+              <button key={one.key} type="button" role="tab" aria-selected={on}
+                      className={on ? 'tab tab--on' : 'tab'}
+                      onClick={() => setFilter(one.key)}>
+                {one.title}
+                {count !== null && <span className="tab__count">{count}</span>}
+              </button>
+            );
+          })}
+        </div>
+        <button type="button" className="nf__link nf__link--action"
+                onClick={readAll} disabled={unread === 0}>
+          Прочитать все
+        </button>
+      </div>
+
+      {note && <p className="nf__note">{note}</p>}
+
+      <div className="nf__body nf__body--page">
+        <div className="nf__list">
+          {loading && rows.length === 0 && <p className="nf__empty">Загружаем ленту…</p>}
+          {!loading && failed && rows.length === 0 && (
+            <p className="nf__empty nf__empty--bad">
+              {failed}
+              <button type="button" className="nf__retry"
+                      onClick={() => setAttempt((n) => n + 1)}>
+                Повторить
+              </button>
+            </p>
+          )}
+          {!loading && !failed && rows.length === 0 && (
+            <p className="nf__empty">
+              {filter === 'all'
+                ? `За последние ${page?.window_days ?? 30} дней событий не было`
+                : `В отборе «${filterTitle(filter)}» событий нет`}
+            </p>
+          )}
+
+          {rows.map((event) => (
+            <FeedRow key={event.id} event={event} active={event.id === opened}
+                     onPick={choose} />
+          ))}
+
+          {page?.has_more && (
+            <button type="button" className="btn btn--small nf__more"
+                    disabled={tail} onClick={loadMore}>
+              {tail ? 'Читаем…' : 'Показать ещё'}
+            </button>
+          )}
+        </div>
+
+        <div className="nf__card">
+          {cardFailed && <p className="nf__empty nf__empty--bad">{cardFailed}</p>}
+          {!cardFailed && !card && (
+            <p className="nf__empty">
+              {rows.length === 0 ? 'Событий нет' : 'Выберите событие слева'}
+            </p>
+          )}
+          {card && (
+            <FeedCard card={card} onFollow={(url) => navigate(url)} />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 function Tile({ icon, title, value }: {
-  icon: Parameters<typeof Icon>[0]['name'];
+  icon: Parameters<typeof AppIcon>[0]['name'];
   title: string;
   value: number | undefined;
 }) {
   return (
     <li className="tile">
-      <span className="tile__icon" aria-hidden="true"><Icon name={icon} size={20} /></span>
+      <span className="tile__icon" aria-hidden="true"><AppIcon name={icon} size={20} /></span>
       <span className="tile__text">
         <span className="tile__title">{title}</span>
         {/* Пока сводка не пришла — прочерк, а не ноль. Ноль означал бы,
@@ -616,13 +823,13 @@ function StatusPill({ status }: { status: string }) {
             : 'clock';
   return (
     <span className={`state state--${status.toLowerCase()}`}>
-      <Icon name={icon} size={15} />
+      <AppIcon name={icon} size={16} />
       {STATUS[status] ?? status}
     </span>
   );
 }
 
-function eventIcon(type: string): Parameters<typeof Icon>[0]['name'] {
+function eventIcon(type: string): Parameters<typeof AppIcon>[0]['name'] {
   if (type.startsWith('telegram.link.')) return 'lock';
   if (type.startsWith('absence.')) return 'calendar';
   if (type.startsWith('question.')) return 'chat';

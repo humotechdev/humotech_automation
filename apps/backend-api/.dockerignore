@@ -15,9 +15,16 @@ __pycache__/
 .env.*
 !.env.example
 
-# Локальные данные разработчика.
+# Локальные данные разработчика. private-exports — готовые выгрузки с
+# кадровыми данными: раньше они попадали в образ через `COPY . .` и
+# оставались в его слое навсегда.
 private-media/
+private-exports/
 staticfiles/
+*.dump
+*.sql.gz
+*.pem
+*.key
 media/
 *.sqlite3
 *.log
@@ -29,8 +36,22 @@ media/
 .coverage
 htmlcov/
 
-# Тесты в образе не нужны: он не для их запуска.
+# Тесты в образе не нужны: он не для их запуска. В tests/ к тому же
+# лежали фикстуры с настоящим (скомпрометированным) токеном бота.
 django_tests/
+tests/
+pytest.ini
+pytest-legacy.ini
+# requirements-dev.txt НЕ исключён: из этого же контекста собирается
+# тестовый образ humotech/backend:test (см. README), и ему он нужен.
+
+# Служебное, в работе не участвует.
+.git/
+.gitignore
+.dockerignore
+Dockerfile
+README.md
+*.md
 
 # Прежний слой Alembic — история, а не runtime.
 migrations/

@@ -48,19 +48,20 @@ from django.db.models import Count, Q
 from django.utils import timezone
 
 from humotech.accounts.models import User, UserRoleScope
-from humotech.core.enums import USER_STATUSES
+from humotech.accounts.security import end_sessions, unlock_account
+from humotech.core.enums import OFFERED_ROLE_CODES, USER_STATUSES
 from humotech.core.errors import Conflict, NotFound, PermissionDenied, ValidationFailed
 from humotech.core.pagination import Page, paginate
 from humotech.core.rbac import Actor, snapshot
 from humotech.core.service import BaseService, refuse_stale
 from humotech.core.timeframes import closed_range_bounds, organization_zone
-from humotech.core.validation import clean_code, clean_text, validate_email
+from humotech.core.validation import clean_code, clean_text
 from humotech.employees.selectors import require_visible_employee
 from humotech.offices.models import Office
 from humotech.rbac.models import Permission, Role, RolePermission
 from humotech.regions.models import Region
 
-USER_FIELDS = ("email", "status", "mfa_enabled")
+USER_FIELDS = ("email", "full_name", "status", "mfa_enabled")
 
 #: Код роли, которая не должна исчезнуть из организации.
 SUPER_ADMIN = "SUPER_ADMIN"
@@ -232,32 +233,67 @@ class UserAdminService(BaseService):
         actor: Actor,
         *,
         email: str,
+        full_name: str | None = None,
+        password: str | None = None,
         employee_id: uuid.UUID | None = None,
     ) -> User:
+        """Завести администратора.
+
+        `email` — это логин; имя параметра совпадает с колонкой в базе.
+        Адресом почты он быть не обязан: организация сама решает, чем
+        людям удобнее входить, а требовать почту там, где её нет, значит
+        требовать выдумать её.
+
+        Пароль необязателен. Без него запись остаётся отключённой: запись
+        без пароля, которую уже можно использовать, — это приглашение к
+        перебору. С паролем она сразу рабочая, потому что заводят её
+        именно для того, чтобы человек вошёл.
+        """
         self.access.require(actor, "users.manage")
-        address = validate_email(email, field="email")
-        if address is None:
+        address = clean_text(email, field="login", required=True, max_length=255)
+        assert address is not None  # required=True гарантирует
+        if any(ch.isspace() for ch in address):
             raise ValidationFailed(
-                "Адрес электронной почты обязателен", details={"field": "email"}
+                "Логин не должен содержать пробелов",
+                details={"field": "login", "value": address},
             )
         if User.objects.filter(
             organization_id=actor.organization_id, email__iexact=address
         ).exists():
             raise Conflict(
-                "Учётная запись с таким адресом уже есть",
-                details={"email": address},
+                "Учётная запись с таким логином уже есть",
+                details={"login": address},
             )
+        if employee_id is not None:
+            # Та же проверка, что и в `update`: без неё к новой учётке
+            # привязывался сотрудник чужой организации или вне области.
+            require_visible_employee(self.access, actor, employee_id)
 
         with self.atomic():
             user = User(
                 organization_id=actor.organization_id,
                 email=address,
+                full_name=clean_text(
+                    full_name, field="full_name", max_length=255
+                ),
                 employee_id=employee_id,
-                # INACTIVE, а не ACTIVE: запись без пароля, которую уже
-                # можно использовать, — это приглашение к перебору.
-                status="INACTIVE",
+                status="ACTIVE" if password else "INACTIVE",
             )
-            user.set_unusable_password()
+            if password:
+                # Правила Django: длина, распространённость, сходство с
+                # логином. Проверяются здесь, до записи: отказ после
+                # создания оставил бы запись без пароля и без объяснения.
+                try:
+                    validate_password(password, user=user)
+                except DjangoValidationError as exc:
+                    raise ValidationFailed(
+                        "Пароль не соответствует требованиям",
+                        details={"field": "password",
+                                 "reasons": list(exc.messages)},
+                    ) from exc
+                user.set_password(password)
+            else:
+                user.set_unusable_password()
             user.save()
             self.audit.record(
                 actor,
@@ -279,6 +315,7 @@ class UserAdminService(BaseService):
                 details={"status": status, "allowed": list(USER_STATUSES)},
             )
         user = self._require(actor, user_id)
+        self._require_manageable(actor, user)
         if user.status == status:
             return user
 
@@ -291,6 +328,11 @@ class UserAdminService(BaseService):
                 _refuse_if_last_super_admin(actor, without_user=user.id)
             user.status = status
             user.save(update_fields=["status", "updated_at"])
+            if status != "ACTIVE":
+                # Отключение обрывает и уже открытые сессии. Одного отказа
+                # в `get_user` мало: включи запись обратно — и старая,
+                # возможно украденная, cookie ожила бы снова.
+                end_sessions(user.id)
             self.audit.record(
                 actor,
                 action="user.status",
@@ -308,6 +350,7 @@ class UserAdminService(BaseService):
         user_id: uuid.UUID,
         *,
         email: str | None = None,
+        full_name: str | None = None,
         employee_id: uuid.UUID | None = None,
         unlink_employee: bool = False,
     ) -> User:
@@ -319,19 +362,37 @@ class UserAdminService(BaseService):
         """
         self.access.require(actor, "users.manage")
         user = self._require(actor, user_id)
+        self._require_manageable(actor, user)
         before = snapshot(user, USER_FIELDS)
         changed: list[str] = []
 
         if email is not None:
-            address = validate_email(email, field="email")
-            if address is None:
+            address = clean_text(
+                email, field="login", required=True, max_length=255
+            )
+            assert address is not None  # required=True гарантирует
+            if any(ch.isspace() for ch in address):
                 raise ValidationFailed(
-                    "Адрес электронной почты обязателен",
-                    details={"field": "email"},
+                    "Логин не должен содержать пробелов",
+                    details={"field": "login", "value": address},
                 )
             if address.lower() != user.email.lower():
+                taken = User.objects.filter(
+                    organization_id=user.organization_id, email__iexact=address
+                ).exclude(id=user.id).exists()
+                if taken:
+                    raise Conflict(
+                        "Учётная запись с таким логином уже есть",
+                        details={"login": address},
+                    )
                 user.email = address
                 changed.append("email")
+
+        if full_name is not None:
+            cleaned = clean_text(full_name, field="full_name", max_length=255)
+            if cleaned != user.full_name:
+                user.full_name = cleaned
+                changed.append("full_name")
 
         if unlink_employee:
             # Отвязка задаётся отдельным признаком, а не `employee_id=None`:
@@ -376,6 +437,7 @@ class UserAdminService(BaseService):
         """
         self.access.require(actor, "users.manage")
         user = self._require(actor, user_id)
+        self._require_manageable(actor, user)
 
         try:
             validate_password(password, user=user)
@@ -388,6 +450,13 @@ class UserAdminService(BaseService):
         with self.atomic():
             user.set_password(password)
             user.save(update_fields=["password", "updated_at"])
+            # Отпечаток пароля в сессии и так перестанет совпадать, но
+            # строки сессий лучше убрать сразу, а не ждать их срока.
+            # Свою сессию, если человек меняет пароль себе, view
+            # переоформляет на новый отпечаток.
+            end_sessions(user.id)
+            # Новый пароль от HR — законный способ снять блокировку входа.
+            unlock_account(user)
             self.audit.record(
                 actor,
                 action="user.password.set",
@@ -413,6 +482,51 @@ class UserAdminService(BaseService):
         # с прежним набором до следующей загрузки страницы.
         self.attach_grants(actor, [user])
         return user
+
+    def _require_manageable(self, actor: Actor, user: User) -> None:
+        """Управлять можно только тем, кто не выше тебя.
+
+        `users.manage` без этой проверки давал захват любой учётки:
+        техадминистратор ставил пароль суперадминистратору (или менял ему
+        логин, или включал отключённого) и входил под ним — с правами,
+        которых сам не имел. Поэтому у цели не должно быть ни разрешений
+        сверх своих, ни территории шире своей. Смотрятся все
+        незакрытые назначения, включая будущие: иначе пароль ставился бы
+        накануне того дня, когда роль вступает в силу.
+        """
+        if user.id == actor.user_id:
+            return
+        grants = list(
+            UserRoleScope.objects.filter(user_id=user.id)
+            .filter(Q(valid_to__isnull=True) | Q(valid_to__gte=timezone.now()))
+            .values_list("role_id", "region_id", "office_id")
+        )
+        if not grants:
+            return
+
+        by_role = _permissions_by_role(list({role_id for role_id, _, _ in grants}))
+        theirs = set().union(*by_role.values()) if by_role else set()
+        missing = sorted(theirs - self.access.permissions(actor))
+        if missing:
+            raise PermissionDenied(
+                "Нельзя управлять учётной записью с правами шире ваших",
+                details={"missing_permissions": missing},
+            )
+
+        mine = self.access.scope(actor)
+        if mine.all_offices:
+            return
+        for _, region_id, office_id in grants:
+            within = (
+                (office_id is not None and office_id in mine.office_ids)
+                or (region_id is not None and region_id in mine.region_ids)
+            )
+            if not within:
+                raise PermissionDenied(
+                    "Нельзя управлять учётной записью с областью шире вашей",
+                    details={"region_id": region_id and str(region_id),
+                             "office_id": office_id and str(office_id)},
+                )
 
 
 def _end_of_day(organization_id, day: date) -> datetime:
@@ -468,6 +582,11 @@ class RoleAdminService(BaseService):
                     "is_system": row.organization_id is None,
                     "permissions": sorted(granted),
                     "grantable": not missing,
+                    # Предлагается ли роль в форме выдачи доступа.
+                    # Каталог шире набора: служебные и переносные роли
+                    # остаются видимыми у тех, кому уже выданы, но
+                    # выбором из списка их не раздают.
+                    "offered": row.code in OFFERED_ROLE_CODES,
                     # Прямо называется, чего не хватает: «нельзя» без
                     # причины выглядит как поломка.
                     "missing_permissions": missing,
@@ -796,6 +915,12 @@ class RoleAdminService(BaseService):
         """Отозвать назначение. Строка остаётся, срок закрывается."""
         self.access.require(actor, "roles.manage")
         grant = self._require_grant(actor, grant_id)
+        # Отозвать можно только то, что мог бы выдать: иначе администратор
+        # офиса снимал бы роли на всю организацию и роли шире своей.
+        self._require_grantable(actor, grant.role)
+        self._require_within_own_scope(
+            actor, region_id=grant.region_id, office_id=grant.office_id
+        )
         if grant.valid_to and grant.valid_to <= timezone.now():
             raise Conflict(
                 "Это назначение уже отозвано",
@@ -856,6 +981,11 @@ class RoleAdminService(BaseService):
         if valid_to_date is not None:
             valid_to = _end_of_day(actor.organization_id, valid_to_date)
         grant = self._require_grant(actor, grant_id)
+        # Продлить — всё равно что выдать заново: те же две проверки.
+        self._require_grantable(actor, grant.role)
+        self._require_within_own_scope(
+            actor, region_id=grant.region_id, office_id=grant.office_id
+        )
         _refuse_stale(
             grant.valid_to, expected_valid_to, enabled=check_expected
         )
@@ -951,6 +1081,14 @@ class RoleAdminService(BaseService):
             self.access.require_office(actor, office_id)
             return
         self.access.require_region(actor, region_id)
+        # `require_region` считает регион видимым и тогда, когда у актора
+        # лишь один офис внутри него — для чтения это верно, для выдачи
+        # нет: администратор одного офиса выдал бы роль на весь регион.
+        if not scope.all_offices and region_id not in scope.region_ids:
+            raise PermissionDenied(
+                "Доступ на регион выдаёт только тот, у кого есть весь регион",
+                details={"region_id": str(region_id)},
+            )
 
     @staticmethod
     def _require_period(

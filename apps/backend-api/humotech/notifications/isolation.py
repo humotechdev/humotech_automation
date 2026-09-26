@@ -43,6 +43,21 @@ E2E_CHAT_ID_FLOOR = 1
 E2E_CHAT_ID_CEILING = 1000
 
 
+#: Диапазон демонстрационных привязок (`seed_demo_hr_data`). Отдельный
+#: от диапазона стенда: сквозные проверки доставки ходят в свой, а в этот
+#: не уходит ничего — очередь снимает такие сообщения, не отдавая боту.
+#: Витрину показывают директору, кнопки в ней нажимают по-настоящему, и
+#: «Напомнить всем» на сто девяносто человек не должно достучаться ни до
+#: кого живого.
+DEMO_CHAT_ID_FLOOR = 5000
+DEMO_CHAT_ID_CEILING = 6000
+
+
+def is_demo_chat_id(chat_id: int) -> bool:
+    """Принадлежит ли идентификатор чата демонстрационной витрине."""
+    return DEMO_CHAT_ID_FLOOR <= chat_id < DEMO_CHAT_ID_CEILING
+
+
 def is_stand_chat_id(chat_id: int) -> bool:
     """Принадлежит ли идентификатор чата диапазону стенда."""
     return E2E_CHAT_ID_FLOOR <= chat_id < E2E_CHAT_ID_CEILING
@@ -89,6 +104,9 @@ __all__ = [
     "ALLOWED_DATABASE",
     "E2E_CHAT_ID_CEILING",
     "E2E_CHAT_ID_FLOOR",
+    "DEMO_CHAT_ID_CEILING",
+    "DEMO_CHAT_ID_FLOOR",
+    "is_demo_chat_id",
     "ENV_MARKER",
     "is_stand_chat_id",
     "require_isolated_stand",

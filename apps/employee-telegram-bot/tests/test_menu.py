@@ -571,3 +571,34 @@ def test_empty_requests_explain_where_to_create_one():
     message, _ = run(my_requests)
 
     assert "Заявок пока нет" in message.answers[-1][0]
+
+
+def test_request_is_named_by_its_stage_not_by_its_status():
+    """Чат, кабинет и кадровая система называют состояние одинаково.
+
+    Внутренний `SUBMITTED` говорит «ожидает решения» — и это неправда
+    про больничный, у которого ещё нет справки: ждут не решения, ждут
+    бумагу, и ждут её от самого человека.
+    """
+    client = FakeClient(**{
+        "absences": {
+            "requests": [{
+                "absence_type": {"code": "SICK_LEAVE", "name": "Больничный"},
+                "status": "SUBMITTED",
+                "stage": "WAITING_DOCUMENTS",
+                "first_day": None,
+                "last_day": None,
+                "working_days": 0,
+                "extension_pending": False,
+                "review_comment": None,
+            }],
+            "total": 1,
+        },
+    })
+    message, _ = run(my_requests, client=client)
+
+    body = message.answers[-1][0]
+    assert "ожидаем документы" in body
+    assert "ожидает решения" not in body
+    # Дат ещё нет, и выдумывать их нечем: период проставит кадровик.
+    assert "период уточняется" in body

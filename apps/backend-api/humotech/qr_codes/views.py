@@ -21,13 +21,13 @@ from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_sche
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.throttling import ScopedRateThrottle
+from humotech.core.throttling import SharedScopedRateThrottle as ScopedRateThrottle
 from rest_framework.views import APIView
 
 from rest_framework.decorators import action
 
 from humotech.core.api import ServiceViewSet, validated
-from humotech.core.errors import PermissionDenied
+from humotech.core.errors import NotFound, PermissionDenied
 from humotech.core.rbac import Actor
 from humotech.qr_codes.points import QrPointService
 from humotech.qr_codes.serializers import (
@@ -41,6 +41,7 @@ from humotech.qr_codes.serializers import (
     QrPointCreateSerializer,
     QrPointSerializer,
     QrPointUpdateSerializer,
+    StickerSerializer,
 )
 from humotech.qr_codes.services import QrDisplayService
 
@@ -162,7 +163,7 @@ class QrDeviceListView(APIView):
     def get(self, request):
         actor = Actor.from_user(request.user)
         devices = QrDisplayService().list_devices(
-            actor, qr_point_id=request.query_params.get("qr_point_id") or None
+            actor, qr_point_id=_uuid_or_none(request, "qr_point_id")
         )
         return Response(DeviceSerializer(devices, many=True).data)
 
@@ -226,6 +227,10 @@ class QrDeviceActionView(APIView):
         if action == "revoke":
             device = service.revoke_device(actor, device_id)
             return Response(DeviceSerializer(device).data)
+        if action != "reissue":
+            # Раньше любое другое слово в пути молча перевыпускало код
+            # сопряжения — и снимало рабочий credential экрана у двери.
+            raise NotFound("Нет такого действия с экраном")
         issued = service.reissue_pairing(actor, device_id)
         return Response(IssuedDeviceSerializer(issued).data)
 
@@ -278,6 +283,19 @@ class QrPointViewSet(ServiceViewSet):
         payload = validated(QrPointUpdateSerializer, request.data)
         return self.item_response(self.service.update(self.actor, pk, **payload))
 
+    @extend_schema(
+        summary="Удалить точку отметки",
+        description=(
+            "Только ту, по которой никто не отмечался. Точка, попавшая "
+            "хоть в одну отметку, — часть истории: её выключают, а не "
+            "стирают."
+        ),
+        responses={204: None},
+    )
+    def destroy(self, request, pk=None):
+        self.service.delete(self.actor, pk)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
     @action(detail=True, methods=["post"])
     def activate(self, request, pk=None):
         return self.item_response(
@@ -289,6 +307,21 @@ class QrPointViewSet(ServiceViewSet):
         return self.item_response(
             self.service.set_active(self.actor, pk, active=False)
         )
+
+    @extend_schema(
+        summary="Ссылка наклейки",
+        description=(
+            "Код печатной точки — чтобы показать его на экране, скачать "
+            "или распечатать заново. Требует права на управление "
+            "точками; обращение попадает в журнал. У точек, выпущенных "
+            "до того, как коды стали храниться, кода нет: такой "
+            "заменяют новым."
+        ),
+        responses={200: StickerSerializer},
+    )
+    @action(detail=True, methods=["get"], url_path="sticker")
+    def sticker(self, request, pk=None):
+        return Response({"sticker_link": self.service.sticker(self.actor, pk)})
 
     @action(detail=True, methods=["post"], url_path="reissue-token")
     def reissue_token(self, request, pk=None):

@@ -163,78 +163,12 @@ export function grantBlockedBecause(role: api.RoleFull): string | null {
 
 // --- разрешения -------------------------------------------------------------
 
-/** Разделы каталога. Префикс кода — он же группа. */
-export const SECTIONS: Array<{ prefix: string; title: string }> = [
-  { prefix: 'employees', title: 'Сотрудники' },
-  { prefix: 'departments', title: 'Подразделения' },
-  { prefix: 'positions', title: 'Должности' },
-  { prefix: 'regions', title: 'Регионы' },
-  { prefix: 'offices', title: 'Офисы' },
-  { prefix: 'attendance', title: 'Посещаемость' },
-  { prefix: 'schedules', title: 'Графики' },
-  { prefix: 'calendar', title: 'Календарь' },
-  { prefix: 'absences', title: 'Отсутствия' },
-  { prefix: 'leave_balances', title: 'Остатки отпуска' },
-  { prefix: 'qr_points', title: 'Точки QR' },
-  { prefix: 'qr_display', title: 'Экраны QR' },
-  { prefix: 'telegram', title: 'Telegram-привязки' },
-  { prefix: 'knowledge', title: 'База знаний' },
-  { prefix: 'questions', title: 'Обращения' },
-  { prefix: 'notifications', title: 'Уведомления' },
-  { prefix: 'analytics', title: 'Аналитика' },
-  { prefix: 'reports', title: 'Отчёты' },
-  { prefix: 'ai', title: 'AI-ассистент' },
-  { prefix: 'users', title: 'Учётные записи' },
-  { prefix: 'roles', title: 'Роли и права' },
-  { prefix: 'audit', title: 'Журнал действий' },
-  { prefix: 'settings', title: 'Настройки' },
-];
-
-export type Section = {
-  prefix: string;
-  title: string;
-  items: api.PermissionRow[];
-};
-
-/**
- * Разложить каталог по разделам.
- *
- * Порядок разделов задан списком выше, а не алфавитом: он повторяет
- * порядок разделов CRM, и человек ищет право там же, где нашёл бы
- * страницу. Незнакомый префикс не теряется — он уходит в конец под
- * собственным именем.
+/*
+ * Группировка каталога разрешений убрана вместе с интерфейсом ролей:
+ * администратор один, и раскладывать права по разделам стало некому и
+ * не для кого. Сервер права по-прежнему проверяет — просто показывать
+ * их список больше негде.
  */
-export function sections(catalog: api.PermissionRow[]): Section[] {
-  const byPrefix = new Map<string, api.PermissionRow[]>();
-  for (const item of catalog) {
-    const prefix = item.code.split('.')[0] ?? item.code;
-    const bucket = byPrefix.get(prefix);
-    if (bucket) bucket.push(item);
-    else byPrefix.set(prefix, [item]);
-  }
-
-  const result: Section[] = [];
-  for (const known of SECTIONS) {
-    const items = byPrefix.get(known.prefix);
-    if (items) {
-      result.push({ ...known, items });
-      byPrefix.delete(known.prefix);
-    }
-  }
-  for (const [prefix, items] of byPrefix) {
-    result.push({ prefix, title: prefix, items });
-  }
-  return result;
-}
-
-/**
- * Что делает разрешение — словами каталога, а не выдумкой интерфейса.
- *
- * Свой словарь названий здесь был бы вторым каталогом прав: он разошёлся
- * бы с настоящим на первом же добавленном разрешении, и человек выдавал
- * бы не то, что прочитал.
- */
-export const permissionTitle = (item: api.PermissionRow): string => item.name;
 
 // --- журнал действий --------------------------------------------------------
 
@@ -249,6 +183,13 @@ export const ACTIONS: Record<string, string> = {
   'user_role_scope.assign': 'Выдана роль',
   'user_role_scope.revoke': 'Отозвана роль',
   'user_role_scope.validity': 'Изменён срок назначения',
+  'auth.login': 'Вход в систему',
+  'auth.login_failed': 'Неудачная попытка входа',
+  'auth.login_locked': 'Вход временно заблокирован',
+  'auth.logout': 'Выход из системы',
+  // Прежние названия тех же событий: старые записи журнала остаются.
+  'auth.login.succeeded': 'Вход в систему',
+  'auth.login.failed': 'Неудачная попытка входа',
 };
 
 export const actionTitle = (action: string): string =>
@@ -271,6 +212,7 @@ export const ENTITIES: Record<string, string> = {
   absence_requests: 'Заявка на отсутствие',
   qr_display_devices: 'Экран показа QR',
   employee_questions: 'Обращение сотрудника',
+  organizations: 'Организация',
 };
 
 export const entityTitle = (entity: string): string =>
@@ -280,11 +222,15 @@ export const entityTitle = (entity: string): string =>
 export const AUDIT_FILTERS = [
   { key: '', title: 'Все действия' },
   { key: 'user.', title: 'Учётные записи' },
+  { key: 'auth.', title: 'Входы и выходы' },
   { key: 'user_role_scope.', title: 'Назначения ролей' },
   { key: 'role.', title: 'Роли' },
   { key: 'employee', title: 'Сотрудники' },
   { key: 'telegram.', title: 'Telegram' },
-  { key: 'knowledge.', title: 'База знаний' },
+  // Отбора по материалам ассистента здесь нет: раздела «База знаний» у
+  // кадровика не существует, и пункт вёл бы к списку действий над тем,
+  // чего он не видит. САМИ записи журнала остаются и показываются в
+  // общем списке — стирать историю ради чистоты меню нельзя.
   { key: 'notification.', title: 'Уведомления' },
 ] as const;
 

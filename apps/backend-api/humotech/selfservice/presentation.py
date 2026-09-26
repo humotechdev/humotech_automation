@@ -42,6 +42,10 @@ def day_json(day: DayRecord) -> dict:
         "missed": day.missed,
         "absence_code": day.absence_code,
         "absence_name": day.absence_name,
+        # Норма дня в секундах: 0 у выходного, null — графика нет.
+        # Без неё клиенту нечем отличить «отработал день» от «отработал
+        # два часа»: конец смены минус начало считает вместе с обедом.
+        "norm_seconds": day.norm_seconds,
     }
 
 

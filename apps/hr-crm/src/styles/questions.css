@@ -1,0 +1,1092 @@
+/*
+ * «Обращения». Префикс классов — `tk-`: файл подключает только эта страница.
+ *
+ * Одна белая поверхность с крупным скруглением; очередь, переписка и
+ * правая часть — зоны внутри неё, разделённые тонкими линиями, а не три
+ * отдельные карточки.
+ */
+
+.tk {
+  --tk-ink: #112f5a;
+  --tk-text: #22355c;
+  --tk-muted: #66768f;
+  --tk-line: #dce6f1;
+  --tk-soft: #eaf3ff;
+  --tk-soft-2: #e3eefb;
+  --tk-blue: #195e96;
+  --tk-blue-hover: #144d7c;
+  --tk-green: #1b9e5f;
+  --tk-green-soft: #e6f6ee;
+  --tk-orange: #c26d06;
+  --tk-orange-soft: #fff3e0;
+  --tk-red: #d93d37;
+  --tk-red-soft: #fdeceb;
+
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  /* Тот же мягкий Inter, что у меню и шапки: одна гарнитура на экране. */
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  font-size: 14px;
+  letter-spacing: -0.005em;
+  color: var(--tk-text);
+}
+
+/* Лист занимает остаток окна: колонки прокручиваются внутри себя, а не
+   всей страницей — иначе поле ответа уезжало бы вниз вместе с лентой. */
+.canvas:has(> .tk) {
+  flex: 1 1 0;
+}
+
+/* Меню выбора открываются в портале у body — тот же шрифт и там. */
+body.tk-type .app-select__menu,
+body.tk-type .app-popover {
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+}
+
+.tk-sheet {
+  flex: 1 1 0;
+  min-height: 560px;
+  display: flex;
+  flex-direction: column;
+  padding: 0 24px;
+  border: 1px solid var(--tk-line);
+  border-radius: 18px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+/* --- шапка листа ---------------------------------------------------------- */
+
+.tk-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  min-height: 60px;
+  padding: 8px 0 4px;
+}
+
+.tk-head__title {
+  margin: 0;
+  font-size: 24px;
+  line-height: 30px;
+  font-weight: 650;
+  color: var(--tk-ink);
+}
+
+.tk-head__sub {
+  margin: 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--tk-muted);
+}
+
+.tk-head__tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tk-select { width: 190px; }
+.tk-select--wide { width: 230px; }
+
+/* Значок перед значением фильтра — внутри самой кнопки выбора. */
+.tk-filter { position: relative; display: inline-flex; }
+
+.tk-filter > svg {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  z-index: 1;
+  transform: translateY(-50%);
+  color: #6b7c98;
+  pointer-events: none;
+}
+
+.tk-filter .app-select__trigger { height: 42px; padding-left: 38px; border-color: var(--tk-line); border-radius: 9px; }
+
+.tk-icon {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border: 1px solid var(--tk-line);
+  border-radius: 9px;
+  background: #ffffff;
+  color: #3f5173;
+  cursor: pointer;
+}
+
+.tk-icon:hover { border-color: #b9d0ec; color: var(--tk-blue); }
+.tk-icon:focus-visible { outline: 2px solid var(--tk-blue); outline-offset: 2px; }
+.tk-icon--spin svg { animation: tk-spin 0.9s linear infinite; }
+
+@keyframes tk-spin { to { transform: rotate(360deg); } }
+
+/* --- вкладки -------------------------------------------------------------- */
+
+.tk-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 0 -24px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--tk-line);
+}
+
+.tk-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 48px;
+  margin-bottom: -1px;
+  padding: 0 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  color: #4d5f7d;
+  cursor: pointer;
+}
+
+.tk-tab:hover { color: var(--tk-ink); }
+
+.tk-tab--on {
+  border-bottom-color: var(--tk-blue);
+  font-weight: 600;
+  color: var(--tk-blue);
+}
+
+.tk-tab__n {
+  min-width: 22px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #eef2f7;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  color: #4d5f7d;
+}
+
+.tk-tab--on .tk-tab__n { background: var(--tk-soft-2); color: var(--tk-blue); }
+
+/* --- три зоны ------------------------------------------------------------- */
+
+.tk-work {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(270px, 25fr) minmax(0, 53fr) minmax(290px, 22fr);
+  margin: 0 -24px;
+}
+
+.tk-queue,
+.tk-talk,
+.tk-side {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.tk-queue { border-right: 1px solid #e2eaf3; }
+.tk-side { border-left: 1px solid #e2eaf3; background: #ffffff; }
+
+/* --- очередь -------------------------------------------------------------- */
+
+.tk-queue__tools {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 14px 14px;
+}
+
+.tk-find {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 42px;
+  padding: 0 14px;
+  border: 1px solid var(--tk-line);
+  border-radius: 9px;
+  color: #7d8ca6;
+}
+
+.tk-find:focus-within { border-color: #9fc0ea; }
+
+.tk-find input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: none;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--tk-text);
+}
+
+/* Фильтры не выходят за колонку: не хватило места — вторая строка. */
+.tk-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+.tk-chip {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 8px;
+  background: #eef2f7;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  white-space: nowrap;
+  color: #33466a;
+  cursor: pointer;
+}
+
+.tk-chip:hover { background: #e6ecf4; }
+
+.tk-chip--on,
+.tk-chip--on:hover {
+  background: var(--tk-blue);
+  font-weight: 500;
+  color: #ffffff;
+}
+
+.tk-chip__n {
+  display: inline-grid;
+  place-items: center;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #dfe6ef;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.tk-chip--unanswered .tk-chip__n { background: var(--tk-red); color: #ffffff; }
+.tk-chip--urgent .tk-chip__n { background: #f6b33c; color: #5a3a00; }
+
+.tk-list {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0;
+  border-top: 1px solid #e8eef5;
+  transition: opacity 0.15s;
+}
+
+.tk-list--busy { opacity: 0.85; }
+.tk-rows { margin: 0; padding: 0; list-style: none; }
+.tk-rows > li { border-bottom: 1px solid #e8eef5; }
+
+.tk-row {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 14px;
+  width: 100%;
+  padding: 16px 16px 14px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+
+.tk-row:hover { background: #f8fbff; }
+.tk-row--on, .tk-row--on:hover { background: var(--tk-soft); }
+.tk-row:focus-visible { outline: 2px solid var(--tk-blue); outline-offset: -2px; }
+
+.tk-row__main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.tk-row__top { display: flex; align-items: center; gap: 6px; min-width: 0; }
+
+.tk-row__name {
+  overflow: hidden;
+  font-size: 15.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--tk-ink);
+}
+
+.tk-row__time { margin-left: auto; flex: 0 0 auto; font-size: 13px; color: #7a8aa3; }
+
+.tk-row__topic,
+.tk-row__snip {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tk-row__topic { font-size: 14.5px; color: #22355c; }
+.tk-row .tk-face { width: 48px; height: 48px; font-size: 16px; }
+.tk-row__snip { font-size: 13.5px; color: #7a8aa3; }
+.tk-row__snip b { font-weight: 600; color: #4d5f7d; }
+.tk-row__mid { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.tk-row__mid .tk-row__topic { flex: 1; min-width: 0; }
+.tk-row--unread .tk-row__topic { font-weight: 600; color: var(--tk-ink); }
+
+.tk-dot { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: var(--tk-blue); }
+
+.tk-queue__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 48px;
+  margin: 0 16px 0 24px;
+  border-top: 1px solid #edf2f8;
+  font-size: 13px;
+  color: var(--tk-muted);
+}
+
+.tk-queue__foot em { font-style: normal; color: var(--tk-orange); }
+
+/* --- статусы и пометки ---------------------------------------------------- */
+
+.tk-status {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.tk-status--NEW { background: var(--tk-soft-2); color: var(--tk-blue); }
+.tk-status--IN_PROGRESS { background: #fdf0d8; color: #9a5b07; }
+.tk-status--WAITING_EMPLOYEE { background: #eef1f5; color: #5d6f8a; }
+.tk-status--CLOSED { background: var(--tk-green-soft); color: var(--tk-green); }
+.tk-status--lg { height: 34px; padding: 0 20px; border-radius: 8px; font-size: 14px; font-weight: 600; }
+
+.tk-flag {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 7px;
+  background: var(--tk-orange-soft);
+  font-size: 12px;
+  color: var(--tk-orange);
+}
+
+.tk-flag--urgent { background: var(--tk-red-soft); color: var(--tk-red); }
+
+/* --- лица ----------------------------------------------------------------- */
+
+.tk-face {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  object-fit: cover;
+  font-size: 14px;
+  font-weight: 600;
+  color: #4a5f86;
+}
+
+.tk-face--none { background: #e6eef8; color: #3f5f8c; }
+.tk-face--xs { width: 24px; height: 24px; font-size: 10px; }
+.tk-face--sm { width: 40px; height: 40px; font-size: 14px; }
+.tk-face--md { width: 48px; height: 48px; font-size: 16px; }
+.tk-face--lg { width: 52px; height: 52px; font-size: 16px; }
+
+/* --- переписка ------------------------------------------------------------ */
+
+.tk-talk__body { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+
+.tk-talk__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 24px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--tk-line);
+}
+
+.tk-talk__who { flex: 1; min-width: 0; }
+
+.tk-talk__name {
+  margin: 0;
+  overflow: hidden;
+  font-size: 17px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--tk-ink);
+}
+
+.tk-talk__where { margin: 2px 0 0; font-size: 13px; color: var(--tk-muted); }
+.tk-pop { position: relative; }
+.tk-talk__head .tk-icon { width: 42px; height: 42px; }
+
+.tk-notice {
+  margin: 10px 24px 0;
+  padding: 8px 12px;
+  border-radius: 9px;
+  background: var(--tk-green-soft);
+  font-size: 13px;
+  color: #17744a;
+}
+
+.tk-notice--bad { background: var(--tk-red-soft); color: #b3302b; }
+
+.tk-thread {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  padding: 14px 24px 18px;
+  scrollbar-gutter: stable;
+}
+
+.tk-thread__topic {
+  margin: 0;
+  font-size: 13px;
+  color: var(--tk-muted);
+}
+
+.tk-thread__topic span { font-weight: 600; color: #4d5f7d; }
+
+.tk-day {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12.5px;
+  color: var(--tk-muted);
+}
+
+.tk-day::before,
+.tk-day::after { content: ''; flex: 1; height: 1px; background: #e8eff7; }
+
+.tk-event {
+  align-self: center;
+  max-width: 90%;
+  margin: 0;
+  font-size: 12px;
+  text-align: center;
+  color: #8a99b1;
+}
+
+.tk-event--closed {
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: var(--tk-green-soft);
+  color: #17744a;
+}
+
+.tk-msg { display: flex; gap: 10px; max-width: 70%; }
+
+.tk-msg--theirs { align-self: flex-start; align-items: flex-end; }
+.tk-msg--mine { align-self: flex-end; flex-direction: column; align-items: flex-end; gap: 4px; }
+
+
+.tk-msg__who {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 12.5px;
+  color: #8a99b1;
+}
+
+.tk-msg__who b { font-weight: 500; color: #4d5f7d; }
+.tk-msg__who time { margin-left: 4px; }
+
+.tk-msg__bubble {
+  position: relative;
+  min-width: 0;
+  padding: 10px 16px;
+  border-radius: 12px;
+}
+
+.tk-msg--mine .tk-msg__bubble { background: #e7f0fb; border-bottom-right-radius: 4px; }
+
+.tk-msg--theirs .tk-msg__bubble { border-bottom-left-radius: 4px; }
+
+.tk-msg--theirs .tk-msg__bubble {
+  border: 1px solid #e1e8f0;
+  background: #ffffff;
+}
+
+.tk-msg__text {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--tk-text);
+}
+
+/* Распорка в конце текста — место под время в последней строке. */
+.tk-msg__pad { display: inline-block; width: 62px; height: 1px; }
+
+.tk-msg__time {
+  position: absolute;
+  right: 12px;
+  bottom: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  line-height: 1;
+  color: #7a8aa3;
+}
+
+.tk-delivery { display: inline-flex; align-items: center; color: #8a99b1; }
+.tk-delivery--READ,
+.tk-msg__time .tk-delivery { color: var(--tk-blue); }
+.tk-delivery--bad { color: var(--tk-red); }
+
+.tk-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--tk-line);
+  border-radius: 10px;
+  background: #ffffff;
+  font-size: 13px;
+  text-decoration: none;
+  color: var(--tk-text);
+}
+
+.tk-file:hover { border-color: #9fc0ea; }
+.tk-file__name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tk-file__size { color: var(--tk-muted); }
+
+/* --- поле ответа ---------------------------------------------------------- */
+
+.tk-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 24px;
+  padding: 12px 0 14px;
+  border-top: 1px solid var(--tk-line);
+}
+
+.tk-compose__row { display: flex; align-items: flex-end; gap: 10px; }
+
+.tk-attach {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--tk-line);
+  border-radius: 9px;
+  background: #ffffff;
+  color: #3f5173;
+  cursor: pointer;
+}
+
+.tk-attach:hover:not(:disabled) { border-color: #9fc0ea; }
+.tk-attach:disabled { color: #b3c0d2; cursor: default; }
+
+.tk-compose__box {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+
+.tk-compose__field {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  max-height: 132px;
+  padding: 11px 44px 11px 16px;
+  border: 1px solid var(--tk-line);
+  border-radius: 9px;
+  outline: 0;
+  resize: none;
+  font: inherit;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--tk-text);
+}
+
+.tk-compose__field:focus { border-color: #9fc0ea; }
+.tk-compose__field::placeholder { color: #98a6bb; }
+
+.tk-send {
+  flex: 0 0 auto;
+  min-width: 118px;
+  height: 44px;
+  padding: 0 24px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--tk-blue);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  color: #ffffff;
+  cursor: pointer;
+}
+
+.tk-send:hover:not(:disabled) { background: var(--tk-blue-hover); }
+/* Пустое поле: та же глубокая кнопка, чуть приглушённая — не серая. */
+.tk-send:disabled { background: #4f7fab; cursor: default; }
+
+.tk-compose__file { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+
+.tk-attached {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 5px 6px 5px 10px;
+  border-radius: 9px;
+  background: var(--tk-soft);
+  font-size: 13px;
+  color: var(--tk-text);
+}
+
+.tk-attached span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tk-attached small { color: var(--tk-muted); }
+
+.tk-attached button {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: #6b7c98;
+  cursor: pointer;
+}
+
+.tk-emoji {
+  position: absolute;
+  right: 8px;
+  bottom: 7px;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: #6b7c98;
+  cursor: pointer;
+}
+
+.tk-emoji:hover:not(:disabled) { color: var(--tk-blue); }
+.tk-emoji:disabled { cursor: default; opacity: 0.35; }
+
+.tk-emoji-menu { display: grid; grid-template-columns: repeat(4, 36px); min-width: 0; }
+.tk-emoji-menu button { justify-content: center; padding: 6px; font-size: 18px; }
+
+.tk-compose__error { font-size: 13px; color: var(--tk-red); }
+
+.tk-compose--off p {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px dashed var(--tk-line);
+  border-radius: 11px;
+  background: #fafcff;
+  font-size: 13.5px;
+  color: var(--tk-muted);
+}
+
+/* --- правая зона ---------------------------------------------------------- */
+
+.tk-side__body {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 20px 18px;
+}
+
+.tk-side__close { display: none; }
+
+.tk-part { padding-bottom: 16px; }
+.tk-part + .tk-part { padding-top: 16px; border-top: 1px solid var(--tk-line); }
+
+.tk-part__title {
+  margin: 0 0 14px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--tk-ink);
+}
+
+.tk-person { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+
+.tk-person__name {
+  display: block;
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  text-decoration: none;
+  color: var(--tk-ink);
+}
+
+a.tk-person__name:hover { color: var(--tk-blue); }
+.tk-person__role { margin: 2px 0 0; font-size: 14px; color: var(--tk-muted); }
+
+.tk-facts { display: flex; flex-direction: column; gap: 14px; margin: 0; padding: 0; list-style: none; }
+
+.tk-fact {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  font-size: 14.5px;
+  color: #22355c;
+}
+
+.tk-fact > svg { color: #3f5173; }
+.tk-fact > span { overflow-wrap: anywhere; }
+
+.tk-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--tk-soft-2);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--tk-blue);
+}
+
+.tk-today::after {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-left: 8px;
+  border-radius: 50%;
+  background: #b3c0d2;
+  vertical-align: 1px;
+}
+.tk-today--ok::after { background: var(--tk-green); }
+.tk-today--wait::after { background: #e0850f; }
+.tk-today--bad::after { background: var(--tk-red); }
+
+.tk-control { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.tk-control__label { font-size: 14px; color: #4d5f7d; }
+
+.tk-state-dot { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: var(--tk-blue); }
+.tk-state-dot--IN_PROGRESS { background: #e0850f; }
+.tk-state-dot--WAITING_EMPLOYEE { background: #8a99b1; }
+.tk-state-dot--CLOSED { background: var(--tk-green); }
+
+.tk-articles { display: flex; flex-direction: column; gap: 12px; margin: 0; padding: 0; list-style: none; }
+
+.tk-articles li {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.tk-articles svg { margin-top: 2px; color: var(--tk-blue); }
+.tk-articles b { display: block; overflow: hidden; font-size: 14.5px; font-weight: 500; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; color: var(--tk-ink); }
+.tk-articles small { display: block; margin-top: 2px; overflow: hidden; font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; color: #7a8aa3; }
+.tk-articles__use { margin-top: 12px; font-size: 13px; text-align: left; }
+
+.tk-choice { display: block; min-width: 0; }
+
+.tk-choice__button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 42px;
+  padding: 0 14px;
+  border: 1px solid var(--tk-line);
+  border-radius: 9px;
+  background: #ffffff;
+  font: inherit;
+  font-size: 14.5px;
+  color: #22355c;
+  cursor: pointer;
+}
+
+.tk-choice__text { flex: 1; min-width: 0; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.tk-choice__button:hover:not(:disabled) { border-color: #9fc0ea; }
+.tk-choice__button:disabled { background: #fafcff; color: var(--tk-muted); cursor: default; }
+
+.tk-menu {
+  min-width: 200px;
+  padding: 6px;
+  border: 1px solid var(--tk-line);
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 10px 28px rgba(19, 41, 90, 0.12);
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+}
+
+.tk-menu button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  color: #22355c;
+  cursor: pointer;
+}
+
+.tk-menu button:hover:not(:disabled) { background: #f3f8fe; }
+.tk-menu button:disabled { color: #a5b2c5; cursor: default; }
+.tk-menu button[aria-checked='true'],
+.tk-menu button[aria-selected='true'] { color: #1466d8; }
+.tk-menu__group + .tk-menu__group { margin-top: 4px; padding-top: 4px; border-top: 1px solid #edf2f8; }
+
+.tk-menu__label {
+  display: block;
+  padding: 6px 10px 2px;
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #8a99b1;
+}
+
+.tk-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+  padding: 6px 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--tk-blue);
+  cursor: pointer;
+}
+
+.tk-action:hover:not(:disabled) { color: var(--tk-blue-hover); }
+.tk-action:disabled { color: #a5b2c5; cursor: default; }
+
+.tk-closed { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 6px; }
+
+.tk-closed__state {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--tk-green);
+}
+
+.tk-closed .tk-action { margin-top: 0; }
+
+/* --- состояния ------------------------------------------------------------ */
+
+.tk-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 28px 16px;
+  font-size: 13.5px;
+  text-align: center;
+  color: var(--tk-muted);
+}
+
+.tk-empty p { margin: 0; }
+.tk-empty svg { color: #9fb2cc; }
+.tk-empty--center { flex: 1; justify-content: center; }
+.tk-empty--queue { padding-top: 48px; }
+.tk-muted { margin: 0; font-size: 13px; color: var(--tk-muted); }
+
+.tk-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--tk-blue);
+  cursor: pointer;
+}
+
+.tk-link:hover { color: var(--tk-blue-hover); }
+
+.tk-ghost {
+  display: block;
+  height: 12px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, #eef3f9, #f7f9fc, #eef3f9);
+  background-size: 200% 100%;
+  animation: tk-ghost 1.2s ease-in-out infinite;
+}
+
+.tk-ghost--short { width: 60%; }
+.tk-ghost--round { width: 42px; height: 42px; border-radius: 50%; }
+.tk-row--ghost { cursor: default; }
+.tk-row--ghost .tk-row__main { gap: 8px; padding-top: 6px; }
+.tk-ghost-block { display: flex; align-items: center; gap: 12px; }
+.tk-ghost-block .tk-ghost:last-child { flex: 1; }
+
+@keyframes tk-ghost { to { background-position: -200% 0; } }
+
+/* --- закрытие ------------------------------------------------------------- */
+
+.tk-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(19, 41, 90, 0.28);
+}
+
+.tk-modal__card {
+  width: min(440px, 100%);
+  padding: 22px 24px;
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 20px 48px rgba(19, 41, 90, 0.2);
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  color: #22355c;
+}
+
+.tk-modal__card h2 { margin: 0 0 4px; font-size: 18px; font-weight: 600; color: #13295a; }
+.tk-modal__card fieldset { margin: 16px 0 12px; padding: 0; border: 0; }
+.tk-modal__card legend { margin-bottom: 8px; font-size: 13px; font-weight: 600; color: #4d5f7d; }
+
+.tk-radio {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.tk-radio input { width: 16px; height: 16px; margin: 0; accent-color: #1466d8; }
+
+.tk-input {
+  width: 100%;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid #dbe7f3;
+  border-radius: 10px;
+  font: inherit;
+  font-size: 14px;
+  color: #22355c;
+}
+
+.tk-input:focus { outline: 0; border-color: #9fc0ea; }
+
+.tk-modal__buttons { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+
+.tk-btn {
+  height: 40px;
+  padding: 0 16px;
+  border: 1px solid #dbe7f3;
+  border-radius: 10px;
+  background: #ffffff;
+  font: inherit;
+  font-size: 14px;
+  color: #22355c;
+  cursor: pointer;
+}
+
+.tk-btn--main { border-color: #1466d8; background: #1466d8; font-weight: 600; color: #ffffff; }
+.tk-btn--main:disabled { border-color: #c9d6e6; background: #c9d6e6; cursor: default; }
+
+/* --- узкие экраны --------------------------------------------------------- */
+
+.tk-only-narrow,
+.tk-only-small,
+.tk-scrim { display: none; }
+
+/* Правая зона уезжает в выдвижную панель: очереди и переписке нужна
+   ширина, а контекст смотрят по требованию. */
+@media (max-width: 1279px) {
+  .tk-work { grid-template-columns: minmax(250px, 32fr) minmax(0, 68fr); }
+  .tk-only-narrow { display: inline-grid; }
+
+  .tk-side {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 5;
+    width: min(360px, 92%);
+    border-left: 1px solid var(--tk-line);
+    box-shadow: -12px 0 28px rgba(19, 41, 90, 0.1);
+    transform: translateX(105%);
+    transition: transform 0.2s ease;
+    visibility: hidden;
+  }
+
+  .tk-side--open { transform: none; visibility: visible; }
+
+  .tk-side__close {
+    display: inline-grid;
+    position: absolute;
+    top: 12px;
+    right: 14px;
+    width: 34px;
+    height: 34px;
+  }
+
+  .tk-scrim {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 4;
+    border: 0;
+    background: rgba(19, 41, 90, 0.12);
+  }
+}
+
+/* Совсем узко — очередь или переписка, по очереди. */
+@media (max-width: 860px) {
+  .tk-sheet { padding: 0 16px; border-radius: 16px; }
+  .tk-tabs { margin: 0 -16px; padding: 0 4px; }
+  .tk-head { flex-direction: column; }
+  .tk-head__tools { width: 100%; flex-wrap: wrap; }
+  .tk-select, .tk-select--wide { flex: 1 1 150px; width: auto; }
+  .tk-tabs { gap: 16px; overflow-x: auto; }
+  .tk-tab { flex: 0 0 auto; }
+  .tk-work { grid-template-columns: minmax(0, 1fr); margin: 0 -16px; }
+  .tk-queue { border-right: 0; }
+  .tk-queue__tools { padding: 14px 16px 10px; }
+  .tk-list { padding: 0 8px; }
+  .tk-queue__foot { margin: 0 16px; }
+  .tk-talk { display: none; }
+  .tk-work--picked .tk-queue { display: none; }
+  .tk-work--picked .tk-talk { display: flex; }
+  .tk-only-small { display: inline-grid; }
+  .tk-talk__head, .tk-compose { margin: 0 16px; }
+  .tk-thread { padding: 12px 16px; }
+  .tk-msg { max-width: 92%; }
+}

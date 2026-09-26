@@ -66,8 +66,98 @@ class SelfServiceClient:
             "/me/absences", telegram_id, params={"limit": limit}
         )
 
+    async def absence_application(
+        self, telegram_id: int, request_id: str
+    ) -> tuple[bytes, str]:
+        """Заявление по заявке: содержимое PDF и имя файла.
+
+        Тот же адрес, что и у кабинета. Бумага собирается из заявки на
+        каждое обращение, поэтому в очереди её нет и быть не может:
+        сохранённая копия молча разошлась бы с продлённой заявкой.
+        """
+        session = await self._get_session()
+        headers = {
+            BOT_SECRET_HEADER: settings.backend_bot_secret,
+            EMPLOYEE_HEADER: str(telegram_id),
+        }
+        async with session.get(
+            f"{self._base_url}/me/absences/{request_id}/application",
+            headers=headers,
+        ) as response:
+            if response.status >= 400:
+                raise _error(response.status, await self._body(response))
+            return await response.read(), f"zayavlenie-{request_id[:8]}.pdf"
+
+    async def absence_certificate(
+        self, telegram_id: int, request_id: str
+    ) -> tuple[bytes, str]:
+        """Приложенная справка: содержимое и имя файла.
+
+        Тот же адрес, что и у кабинета. Имя собирается по типу: справка
+        приходит и снимком с камеры, и PDF, а файл без расширения
+        Telegram покажет, но телефон открыть не предложит.
+        """
+        session = await self._get_session()
+        headers = {
+            BOT_SECRET_HEADER: settings.backend_bot_secret,
+            EMPLOYEE_HEADER: str(telegram_id),
+        }
+        async with session.get(
+            f"{self._base_url}/me/absences/{request_id}/document",
+            headers=headers,
+        ) as response:
+            if response.status >= 400:
+                raise _error(response.status, await self._body(response))
+            kind = response.headers.get("Content-Type", "").split(";")[0].strip()
+            suffix = {
+                "application/pdf": ".pdf",
+                "image/jpeg": ".jpg",
+                "image/png": ".png",
+            }.get(kind, "")
+            return await response.read(), f"spravka-{request_id[:8]}{suffix}"
+
+    async def question_reply_file(
+        self, telegram_id: int, message_id: str
+    ) -> tuple[bytes, str]:
+        """Файл, который кадровик приложил к ответу на обращение.
+
+        Имя — то, с которым файл приложили: «Бланк заявления.pdf»
+        человеку понятнее, чем набор букв.
+        """
+        session = await self._get_session()
+        headers = {
+            BOT_SECRET_HEADER: settings.backend_bot_secret,
+            EMPLOYEE_HEADER: str(telegram_id),
+        }
+        async with session.get(
+            f"{self._base_url}/me/questions/replies/{message_id}/file",
+            headers=headers,
+        ) as response:
+            if response.status >= 400:
+                raise _error(response.status, await self._body(response))
+            return await response.read(), _file_name(
+                response.headers.get("Content-Disposition", ""),
+                response.headers.get("Content-Type", ""),
+            )
+
     async def leave_balance(self, telegram_id: int) -> dict:
         return await self._get("/me/leave-balance", telegram_id)
+
+    async def ask_hr(
+        self, telegram_id: int, *, text: str, message_id: int | None = None
+    ) -> dict:
+        """Сообщение в отдел кадров.
+
+        В какое обращение оно ляжет — в открытое, переоткрытое или новое, —
+        решает backend. `message_id` защищает от дубля, если бот отправит
+        то же сообщение повторно после сбоя сети.
+        """
+        return await self._request(
+            "POST",
+            "/me/questions/messages",
+            headers={EMPLOYEE_HEADER: str(telegram_id)},
+            json={"text": text, "telegram_message_id": message_id},
+        )
 
     async def scan(
         self,
@@ -105,6 +195,177 @@ class SelfServiceClient:
             json=body,
         )
 
+    async def day_notice(
+        self,
+        *,
+        telegram_user_id: int,
+        kind: str,
+        comment: str | None = None,
+    ) -> dict:
+        """Ответ на напоминание: «Опаздываю» или «Не приду».
+
+        Ни отпуска, ни больничного это не оформляет — они проходят
+        согласование и живут своими заявками. Здесь только объяснение
+        пустой строки в табеле.
+        """
+        body: dict = {"kind": kind}
+        if comment:
+            body["comment"] = comment
+        return await self._request(
+            "POST",
+            "/me/attendance/notice",
+            headers={EMPLOYEE_HEADER: str(telegram_user_id)},
+            json=body,
+        )
+
+    async def upload_absence_document(
+        self,
+        *,
+        telegram_user_id: int,
+        request_id: str,
+        filename: str,
+        content: bytes,
+        content_type: str,
+    ) -> dict:
+        """Приложить справку к заявке файлом из чата.
+
+        Тот же адрес, что у Mini App: второй путь загрузки означал бы
+        вторую проверку типа и размера, которую однажды забудут
+        обновить. Проверяет файл сервер — бот только передаёт его.
+        """
+        form = aiohttp.FormData()
+        form.add_field(
+            "document", content, filename=filename, content_type=content_type
+        )
+        session = await self._get_session()
+        headers = {
+            BOT_SECRET_HEADER: settings.backend_bot_secret,
+            EMPLOYEE_HEADER: str(telegram_user_id),
+        }
+        async with session.post(
+            f"{self._base_url}/me/absences/{request_id}/document",
+            headers=headers,
+            data=form,
+        ) as response:
+            body = await self._body(response)
+            if response.status >= 400:
+                raise _error(response.status, body)
+            return body
+
+    async def ask(
+        self, telegram_id: int, *, text: str, client_request_id: str | None = None
+    ) -> dict:
+        """Спросить ассистента.
+
+        Обращение в CRM здесь НЕ создаётся: вопрос, на который ассистент
+        ответил, кадровику не нужен, а очередь, забитая тем, что
+        решилось само, перестаёт быть очередью.
+        """
+        body: dict = {"text": text}
+        if client_request_id:
+            body["client_request_id"] = client_request_id
+        return await self._request(
+            "POST", "/me/ask",
+            headers={EMPLOYEE_HEADER: str(telegram_id)},
+            json=body,
+        )
+
+    async def escalate(
+        self, telegram_id: int, *, text: str, message_id: int | None = None
+    ) -> dict:
+        """Передать вопрос HR — только по явному нажатию человека.
+
+        Уходит ИСХОДНЫЙ вопрос, а не ответ ассистента: кадровик должен
+        прочитать то, что написал сотрудник.
+        """
+        body: dict = {"text": text}
+        if message_id is not None:
+            body["telegram_message_id"] = message_id
+        return await self._request(
+            "POST", "/me/ask/escalate",
+            headers={EMPLOYEE_HEADER: str(telegram_id)},
+            json=body,
+        )
+
+    # --- первичное ознакомление -------------------------------------------
+
+    async def onboarding(self, telegram_id: int) -> dict:
+        """Где человек остановился и что показать дальше.
+
+        Следующий шаг выбирает сервер. Бот не просит «покажи седьмую
+        карточку»: кнопка в Telegram живёт в чате вечно, её можно нажать
+        через месяц из старого сообщения, и порядок, держащийся на ней,
+        порядком быть перестаёт.
+        """
+        return await self._get("/me/onboarding", telegram_id)
+
+    async def onboarding_start(
+        self, telegram_id: int, *, message_id: int | None = None
+    ) -> dict:
+        return await self._request(
+            "POST", "/me/onboarding/start",
+            headers={EMPLOYEE_HEADER: str(telegram_id)},
+            json={"message_id": message_id},
+        )
+
+    async def onboarding_section(self, telegram_id: int, position: int) -> dict:
+        """Карточка по номеру — для «← Назад» и перечитывания из меню."""
+        return await self._get(
+            f"/me/onboarding/sections/{position}", telegram_id
+        )
+
+    async def onboarding_acknowledge(
+        self, telegram_id: int, section_id: str, *, message_id: int | None = None
+    ) -> dict:
+        """«Я ознакомился». Повтор безопасен: ключ в базе решает это молча."""
+        return await self._request(
+            "POST", "/me/onboarding/acknowledge",
+            headers={EMPLOYEE_HEADER: str(telegram_id)},
+            json={"section_id": section_id, "message_id": message_id},
+        )
+
+    async def onboarding_decision(
+        self, telegram_id: int, version_id: str, decision: str
+    ) -> dict:
+        return await self._request(
+            "POST", "/me/onboarding/decision",
+            headers={EMPLOYEE_HEADER: str(telegram_id)},
+            json={"version_id": version_id, "decision": decision},
+        )
+
+    async def policy_text(self, telegram_id: int, version_id: str) -> dict:
+        """Полный текст редакции — то, что открывает отдельная кнопка."""
+        return await self._get(f"/me/policies/{version_id}", telegram_id)
+
+    async def policy_file(
+        self, telegram_id: int, version_id: str
+    ) -> tuple[bytes, str, str]:
+        """Утверждённый PDF: содержимое, имя файла и тип.
+
+        Скачивается здесь, а не отдаётся ссылкой: файл лежит в приватном
+        хранилище, и адреса, который можно переслать, у него нет и быть
+        не должно.
+        """
+        session = await self._get_session()
+        headers = {
+            BOT_SECRET_HEADER: settings.backend_bot_secret,
+            EMPLOYEE_HEADER: str(telegram_id),
+        }
+        async with session.get(
+            f"{self._base_url}/me/policies/{version_id}/file", headers=headers
+        ) as response:
+            if response.status >= 400:
+                raise _error(response.status, await self._body(response))
+            name = "document.pdf"
+            disposition = response.headers.get("Content-Disposition", "")
+            if "filename=" in disposition:
+                name = disposition.split("filename=")[-1].strip('"; ')
+            return (
+                await response.read(),
+                name,
+                response.headers.get("Content-Type", "application/pdf"),
+            )
+
     # --- привязка ---------------------------------------------------------
 
     async def consume_link_token(
@@ -128,6 +389,41 @@ class SelfServiceClient:
             headers={},
             json={
                 "token": token,
+                "telegram_user_id": telegram_user_id,
+                "telegram_chat_id": telegram_chat_id,
+                "telegram_username": telegram_username,
+                "language_code": language_code,
+            },
+        )
+
+    async def accept_link_terms(self, *, telegram_user_id: int) -> dict:
+        return await self._request(
+            "POST", "/telegram/bot/link/accept", headers={},
+            json={"telegram_user_id": telegram_user_id},
+        )
+
+    async def recognize(
+        self,
+        *,
+        telegram_user_id: int,
+        telegram_chat_id: int,
+        telegram_username: str | None,
+        language_code: str | None = None,
+    ) -> dict:
+        """Спросить backend: не ждут ли этого человека.
+
+        Бот не может написать первым — это правило Telegram. Всё, что он
+        может, — узнать открывшего его человека по имени в Telegram,
+        которое кадровик указал в карточке.
+
+        Ответ — то, чем поздороваться: имя, офис, график, руководитель.
+        Доступа это не даёт: привязка ждёт подтверждения кадровика.
+        """
+        return await self._request(
+            "POST",
+            "/telegram/bot/recognize",
+            headers={},
+            json={
                 "telegram_user_id": telegram_user_id,
                 "telegram_chat_id": telegram_chat_id,
                 "telegram_username": telegram_username,
@@ -214,3 +510,20 @@ def _error(status: int, body: Any):
 
 
 __all__ = ["BOT_SECRET_HEADER", "EMPLOYEE_HEADER", "SelfServiceClient"]
+
+
+def _file_name(disposition: str, content_type: str) -> str:
+    """Имя файла из `Content-Disposition` (RFC 5987) или по типу."""
+    from urllib.parse import unquote
+
+    marker = "filename*=UTF-8''"
+    if marker in disposition:
+        name = unquote(disposition.split(marker, 1)[1].split(";", 1)[0].strip())
+        if name:
+            return name
+    kind = content_type.split(";")[0].strip()
+    return "file" + {
+        "application/pdf": ".pdf",
+        "image/jpeg": ".jpg",
+        "image/png": ".png",
+    }.get(kind, "")

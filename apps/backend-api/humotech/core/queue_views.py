@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import serializers
@@ -28,11 +29,21 @@ from rest_framework.views import APIView
 
 from humotech.absences.services import AbsenceService
 from humotech.absences.views import hr_request_json
+from humotech.core.timeframes import organization_zone
 from humotech.attendance.hr import AttendanceHrService
 from humotech.attendance.serializers import CorrectionRequestSerializer
 from humotech.attendance.views import _uuid_param
 from humotech.core.pagination import Cursor, normalize_limit
 from humotech.core.rbac import Actor
+from humotech.employees.models import EmployeeAssignment
+from humotech.employees.services import current_primary_assignment_filter
+
+# Заявка, по которой ещё не приняли решение. Одинаково у отсутствий и у
+# исправлений отметок: статусы у обеих моделей одни и те же.
+OPEN_STATUSES = "SUBMITTED,IN_REVIEW"
+LEAVE_TYPES = "ANNUAL_LEAVE,UNPAID_LEAVE"
+# Заявка «на сам отпуск» — создание или продление. Отмена — отдельная вкладка.
+OWN_KINDS = "CREATE,EXTEND"
 
 
 class QueueItemSerializer(serializers.Serializer):
@@ -41,8 +52,21 @@ class QueueItemSerializer(serializers.Serializer):
     kind = serializers.ChoiceField(choices=["absence", "correction"])
     id = serializers.UUIDField()
     created_at = serializers.DateTimeField()
+    place = serializers.DictField(
+        allow_null=True,
+        help_text="Где сотрудник работает сейчас: office_name, department_name",
+    )
     absence = serializers.DictField(required=False)
     correction = serializers.DictField(required=False)
+
+
+class QueueCountsSerializer(serializers.Serializer):
+    open = serializers.IntegerField(help_text="Ждут решения: отсутствия и исправления")
+    all = serializers.IntegerField()
+    leave = serializers.IntegerField(help_text="Отпуска: создание и продление")
+    sick = serializers.IntegerField(help_text="Больничные: создание и продление")
+    fixes = serializers.IntegerField(help_text="Исправления отметок")
+    cancel = serializers.IntegerField(help_text="Заявки на отмену отсутствия")
 
 
 class QueueResponseSerializer(serializers.Serializer):
@@ -81,6 +105,10 @@ class RequestQueueView(APIView):
         ),
         parameters=[
             OpenApiParameter("kind", str, enum=["absence", "correction"]),
+            OpenApiParameter(
+                "request_kind", str,
+                description="Вид заявки на отсутствие: CREATE, EXTEND, CANCEL",
+            ),
             OpenApiParameter("status", str),
             OpenApiParameter(
                 "employee_id", str,
@@ -116,6 +144,9 @@ class RequestQueueView(APIView):
         rows.sort(key=lambda row: row.order, reverse=True)
         page = rows[:size]
         has_more = len(rows) > size
+        places = _places(
+            {str(row.body["employee"]["id"]) for row in page if row.body.get("employee")}
+        )
 
         return Response(
             {
@@ -124,6 +155,7 @@ class RequestQueueView(APIView):
                         "kind": row.kind,
                         "id": str(row.id),
                         "created_at": row.created_at,
+                        "place": places.get(str((row.body.get("employee") or {}).get("id"))),
                         row.kind: row.body,
                     }
                     for row in page
@@ -148,12 +180,17 @@ class RequestQueueView(APIView):
             office_id=_uuid_param(request, "office_id"),
             region_id=_uuid_param(request, "region_id"),
             search=request.query_params.get("search") or None,
-            date_from=request.query_params.get("date_from") or None,
-            date_to=request.query_params.get("date_to") or None,
+            date_from=_date_text(request, "date_from"),
+            date_to=_date_text(request, "date_to"),
+            request_kind=request.query_params.get("request_kind") or None,
         )
         rows = list(_before(queryset, position)[: size + 1])
+        # Пояс показа считается один раз на страницу: он один на всю
+        # организацию, а запрос за ним — не бесплатный.
+        zone = organization_zone(actor.organization_id)
         return [
-            _Row(row.created_at, row.id, "absence", hr_request_json(row)) for row in rows
+            _Row(row.created_at, row.id, "absence", hr_request_json(row, zone))
+            for row in rows
         ]
 
     def _corrections(self, actor, request, position, size) -> list[_Row]:
@@ -173,6 +210,88 @@ class RequestQueueView(APIView):
         ]
 
 
+class RequestCountsView(APIView):
+    """Счётчики вкладок очереди одним ответом.
+
+    Фильтры те же, что у списка, кроме статуса, вида и типа — это и есть
+    оси вкладок. Права те же: без права на один из потоков отказ, а не
+    молча урезанные числа, которые читались бы как «заявок нет».
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        operation_id="requests_queue_counts",
+        summary="Счётчики вкладок очереди заявок",
+        parameters=[
+            OpenApiParameter("employee_id", str),
+            OpenApiParameter("office_id", str),
+            OpenApiParameter("region_id", str),
+            OpenApiParameter("search", str),
+            OpenApiParameter("date_from", str),
+            OpenApiParameter("date_to", str),
+        ],
+        responses=QueueCountsSerializer,
+        tags=["Заявки"],
+    )
+    def get(self, request):
+        actor = Actor.from_user(request.user)
+        common = {
+            "employee_id": _uuid_param(request, "employee_id"),
+            "office_id": _uuid_param(request, "office_id"),
+            "region_id": _uuid_param(request, "region_id"),
+            "search": request.query_params.get("search") or None,
+        }
+        dates = {
+            "date_from": _date_text(request, "date_from"),
+            "date_to": _date_text(request, "date_to"),
+        }
+        absences = AbsenceService()
+        corrections = AttendanceHrService()
+
+        def absence(**extra) -> int:
+            return absences.queue(actor, **common, **dates, **extra).count()
+
+        def correction(**extra) -> int:
+            return corrections.correction_queue(actor, **common, **extra).count()
+
+        return Response(
+            {
+                "open": absence(status=OPEN_STATUSES) + correction(status=OPEN_STATUSES),
+                "all": absence() + correction(),
+                "leave": absence(type_code=LEAVE_TYPES, request_kind=OWN_KINDS),
+                "sick": absence(type_code="SICK_LEAVE", request_kind=OWN_KINDS),
+                "fixes": correction(),
+                "cancel": absence(request_kind="CANCEL"),
+            }
+        )
+
+
+def _places(employee_ids: set[str]) -> dict[str, dict]:
+    """Офис и отдел по текущему основному назначению — одним запросом.
+
+    Место берётся на сегодня, а не на дату заявки: кадровик ищет человека
+    там, где тот работает сейчас. Нет назначения — нет и места (`None`),
+    а не выдуманный «главный офис».
+    """
+    if not employee_ids:
+        return {}
+    rows = (
+        EmployeeAssignment.objects.filter(
+            current_primary_assignment_filter(date.today()),
+            employee_id__in=employee_ids,
+        )
+        .select_related("office", "department")
+    )
+    return {
+        str(row.employee_id): {
+            "office_name": row.office.name if row.office_id else None,
+            "department_name": row.department.name if row.department_id else None,
+        }
+        for row in rows
+    }
+
+
 def _before(queryset, position):
     """Строго раньше позиции курсора — тем же сравнением, что в `paginate`."""
     from django.db.models import Q
@@ -190,6 +309,20 @@ def _position(cursor: str | None):
     return Cursor.decode(cursor) if cursor else None
 
 
+def _date_text(request, name: str) -> str | None:
+    """Дата фильтра, проверенная здесь, а не в базе.
+
+    Сервис очереди отсутствий кладёт строку в `__date__gte` как есть, и
+    «garbage» или «2026-02-30» долетали до Django-валидации поля внутри
+    запроса — это 500, а не 400.
+    """
+    from humotech.analytics.metrics import check_date
+    from humotech.attendance.views import _date_param
+
+    value = check_date(_date_param(request, name), name)
+    return value.isoformat() if value else None
+
+
 def _int_param(request, name: str) -> int | None:
     raw = request.query_params.get(name)
     if not raw:
@@ -200,4 +333,4 @@ def _int_param(request, name: str) -> int | None:
         return None
 
 
-__all__ = ["RequestQueueView"]
+__all__ = ["RequestCountsView", "RequestQueueView"]

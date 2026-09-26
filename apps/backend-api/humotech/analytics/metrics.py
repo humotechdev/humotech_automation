@@ -47,7 +47,10 @@ from humotech.core.rbac import Actor
 from humotech.core.service import BaseService
 from humotech.core.timeframes import days_in, local_date, office_zone, range_bounds
 from humotech.employees.models import Employee, EmployeeAssignment
-from humotech.employees.services import current_primary_assignment_filter
+from humotech.employees.services import (
+    current_primary_assignment_filter,
+    roster_assignment_filter,
+)
 from humotech.offices.models import Office
 from humotech.schedules.models import CalendarException, EmployeeScheduleAssignment
 
@@ -337,7 +340,9 @@ class AnalyticsService(BaseService):
             queryset = queryset.filter(visible)
         if region_id:
             queryset = queryset.filter(region_id=region_id)
-        return list(queryset.order_by("name"))
+        # Регион подтягивается сразу: обзор группирует офисы по регионам,
+        # и без этого получился бы запрос на каждый офис.
+        return list(queryset.select_related("region").order_by("name"))
 
     def _build(
         self,
@@ -406,7 +411,7 @@ class AnalyticsService(BaseService):
         only: uuid.UUID | None,
     ) -> set[uuid.UUID]:
         queryset = EmployeeAssignment.objects.filter(
-            current_primary_assignment_filter(at),
+            roster_assignment_filter(at),
             office_id__in=office_ids,
             employee__organization_id=actor.organization_id,
         )
@@ -764,7 +769,32 @@ def _differences(left: Report, right: Report) -> list[dict]:
     return result
 
 
+#: Границы допустимых дат в параметрах отчётов и аналитики.
+#:
+#: Не бизнес-правило, а защита арифметики: 0001-01-01 и 9999-12-31 —
+#: законные даты ISO, но «сутки до» первой и «сутки после» второй
+#: в Python не существуют, и сервис отвечал OverflowError, то есть 500.
+#: Сравнение «с тем же периодом год назад» отступает ещё на год, поэтому
+#: запас с обеих сторон.
+DATE_MIN = date(1900, 1, 1)
+DATE_MAX = date(2200, 12, 31)
+
+
+def check_date(value: date | None, field: str) -> date | None:
+    """Дата из запроса — в пределах, где с ней можно считать."""
+    if value is not None and not (DATE_MIN <= value <= DATE_MAX):
+        raise ValidationFailed(
+            f"Дата вне допустимого диапазона {DATE_MIN.isoformat()} — "
+            f"{DATE_MAX.isoformat()}",
+            details={field: [f"Допустимы даты с {DATE_MIN.isoformat()} "
+                             f"по {DATE_MAX.isoformat()}"]},
+        )
+    return value
+
+
 def _validate_period(first: date, last: date) -> None:
+    check_date(first, "date_from")
+    check_date(last, "date_to")
     if last < first:
         raise ValidationFailed(
             "Конец периода раньше начала",

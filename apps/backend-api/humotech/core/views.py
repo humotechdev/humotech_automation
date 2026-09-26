@@ -76,3 +76,38 @@ def readyz(request) -> JsonResponse:
         },
         status=200 if not issues else 503,
     )
+
+
+# --- ответы на ошибки вне DRF --------------------------------------------
+#
+# Django по умолчанию отвечает на 400/403/404/500 HTML-страницей. Клиенты
+# проекта — CRM, бот, Mini App — разбирают только JSON и ждут единого
+# конверта `{"error": {"code", "message", "details"}}`. К тому же HTML-500
+# при случайно включённом DEBUG — это трейсбек с настройками наружу.
+# Поэтому здесь свои обработчики, и никаких подробностей в них нет: ни
+# текста исключения, ни пути к файлу, ни запроса к базе. Подробности —
+# в журнале сервера (`django.request` пишет их сам).
+
+
+def _error_json(code: str, message: str, status: int) -> JsonResponse:
+    return JsonResponse(
+        {"error": {"code": code, "message": message, "details": None}},
+        status=status,
+        json_dumps_params={"ensure_ascii": False},
+    )
+
+
+def bad_request(request, exception=None) -> JsonResponse:
+    return _error_json("bad_request", "Некорректный запрос", 400)
+
+
+def permission_denied(request, exception=None) -> JsonResponse:
+    return _error_json("forbidden", "Недостаточно прав", 403)
+
+
+def page_not_found(request, exception=None) -> JsonResponse:
+    return _error_json("not_found", "Не найдено", 404)
+
+
+def server_error(request) -> JsonResponse:
+    return _error_json("server_error", "Внутренняя ошибка сервера", 500)

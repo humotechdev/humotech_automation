@@ -10,7 +10,7 @@
 
 Третье и было дефектом: сетевой сбой на секунду отбирал у человека
 меню до следующего `/start`, потому что бот присылал «Помощь» — одну
-кнопку вместо одиннадцати.
+кнопку вместо полного меню.
 """
 
 from __future__ import annotations
@@ -87,7 +87,7 @@ def test_active_employee_gets_the_whole_menu_after_a_bot_restart():
     _, markup = message.answers[-1]
     assert kb.BTN_SCAN in labels(markup)
     assert kb.BTN_OPEN in labels(markup)
-    assert len(labels(markup)) == 11
+    assert len(labels(markup)) == len(kb.ALL_BUTTONS) - 1  # всё, кроме запасной «кабинет»
 
 
 def test_the_keyboard_carries_the_flags_that_keep_it_open():
@@ -136,7 +136,7 @@ def test_plain_menu_keeps_the_same_labels_without_web_app():
     _, markup = message.answers[-1]
     assert labels(markup)[:2] == [kb.BTN_SCAN, kb.BTN_OPEN]
     assert web_apps(markup) == 0
-    assert len(labels(markup)) == 11
+    assert len(labels(markup)) == len(kb.ALL_BUTTONS) - 1  # всё, кроме запасной «кабинет»
 
 
 def test_the_switch_turns_the_launch_row_into_plain_buttons(monkeypatch):
@@ -203,7 +203,7 @@ def test_a_confirmed_link_restores_the_full_menu():
     assert labels(message.answers[-1][1]) == [kb.BTN_HELP]
 
     asyncio.run(start(message, PROFILE, None))
-    assert len(labels(message.answers[-1][1])) == 11
+    assert len(labels(message.answers[-1][1])) == len(kb.ALL_BUTTONS) - 1  # всё, кроме запасной «кабинет»
 
 
 # --- следующие ответы не затирают меню -------------------------------------
@@ -213,7 +213,7 @@ def test_an_unrecognised_message_returns_the_full_menu_not_help():
     asyncio.run(anything_else(message, PROFILE, None))
 
     _, markup = message.answers[-1]
-    assert len(labels(markup)) == 11
+    assert len(labels(markup)) == len(kb.ALL_BUTTONS) - 1  # всё, кроме запасной «кабинет»
     assert web_apps(markup) == 2
 
 

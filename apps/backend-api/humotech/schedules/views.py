@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from humotech.core.api import ServiceViewSet, validated
 from humotech.schedules.serializers import (
+    DepartmentAssignSerializer,
     ScheduleAssignSerializer,
     ScheduleAssignmentSerializer,
     WorkScheduleCreateSerializer,
@@ -50,6 +52,11 @@ class WorkScheduleViewSet(ServiceViewSet):
             serializer_class=WorkScheduleDetailSerializer,
         )
 
+
+    def destroy(self, request, pk=None):
+        """Убрать совсем. Сервер откажет, если на запись уже ссылались."""
+        self.service.delete(self.actor, pk)
+        return Response(status=status.HTTP_204_NO_CONTENT)
     @action(detail=True, methods=["post"])
     def deactivate(self, request, pk=None):
         return self.item_response(self.service.deactivate(self.actor, pk))
@@ -57,6 +64,23 @@ class WorkScheduleViewSet(ServiceViewSet):
     @action(detail=True, methods=["post"])
     def reactivate(self, request, pk=None):
         return self.item_response(self.service.reactivate(self.actor, pk))
+
+    @action(detail=True, methods=["post"], url_path="assign-department")
+    def assign_department(self, request, pk=None):
+        """Назначить график всем, кто числится в отделе сейчас.
+
+        Возвращает, кому назначили и кого пропустили: отказ по одному
+        человеку не отменяет остальных, и молчать о нём нельзя.
+        """
+        payload = validated(DepartmentAssignSerializer, request.data)
+        return Response(
+            self.service.assign_to_department(
+                self.actor,
+                department_id=payload["department_id"],
+                schedule_id=pk,
+                valid_from=payload["valid_from"],
+            )
+        )
 
     @action(detail=True, methods=["post"])
     def assign(self, request, pk=None):

@@ -200,6 +200,19 @@ def test_consume_creates_pending_binding_not_access(service, hr, employee):
     )
 
 
+def test_employee_terms_activate_link_without_hr_confirmation(service, hr, employee):
+    """Согласие в боте завершает именно свою персональную привязку."""
+    issued = service.create_invitation(hr, employee.id)
+    service.consume(token=issued.token, telegram_user_id=777_1, telegram_chat_id=777_1)
+
+    account = service.accept_terms(telegram_user_id=777_1)
+
+    assert account.status == "ACTIVE"
+    assert TelegramLinkInvitation.objects.get(id=issued.invitation.id).status == "USED"
+    employee.refresh_from_db()
+    assert employee.telegram_connected is True
+
+
 def test_used_token_cannot_be_used_twice(service, hr, employee):
     issued = service.create_invitation(hr, employee.id)
     service.consume(

@@ -49,6 +49,9 @@ class AiSettings(BaseSettings):
 
     ai_max_retrieved_chunks: int = 6
     ai_max_context_tokens: int = 4000
+    # Потолок ответа модели. Сотрудник читает ответ с телефона, а без
+    # потолка цена одного вопроса ограничена только умолчанием провайдера.
+    ai_max_output_tokens: int = 800
     ai_query_max_length: int = 1000
     ai_cache_ttl_seconds: int = 900
     ai_log_retention_days: int = 90

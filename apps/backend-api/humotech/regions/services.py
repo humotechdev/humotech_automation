@@ -25,6 +25,14 @@ from humotech.regions.models import Region
 AUDITED_FIELDS = ("code", "name", "timezone", "status")
 
 
+def _free_code(prefix: str, taken: set[str]) -> str:
+    """Свободный код справочника: префикс и порядковый номер."""
+    number = len(taken) + 1
+    while f"{prefix}{number}" in taken:
+        number += 1
+    return f"{prefix}{number}"
+
+
 class RegionService(BaseService):
     """Требует `regions.read` для чтения и `regions.manage` для изменений."""
 
@@ -65,14 +73,32 @@ class RegionService(BaseService):
     # --------------------------------------------------------------- изменение
 
     def create(
-        self, actor: Actor, *, code: str, name: str, timezone: str | None = None
+        self, actor: Actor, *, name: str, code: str | None = None,
+        timezone: str | None = None,
     ) -> Region:
+        """Код не обязателен: его придумывает сервер.
+
+        По коду стоит уникальный ключ и на него ссылаются выгрузки, но
+        человеку он не нужен — регион опознаётся названием. Просить
+        кадровика сочинить `REG-3` значит просить его придумать
+        техническую подробность.
+        """
         self.access.require(actor, "regions.manage")
 
         with self.atomic():
             region = Region.objects.create(
                 organization_id=actor.organization_id,
-                code=clean_code(code),
+                code=(
+                    clean_code(code) if code
+                    else _free_code(
+                        "REG-",
+                        set(
+                            Region.objects.filter(
+                                organization_id=actor.organization_id
+                            ).values_list("code", flat=True)
+                        ),
+                    )
+                ),
                 name=clean_text(name, field="name", required=True),
                 timezone=validate_timezone(timezone, required=False),
                 status="ACTIVE",

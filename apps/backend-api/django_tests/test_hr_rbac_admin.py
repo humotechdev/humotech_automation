@@ -330,8 +330,11 @@ class TestSetPassword:
         ).status_code == 200
         assert browser.get(f"{API}/auth/me").status_code == 200
 
+        # `employees.read` у администратора обязательно: пароль ставят только
+        # тому, у кого прав не больше, чем у себя (см. `_require_manageable`).
         api_client.force_authenticate(
-            user=make_user(organization, permissions=("users.manage",))
+            user=make_user(organization,
+                           permissions=("users.manage", "employees.read"))
         )
         api_client.post(
             f"{API}/users/{victim.id}/set-password/",

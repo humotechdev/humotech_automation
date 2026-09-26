@@ -15,9 +15,11 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 
 import * as api from '../api/crm';
 import { ApiFailure } from '../api/errors';
-import { Icon } from './nav-icons';
+import { AppIcon } from './AppIcon';
+import { AppSelectField } from './AppSelect';
+import { AppDateRangePicker } from './DateRangePicker';
 import { Diff } from './UserCard';
-import { useBlock } from '../features/dashboard/data';
+import { today, useBlock } from '../features/dashboard/data';
 import {
   AUDIT_FILTERS,
   actionTitle,
@@ -28,7 +30,7 @@ import { moment } from '../features/time/zone';
 
 const PAGE = '25';
 
-export function AuditTab({ zone, mayRead }: { zone: string; mayRead: boolean }) {
+export function AuditTab({ zone }: { zone: string }) {
   const at = useCallback(
     (value: string) => moment(value, zone, false),
     [zone],
@@ -59,7 +61,6 @@ export function AuditTab({ zone, mayRead }: { zone: string; mayRead: boolean }) 
   const [block, reload] = useBlock(
     (signal) => api.auditLogs(params, signal),
     `audit|${key}`,
-    mayRead,
   );
 
   // Смена фильтра — это другой набор: дочитанный хвост от прежнего к нему
@@ -100,44 +101,19 @@ export function AuditTab({ zone, mayRead }: { zone: string; mayRead: boolean }) 
     }
   }, [nextCursor, params]);
 
-  if (!mayRead) {
-    return (
-      <p className="empty empty--bad">
-        Нет права на чтение журнала. В нём видно, кто и что менял по всей
-        организации, поэтому это отдельное разрешение — попросите
-        <span> </span>
-        <span className="mono">audit.read</span> у администратора.
-      </p>
-    );
-  }
 
   return (
     <section className="panel" aria-label="Журнал действий">
       <div className="toolbar">
-        <label className="pick">
-          <span className="visually-hidden">Действие</span>
-          <select value={action} aria-label="Действие"
-                  onChange={(event) => setAction(event.target.value)}>
+        <AppSelectField label="Действие" value={action} onChange={setAction}>
             {AUDIT_FILTERS.map((item) => (
               <option key={item.key} value={item.key}>{item.title}</option>
             ))}
-          </select>
-        </label>
-        <label className="pick pick--date">
-          <Icon name="calendar" size={16} />
-          <span className="visually-hidden">Начало периода</span>
-          <input type="date" value={from} max={to || undefined}
-                 aria-label="Начало периода"
-                 onChange={(event) => setFrom(event.target.value)} />
-        </label>
-        <label className="pick pick--date">
-          <span className="visually-hidden">Конец периода</span>
-          <input type="date" value={to} min={from || undefined}
-                 aria-label="Конец периода"
-                 onChange={(event) => setTo(event.target.value)} />
-        </label>
+        </AppSelectField>
+        <AppDateRangePicker label="Период журнала" now={today()} from={from} to={to} className="audit-date-range"
+          onFromChange={setFrom} onToChange={setTo} />
         <label className="find">
-          <Icon name="search" size={16} />
+          <AppIcon name="search" size={16} />
           <input type="search" value={actor} placeholder="ID инициатора"
                  aria-label="Идентификатор инициатора"
                  onChange={(event) => setActor(event.target.value.trim())} />
@@ -166,7 +142,7 @@ export function AuditTab({ zone, mayRead }: { zone: string; mayRead: boolean }) 
       {block.state === 'ready' && items.length > 0 && (
         <>
           <div className="scroller">
-            <table className="grid-table" aria-label="Записи журнала">
+            <table className="grid-table table-cards" aria-label="Записи журнала">
               <thead>
                 <tr>
                   <th scope="col">Когда</th>
@@ -180,9 +156,9 @@ export function AuditTab({ zone, mayRead }: { zone: string; mayRead: boolean }) 
                 {items.map((entry) => (
                   <tr key={entry.id}>
                     <td className="num">{at(entry.occurred_at)}</td>
-                    <td>{entry.actor_email ?? 'Система'}</td>
-                    <td>{actionTitle(entry.action)}</td>
-                    <td>
+                    <td data-label="Инициатор">{entry.actor_email ?? 'Система'}</td>
+                    <td data-label="Действие">{actionTitle(entry.action)}</td>
+                    <td data-label="Объект">
                       <span className="who__text">
                         <span className="who__name">
                           {entityTitle(entry.entity_type)}
@@ -192,7 +168,7 @@ export function AuditTab({ zone, mayRead }: { zone: string; mayRead: boolean }) 
                         </span>
                       </span>
                     </td>
-                    <td><Diff entry={entry} at={at} /></td>
+                    <td data-label="Что изменилось"><Diff entry={entry} at={at} /></td>
                   </tr>
                 ))}
               </tbody>

@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Generic, TypeVar
 
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Q, QuerySet
 
 from humotech.core.errors import ValidationFailed
@@ -31,6 +32,35 @@ DEFAULT_PAGE_SIZE = 50
 MAX_PAGE_SIZE = 200
 
 T = TypeVar("T")
+
+# Наш курсор — это base64 от JSON в сотню байт. Всё, что заметно длиннее,
+# заведомо не наше, и разбирать его незачем.
+MAX_CURSOR_LENGTH = 512
+
+# Всё, чем может закончиться разбор чужой строки: кривой base64, не JSON,
+# JSON не той формы (список, число, строка), JSON глубиной в тысячу
+# уровней, дата за краем календаря, `id` не строкой.
+_CURSOR_ERRORS = (
+    binascii.Error, ValueError, KeyError, TypeError, AttributeError,
+    json.JSONDecodeError, RecursionError, OverflowError,
+)
+
+
+def _bad_cursor(raw) -> ValidationFailed:
+    # Ввод клиента в ответе режется: эхо мегабайтной строки ни к чему.
+    return ValidationFailed(
+        "Некорректный курсор постраничного вывода",
+        details={"cursor": str(raw)[:100]},
+    )
+
+
+def _load_cursor(raw: str) -> dict:
+    if len(raw) > MAX_CURSOR_LENGTH:
+        raise ValueError("cursor too long")
+    payload = json.loads(base64.urlsafe_b64decode(raw.encode()))
+    if not isinstance(payload, dict):
+        raise TypeError("cursor is not an object")
+    return payload
 
 
 @dataclass(frozen=True)
@@ -49,18 +79,16 @@ class Cursor:
     @classmethod
     def decode(cls, raw: str) -> "Cursor":
         try:
-            payload = json.loads(base64.urlsafe_b64decode(raw.encode()))
-            return cls(
-                created_at=datetime.fromisoformat(payload["created_at"]),
-                id=uuid.UUID(payload["id"]),
-            )
-        except (
-            binascii.Error, ValueError, KeyError, TypeError, json.JSONDecodeError
-        ) as exc:
+            payload = _load_cursor(raw)
+            created_at = datetime.fromisoformat(payload["created_at"])
+            if created_at.tzinfo is None:
+                # Наивное время сравнилось бы с timestamptz по поясу сервера:
+                # курсор, выданный нами, всегда с поясом — значит, чужой.
+                raise ValueError("cursor without timezone")
+            return cls(created_at=created_at, id=uuid.UUID(payload["id"]))
+        except _CURSOR_ERRORS as exc:
             # курсор приходит от клиента: испорченный не должен ронять запрос
-            raise ValidationFailed(
-                "Некорректный курсор постраничного вывода", details={"cursor": raw}
-            ) from exc
+            raise _bad_cursor(raw) from exc
 
 
 @dataclass(frozen=True)
@@ -138,14 +166,13 @@ class FieldCursor:
     @classmethod
     def decode(cls, raw: str) -> "FieldCursor":
         try:
-            payload = json.loads(base64.urlsafe_b64decode(raw.encode()))
-            return cls(value=str(payload["v"]), id=uuid.UUID(payload["id"]))
-        except (
-            binascii.Error, ValueError, KeyError, TypeError, json.JSONDecodeError
-        ) as exc:
-            raise ValidationFailed(
-                "Некорректный курсор постраничного вывода", details={"cursor": raw}
-            ) from exc
+            payload = _load_cursor(raw)
+            value = payload["v"]
+            if not isinstance(value, str) or "\x00" in value:
+                raise TypeError("cursor value is not a plain string")
+            return cls(value=value, id=uuid.UUID(payload["id"]))
+        except _CURSOR_ERRORS as exc:
+            raise _bad_cursor(raw) from exc
 
 
 def paginate_on(
@@ -168,10 +195,17 @@ def paginate_on(
 
     if cursor:
         position = FieldCursor.decode(cursor)
+        # Значение приводится к типу поля заранее: иначе строка «abc» в
+        # курсоре календаря дошла бы до ORM и уронила запрос на сравнении
+        # с датой. Подпись у курсора нет — его может собрать кто угодно.
+        try:
+            value = queryset.model._meta.get_field(field).to_python(position.value)
+        except (DjangoValidationError, ValueError, TypeError, OverflowError) as exc:
+            raise _bad_cursor(cursor) from exc
         operator = "lt" if descending else "gt"
         queryset = queryset.filter(
-            Q(**{f"{field}__{operator}": position.value})
-            | Q(**{field: position.value, f"id__{operator}": position.id})
+            Q(**{f"{field}__{operator}": value})
+            | Q(**{field: value, f"id__{operator}": position.id})
         )
 
     rows = list(queryset[: size + 1])

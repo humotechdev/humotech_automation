@@ -17,6 +17,8 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import date, time, timedelta
 
+from django.db.models import Q
+
 from humotech.core.errors import Conflict, NotFound, ValidationFailed
 from humotech.core.pagination import Page, paginate
 from humotech.core.rbac import Actor, snapshot
@@ -27,7 +29,9 @@ from humotech.core.validation import (
     validate_day_interval,
     validate_timezone,
 )
-from humotech.employees.models import Employee
+from humotech.departments.models import Department
+from humotech.employees.models import Employee, EmployeeAssignment
+from humotech.employees.selectors import require_visible_employee
 from humotech.schedules.models import (
     EmployeeScheduleAssignment,
     ScheduleBreak,
@@ -212,6 +216,36 @@ class WorkScheduleService(BaseService):
 
     # ------------------------------------------------- назначение сотруднику
 
+    def delete(self, actor: Actor, schedule_id: uuid.UUID) -> None:
+        """Убрать график совсем — только пока его никому не назначали.
+
+        Назначенный график остаётся навсегда: по нему считается
+        отработанное время прошлых месяцев. Такой график выключают.
+        """
+        self.access.require(actor, "schedules.manage")
+        schedule = self.access.require_schedule(actor, schedule_id)
+
+        used = EmployeeScheduleAssignment.objects.filter(
+            schedule_id=schedule.id
+        ).count()
+        if used:
+            raise Conflict(
+                f"График уже назначен сотрудникам ({used}). Его можно только "
+                f"выключить: по нему считается отработанное время прошлых "
+                f"месяцев",
+                details={"schedule_id": str(schedule.id), "used": used},
+            )
+
+        with self.atomic():
+            self.audit.record(
+                actor, action="schedule.delete", entity_type="work_schedules",
+                entity_id=schedule.id, before=snapshot(schedule, AUDITED_FIELDS),
+                after=None,
+            )
+            # Дни и перерывы уходят вместе с графиком: они его часть, а не
+            # самостоятельные записи, и ссылаются только на него.
+            schedule.delete()
+
     def assign_to_employee(
         self,
         actor: Actor,
@@ -293,6 +327,72 @@ class WorkScheduleService(BaseService):
             )
         return assignment
 
+    def assign_to_department(
+        self,
+        actor: Actor,
+        *,
+        department_id: uuid.UUID,
+        schedule_id: uuid.UUID,
+        valid_from: date,
+    ) -> dict:
+        """Назначить график всем, кто числится в отделе СЕЙЧАС.
+
+        Это снимок состава, а не правило «у отдела такой график». Разница
+        видна при переводе: человек, пришедший в отдел завтра, графика от
+        этого назначения не получит, а ушедший из отдела не потеряет тот,
+        по которому уже работает. Правило «график следует за отделом»
+        меняло бы прошлое при каждом переводе — и табель за прошлый месяц
+        переставал бы сходиться сам собой.
+
+        Отказ по одному человеку не отменяет остальных: у кого-то график
+        уже назначен с той же даты, и это не повод не назначить его всем
+        прочим. Кто не получил и почему — в ответе.
+        """
+        self.access.require(actor, "schedules.manage")
+        # График и отдел проверяются ДО выборки состава: иначе чужой график
+        # отвечал бы «в отделе нет сотрудников» вместо «не найден», а отказ
+        # по области посреди цикла оставил бы половину назначений сделанной.
+        self.access.require_schedule(actor, schedule_id)
+        department = Department.objects.filter(
+            id=department_id, organization_id=actor.organization_id
+        ).first()
+        if department is None:
+            raise NotFound("Отдел не найден")
+        if department.office_id is not None:
+            self.access.require_office(actor, department.office_id)
+
+        staff = EmployeeAssignment.objects.filter(
+            department_id=department_id, organization_id=actor.organization_id
+        ).filter(Q(valid_to__isnull=True) | Q(valid_to__gte=valid_from))
+        # Общий отдел (без офиса) тянется через все регионы. Региональному
+        # HR достаются только люди его области: назначить график человеку
+        # чужого офиса по одному запросу он не может, и через отдел — тоже.
+        visible = self.access.visible_office_ids(actor)
+        if visible is not None:
+            staff = staff.filter(office_id__in=visible)
+        today_staff = list(staff.values_list("employee_id", flat=True).distinct())
+        if not today_staff:
+            raise Conflict(
+                "В отделе нет сотрудников: назначать график некому",
+                details={"department_id": str(department_id)},
+            )
+
+        assigned: list[str] = []
+        skipped: list[dict] = []
+        for employee_id in today_staff:
+            try:
+                self.assign_to_employee(
+                    actor,
+                    employee_id=employee_id,
+                    schedule_id=schedule_id,
+                    valid_from=valid_from,
+                )
+                assigned.append(str(employee_id))
+            except (Conflict, ValidationFailed) as exc:
+                skipped.append({"employee_id": str(employee_id),
+                                "reason": str(exc)})
+        return {"assigned": assigned, "skipped": skipped}
+
     def current_assignment(
         self, employee_id: uuid.UUID, *, at: date | None = None
     ) -> EmployeeScheduleAssignment | None:
@@ -322,12 +422,12 @@ class WorkScheduleService(BaseService):
     # ------------------------------------------------------ внутренние правила
 
     def _require_employee(self, actor: Actor, employee_id: uuid.UUID) -> Employee:
-        employee = Employee.objects.filter(
-            id=employee_id, organization_id=actor.organization_id
-        ).first()
-        if employee is None:
-            raise NotFound("Сотрудник не найден")
-        return employee
+        """Сотрудник своей организации И своей области видимости.
+
+        Одной организации мало: региональный HR иначе назначал бы график
+        и читал историю графиков людей чужого региона.
+        """
+        return require_visible_employee(self.access, actor, employee_id)
 
     @staticmethod
     def _validate_days(days: list[DaySpec]) -> None:

@@ -13,31 +13,42 @@
 
 :root {
   /* --- поверхности --- */
-  --bg: #f7f9fc;
+  --bg: #f4f7fb;
   --surface: #ffffff;
   --surface-sunken: #eaf0f6;
 
   /* --- тёмно-синий: только действия, активная навигация, важные цифры --- */
-  --navy: #102a43;
-  --navy-pressed: #0b1f33;
-  --navy-soft: #eaf0f6;
+  --navy: #102a56;
+  --navy-pressed: #0b2e5e;
+  --navy-soft: #eaf1fb;
+
+  /* Верхняя панель — единственная крупная тёмная плоскость приложения. */
+  --topbar: #0b2e5e;
+
+  /* Основной синий: ссылка, активная вкладка, нажатое действие. */
+  --accent: #1976e8;
+  --accent-soft: #e8f1fe;
 
   /* --- текст --- */
-  --text: #111827;
-  --text-muted: #667085;
+  --text: #102a56;
+  --text-muted: #6b7f9f;
+  --text-faint: #a9b7c9;
   --text-on-navy: #ffffff;
   --text-on-navy-muted: #b6c6d6;
 
   /* --- границы --- */
-  --border: #e4e7ec;
+  --border: #d8e3f0;
 
   /* --- состояния: точка, иконка, подпись, светлый badge — не заливка --- */
-  --success: #168a55;
-  --success-bg: #e7f4ee;
+  --success: #159a70;
+  --success-bg: #e9f7f2;
   --danger: #c33d3d;
   --danger-bg: #fbecec;
-  --warning: #b7791f;
-  --warning-bg: #fbf3e4;
+  --warning: #c87900;
+  --warning-bg: #fff3df;
+  /* Серый неактивного: выходной, будущий день, «данных нет». */
+  --idle: #a9b7c9;
+  --idle-bg: #eef2f7;
 
   /* --- типографика --- */
   --font: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -63,14 +74,18 @@
 
   --screen-padding: 16px;
   --card-padding: 16px;
-  --radius-card: 16px;
+  --radius-card: 14px;
   --radius-control: 12px;
   --radius-pill: 999px;
   --tap-target: 48px;
 
   /* Единственная тень в приложении, и та почти незаметна: карточки
-     разделены границей, а не высотой. */
-  --shadow-raised: 0 2px 8px rgba(16, 42, 67, 0.1);
+     разделены границей, а не высотой. Размытие маленькое намеренно —
+     мягкое пятно под каждой карточкой на телефоне читается как грязь. */
+  --shadow-raised: 0 1px 3px rgba(16, 42, 86, 0.06);
+
+  /* Высота верхней панели без безопасной зоны. */
+  --topbar-height: 72px;
 
   --motion: 160ms;
 
@@ -111,7 +126,7 @@
   /* Высота нижней навигации + её безопасная зона: на эту величину
      отступает контент каждого экрана, иначе последняя карточка
      оказывается под панелью и до неё нельзя дотянуться. */
-  --nav-height: 60px;
+  --nav-height: 62px;
   --nav-total: calc(var(--nav-height) + var(--safe-bottom));
 
   color-scheme: light;

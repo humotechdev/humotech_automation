@@ -35,19 +35,21 @@ import { useEffect, useRef, useState } from 'react';
 import { api, type ScanResponse } from '../api';
 import { time } from '../format';
 import {
-  SCAN_RESULTS,
-  SCAN_UNKNOWN,
   cameraAvailable,
   closeScanner,
+  isSticker,
   looksLikeOurCode,
   newAttemptId,
+  scanView,
   scanWithTelegram,
 } from '../scanner';
 import {
+  type Position,
   exitFullscreen,
   fullscreenSupported,
   haptic,
   requestFullscreen,
+  requestPosition,
 } from '../telegram';
 import { Field } from '../ui/fields';
 import { AlertIcon, CameraIcon, CheckIcon, QrIcon } from '../ui/icons';
@@ -60,6 +62,8 @@ import {
 
 type Phase =
   | { kind: 'idle'; error?: string }
+  /** Ждём телефон: печатный код без координат сервер не примет. */
+  | { kind: 'locating' }
   | { kind: 'working' }
   | { kind: 'done'; result: ScanResponse };
 
@@ -107,11 +111,42 @@ export function Scan({
     };
   }, []);
 
-  async function submit(code: string) {
-    if (phase.kind === 'working') return; // защита от двойного нажатия
+  /**
+   * Отправка отметки. Одна на оба пути — и камеру, и ручной ввод.
+   *
+   * `locating` — уже запущенный запрос геопозиции. Камера передаёт его
+   * сюда, потому что запускает заранее: ждать местоположение ПОСЛЕ
+   * сканирования значило бы добавить человеку у двери лишние секунды
+   * там, где их можно было потратить, пока он наводит телефон.
+   */
+  async function submit(code: string, locating?: Promise<Position | null>) {
+    if (phase.kind === 'working' || phase.kind === 'locating') return;
+    const text = code.trim();
+
+    // Печатный код у двери висит круглосуточно: сам по себе он говорит
+    // только «этот стикер существует». Поэтому сервер принимает его
+    // исключительно с координатами, и спрашивать их надо здесь — иначе
+    // запрос уйдёт заведомо в отказ.
+    let position: Position | null = null;
+    if (isSticker(text)) {
+      setPhase({ kind: 'locating' });
+      position = await (locating ?? requestPosition());
+      if (!position) {
+        haptic('error');
+        setPhase({
+          kind: 'idle',
+          error:
+            'Телефон не сообщил, где вы. Печатный код у двери принимается '
+            + 'только вместе с местоположением: включите геолокацию, '
+            + 'разрешите её Telegram и попробуйте снова.',
+        });
+        return;
+      }
+    }
+
     setPhase({ kind: 'working' });
 
-    const response = await api.scan(code.trim(), newAttemptId());
+    const response = await api.scan(text, newAttemptId(), position);
     if (!response.ok) {
       haptic('error');
       setPhase({ kind: 'idle', error: response.message });
@@ -139,10 +174,14 @@ export function Scan({
     const stop = new AbortController();
     leaving.current = stop;
 
+    // Геопозиция запрашивается ОДНОВРЕМЕННО с открытием камеры, а не
+    // после неё. Пока человек наводит телефон на код, телефон успевает
+    // определить место — и к моменту отправки ждать уже нечего.
+    const locating = requestPosition();
     const outcome = await scanWithTelegram(window, stop.signal);
 
     if (outcome.kind === 'code') {
-      await submit(outcome.value);
+      await submit(outcome.value, locating);
       return;
     }
     if (outcome.kind === 'cancelled') return;
@@ -168,7 +207,13 @@ export function Scan({
     );
   }
 
-  const busy = phase.kind === 'working';
+  const busy = phase.kind === 'working' || phase.kind === 'locating';
+  // Два разных ожидания подряд: сперва телефон ищет место, потом ответ
+  // ждёт сервер. Подписать их одинаково значило бы показать человеку
+  // «Отправляем…» в тот момент, когда ещё ничего не отправлено.
+  const waiting = phase.kind === 'locating'
+    ? 'Определяем, где вы…'
+    : 'Отправляем…';
 
   return (
     <div className={`scan-screen${wide ? ' scan-screen-wide' : ''}`}>
@@ -180,7 +225,7 @@ export function Scan({
 
       <div className="scan-frame">
         {busy ? (
-          <span className="muted">Отправляем…</span>
+          <span className="muted">{waiting}</span>
         ) : (
           <QrIcon size={40} />
         )}
@@ -201,7 +246,7 @@ export function Scan({
           wide
           icon={<CameraIcon size={20} />}
         >
-          {busy ? 'Отправляем…' : 'Открыть камеру'}
+          {busy ? waiting : 'Открыть камеру'}
         </PrimaryButton>
       )}
 
@@ -267,7 +312,7 @@ export function ScanResult({
   onHome: () => void;
   onAgain: () => void;
 }) {
-  const view = SCAN_RESULTS[result.status] ?? SCAN_UNKNOWN;
+  const view = scanView(result);
 
   return (
     <div className="scan-result">

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import serializers
 from rest_framework.permissions import IsAuthenticated
@@ -10,7 +11,11 @@ from rest_framework.views import APIView
 
 from humotech.analytics.dashboard import DashboardService
 from humotech.analytics.metrics import AnalyticsService
+from humotech.analytics.overview import OverviewService
+from humotech.core.errors import ValidationFailed
 from humotech.attendance.views import _date_param, _uuid_param
+from humotech.analytics.movement import MovementService
+from humotech.analytics.people import PeopleService
 from humotech.core.rbac import Actor
 
 
@@ -110,7 +115,7 @@ class DashboardView(APIView):
         actor = Actor.from_user(request.user)
         summary = DashboardService().summary(
             actor,
-            day=_date_param(request, "date"),
+            day=_bounded_date(request, "date"),
             office_id=_uuid_param(request, "office_id"),
             region_id=_uuid_param(request, "region_id"),
             department_id=_uuid_param(request, "department_id"),
@@ -237,10 +242,228 @@ class ComparisonView(APIView):
             right_id=_uuid_param(request, "right_id"),
             first=first,
             last=last,
-            right_first=_date_param(request, "right_first"),
-            right_last=_date_param(request, "right_last"),
+            right_first=_bounded_date(request, "right_first"),
+            right_last=_bounded_date(request, "right_last"),
         )
         return Response(result)
+
+
+class OverviewResponseSerializer(serializers.Serializer):
+    period = serializers.DictField()
+    previous_period = serializers.DictField()
+    weekday = serializers.IntegerField(allow_null=True)
+    generated_at = serializers.DateTimeField()
+    timezones = serializers.ListField(child=serializers.CharField())
+    summary = serializers.DictField()
+    days = serializers.ListField(child=serializers.DictField())
+    previous_days = serializers.ListField(child=serializers.DictField())
+    offices = serializers.ListField(child=serializers.DictField())
+    # Та же явка уровнем выше: регионы собираются из своих офисов, а не
+    # считаются отдельно — два подсчёта одного числа однажды разойдутся.
+    regions = serializers.ListField(child=serializers.DictField())
+    # Рейтинг людей: худшая явка сверху. Страницу открывают, чтобы найти
+    # проблему, а не полюбоваться отличниками.
+    employees = serializers.ListField(child=serializers.DictField())
+    arrivals = serializers.DictField()
+    weekdays = serializers.DictField()
+
+
+class MovementSpanSerializer(serializers.Serializer):
+    first = serializers.DateField()
+    last = serializers.DateField()
+    hired = serializers.IntegerField()
+    left = serializers.IntegerField()
+    difference = serializers.IntegerField()
+
+
+class MovementResponseSerializer(serializers.Serializer):
+    current = MovementSpanSerializer()
+    previous = MovementSpanSerializer()
+    month_before = MovementSpanSerializer()
+    year_before = MovementSpanSerializer()
+    headcount = serializers.IntegerField()
+
+
+class MovementView(APIView):
+    """Движение сотрудников: принято, уволено, разница.
+
+    Отдельно от посещаемости: там единица измерения — дни, здесь —
+    люди, и складывать их в одном ответе значит путать два разных
+    вопроса.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Движение сотрудников",
+        description=(
+            "Приём считается по дате выхода, увольнение — по дате "
+            "увольнения, а не по дате создания карточки: человека "
+            "оформляют заранее. Сравнение идёт с равным по длине "
+            "предыдущим периодом, а также с тем же периодом месяцем и "
+            "годом раньше."
+        ),
+        parameters=PERIOD_PARAMS
+        + [
+            OpenApiParameter("region_id", str),
+            OpenApiParameter("office_id", str),
+        ],
+        responses=MovementResponseSerializer,
+        tags=["Аналитика"],
+    )
+    def get(self, request):
+        actor = Actor.from_user(request.user)
+        first, last = _period(request)
+        report = MovementService().report(
+            actor,
+            first=first,
+            last=last,
+            office_id=_uuid_param(request, "office_id"),
+            region_id=_uuid_param(request, "region_id"),
+        )
+        return Response({
+            "current": _movement_json(report.current),
+            "previous": _movement_json(report.previous),
+            "month_before": _movement_json(report.month_before),
+            "year_before": _movement_json(report.year_before),
+            "headcount": report.headcount,
+        })
+
+
+def _movement_json(row) -> dict:
+    return {
+        "first": row.first.isoformat(),
+        "last": row.last.isoformat(),
+        "hired": row.hired,
+        "left": row.left,
+        "difference": row.difference,
+    }
+
+
+class AnalyticsOverviewView(APIView):
+    """Всё для страницы «Аналитика» одним ответом.
+
+    Сводка с предыдущим равным периодом, каждый день периода, рейтинг
+    офисов, ритм прихода и дни недели. Правила — те же, что у `/analytics`.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Обзор аналитики",
+        description=(
+            "Доли приходят с числителем и знаменателем; percent = null — "
+            "нулевой знаменатель, а не ноль процентов. Выходные, дни без "
+            "графика, оформленные отсутствия и будущие дни в неявку не "
+            "входят. Среднее время — только по закрытым посещениям. Сдвиг "
+            "прихода считается от начала личной смены сотрудника, сутки — в "
+            "поясе его офиса."
+        ),
+        parameters=PERIOD_PARAMS
+        + [
+            OpenApiParameter("region_id", str),
+            OpenApiParameter("office_id", str),
+            OpenApiParameter("department_id", str),
+            OpenApiParameter("employee_id", str),
+            OpenApiParameter(
+                "weekday", int,
+                description="Детализация по дню недели: 1 — понедельник … 7",
+            ),
+            OpenApiParameter(
+                "people_limit", int,
+                description="Сколько сотрудников вернуть (по умолчанию 50, не больше 2000)",
+            ),
+        ],
+        responses=OverviewResponseSerializer,
+        tags=["Аналитика"],
+    )
+    def get(self, request):
+        actor = Actor.from_user(request.user)
+        first, last = _period(request)
+        raw = request.query_params.get("weekday")
+        try:
+            weekday = int(raw) if raw else None
+        except ValueError:
+            raise ValidationFailed(
+                "День недели — число от 1 до 7", details={"weekday": raw}
+            ) from None
+        raw_limit = request.query_params.get("people_limit")
+        try:
+            people_limit = max(1, min(int(raw_limit), 2000)) if raw_limit else None
+        except ValueError:
+            raise ValidationFailed(
+                "Число сотрудников — целое", details={"people_limit": raw_limit}
+            ) from None
+        body = OverviewService().overview(
+            actor,
+            first=first,
+            last=last,
+            people_limit=people_limit,
+            region_id=_uuid_param(request, "region_id"),
+            office_id=_uuid_param(request, "office_id"),
+            department_id=_uuid_param(request, "department_id"),
+            employee_id=_uuid_param(request, "employee_id"),
+            weekday=weekday,
+        )
+        return Response(body)
+
+
+SCOPE_PARAMS = PERIOD_PARAMS + [
+    OpenApiParameter("region_id", str),
+    OpenApiParameter("office_id", str),
+    OpenApiParameter("department_id", str),
+]
+
+
+def _scope(request) -> dict:
+    first, last = _period(request)
+    return {
+        "first": first,
+        "last": last,
+        "region_id": _uuid_param(request, "region_id"),
+        "office_id": _uuid_param(request, "office_id"),
+        "department_id": _uuid_param(request, "department_id"),
+    }
+
+
+class TeamView(APIView):
+    """Команда за период: численность, приём, уход, переводы, состав."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Команда за период",
+        description=(
+            "Численность на дату — принят, не уволен и числится основным "
+            "назначением в выборке. Оставлен после стажировки — запись "
+            "журнала о переводе в штат. Перевод — смена отдела или офиса."
+        ),
+        parameters=SCOPE_PARAMS,
+        responses={200: OpenApiTypes.OBJECT},
+        tags=["Аналитика"],
+    )
+    def get(self, request):
+        return Response(PeopleService().team(Actor.from_user(request.user), **_scope(request)))
+
+
+class ProbationView(APIView):
+    """Стажировки: кто сейчас стажируется и чем закончились решения."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Стажировки",
+        description=(
+            "Сейчас на стажировке — по статусу и текущему назначению. "
+            "Решения периода: оставлен в штате (журнал) и не прошёл "
+            "стажировку (увольнение с этой причиной)."
+        ),
+        parameters=SCOPE_PARAMS,
+        responses={200: OpenApiTypes.OBJECT},
+        tags=["Аналитика"],
+    )
+    def get(self, request):
+        return Response(PeopleService().probation(Actor.from_user(request.user), **_scope(request)))
 
 
 def _period(request):
@@ -254,12 +477,23 @@ def _period(request):
 
     from humotech.core.timeframes import month_range
 
-    first = _date_param(request, "date_from")
-    last = _date_param(request, "date_to")
+    first = _bounded_date(request, "date_from")
+    last = _bounded_date(request, "date_to")
     if first and last:
         return first, last
     default_first, default_last = month_range(_date.today())
     return first or default_first, last or default_last
+
+
+def _bounded_date(request, name: str):
+    """Дата из строки запроса в пределах, где с ней можно считать.
+
+    0001-01-01 и 9999-12-31 — законный ISO, но «день до» и «день после»
+    них в Python не существуют: без этой проверки сервис падал с 500.
+    """
+    from humotech.analytics.metrics import check_date
+
+    return check_date(_date_param(request, name), name)
 
 
 def _series_wanted(request) -> bool:

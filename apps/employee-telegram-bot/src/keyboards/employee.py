@@ -46,6 +46,8 @@ from aiogram.types import (
     WebAppInfo,
 )
 
+from src.keyboards import onboarding as onboarding_kb
+
 #: Верхний ряд: две кнопки запуска Mini App.
 BTN_SCAN = "📷 Отметиться"
 BTN_OPEN = "👤 Кабинет"
@@ -62,7 +64,22 @@ BTN_HISTORY = "🕘 История посещений"
 BTN_SICK_LEAVE = "🤒 Больничный"
 BTN_VACATION = "🏖 Отпуск"
 BTN_MY_REQUESTS = "📄 Мои заявки"
+BTN_ASK_HR = "✍️ Написать в HR"
+#: Правила и обязательные документы. Подпись берётся из клавиатур
+#: ознакомления: по ней же фильтруется обработчик, и вторая копия строки
+#: разошлась бы с ним молча.
+BTN_RULES = onboarding_kb.BTN_RULES
 BTN_HELP = "❓ Помощь"
+#: Выход из ввода вопроса. В общем меню её нет: она нужна только там.
+BTN_CANCEL = "✖️ Отмена"
+BTN_SEND_LOCATION = "📍 Отправить геопозицию"
+LINK_ACCEPT = "link:accept"
+
+
+def link_consent() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Согласен с условиями", callback_data=LINK_ACCEPT)
+    ]])
 
 # Все подписи разом — по ним фильтруются хендлеры, и список должен быть один.
 #
@@ -72,7 +89,8 @@ BTN_HELP = "❓ Помощь"
 ALL_BUTTONS = (
     BTN_SCAN, BTN_OPEN,
     BTN_CABINET, BTN_WHERE_AM_I, BTN_TODAY, BTN_WEEK, BTN_MONTH,
-    BTN_HISTORY, BTN_SICK_LEAVE, BTN_VACATION, BTN_MY_REQUESTS, BTN_HELP,
+    BTN_HISTORY, BTN_SICK_LEAVE, BTN_VACATION, BTN_MY_REQUESTS, BTN_ASK_HR,
+    BTN_RULES, BTN_HELP,
 )
 
 #: Путь быстрой отметки. Домен не хранится нигде в коде — приходит из
@@ -104,6 +122,7 @@ def employee_menu(
     *,
     private: bool = True,
     launch_apps: bool = True,
+    onboarding: bool = False,
 ) -> ReplyKeyboardMarkup:
     """Меню сотрудника с рабочей привязкой. Единственный сборщик на бота.
 
@@ -123,8 +142,15 @@ def employee_menu(
     кнопками. Нужно там, где клиент не показал клавиатуру с `web_app`:
     подписи и обработчики остаются прежними, путь становится на одно
     нажатие длиннее, но кнопки есть.
+
+    `onboarding=True` добавляет сверху «Продолжить ознакомление». Набор
+    при этом остаётся полным: ознакомление доступа не закрывает, и
+    прятать рабочие разделы у того, кто не дочитал, значило бы наказать
+    его за то, что лечится напоминанием.
     """
     rows = []
+    if onboarding:
+        rows.append([KeyboardButton(text=onboarding_kb.BTN_CONTINUE)])
     if mini_app_url:
         rows.append(
             _launch_row(mini_app_url, private=private, launch_apps=launch_apps)
@@ -137,7 +163,11 @@ def employee_menu(
             [KeyboardButton(text=BTN_HISTORY)],
             [KeyboardButton(text=BTN_SICK_LEAVE),
              KeyboardButton(text=BTN_VACATION)],
-            [KeyboardButton(text=BTN_MY_REQUESTS), KeyboardButton(text=BTN_HELP)],
+            [KeyboardButton(text=BTN_MY_REQUESTS), KeyboardButton(text=BTN_ASK_HR)],
+            # «Правила и документы» остаются в меню и после ознакомления:
+            # человек имеет право перечитать то, с чем согласился, и
+            # увидеть новую редакцию, когда её выпустят.
+            [KeyboardButton(text=BTN_RULES), KeyboardButton(text=BTN_HELP)],
         ]
     )
     return ReplyKeyboardMarkup(
@@ -145,6 +175,32 @@ def employee_menu(
         resize_keyboard=True,
         is_persistent=True,
         one_time_keyboard=False,
+    )
+
+
+def cancel_menu() -> ReplyKeyboardMarkup:
+    """Клавиатура на время ввода вопроса: только выход из него."""
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text=BTN_CANCEL)]],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+
+
+def location_request() -> ReplyKeyboardMarkup:
+    """Клавиатура после скана печатного QR: геопозиция или отмена.
+
+    Геопозицию отправляет сам Telegram по нажатию — текущую, с
+    погрешностью. Набрать координаты руками здесь нельзя, и это
+    намеренно.
+    """
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=BTN_SEND_LOCATION, request_location=True)],
+            [KeyboardButton(text=BTN_CANCEL)],
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True,
     )
 
 
@@ -210,6 +266,7 @@ def help_only_menu() -> ReplyKeyboardMarkup:
 
 __all__ = [
     "ALL_BUTTONS",
+    "BTN_RULES",
     "KEYBOARD_SOURCE",
     "SCAN_PATH",
     "cabinet_button",

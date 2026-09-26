@@ -1,21 +1,28 @@
 /*
- * Строго монохромно: белый, чёрный, нейтральный серый. Ни одного
- * цветного акцента, ни градиентов, ни свечения — HR-система читается
- * как документ, а не как витрина.
+ * Вход. Нейтральная основа и один фирменный синий — тот же, что во всей
+ * CRM. Ни градиентов, ни свечения, ни второго акцента: HR-система
+ * читается как документ, а не как витрина.
+ *
+ * Цвета здесь не заводятся. Оба файла подключены рядом (`main.tsx`),
+ * поэтому роли из `crm.css` доступны напрямую — а собственные значения
+ * означали бы вторую палитру, которая рано или поздно разойдётся с
+ * первой.
  *
  * Шрифт системный: внешний CDN тянуть нельзя, а собственного файла
  * шрифта в проекте нет.
  */
 
 :root {
-  --ink: #111111;
-  --ink-soft: #3d3d3d;
-  --muted: #8c8c8c;
-  --line: #e7e7e7;
-  --page: #f2f2f3;
-  --panel: #1b1b1b;
-  --panel-text: #c9c9c9;
-  --panel-line: #333333;
+  /* Прежние имена страницы входа оставлены — их знает её разметка, —
+     но теперь это указатели на общие роли, а не отдельные числа. */
+  --ink: var(--text-body);
+  --ink-soft: var(--text-heading);
+  --muted: var(--text-muted);
+  --line: var(--border-default);
+  --page: var(--background);
+  --panel: var(--blue-deep);
+  --panel-text: var(--text-on-deep-muted);
+  --panel-line: var(--border-on-deep);
 
   --radius: 10px;
   --radius-card: 18px;
@@ -35,9 +42,13 @@ body {
 
 body {
   margin: 0;
-  background: #ffffff;
+  background: var(--surface-1);
   color: var(--ink);
-  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  /* Узкий шрифт задан здесь, а не только в crm.css: этот файл
+     подключается раньше, и правило `body` из него выигрывало по порядку.
+     Держать одно свойство в двух местах — верный способ однажды
+     поменять не то. */
+  font-family: 'Roboto Condensed', 'Arial Narrow', 'Segoe UI', Roboto, sans-serif;
   font-size: 15px;
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
@@ -54,8 +65,11 @@ input {
   color: inherit;
 }
 
+/* Общий фокус для всего документа — тот же синий, что и в формах CRM.
+   Тёмная обводка здесь означала бы, что «куда я нажал» и «где я стою»
+   выглядят одинаково. */
 :focus-visible {
-  outline: 2px solid var(--ink);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -96,7 +110,7 @@ input {
   min-height: 100dvh;
   display: grid;
   grid-template-columns: 39% 1fr;
-  background: #ffffff;
+  background: var(--surface-1);
 }
 
 /* --- знак --------------------------------------------------------------- */
@@ -106,8 +120,8 @@ input {
   align-items: center;
   justify-content: center;
   flex: none;
-  background: #ffffff;
-  border: 1px solid rgba(0, 0, 0, 0.07);
+  background: var(--surface-1);
+  border: 1px solid var(--line);
   overflow: hidden;
 }
 
@@ -149,7 +163,7 @@ input {
 
 .brand {
   background: var(--panel);
-  color: #ffffff;
+  color: var(--text-on-deep);
   padding: clamp(32px, 3.2vw, 56px);
   display: flex;
   flex-direction: column;
@@ -157,12 +171,29 @@ input {
 }
 
 .brand .wordmark__name {
-  color: #ffffff;
+  color: var(--text-on-deep);
   font-size: clamp(24px, 2.2vw, 34px);
 }
 
 .brand .wordmark__tagline {
-  color: #9b9b9b;
+  color: var(--text-on-deep-muted);
+}
+
+.brand__logo .brand__full {
+  /* Пропорции — из самого файла: ширина считается от высоты, надпись не
+     сжимается. Тот же приём, что у знака в боковом меню CRM. */
+  height: clamp(44px, 4vw, 60px);
+  width: auto;
+  max-width: 100%;
+  object-fit: contain;
+  object-position: left center;
+  display: block;
+}
+
+/* Узкого варианта здесь нет: панель входа либо показана целиком,
+   либо скрыта вовсе. */
+.brand__logo .brand__mark {
+  display: none;
 }
 
 .brand__head {
@@ -201,13 +232,13 @@ input {
 .brand__column-title {
   font-size: clamp(13px, 1vw, 15px);
   font-weight: 600;
-  color: #ffffff;
+  color: var(--text-on-deep);
   letter-spacing: 0.01em;
 }
 
 .brand__column-hint {
   font-size: clamp(11px, 0.85vw, 12.5px);
-  color: #8f8f8f;
+  color: var(--text-on-deep-muted);
   line-height: 1.35;
 }
 
@@ -236,19 +267,19 @@ input {
 }
 
 .chart__grid line {
-  stroke: #303030;
+  stroke: var(--border-on-deep);
   stroke-width: 1;
   stroke-dasharray: 3 5;
   vector-effect: non-scaling-stroke;
 }
 
 .chart__bars rect {
-  fill: #ffffff;
+  fill: var(--surface-1);
 }
 
 .chart__line {
   fill: none;
-  stroke: #d6d6d6;
+  stroke: var(--text-on-deep-muted);
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
@@ -257,7 +288,7 @@ input {
 
 .chart__dot {
   fill: var(--panel);
-  stroke: #ffffff;
+  stroke: var(--surface-1);
   stroke-width: 2;
   vector-effect: non-scaling-stroke;
 }
@@ -272,15 +303,15 @@ input {
   padding: 10px 14px;
   border: 1px solid var(--panel-line);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--overlay-on-deep);
   font-size: 11.5px;
-  color: #cfcfcf;
+  color: var(--text-on-deep-muted);
 }
 
 /* --- правая половина ---------------------------------------------------- */
 
 .form-side {
-  background: #ffffff;
+  background: var(--surface-1);
   padding: clamp(20px, 2.2vw, 36px) clamp(24px, 4vw, 72px) clamp(28px, 3vw, 52px);
   display: flex;
   flex-direction: column;
@@ -327,7 +358,7 @@ input {
   align-items: center;
   gap: 8px;
   padding: 11px 16px;
-  background: #ffffff;
+  background: var(--surface-1);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   font-size: clamp(14px, 1.05vw, 15px);
@@ -336,7 +367,7 @@ input {
 }
 
 .lang__button:hover {
-  border-color: #d5d5d5;
+  border-color: var(--border-strong);
 }
 
 .lang__globe {
@@ -348,6 +379,9 @@ input {
 }
 
 .lang__list {
+  /* Тот же выход, что у фильтров на главной: список появляется, а не
+     возникает. Ключевые кадры объявлены в `crm.css`. */
+  animation: drop-in 0.16s ease-out;
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
@@ -356,10 +390,10 @@ input {
   padding: 4px;
   list-style: none;
   min-width: 100%;
-  background: #ffffff;
+  background: var(--surface-1);
   border: 1px solid var(--line);
-  border-radius: var(--radius);
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.08);
+  border-radius: 11px;
+  box-shadow: 0 10px 24px var(--shadow-lift);
 }
 
 .lang__option {
@@ -375,7 +409,7 @@ input {
 }
 
 .lang__option:hover {
-  background: #f4f4f4;
+  background: var(--hover-bg);
 }
 
 /* --- форма -------------------------------------------------------------- */
@@ -407,16 +441,18 @@ input {
   padding: 0 18px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: #ffffff;
-  transition: border-color 0.15s ease;
+  background: var(--surface-1);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
+/* Тот же приём, что и в формах CRM: синяя граница плюс мягкое кольцо. */
 .field__box:focus-within {
-  border-color: var(--ink);
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 3px var(--focus-ring-soft);
 }
 
 .field__icon {
-  color: #9d9d9d;
+  color: var(--text-muted);
   flex: none;
 }
 
@@ -430,7 +466,7 @@ input {
 }
 
 .field__input::placeholder {
-  color: #a8a8a8;
+  color: var(--disabled-text);
 }
 
 .field__input:disabled {
@@ -438,7 +474,12 @@ input {
 }
 
 .field__box:has(.field__input[aria-invalid='true']) {
-  border-color: #6b6b6b;
+  border-color: var(--status-danger);
+}
+
+.field__box:has(.field__input[aria-invalid='true']):focus-within {
+  border-color: var(--status-danger);
+  box-shadow: 0 0 0 3px var(--focus-ring-danger);
 }
 
 .field__reveal {
@@ -452,7 +493,7 @@ input {
   border: 0;
   border-radius: 6px;
   background: none;
-  color: #8f8f8f;
+  color: var(--text-muted);
   cursor: pointer;
 }
 
@@ -463,7 +504,7 @@ input {
 .field__error {
   margin: 0;
   font-size: 12.5px;
-  color: var(--ink);
+  color: var(--status-danger);
 }
 
 .remember {
@@ -479,17 +520,17 @@ input {
   width: 19px;
   height: 19px;
   margin: 0;
-  accent-color: #111111;
+  accent-color: var(--action-bg);
   cursor: pointer;
 }
 
 .form__alert {
   margin: 0;
   padding: 13px 16px;
-  border: 1px solid #d8d8d8;
-  border-left: 3px solid var(--ink);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--status-danger);
   border-radius: 8px;
-  background: #f7f7f7;
+  background: var(--surface-2);
   font-size: clamp(14px, 1.05vw, 15px);
 }
 
@@ -497,8 +538,8 @@ input {
   height: clamp(54px, 4.2vw, 60px);
   border: 0;
   border-radius: var(--radius);
-  background: var(--ink);
-  color: #ffffff;
+  background: var(--action-bg);
+  color: var(--text-on-action);
   font-size: clamp(16px, 1.2vw, 18px);
   font-weight: 600;
   cursor: pointer;
@@ -506,11 +547,16 @@ input {
 }
 
 .submit:hover:not(:disabled) {
-  background: #000000;
+  background: var(--action-bg-hover);
+}
+
+.submit:active:not(:disabled) {
+  background: var(--action-bg-pressed);
 }
 
 .submit:disabled {
-  background: #6f6f6f;
+  background: var(--disabled-bg);
+  color: var(--disabled-text);
   cursor: progress;
 }
 
@@ -536,7 +582,7 @@ input {
 .form-side__shield {
   flex: none;
   margin-top: 2px;
-  color: #9d9d9d;
+  color: var(--text-muted);
 }
 
 /* --- временная страница после входа ------------------------------------- */
@@ -549,7 +595,7 @@ input {
   align-items: flex-start;
   gap: 18px;
   padding: clamp(28px, 4vw, 44px);
-  background: #ffffff;
+  background: var(--surface-1);
   border-radius: var(--radius-card);
 }
 
@@ -568,17 +614,18 @@ input {
 .stub__exit {
   height: 46px;
   padding: 0 22px;
-  border: 1px solid var(--ink);
+  border: 1px solid var(--action-bg);
   border-radius: var(--radius);
-  background: #ffffff;
+  background: var(--surface-1);
+  color: var(--action-text);
   font-size: 14.5px;
   font-weight: 500;
   cursor: pointer;
 }
 
 .stub__exit:hover:not(:disabled) {
-  background: var(--ink);
-  color: #ffffff;
+  background: var(--action-bg);
+  color: var(--text-on-action);
 }
 
 .stub__exit:disabled {

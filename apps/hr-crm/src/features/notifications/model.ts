@@ -198,7 +198,7 @@ export function relatedLink(row: Notification): { to: string; title: string } | 
     // У привязки своей страницы нет — ведём в карточку сотрудника,
     // где привязка и живёт.
     return {
-      to: `/employees?employee=${row.employee_id}`,
+      to: `/employees/${row.employee_id}`,
       title: 'Открыть карточку сотрудника',
     };
   }

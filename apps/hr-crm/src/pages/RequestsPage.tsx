@@ -1,55 +1,69 @@
 /**
- * Заявки: отпуска, больничные и исправления отметок в одной очереди.
+ * Страница «Заявки»: отпуска, больничные, исправления отметок и отмены.
  *
- * Список и подробности стоят рядом, а не одно поверх другого: кадровик
- * разбирает очередь, и терять её из виду на каждой заявке — значит
- * заставлять его каждый раз искать место, где он остановился.
+ * Вёрстка повторяет эталон 1672×941. Размеры — в `styles/requests.css`,
+ * классы с префиксом `rq-`.
  *
- * Очередь приходит одним адресом `/requests`. Склеивать две страницы —
- * отсутствий и исправлений — на клиенте нельзя: получилась бы не очередь,
- * а произвольная смесь двух её половин, в которой часть свежих записей
- * не показана вовсе.
+ * Список и подробности стоят рядом: кадровик разбирает очередь, и терять
+ * её из виду на каждой заявке — значит каждый раз искать место, где он
+ * остановился. Состояние — в адресе: вкладка, фильтры, страница и
+ * открытая заявка переживают обновление и ссылку коллеге.
+ *
+ * Очередь приходит одним адресом `/requests`: склейка двух списков на
+ * клиенте дала бы не очередь, а произвольную смесь её половин.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 
 import * as api from '../api/crm';
-import { AppShell, initials } from '../components/AppShell';
-import { Icon } from '../components/nav-icons';
 import { messageFor } from '../api/errors';
-import { formatTime, longDate, useBlock, type Block } from '../features/dashboard/data';
+import { AppShell } from '../components/AppShell';
+import { AppIcon, type AppIconName } from '../components/AppIcon';
+import { Dropdown } from '../components/AppSelect';
+import { AppDateRangePicker } from '../components/DateRangePicker';
+import { formatTime, today, useBlock, type Block } from '../features/dashboard/data';
+import {
+  Face,
+  calendarDaysWord,
+  certificateState,
+  dateTime,
+  dayTime,
+  kindOf,
+  periodOf,
+  personOf,
+  shortName,
+  statusOf,
+  waitingWord,
+} from '../features/requests/model';
+import '../styles/requests.css';
 
+const OPEN = 'SUBMITTED,IN_REVIEW';
+
+/** Вкладки. Каждая — настоящий фильтр сервера, а не срез показанной страницы. */
 const TABS = [
+  { key: 'open', title: 'Требуют решения', params: { status: OPEN } as api.QueueQuery },
   { key: 'all', title: 'Все', params: {} as api.QueueQuery },
-  { key: 'sick', title: 'Больничные', params: { kind: 'absence', type: 'SICK_LEAVE' } },
-  { key: 'leave', title: 'Отпуска', params: { kind: 'absence', type: 'ANNUAL_LEAVE,UNPAID_LEAVE' } },
-  { key: 'fixes', title: 'Исправления отметок', params: { kind: 'correction' } },
+  { key: 'leave', title: 'Отпуска', params: { kind: 'absence', type: 'ANNUAL_LEAVE,UNPAID_LEAVE', request_kind: 'CREATE,EXTEND' } },
+  { key: 'sick', title: 'Больничные', params: { kind: 'absence', type: 'SICK_LEAVE', request_kind: 'CREATE,EXTEND' } },
+  { key: 'fixes', title: 'Исправления', params: { kind: 'correction' } },
+  { key: 'cancel', title: 'Отмена', params: { kind: 'absence', request_kind: 'CANCEL' } },
 ] as const;
 
-/** Состояния рассмотрения. Показываются словами, а не цветом. */
-const STATUS_TITLE: Record<string, string> = {
-  SUBMITTED: 'На рассмотрении',
-  PENDING: 'На рассмотрении',
-  IN_REVIEW: 'На рассмотрении',
-  APPROVED: 'Подтверждена',
-  REJECTED: 'Отклонена',
-  CANCELLED: 'Отменена',
-  DRAFT: 'Черновик',
-};
+const STATUS_OPTIONS = [
+  { id: OPEN, name: 'На рассмотрении' },
+  { id: 'APPROVED', name: 'Одобрена' },
+  { id: 'REJECTED', name: 'Отклонена' },
+  { id: 'CANCELLED', name: 'Отменена' },
+];
 
-/** Состояния документа — отдельная величина, не смешивается со статусом. */
-const DOCUMENT_TITLE: Record<string, string> = {
-  PENDING: 'Справка на проверке',
-  VERIFIED: 'Справка проверена',
-  REJECTED: 'Справка отклонена',
-};
-
-const OPEN_STATUSES = 'SUBMITTED,IN_REVIEW,PENDING';
+// Larger cursor pages mean fewer trips through the queue; the list itself
+// remains independently scrollable inside its panel.
+const PAGE = '20';
 
 export function RequestsPage() {
   const [params, setParams] = useSearchParams();
-  const tab = TABS.find((t) => t.key === params.get('tab')) ?? TABS[0];
+  const tab = TABS.find((one) => one.key === params.get('tab')) ?? TABS[0];
   const search = params.get('search') ?? '';
   const region = params.get('region_id') ?? '';
   const office = params.get('office_id') ?? '';
@@ -58,10 +72,13 @@ export function RequestsPage() {
   const to = params.get('date_to') ?? '';
   const cursor = params.get('cursor') ?? '';
   const opened = params.get('request') ?? '';
+  // Заявки одного сотрудника: приходит ссылкой с главной, своего поля нет.
+  const employee = params.get('employee_id') ?? '';
 
   const [draft, setDraft] = useState(search);
   const [updated, setUpdated] = useState<Date | null>(null);
   const [attempt, setAttempt] = useState(0);
+  const [ordered, setOrdered] = useState<string | null>(null);
   useEffect(() => setDraft(search), [search]);
 
   const patch = useCallback(
@@ -88,443 +105,439 @@ export function RequestsPage() {
     return () => clearTimeout(timer);
   }, [draft, search, patch]);
 
-  const filters: api.QueueQuery = useMemo(
+  // Общие фильтры — без вкладки: по ним же считаются счётчики вкладок.
+  const common: api.QueueQuery = useMemo(
     () => ({
-      ...tab.params,
       ...(search ? { search } : {}),
       ...(region ? { region_id: region } : {}),
       ...(office ? { office_id: office } : {}),
-      ...(status === 'open' ? { status: OPEN_STATUSES } : status ? { status } : {}),
+      ...(employee ? { employee_id: employee } : {}),
       ...(from ? { date_from: from } : {}),
       ...(to ? { date_to: to } : {}),
     }),
-    [tab, search, region, office, status, from, to],
+    [search, region, office, employee, from, to],
   );
-  const key = `${tab.key}|${search}|${region}|${office}|${status}|${from}|${to}|${cursor}|${attempt}`;
+  const base = `${search}|${region}|${office}|${employee}|${from}|${to}|${attempt}`;
 
-  const [list, reload] = useBlock(
+  const [list] = useBlock(
     (signal) =>
-      api.queue({ ...filters, limit: '10', ...(cursor ? { cursor } : {}) }, signal).then(
-        (body) => {
-          setUpdated(new Date());
-          return body;
-        },
-      ),
-    key,
+      api.queue(
+        { ...common, ...tab.params, ...(status ? { status } : {}), limit: PAGE, ...(cursor ? { cursor } : {}) },
+        signal,
+      ).then((body) => {
+        setUpdated(new Date());
+        return body;
+      }),
+    `${tab.key}|${status}|${cursor}|${base}`,
   );
 
-  // Счётчики вкладок: по одному запросу на вкладку, без строк.
-  const [counts] = useBlock(
-    (signal) =>
-      Promise.all(
-        TABS.map((item) =>
-          api
-            .queue({ ...filters, ...item.params, limit: '1' }, signal)
-            .then((body) => [item.key, body.items.length + (body.has_more ? 1 : 0)] as const)
-            .catch(() => [item.key, 0] as const),
-        ),
-      ).then((pairs) => Object.fromEntries(pairs)),
-    `counts|${key}`,
-  );
+  const [counts] = useBlock((signal) => api.queueCounts(common, signal), `counts|${base}`);
 
   const [directory] = useBlock(
     (signal) =>
       Promise.all([api.regions(signal), api.offices(signal)]).then(([r, o]) => ({
         regions: r.items,
-        offices: o.items,
+        offices: o.items.filter((one) => one.status === 'ACTIVE'),
       })),
     'directory',
   );
 
   const offices = useMemo(() => {
     if (directory.state !== 'ready') return [];
-    const all = directory.data.offices.filter((o) => o.status === 'ACTIVE');
-    return region ? all.filter((o) => o.region_id === region) : all;
+    return region ? directory.data.offices.filter((one) => one.region_id === region) : directory.data.offices;
   }, [directory, region]);
 
   const items = list.state === 'ready' ? list.data.items : [];
-  const current = items.find((item) => item.id === opened) ?? null;
-  const dirty = Boolean(search || region || office || status || from || to);
+  // Шторка открывается ТОЛЬКО по выбору. Прежде без выбора открывалась
+  // первая заявка очереди — это было верно для постоянной колонки
+  // рядом со списком, но окно поверх страницы, которое появляется само,
+  // закрывает собой очередь, ради которой страницу открыли.
+  const current = opened ? items.find((item) => item.id === opened) ?? null : null;
+  const first = items[0];
+  const employeeName = employee
+    ? first?.absence?.employee.full_name ?? first?.correction?.employee?.full_name ?? null
+    : null;
+  const dirty = Boolean(search || region || office || employee || status || from || to);
+  const waiting = counts.state === 'ready' ? counts.data['open'] ?? 0 : null;
+
+  async function order() {
+    setOrdered(null);
+    try {
+      await api.orderExport({
+        kind: 'absences', fmt: 'xlsx',
+        ...(from ? { date_from: from } : {}),
+        ...(to ? { date_to: to } : {}),
+        ...(office ? { office_id: office } : region ? { region_id: region } : {}),
+      });
+      setOrdered('Выгрузка поставлена в очередь');
+    } catch (error) {
+      setOrdered(messageFor(error));
+    }
+  }
 
   return (
     <AppShell breadcrumb="Заявки" section="requests">
-      <header className="head head--tight">
-        <div>
-          <h1 className="head__title">Заявки</h1>
-          <p className="head__sub">Отпуска, больничные и исправления отметок</p>
-        </div>
-        <div className="head__filters">
-          <button type="button" className="pick pick--icon" aria-label="Обновить"
-                  onClick={() => setAttempt((n) => n + 1)}>
-            <Icon name="refresh" size={16} />
-          </button>
-          <p className="head__updated">
-            {updated ? `Обновлено в ${formatTime(updated)}` : 'Загружаем…'}
-          </p>
-        </div>
-      </header>
-
-      <div className="queue-grid">
-        <section className="sheet">
-          <div className="tabs" role="tablist">
-            {TABS.map((item) => (
-              <button
-                key={item.key}
-                type="button"
-                role="tab"
-                aria-selected={item.key === tab.key}
-                className={item.key === tab.key ? 'tab tab--on' : 'tab'}
-                onClick={() => patch({ tab: item.key === 'all' ? null : item.key, request: null })}
-              >
-                {item.title}
-                {counts.state === 'ready' && (
-                  <span className="tab__count">{counts.data[item.key] ?? 0}</span>
-                )}
-              </button>
-            ))}
-          </div>
-
-          <div className="toolbar">
-            <label className="find find--wide">
-              <Icon name="search" size={16} />
-              <input
-                type="search"
-                value={draft}
-                placeholder="Поиск сотрудника или заявки"
-                aria-label="Поиск сотрудника или заявки"
-                onChange={(event) => setDraft(event.target.value)}
-              />
-            </label>
-            <Picker label="Регион" value={region} empty="Все регионы"
-                    options={directory.state === 'ready' ? directory.data.regions : []}
-                    onChange={(value) => patch({ region_id: value || null, office_id: null })} />
-            <Picker label="Офис" value={office} empty="Все офисы" options={offices}
-                    onChange={(value) => patch({ office_id: value || null })} />
-            <label className="pick">
-              <span className="visually-hidden">Статус</span>
-              <select value={status} onChange={(event) => patch({ status: event.target.value || null })}>
-                <option value="">Любой статус</option>
-                <option value="open">Требуют действия</option>
-                <option value="APPROVED">Подтверждённые</option>
-                <option value="REJECTED">Отклонённые</option>
-                <option value="CANCELLED">Отменённые</option>
-              </select>
-            </label>
-            <label className="pick pick--date">
-              <Icon name="calendar" size={16} />
-              <span className="visually-hidden">Отсутствие с</span>
-              <input type="date" value={from} aria-label="Отсутствие с"
-                     onChange={(event) => patch({ date_from: event.target.value || null })} />
-            </label>
-            <label className="pick pick--date">
-              <span className="visually-hidden">Отсутствие по</span>
-              <input type="date" value={to} aria-label="Отсутствие по"
-                     onChange={(event) => patch({ date_to: event.target.value || null })} />
-            </label>
-            {dirty && (
-              <button type="button" className="btn" onClick={() =>
-                patch({ search: null, region_id: null, office_id: null, status: null,
-                        date_from: null, date_to: null })}>
-                Сбросить
-              </button>
-            )}
-          </div>
-          <p className="toolbar__note">Период фильтрует даты самого отсутствия, а не дату подачи.</p>
-
-          <Rows block={list}>
-            {(data) =>
-              data.items.length === 0 ? (
-                <p className="empty">
-                  {dirty ? 'По этим условиям заявок нет.' : 'Очередь пуста.'}
-                </p>
-              ) : (
-                <div className="scroller">
-                  <table className="people">
-                    <thead>
-                      <tr>
-                        <th>Сотрудник</th>
-                        <th>Тип</th>
-                        <th>Даты</th>
-                        <th>Документ</th>
-                        <th>Статус</th>
-                        <th aria-label="Открыть" />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.items.map((item) => (
-                        <Row key={item.id} item={item} selected={item.id === opened}
-                             onOpen={() => patch({ request: item.id }, true)} />
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )
-            }
-          </Rows>
-
-          <div className="pager">
-            <p className="pager__note">
-              {list.state === 'ready' ? `Показано ${list.data.items.length}` : ''}
+      <div className="rq">
+        <header className="rq-head">
+          <div>
+            <h1 className="rq-head__title">Заявки</h1>
+            <p className="rq-head__sub">
+              Отпуска, больничные и исправления отметок
+              {waiting !== null && <> · {waiting} {waitingWord(waiting)} внимания</>}
+              {updated ? <> · обновлено в {formatTime(updated)}</> : <> · загружаем…</>}
             </p>
-            <div className="pager__tools">
-              <button type="button" className="btn" disabled={!cursor}
-                      onClick={() => patch({ cursor: null })}>
-                Назад
-              </button>
-              <button
-                type="button"
-                className="btn btn--dark"
-                disabled={list.state !== 'ready' || !list.data.has_more}
-                onClick={() => list.state === 'ready' && patch({ cursor: list.data.next_cursor }, true)}
-              >
-                Далее
-              </button>
-            </div>
           </div>
-        </section>
+          <div className="rq-head__actions">
+            <button type="button" className="rq-btn rq-btn--light" onClick={() => setAttempt((n) => n + 1)}>
+              <AppIcon name="refresh" size={20} />
+              Обновить
+            </button>
+            <button type="button" className="rq-btn rq-btn--light rq-btn--blue-text" onClick={() => void order()}>
+              <AppIcon name="download" size={20} />
+              Экспорт
+            </button>
+          </div>
+        </header>
 
-        {current && (
-          <Details
-            item={current}
-            onClose={() => patch({ request: null }, true)}
-            onDone={reload}
-          />
+        {ordered && (
+          <p className="rq-note" role="status">
+            {ordered} — <Link to="/reports">файл появится в отчётах</Link>
+          </p>
         )}
+
+        <div className="rq-grid">
+          <section className="rq-list" aria-label="Очередь заявок">
+            {/* Вкладки подчёркиванием, а не заливкой: их шесть, и шесть
+                залитых кнопок в ряд спорят за внимание с самой
+                очередью, ради которой страницу открыли. */}
+            <div className="rq-tabs" role="tablist" aria-label="Вид заявок">
+              {TABS.map((one) => {
+                const count = counts.state === 'ready' && one.key !== 'all'
+                  ? counts.data[one.key] ?? 0
+                  : null;
+                return (
+                  <button
+                    key={one.key}
+                    type="button"
+                    role="tab"
+                    aria-selected={one.key === tab.key}
+                    onClick={() => patch({
+                      tab: one.key === 'open' ? null : one.key,
+                      request: null,
+                      status: null,
+                    })}
+                  >
+                    {one.title}
+                    {count !== null && <i>{count}</i>}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Одна строка отбора. Чипов с офисом, статусом, датами и поиском
+                здесь нет: они повторяли то, что и так видно в полях. Метка
+                остаётся только у условий без своего поля — сотрудник,
+                пришедший по ссылке, и регион, — и рядом «Сбросить». */}
+            <div className="rq-filters">
+              <label className="rq-search">
+                <AppIcon name="search" size={16} />
+                <input type="search" value={draft} placeholder="Поиск сотрудника"
+                       aria-label="Поиск сотрудника"
+                       onChange={(event) => setDraft(event.target.value)} />
+              </label>
+              <Select label="Офис" empty="Все офисы" value={office} options={offices}
+                      onChange={(value) => patch({ office_id: value || null })} />
+              <Select label="Статус" empty="Все статусы" value={status} options={STATUS_OPTIONS}
+                      onChange={(value) => patch({ status: value || null })} />
+              {/* Период фильтрует даты самого отсутствия, а не дату подачи. */}
+              <AppDateRangePicker className="rq-dates" label="Даты отсутствия" now={today()} from={from} to={to}
+                onFromChange={(value) => patch({ date_from: value || null })}
+                onToChange={(value) => patch({ date_to: value || null })} />
+              {region && !office && directory.state === 'ready' && (
+                <Chip text={directory.data.regions.find((one) => one.id === region)?.name ?? 'Регион'}
+                      onClear={() => patch({ region_id: null })} />
+              )}
+              {employee && (
+                <Chip text={employeeName ? `Заявки: ${employeeName}` : 'Заявки одного сотрудника'}
+                      onClear={() => patch({ employee_id: null })} />
+              )}
+              {dirty && (
+                <button type="button" className="rq-reset" onClick={() =>
+                  patch({ search: null, region_id: null, office_id: null, employee_id: null,
+                          status: null, date_from: null, date_to: null })}>
+                  Сбросить
+                </button>
+              )}
+            </div>
+
+            {/* Не таблица: у заявки нет восьми равноправных столбцов, у
+                неё есть человек, вид и состояние. Шапка колонок над
+                пустым телом — самое заметное, что было на этой
+                странице, и самое бесполезное. */}
+            <div className="rq-rows">
+              <Rows block={list}>
+                {(data) => data.items.length === 0 ? (
+                  <div className="rq-none">
+                    <p>По выбранным условиям заявок нет</p>
+                    <small>Измените фильтры или сбросьте поиск.</small>
+                  </div>
+                ) : (
+                  data.items.map((item) => (
+                    <Row key={item.id} item={item} on={item.id === current?.id}
+                         onPick={() => patch({ request: item.id }, true)} />
+                  ))
+                )}
+              </Rows>
+            </div>
+
+            {/* Листалка появляется, только когда есть что листать:
+                две неактивные кнопки под пустым списком — обещание
+                страниц, которых нет. */}
+            {list.state === 'ready' && (list.data.has_more || cursor) && (
+              <footer className="rq-pager">
+                <button type="button" className="rq-pager__btn" disabled={!cursor}
+                        onClick={() => patch({ cursor: null })}>
+                  <AppIcon name="back" size={16} />
+                  В начало
+                </button>
+                <button type="button" className="rq-pager__btn"
+                        disabled={!list.data.has_more}
+                        onClick={() => patch({ cursor: list.data.next_cursor }, true)}>
+                  Далее
+                  <AppIcon name="next" size={16} />
+                </button>
+              </footer>
+            )}
+          </section>
+
+          {/* Панель стоит рядом постоянно, а не выезжает поверх: это
+              одна рабочая зона, а не список с окном над ним. Пока
+              заявку не выбрали — короткая подсказка вместо пустоты. */}
+          {current ? (
+            <Preview key={current.id} item={current} />
+          ) : (
+            <aside className="rq-view rq-view--idle" aria-label="Выбранная заявка">
+              <p>Выберите заявку слева — здесь появится, что по ней проверить.</p>
+            </aside>
+          )}
+        </div>
       </div>
     </AppShell>
   );
 }
 
-// --- строка ----------------------------------------------------------------
+// --- строка ----------------------------------------------------------------------
 
-function Row({ item, selected, onOpen }: {
-  item: api.QueueItem; selected: boolean; onOpen: () => void;
+function Row({ item, on, onPick }: {
+  item: api.QueueItem;
+  on: boolean;
+  onPick: () => void;
 }) {
-  const person = item.absence?.employee ?? item.correction?.employee;
-  const status = item.absence?.status ?? item.correction?.status ?? '';
-  const document = item.absence?.documents?.[0];
-
+  const person = personOf(item);
+  const state = statusOf(item);
+  const kind = kindOf(item);
+  const at = item.absence?.submitted_at ?? item.correction?.submitted_at ?? item.created_at;
   return (
-    <tr className={selected ? 'is-picked' : undefined} tabIndex={0} onClick={onOpen}
-        onKeyDown={(event) => event.key === 'Enter' && onOpen()}>
-      <td>
-        <span className="who">
-          <span className="avatar">{initials(person?.full_name)}</span>
-          <span className="who__text">
-            <span className="who__name">{person?.full_name ?? '—'}</span>
-            <span className="who__id">{person?.employee_number ?? '—'}</span>
-          </span>
-        </span>
-      </td>
-      <td>{kindTitle(item)}</td>
-      <td>
-        <span className="two">
-          <span className="two__first">{dates(item)}</span>
-        </span>
-      </td>
-      <td>
-        {item.kind === 'correction' ? (
-          <span className="muted">—</span>
-        ) : document ? (
-          <span className="pill">
-            <Icon name="doc" size={14} />
-            {DOCUMENT_TITLE[document.verification_status] ?? 'Загружена'}
-          </span>
-        ) : item.absence?.requires_document ? (
-          <span className="muted">Нет справки</span>
-        ) : (
-          <span className="muted">—</span>
-        )}
-      </td>
-      <td>
-        <span className="pill">{STATUS_TITLE[status] ?? status}</span>
-      </td>
-      <td className="people__go"><Icon name="arrow" size={16} /></td>
-    </tr>
+    <div
+      className={on ? 'rq-row rq-row--on' : 'rq-row'}
+      role="button"
+      tabIndex={0}
+      aria-pressed={on}
+      onClick={onPick}
+      onKeyDown={(event) => { if (event.key === 'Enter') onPick(); }}
+    >
+      <Face id={person?.id ?? ''} name={person?.full_name ?? ''} className="rq-row__face" />
+      <span className="rq-row__who">
+        <b>{shortName(person?.full_name)}</b>
+        <small>{item.place?.office_name ?? '—'}</small>
+      </span>
+      <span className="rq-row__kind">
+        <AppIcon name={kind.icon} size={20} />
+        <span>{kind.title}</span>
+      </span>
+      <span className="rq-row__when">
+        <small>Подана</small>
+        <span>{at ? dayTime(at) : '—'}</span>
+      </span>
+      <span className={`rq-status rq-status--${state.tone} rq-row__state`}>
+        <i aria-hidden="true" />
+        {state.title}
+      </span>
+      {/* Стрелка ведёт на страницу заявки, строка — только выбирает.
+          Одно нажатие, два разных намерения: посмотреть рядом и уйти
+          разбираться. */}
+      <Link
+        className="rq-row__go"
+        to={`/requests/${item.id}`}
+        aria-label="Открыть заявку"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <AppIcon name="next" size={20} />
+      </Link>
+    </div>
   );
 }
 
-// --- подробности -----------------------------------------------------------
+// --- предпросмотр ------------------------------------------------------------
+//
+// Правая колонка ЧИТАЕТ заявку, а не решает по ней. Решение — на
+// отдельной странице: у него есть цена, и принимать его мимоходом, не
+// открыв бумаги и историю, нельзя. Здесь кадровик понимает, стоит ли
+// вообще открывать эту заявку.
 
-function Details({ item, onClose, onDone }: {
-  item: api.QueueItem; onClose: () => void; onDone: () => void;
-}) {
-  const [comment, setComment] = useState('');
-  const [sending, setSending] = useState(false);
-  const [failed, setFailed] = useState<string | null>(null);
-  const [done, setDone] = useState<string | null>(null);
-
-  const person = item.absence?.employee ?? item.correction?.employee;
-  const status = item.absence?.status ?? item.correction?.status ?? '';
-  const open = ['SUBMITTED', 'IN_REVIEW', 'PENDING'].includes(status);
-  const document = item.absence?.documents?.[0];
-
-  async function decide(decision: 'approve' | 'reject') {
-    if (sending) return;
-    setSending(true);
-    setFailed(null);
-    try {
-      if (item.kind === 'absence') await api.decideAbsence(item.id, decision, comment);
-      else await api.decideCorrection(item.id, decision, comment);
-      setDone(decision === 'approve' ? 'Заявка подтверждена' : 'Заявка отклонена');
-      onDone();
-    } catch (error) {
-      // Комментарий остаётся в поле: набирать его заново из-за сбоя сети —
-      // худшее, что можно предложить человеку.
-      setFailed(messageFor(error));
-    } finally {
-      setSending(false);
-    }
-  }
+function Preview({ item }: { item: api.QueueItem }) {
+  const person = personOf(item);
+  const kind = kindOf(item);
+  const state = statusOf(item);
+  const period = periodOf(item);
+  const absence = item.absence;
+  const missing = absence?.missing_for_approval ?? [];
+  const cert = certificateState(item);
+  const vacation = item.kind === 'absence' && !absence?.requires_document;
 
   return (
-    <aside className="panel side-panel" aria-label="Подробности заявки">
-      <header className="side-panel__head">
-        <span className="side-panel__title">
-          <Icon name="doc" size={18} />
-          {kindTitle(item)}
+    <aside className="rq-view" aria-label="Выбранная заявка">
+      <header className="rq-view__head">
+        <span className="rq-view__icon" aria-hidden="true">
+          <AppIcon name={kind.icon} size={20} />
         </span>
-        <span className="pill">{STATUS_TITLE[status] ?? status}</span>
-        <button type="button" className="tool" aria-label="Закрыть" onClick={onClose}>✕</button>
+        <div>
+          <h2>{kind.title}</h2>
+          <p>
+            {shortName(person?.full_name)}
+            {item.place?.office_name && <> · {item.place.office_name}</>}
+          </p>
+          <span className={`rq-status rq-status--${state.tone}`}>{state.title}</span>
+        </div>
       </header>
 
-      <div className="side-panel__body">
-        <div className="who">
-          <span className="avatar">{initials(person?.full_name)}</span>
-          <span className="who__text">
-            <span className="who__name">{person?.full_name ?? '—'}</span>
-            <span className="who__id">{person?.employee_number ?? '—'}</span>
-          </span>
+      {item.kind === 'correction' ? (
+        <div className="rq-view__body">
+          <h3>Исправление отметки</h3>
+          <dl className="rq-pairs">
+            <Check title="Дата" value={period.long} tone="grey" icon="calendar" />
+            <Check title="Запрошено" value={correctionAsk(item)} tone="grey" icon="clock" />
+            <Check
+              title="Комментарий"
+              value={item.correction?.reason ?? '—'}
+              tone="grey"
+              icon="chat"
+            />
+          </dl>
         </div>
+      ) : vacation ? (
+        /* У отпуска нет ни справки, ни заявления: спрашивать их —
+           значит просить бумагу, которой никто не ждёт. */
+        <div className="rq-view__body">
+          <h3>Что проверить</h3>
+          {/* Теми же строками, что и у больничного: у отпуска пунктов
+              меньше, но смотрят на них так же — сверху вниз, по одному
+              на строку. Раньше здесь стоял плотный список пар, и одна
+              очередь выглядела двумя разными экранами. */}
+          <ul className="rq-view__checks">
+            <Check title="Период" value={period.long} tone="grey" icon="calendar" />
+            <Check
+              title="Длительность"
+              value={period.days !== null
+                ? `${period.days} ${calendarDaysWord(period.days)}`
+                : '—'}
+              tone="grey"
+              icon="clock"
+            />
+            <Check title="Решение" value={state.title} tone={state.tone} />
+          </ul>
+        </div>
+      ) : (
+        <div className="rq-view__body">
+          <h3>Что проверить</h3>
+          <ul className="rq-view__checks">
+            <Check title="Справка" value={cert.title} tone={cert.tone} />
+            <Check
+              title="Подписанное заявление"
+              value={absence?.application_received_at ? 'Подтверждено' : 'Не подтверждено'}
+              tone={absence?.application_received_at ? 'green' : 'orange'}
+            />
+            <Check
+              title="Фактические даты"
+              value={missing.includes('period') ? 'Не указаны' : period.long}
+              tone={missing.includes('period') ? 'orange' : 'green'}
+            />
+          </ul>
+        </div>
+      )}
 
-        <dl className="facts">
-          <div className="facts__row">
-            <dt>Подана</dt>
-            <dd>{item.absence?.submitted_at ? longDate(item.absence.submitted_at.slice(0, 10)) : '—'}</dd>
-          </div>
-          <div className="facts__row">
-            <dt>{item.kind === 'absence' ? 'Период отсутствия' : 'Дата отметки'}</dt>
-            <dd>{dates(item)}</dd>
-          </div>
-        </dl>
+      <p className="rq-hint">
+        <AppIcon name="info" size={18} />
+        {missing.length > 0
+          ? 'Одобрение станет доступно после проверки всех пунктов.'
+          : 'Все пункты проверки закрыты.'}
+      </p>
 
-        {item.absence?.comment && (
-          <>
-            <p className="side-panel__label">Комментарий сотрудника</p>
-            <p className="side-panel__text">{item.absence.comment}</p>
-          </>
-        )}
-        {item.correction?.reason && (
-          <>
-            <p className="side-panel__label">Причина</p>
-            <p className="side-panel__text">{item.correction.reason}</p>
-          </>
-        )}
-
-        {item.kind === 'absence' && (
-          <>
-            <p className="side-panel__label">Документ</p>
-            {document ? (
-              <div className="doc">
-                <p className="doc__name">{document.file.name}</p>
-                <p className="doc__meta">
-                  {document.file.mime_type} · {size(document.file.size_bytes)} ·
-                  {' '}загружен {longDate(document.file.uploaded_at.slice(0, 10))}
-                </p>
-                <p className="doc__state">
-                  {DOCUMENT_TITLE[document.verification_status] ?? document.verification_status}
-                </p>
-              </div>
-            ) : item.absence?.requires_document ? (
-              <p className="empty">Ожидаем справку — документ ещё не предоставлен.</p>
-            ) : (
-              <p className="empty">Для этого типа заявки документ не требуется.</p>
-            )}
-          </>
-        )}
-
-        <p className="side-panel__label">Комментарий HR</p>
-        <textarea
-          className="area"
-          value={comment}
-          rows={3}
-          placeholder="Добавить комментарий…"
-          aria-label="Комментарий HR"
-          onChange={(event) => setComment(event.target.value)}
-        />
-
-        {failed && <p className="empty empty--bad" role="alert">{failed}</p>}
-        {done && <p className="empty" role="status">{done}</p>}
-
-        {open ? (
-          <div className="side-panel__actions">
-            <button type="button" className="btn btn--dark" disabled={sending}
-                    onClick={() => void decide('approve')}>
-              {sending ? 'Отправляем…' : 'Подтвердить'}
-            </button>
-            <button type="button" className="btn" disabled={sending}
-                    onClick={() => void decide('reject')}>
-              Отклонить
-            </button>
-          </div>
-        ) : (
-          <p className="empty">
-            Заявка уже рассмотрена. Повторное решение по ней не принимается.
-          </p>
-        )}
-      </div>
+      <footer className="rq-view__foot">
+        <Link className="rq-btn rq-btn--light" to={`/requests/${item.id}`}>
+          Открыть заявку
+        </Link>
+        {/* Кнопка здесь неактивна всегда и намеренно: одобряют на
+            странице заявки, где видно, что именно одобряют. */}
+        <button type="button" className="rq-btn rq-btn--approve" disabled>
+          <AppIcon name="check" size={20} />
+          Одобрить
+        </button>
+      </footer>
     </aside>
   );
 }
 
-// --- мелочи ----------------------------------------------------------------
-
-function kindTitle(item: api.QueueItem): string {
-  if (item.kind === 'correction') return 'Исправление отметки';
-  const code = item.absence?.absence_type?.code;
-  return code === 'SICK_LEAVE' ? 'Больничный' : item.absence?.absence_type?.name ?? 'Отсутствие';
-}
-
-function dates(item: api.QueueItem): string {
-  const first = item.absence?.first_day;
-  const last = item.absence?.last_day;
-  if (first && last) return first === last ? longDate(first) : `${first} — ${last}`;
-  if (first) return longDate(first);
-  const at = item.correction?.created_at ?? item.created_at;
-  return at ? longDate(at.slice(0, 10)) : '—';
-}
-
-const size = (bytes: number) =>
-  bytes < 1024 * 1024
-    ? `${Math.round(bytes / 1024)} КБ`
-    : `${Math.round((bytes / 1024 / 1024) * 10) / 10} МБ`;
-
-function Picker({ label, value, empty, options, onChange }: {
-  label: string; value: string; empty: string;
-  options: { id: string; name: string }[]; onChange: (value: string) => void;
+function Check({ title, value, tone, icon = 'doc' }: {
+  title: string;
+  value: string;
+  tone: string;
+  icon?: AppIconName;
 }) {
   return (
-    <label className="pick">
-      <span className="visually-hidden">{label}</span>
-      <select value={value} onChange={(event) => onChange(event.target.value)}>
-        <option value="">{empty}</option>
-        {options.map((option) => (
-          <option key={option.id} value={option.id}>{option.name}</option>
-        ))}
-      </select>
-    </label>
+    <li className="rq-check">
+      <AppIcon name={icon} size={20} />
+      <b>{title}</b>
+      <span className={`rq-check__value rq-check__value--${tone}`}>{value}</span>
+    </li>
   );
 }
 
+function correctionAsk(item: api.QueueItem): string {
+  const entry = item.correction?.requested_entry_at;
+  const exit = item.correction?.requested_exit_at;
+  const both = [entry && `вход ${dateTime(entry, true)}`, exit && `выход ${dateTime(exit, true)}`]
+    .filter(Boolean)
+    .join(', ');
+  return both || '—';
+}
+
+// --- мелочи ------------------------------------------------------------------------------
+
+function Chip({ text, onClear }: { text: string; onClear: () => void }) {
+  return (
+    <button type="button" className="rq-chip" onClick={onClear} aria-label={`Снять фильтр: ${text}`}>
+      {text}
+      <AppIcon name="close" size={16} />
+    </button>
+  );
+}
+
+function Select({ label, empty, value, options, onChange }: {
+  label: string;
+  empty: string;
+  value: string;
+  options: { id: string; name: string }[];
+  onChange: (value: string) => void;
+}) {
+  return <Dropdown label={label} empty={empty} value={value} options={options} onChange={onChange} />;
+}
+
 function Rows<T>({ block, children }: { block: Block<T>; children: (data: T) => React.ReactNode }) {
-  if (block.state === 'loading') return <p className="empty">Загружаем очередь…</p>;
-  if (block.state === 'denied') return <p className="empty">Нет доступа к заявкам.</p>;
+  if (block.state === 'loading') return <p className="rq-empty">Загружаем очередь…</p>;
+  if (block.state === 'denied') return <p className="rq-empty">Нет доступа к заявкам.</p>;
   if (block.state === 'error') {
-    return (
-      <p className="empty empty--bad">
-        Не удалось загрузить очередь. Это ошибка запроса, а не «заявок нет».
-      </p>
-    );
+    return <p className="rq-empty rq-empty--bad">Не удалось загрузить очередь. Это ошибка запроса, а не «заявок нет».</p>;
   }
   return <>{children(block.data)}</>;
 }

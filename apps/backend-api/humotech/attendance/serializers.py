@@ -53,6 +53,14 @@ class AttendanceEventSerializer(serializers.Serializer):
     inside_geofence = serializers.BooleanField(allow_null=True)
     inside_office_network = serializers.BooleanField(allow_null=True)
     created_at = serializers.DateTimeField()
+    author_name = serializers.SerializerMethodField(
+        help_text="Кто внёс ручную отметку; у отметки по QR — пусто",
+    )
+
+    def get_author_name(self, event) -> str | None:
+        authors = self.context.get("authors") or {}
+        user_id = (event.event_metadata or {}).get("created_by_user_id")
+        return authors.get(str(user_id)) if user_id else None
 
     # Ни `qr_nonce_hash`, ни координат, ни IP: журнал смотрит кадровик,
     # а это технические поля разбора инцидентов. Их место в аудите.
@@ -75,6 +83,14 @@ class AttendanceSessionSerializer(serializers.Serializer):
         return session.ended_at is None
 
 
+class PresenceIntervalSerializer(serializers.Serializer):
+    """Один отрезок присутствия. `ended_at: null` — сессия ещё открыта."""
+
+    started_at = serializers.DateTimeField()
+    ended_at = serializers.DateTimeField(allow_null=True)
+    seconds = serializers.IntegerField()
+
+
 class PresenceRowSerializer(serializers.Serializer):
     employee_id = serializers.UUIDField()
     full_name = serializers.CharField()
@@ -93,10 +109,20 @@ class PresenceRowSerializer(serializers.Serializer):
     # null означает «сравнивать не с чем», а не «не опоздал».
     late_minutes = serializers.IntegerField(allow_null=True)
     scheduled_start = serializers.TimeField(allow_null=True)
+    scheduled_end = serializers.TimeField(allow_null=True)
 
     absence_code = serializers.CharField(allow_null=True)
     absence_name = serializers.CharField(allow_null=True)
+    # Что человек сам сказал про день: «LATE» — задерживается, «ABSENT» —
+    # не придёт. Это предупреждение, а не оформленное отсутствие: отпуск
+    # и больничный проходят согласование и живут своими заявками.
+    notice_kind = serializers.CharField(allow_null=True)
+    notice_comment = serializers.CharField(allow_null=True)
     conflicting_marks = serializers.BooleanField()
+    # Отрезки присутствия за день. Шкале рабочего дня их не собрать из
+    # первого входа и последнего выхода: обед между ними пропал бы.
+    intervals = PresenceIntervalSerializer(many=True)
+    outside_geofence = serializers.BooleanField()
 
 
 class CorrectionRequestSerializer(serializers.Serializer):
@@ -125,7 +151,9 @@ class CorrectionDecisionSerializer(serializers.Serializer):
     ту же заявку заново, и так по кругу.
     """
 
-    comment = serializers.CharField(required=False, allow_blank=True)
+    comment = serializers.CharField(
+        required=False, allow_blank=True, max_length=2000
+    )
 
 
 class ManualEventSerializer(serializers.Serializer):

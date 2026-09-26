@@ -31,14 +31,19 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, type ScanResponse } from '../api';
 import { duration, time } from '../format';
 import {
-  SCAN_RESULTS,
-  SCAN_UNKNOWN,
   closeScanner,
+  isSticker,
   nativeScannerReady,
   newAttemptId,
+  scanView,
   scanWithTelegram,
 } from '../scanner';
-import { closeApp, haptic } from '../telegram';
+import {
+  type Position,
+  closeApp,
+  haptic,
+  requestPosition,
+} from '../telegram';
 import { AlertIcon, CheckIcon, QrIcon } from '../ui/icons';
 import { PrimaryButton, SecondaryButton } from '../ui/primitives';
 
@@ -52,8 +57,23 @@ import { PrimaryButton, SecondaryButton } from '../ui/primitives';
  */
 export const CLOSE_AFTER_MS = 1800;
 
+/**
+ * Чем занят экран, пока человек ждёт.
+ *
+ * Три разных ожидания подряд, и назвать их одним словом нельзя:
+ * «Проверяем код…» в тот момент, когда телефон ещё ищет место, — это
+ * неправда, и человек у двери не понимает, чего именно ждать.
+ */
+const WAITING: Record<string, string> = {
+  opening: 'Открываем сканер…',
+  locating: 'Определяем, где вы…',
+  sending: 'Проверяем код…',
+};
+
 type Phase =
   | { kind: 'opening' }
+  /** Ждём телефон: печатный код без координат сервер не примет. */
+  | { kind: 'locating' }
   | { kind: 'sending' }
   | { kind: 'done'; result: ScanResponse }
   | { kind: 'failed'; message: string }
@@ -88,6 +108,10 @@ export function QuickScan({ onOpenCabinet }: { onOpenCabinet: () => void }) {
     const stop = new AbortController();
     leaving.current = stop;
 
+    // Место запрашивается ОДНОВРЕМЕННО с открытием камеры: печатному
+    // коду оно обязательно, а пока человек наводит телефон, оно всё
+    // равно определяется само — ждать потом будет нечего.
+    const locating = requestPosition();
     const outcome = await scanWithTelegram(window, stop.signal);
     if (!alive.current) return;
 
@@ -108,8 +132,31 @@ export function QuickScan({ onOpenCabinet }: { onOpenCabinet: () => void }) {
       return;
     }
 
+    // Печатный код у двери сервер принимает только с координатами:
+    // сама по себе наклейка доказывает лишь то, что она существует.
+    let position: Position | null = null;
+    if (isSticker(outcome.value)) {
+      setPhase({ kind: 'locating' });
+      position = await locating;
+      if (!alive.current) return;
+
+      if (!position) {
+        closeScanner();
+        busy.current = false;
+        haptic('error');
+        setPhase({
+          kind: 'failed',
+          message:
+            'Телефон не сообщил, где вы. Печатный код у двери принимается '
+            + 'только вместе с местоположением: включите геолокацию, '
+            + 'разрешите её Telegram и попробуйте снова.',
+        });
+        return;
+      }
+    }
+
     setPhase({ kind: 'sending' });
-    const response = await api.scan(outcome.value, newAttemptId());
+    const response = await api.scan(outcome.value, newAttemptId(), position);
     if (!alive.current) return;
 
     // Окно сканера живёт своей жизнью и камеру держит оно. Результат
@@ -163,14 +210,18 @@ export function QuickScan({ onOpenCabinet }: { onOpenCabinet: () => void }) {
   );
 
   function body() {
-    if (phase.kind === 'opening' || phase.kind === 'sending') {
+    if (
+      phase.kind === 'opening'
+      || phase.kind === 'locating'
+      || phase.kind === 'sending'
+    ) {
       return (
         <>
           <span className="quick-scan-mark" role="status">
             <QrIcon size={34} />
           </span>
           <p className="quick-scan-title">
-            {phase.kind === 'opening' ? 'Открываем сканер…' : 'Проверяем код…'}
+            {WAITING[phase.kind]}
           </p>
           <p className="state-text">
             Наведите камеру на код у входа. Вход это или уход, определит
@@ -219,7 +270,7 @@ export function QuickScan({ onOpenCabinet }: { onOpenCabinet: () => void }) {
     }
 
     const { result } = phase;
-    const view = SCAN_RESULTS[result.status] ?? SCAN_UNKNOWN;
+    const view = scanView(result);
     const worked = result.accepted;
     const closed = result.session?.status === 'CLOSED';
 

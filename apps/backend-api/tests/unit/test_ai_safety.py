@@ -41,7 +41,7 @@ def test_normalization_makes_similar_questions_identical():
     [
         "мой ключ sk-abcdefghijklmnopqrstuvwx1234567890",
         "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload.signature",
-        "бот 8836690896:AAEf090pH9HSt7y9aJjsq4o_uHBl5zsi0uY",
+        "бот 1234567890:AAFakeTelegramTokenForUnitTests0000",
         "пароль: SuperSecret123",
         "api_key = abcdef1234567890",
     ],

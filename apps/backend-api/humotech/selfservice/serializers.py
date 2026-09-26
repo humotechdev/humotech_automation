@@ -8,9 +8,12 @@
 
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 
 from rest_framework import serializers
+
+from humotech.core.enums import DAY_NOTICE_KINDS
 
 
 class ScanRequestSerializer(serializers.Serializer):
@@ -69,6 +72,8 @@ class PeriodSerializer(serializers.Serializer):
 
     PERIODS = ("today", "week", "month")
     MAX_DAYS = 366
+    EARLIEST = date(2000, 1, 1)
+    LATEST = date(2100, 12, 31)
 
     period = serializers.ChoiceField(choices=PERIODS, required=False)
     date_from = serializers.DateField(required=False)
@@ -82,6 +87,13 @@ class PeriodSerializer(serializers.Serializer):
             # на пустой запрос ошибкой было бы придирчиво.
             attrs["period"] = "month"
             return attrs
+        for field in ("date_from", "date_to"):
+            if not self.EARLIEST <= attrs[field] <= self.LATEST:
+                # Год 1 или 9999 — не период, а способ получить 500 при
+                # переводе границ суток в UTC.
+                raise serializers.ValidationError(
+                    {field: "Дата вне допустимого диапазона"}
+                )
         if attrs["date_to"] < attrs["date_from"]:
             raise serializers.ValidationError(
                 {"date_to": "Конец периода раньше начала"}
@@ -93,3 +105,17 @@ class PeriodSerializer(serializers.Serializer):
                 {"date_to": "Период длиннее года — сузьте запрос"}
             )
         return attrs
+
+
+class DayNoticeSerializer(serializers.Serializer):
+    """Ответ на напоминание: задерживаюсь или не приду.
+
+    Причина необязательна намеренно. Требовать объяснение у того, кто
+    стоит в пробке, — способ не получить ни объяснения, ни
+    предупреждения: человек просто не нажмёт кнопку.
+    """
+
+    kind = serializers.ChoiceField(choices=DAY_NOTICE_KINDS)
+    comment = serializers.CharField(
+        max_length=500, required=False, allow_null=True, allow_blank=True
+    )

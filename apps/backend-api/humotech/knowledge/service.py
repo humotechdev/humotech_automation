@@ -445,10 +445,11 @@ class KnowledgeService(BaseService):
                 "уровень области действия должен быть однозначным",
                 details={"field": "office_id"},
             )
-        if office_id is not None:
-            self.access.require_office(actor, office_id)
-        if region_id is not None:
-            self.access.require_region(actor, region_id)
+        # Своя организация, своя видимость; FAQ на всю организацию — только
+        # тому, кому видна вся организация.
+        self.use_cases._require_area(
+            actor, office_id=office_id, region_id=region_id
+        )
         if source_id is not None:
             self.use_cases._require_source(actor, source_id)
 
@@ -490,7 +491,7 @@ class KnowledgeService(BaseService):
         сотрудник спросил бы одно, а получил ответ на другое.
         """
         self.access.require(actor, "knowledge.write")
-        faq = self._require_faq(actor, faq_id)
+        faq = self._require_faq_in_scope(actor, faq_id)
         before = snapshot(faq, FAQ_FIELDS)
         fields: list[str] = []
 
@@ -540,7 +541,7 @@ class KnowledgeService(BaseService):
         """Включить FAQ в поиск или убрать из него."""
         self.access.require(actor, "knowledge.publish")
         target = _known(status, "status", FAQ_ENTRY_STATUSES)
-        faq = self._require_faq(actor, faq_id)
+        faq = self._require_faq_in_scope(actor, faq_id)
 
         if target == "ACTIVE" and faq.question_embedding is None:
             # Без эмбеддинга запись действующей быть не может: поиск
@@ -566,6 +567,18 @@ class KnowledgeService(BaseService):
                 before=before,
                 after=snapshot(faq, FAQ_FIELDS),
             )
+        return faq
+
+    def _require_faq_in_scope(self, actor: Actor, faq_id: uuid.UUID) -> FaqEntry:
+        """FAQ своей организации, и его офис или регион виден актору.
+
+        Для правки и включения в поиск: иначе пользователь с правами на
+        один офис менял ответ, который получают сотрудники соседнего.
+        """
+        faq = self._require_faq(actor, faq_id)
+        self.use_cases._require_area(
+            actor, office_id=faq.office_id, region_id=faq.region_id
+        )
         return faq
 
     def _require_faq(self, actor: Actor, faq_id: uuid.UUID) -> FaqEntry:

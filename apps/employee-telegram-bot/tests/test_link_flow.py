@@ -82,15 +82,34 @@ class FakeState:
 class FakeClient:
     """Клиент backend. Либо запоминает вызов, либо бросает заданную ошибку."""
 
-    def __init__(self, *, raises: Exception | None = None):
+    def __init__(self, *, raises: Exception | None = None,
+                 recognizes: Exception | dict | None = None):
         self.raises = raises
+        self.recognizes = recognizes
         self.calls: list[dict] = []
+        self.recognized: list[dict] = []
 
     async def consume_link_token(self, **kwargs):
         self.calls.append(kwargs)
         if self.raises is not None:
             raise self.raises
         return {"status": "PENDING", "employee_known": True}
+
+    async def recognize(self, **kwargs):
+        self.recognized.append(kwargs)
+        if isinstance(self.recognizes, Exception):
+            raise self.recognizes
+        return self.recognizes or {
+            "status": "PENDING",
+            "full_name": "Мурадов Азизбек",
+            "employment_status": "PROBATION",
+            "hire_date": "2026-09-18",
+            "office_name": "город Ташкент",
+            "department_name": None,
+            "position_name": None,
+            "schedule_name": "Пн–Пт 09:00–18:00",
+            "manager_name": None,
+        }
 
 
 def run_start(payload: str, client: FakeClient, message=None) -> FakeMessage:
@@ -114,18 +133,16 @@ def refusal(reason: str) -> Conflict:
 
 # --- успешный переход ------------------------------------------------------
 
-def test_successful_click_reports_pending_not_access():
-    """Успех — это ещё НЕ доступ. Клавиатуру сотрудника показывать нельзя:
-    она означала бы, что бот уже работает."""
+def test_successful_click_shows_terms_before_access():
+    """После ссылки сотрудник сперва принимает условия, доступа пока нет."""
     client = FakeClient()
     message = run_start("link_the-token", client)
 
     text, markup = message.answers[-1]
     assert text == start_module.LINK_PENDING
-    # Клавиатуры сотрудника здесь быть не должно: она означала бы,
-    # что бот уже работает. Остаётся только «Помощь».
+    # Нужна только inline-кнопка согласия; обычное меню ещё рано.
     assert markup is not None
-    assert [b.text for row in markup.keyboard for b in row] == ["❓ Помощь"]
+    assert markup.inline_keyboard[0][0].callback_data == "link:accept"
 
 
 def test_bot_sends_only_what_telegram_confirmed():
@@ -158,7 +175,6 @@ def test_bot_sends_only_what_telegram_confirmed():
         ("expired", start_module.LINK_EXPIRED),
         ("revoked", start_module.LINK_REVOKED),
         ("used", start_module.LINK_USED),
-        ("pending", start_module.LINK_AWAITING),
         ("invalid", start_module.LINK_INVALID),
         ("telegram_taken", start_module.LINK_TAKEN),
         ("employee_inactive", start_module.LINK_INACTIVE),
@@ -176,6 +192,14 @@ def test_unknown_reason_falls_back_to_a_neutral_message():
     Молчание в этом случае хуже общего текста."""
     message = run_start("link_x", FakeClient(raises=refusal("что-то новое")))
     assert message.answers[-1][0] == start_module.LINK_ERROR
+
+
+def test_pending_link_can_resume_with_terms_after_a_restart():
+    """Старый переход не должен оставлять человека ждать HR навсегда."""
+    message = run_start("link_x", FakeClient(raises=refusal("pending")))
+    said, markup = message.answers[-1]
+    assert said == start_module.LINK_PENDING
+    assert markup.inline_keyboard[0][0].callback_data == "link:accept"
 
 
 def test_backend_outage_does_not_leave_the_user_without_an_answer():
@@ -204,16 +228,43 @@ def test_refusal_never_shows_the_employee_keyboard():
 
 # --- посторонняя нагрузка --------------------------------------------------
 
-def test_foreign_payload_behaves_like_a_plain_start():
-    """Нагрузка не наша — ведём себя как при обычном /start и на backend
-    не ходим."""
+def test_foreign_payload_does_not_consume_a_token():
+    """Нагрузка не наша — ссылку не гасим.
+
+    Но человека, у которого привязки нет, пробуем узнать: бот не может
+    написать первым, и первый запуск — единственный момент, когда это
+    вообще возможно.
+    """
     client = FakeClient()
     message = run_start("ref_partner42", client)
 
     assert client.calls == []
-    # Без привязки обычный /start объясняет, что делать, и не показывает
-    # меню сотрудника.
-    assert message.answers[-1][0].startswith("Этот Telegram не связан")
+    assert len(client.recognized) == 1
+    assert message.answers[-1][0].startswith("Добро пожаловать в HUMOTECH")
+
+
+def test_recognized_employee_is_greeted_with_the_facts():
+    """Узнанному сразу говорят, куда он принят и по какому графику."""
+    client = FakeClient()
+    message = run_start("ref_partner42", client)
+
+    said = message.answers[-1][0]
+    assert "Мурадов Азизбек" in said
+    assert "на стажировку" in said
+    assert "город Ташкент" in said
+    assert "Пн–Пт 09:00–18:00" in said
+    # Доступа это ещё не даёт, и об этом сказано прямо.
+    assert "подтвердит привязку" in said
+
+
+def test_unknown_person_is_sent_to_hr():
+    """Постороннему не намекают, что такой сотрудник есть."""
+    client = FakeClient(recognizes=refusal("unknown"))
+    message = run_start("ref_partner42", client)
+
+    said = message.answers[-1][0]
+    assert said.startswith("Мы вас пока не ждём")
+    assert "Мурадов" not in said
 
 
 # --- секреты ---------------------------------------------------------------

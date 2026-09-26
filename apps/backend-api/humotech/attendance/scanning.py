@@ -39,6 +39,7 @@ from humotech.attendance.services import RejectionReason, register_scan
 from humotech.core.clientip import address_in_networks
 from humotech.core.errors import constraint_name_of
 from humotech.offices.models import OfficeNetwork
+from humotech.qr_codes import stickers
 from humotech.qr_codes.models import OfficeQrPoint
 from humotech.qr_codes.tokens import QrTokenError, read
 
@@ -61,6 +62,12 @@ class ScanStatus:
     LOCATION_TOO_VAGUE = "LOCATION_TOO_VAGUE"
     NETWORK_REQUIRED = "NETWORK_REQUIRED"
     GEOLOCATION_REQUIRED = "GEOLOCATION_REQUIRED"
+    # Печатный код, которого больше нет: наклейку перевыпустили или
+    # это вовсе не наш секрет. Отличить одно от другого нельзя — старые
+    # хеши не хранятся, — и человеку в обоих случаях нужно одно и то же.
+    QR_REVOKED = "QR_REVOKED"
+    GEOFENCE_NOT_CONFIGURED = "GEOFENCE_NOT_CONFIGURED"
+    TOO_SOON = "TOO_SOON"
 
 
 # Ограничение, по которому узнаётся повторно присланная попытка.
@@ -81,6 +88,8 @@ _REJECTION_TO_STATUS = {
     RejectionReason.OUTSIDE_GEOFENCE: ScanStatus.OUTSIDE_GEOFENCE,
     RejectionReason.LOCATION_TOO_VAGUE: ScanStatus.LOCATION_TOO_VAGUE,
     RejectionReason.CLOCK_DRIFT: ScanStatus.QR_EXPIRED,
+    RejectionReason.GEOFENCE_NOT_CONFIGURED: ScanStatus.GEOFENCE_NOT_CONFIGURED,
+    RejectionReason.TOO_SOON: ScanStatus.TOO_SOON,
 }
 
 # Почему код не разобрался -> что показать. Истёкший срок отделён от всего
@@ -99,6 +108,14 @@ class ScanOutcome:
     office_name: str | None = None
     point_name: str | None = None
     occurred_at: datetime | None = None
+    #: Направление точки: ENTRY, EXIT или BOTH. По нему бот объясняет
+    #: отказ «эта точка только для входа», не угадывая.
+    point_mode: str | None = None
+    #: Расстояние до офиса в метрах и допустимый радиус — если сравнивали.
+    distance_m: float | None = None
+    radius_m: int | None = None
+    #: Часовой пояс офиса: время отметки человеку показывается в нём.
+    office_timezone: str | None = None
 
     @property
     def accepted(self) -> bool:
@@ -127,6 +144,17 @@ def scan(
     """
     moment = now or timezone.now()
     employee = context.employee
+
+    # Печатный код узнаётся по виду раньше подписанного: у него нет
+    # подписи, и разбирать его как меняющийся значило бы ответить
+    # «код не распознан» на рабочую наклейку.
+    secret = stickers.secret_of(token)
+    if secret is not None:
+        return _scan_sticker(
+            context, secret=secret, moment=moment, ip_address=ip_address,
+            client_event_id=client_event_id, latitude=latitude,
+            longitude=longitude, accuracy_m=accuracy_m, source=source,
+        )
 
     try:
         payload = read(token, now=moment)
@@ -202,12 +230,84 @@ def scan(
             raise
         return replayed
 
+    return _outcome(result, point, employee_id=employee.id)
+
+
+def _scan_sticker(
+    context, *, secret, moment, ip_address, client_event_id, latitude,
+    longitude, accuracy_m, source,
+) -> ScanOutcome:
+    """Скан печатного кода: точка — по хешу секрета, строгая геозона.
+
+    Срока и одноразовости у наклейки нет, поэтому вся защита — в месте:
+    координаты обязательны, офис обязан быть на карте, а повтор в
+    течение минуты не принимается. Проверку выполняет то же правило
+    `register_scan`, что и для меняющегося кода, — с флагом строгости.
+    """
+    employee = context.employee
+    point = (
+        OfficeQrPoint.objects.select_related("office", "office__organization")
+        .filter(qr_mode="STATIC", static_token_hash=stickers.token_hash(secret))
+        .first()
+    )
+    if point is None:
+        # Секрета в логе нет: по нему собирается рабочая наклейка.
+        logger.info(
+            "sticker scan rejected: unknown or reissued secret",
+            extra={"employee_id": str(employee.id)},
+        )
+        return ScanOutcome(status=ScanStatus.QR_REVOKED)
+
+    if point.organization_id != context.organization_id:
+        logger.warning(
+            "sticker scan rejected: cross-organization attempt",
+            extra={"employee_id": str(employee.id), "qr_point_id": str(point.id)},
+        )
+        return ScanOutcome(status=ScanStatus.OFFICE_NOT_ALLOWED)
+
+    try:
+        result = register_scan(
+            employee_id=employee.id,
+            qr_point=point,
+            now=moment,
+            ip_address=ip_address,
+            inside_office_network=_inside_office_network(point, ip_address),
+            latitude=latitude,
+            longitude=longitude,
+            location_accuracy_m=accuracy_m,
+            client_event_id=client_event_id,
+            source=source,
+            strict_location=True,
+        )
+    except IntegrityError as error:
+        replayed = _replay(error, employee_id=employee.id,
+                           client_event_id=client_event_id, point=point)
+        if replayed is None:
+            raise
+        return replayed
+
+    return _outcome(result, point, employee_id=employee.id)
+
+
+def _outcome(result, point: OfficeQrPoint, *, employee_id) -> ScanOutcome:
+    """Результат правила -> ответ. Один на оба вида кода."""
+    event = result.event
+    distance = float(event.distance_m) if event.distance_m is not None else None
+    common = {
+        "office_name": point.office.name,
+        "point_name": point.name,
+        "point_mode": point.direction_mode,
+        "distance_m": distance,
+        "radius_m": point.office.geofence_radius_m,
+        "office_timezone": point.office.timezone,
+    }
+
     if not result.accepted:
         logger.info(
             "qr scan rejected: %s",
             result.rejection_reason,
             extra={
-                "employee_id": str(employee.id),
+                "employee_id": str(employee_id),
                 "qr_point_id": str(point.id),
             },
         )
@@ -215,20 +315,16 @@ def scan(
             status=_REJECTION_TO_STATUS.get(
                 result.rejection_reason, ScanStatus.QR_INVALID
             ),
-            office_name=point.office.name,
-            point_name=point.name,
+            **common,
         )
 
     return ScanOutcome(
         status=(
-            ScanStatus.ENTERED
-            if result.event.event_type == "ENTRY"
-            else ScanStatus.EXITED
+            ScanStatus.ENTERED if event.event_type == "ENTRY" else ScanStatus.EXITED
         ),
         session=result.session,
-        office_name=point.office.name,
-        point_name=point.name,
-        occurred_at=result.event.occurred_at,
+        occurred_at=event.occurred_at,
+        **common,
     )
 
 
@@ -272,13 +368,23 @@ def _replay(
         extra={"employee_id": str(employee_id)},
     )
 
+    common = {
+        "office_name": point.office.name,
+        "point_name": point.name,
+        "point_mode": point.direction_mode,
+        "distance_m": (
+            float(first.distance_m) if first.distance_m is not None else None
+        ),
+        "radius_m": point.office.geofence_radius_m,
+        "office_timezone": point.office.timezone,
+    }
+
     if first.verification_status != "ACCEPTED":
         return ScanOutcome(
             status=_REJECTION_TO_STATUS.get(
                 first.rejection_reason, ScanStatus.QR_INVALID
             ),
-            office_name=point.office.name,
-            point_name=point.name,
+            **common,
         )
 
     session = AttendanceSession.objects.filter(
@@ -290,9 +396,8 @@ def _replay(
             ScanStatus.ENTERED if first.event_type == "ENTRY" else ScanStatus.EXITED
         ),
         session=session,
-        office_name=point.office.name,
-        point_name=point.name,
         occurred_at=first.occurred_at,
+        **common,
     )
 
 

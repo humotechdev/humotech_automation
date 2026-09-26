@@ -101,13 +101,24 @@ class RetrievalService:
     # --------------------------------------------------------------- фильтры
 
     def _visible_chunks(self, scope: EmployeeScope, language: str, today: date):
-        """Чанки, которые вообще имеют право попасть в ответ."""
+        """Чанки, которые вообще имеют право попасть в ответ.
+
+        Отдел проверяется отдельно от уровня «офис > регион > глобальное»:
+        документ отдела без офиса и региона — это не глобальное правило,
+        а правило одного отдела. Раньше поле `department_id` принималось
+        API, но поиск его не смотрел, и такой документ уходил всей
+        организации.
+        """
+        department = Q(source__department_id__isnull=True)
+        if scope.department_id:
+            department |= Q(source__department_id=scope.department_id)
         return KnowledgeChunk.objects.filter(
             Q(source__effective_from__isnull=True)
             | Q(source__effective_from__lte=today),
             Q(source__effective_to__isnull=True)
             | Q(source__effective_to__gte=today),
             _scope_condition(scope, "source__"),
+            department,
             source__organization_id=scope.organization_id,
             source__status="ACTIVE",
             source__language=language,

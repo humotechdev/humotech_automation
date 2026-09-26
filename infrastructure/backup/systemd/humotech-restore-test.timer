@@ -1,0 +1,10 @@
+[Unit]
+Description=HUMOTECH: ежемесячная проверка восстановления
+
+[Timer]
+# Первое число месяца, 05:00 — после ночной копии.
+OnCalendar=*-*-01 05:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

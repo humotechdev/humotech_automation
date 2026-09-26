@@ -104,7 +104,15 @@ class User(UUIDPrimaryKeyModel, TimestampedModel, ArchivableModel, AbstractBaseU
         blank=True,
         related_name="account",
     )
+    #: Логин: адрес почты или короткое имя вроде `malika.hr`. Колонка
+    #: называется `email` исторически и поле не проверяется на формат
+    #: адреса: организация сама решает, чем людям удобнее входить.
     email = models.CharField(max_length=255)
+    #: Как человека зовут. Пусто у технической учётной записи: у неё имени
+    #: нет вовсе, и подставлять туда адрес значит выдавать одно за другое.
+    #: У записи, привязанной к сотруднику, имя берут из карточки — здесь
+    #: оно нужно тем, у кого карточки нет.
+    full_name = models.CharField(max_length=255, null=True, blank=True)
     # Только хеш (argon2/bcrypt). Открытый пароль не хранится нигде и никогда.
     # Колонка называется password_hash — имя говорит, что внутри, и не даёт
     # принять её за место для пароля.
@@ -266,3 +274,37 @@ class UserRoleScope(UUIDPrimaryKeyModel, OrganizationScopedModel, CreatedAtModel
 
     def __str__(self) -> str:
         return f"{self.user_id} / {self.role_id}"
+
+
+class AuthRateCounter(models.Model):
+    """Счётчик попыток в окне времени — общий для всех рабочих процессов.
+
+    Живёт в PostgreSQL, а не в кэше процесса: при нескольких воркерах
+    счётчик в LocMem у каждого свой, и предел умножается на их число.
+    Строка меняется под `SELECT ... FOR UPDATE`, поэтому параллельные
+    запросы не «теряют» попытки друг у друга.
+
+    Ключ — SHA-256 от области и идентификатора (организация, логин,
+    адрес). Сам логин здесь не хранится: таблица о частоте, а не о людях.
+
+    Префикс `auth_` у таблицы не случаен: это служебная таблица входа того
+    же рода, что `django_session`, а не бизнес-данные, и сверка схемы
+    с эталоном её не касается.
+    """
+
+    key = models.CharField(max_length=64, primary_key=True)
+    hits = models.IntegerField(default=0)
+    window_started_at = models.DateTimeField()
+    locked_until = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "auth_rate_counters"
+        verbose_name = "счётчик попыток"
+        verbose_name_plural = "счётчики попыток"
+        indexes = [
+            models.Index(fields=["updated_at"], name="ix_auth_rate_counters_upd"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.key[:12]}… {self.hits}"

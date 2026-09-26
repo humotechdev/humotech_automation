@@ -17,13 +17,15 @@
 
 from __future__ import annotations
 
+import logging
+
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import serializers, status
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.throttling import ScopedRateThrottle
+from humotech.core.throttling import SharedScopedRateThrottle as ScopedRateThrottle
 from rest_framework.views import APIView
 
 from humotech.core.api import ServiceViewSet, validated
@@ -36,14 +38,23 @@ from humotech.telegram.auth import (
 from humotech.telegram.serializers import (
     AccountSerializer,
     BotConsumeSerializer,
+    BotLinkAcceptSerializer,
     InvitationCreateSerializer,
     InvitationSerializer,
     IssuedInvitationSerializer,
     LinkStatusSerializer,
     MiniAppAuthSerializer,
     MiniAppSessionSerializer,
+    BotRecognizeSerializer,
+    WelcomeSerializer,
 )
-from humotech.telegram.services import TelegramLinkService, TelegramMiniAppService
+from humotech.telegram.services import (
+    TelegramLinkService,
+    TelegramMiniAppService,
+    welcome_facts,
+)
+
+log = logging.getLogger(__name__)
 
 
 class TelegramInvitationViewSet(ServiceViewSet):
@@ -80,7 +91,10 @@ class TelegramInvitationViewSet(ServiceViewSet):
 
     def create(self, request):
         payload = validated(InvitationCreateSerializer, request.data)
-        issued = self.service.create_invitation(self.actor, payload["employee_id"])
+        issued = self.service.create_invitation(
+            self.actor, payload["employee_id"],
+            replace=payload.get("replace", False),
+        )
         # Единственный ответ, в котором есть открытый токен. Повторно
         # получить его нельзя: в базе только хеш.
         return Response(
@@ -111,10 +125,18 @@ class BotLinkResultSerializer(serializers.Serializer):
 
     Сотрудник боту неизвестен и знать его боту незачем: он только
     сообщает человеку, что привязка ждёт подтверждения.
+
+    `onboarding_required` — единственное исключение, и это булево
+    значение, а не сведения о человеке. Без него бот не знал бы, что
+    показать сразу после перехода по ссылке: приветствие ознакомления
+    или обычные условия привязки.
     """
 
     status = serializers.CharField()
     employee_known = serializers.BooleanField()
+    onboarding_required = serializers.BooleanField(
+        help_text="Ждёт ли этого человека первичное ознакомление",
+    )
 
 
 class MiniAppEmployeeSerializer(serializers.Serializer):
@@ -141,6 +163,24 @@ class OutboxMessageSerializer(serializers.Serializer):
     text = serializers.CharField()
     type = serializers.CharField()
     attempts = serializers.IntegerField()
+    entity_id = serializers.CharField(
+        allow_null=True, required=False,
+        help_text=(
+            "На что ссылается уведомление. По нему бот прикладывает "
+            "кнопку — например, открывает нужный опрос в Mini App"
+        ),
+    )
+    attachment = serializers.CharField(
+        allow_null=True, required=False,
+        help_text=(
+            "Что приложить к сообщению. Сам файл в очередь не кладётся: "
+            "бот скачивает его тем же запросом, что и человек из кабинета"
+        ),
+    )
+    telegram_user_id = serializers.IntegerField(
+        allow_null=True, required=False,
+        help_text="От чьего имени бот запросит вложение",
+    )
 
 
 class OutboxBatchSerializer(serializers.Serializer):
@@ -232,6 +272,18 @@ class EmployeeTelegramDisconnectView(_EmployeeScopedView):
         return Response(AccountSerializer(account).data)
 
 
+def _onboarding_required(employee_id) -> bool:
+    """Ждёт ли человека первичное ознакомление.
+
+    Импорт локальный: `onboarding` пользуется приглашениями из этого
+    модуля, и импорт на уровне файла замкнул бы круг.
+    """
+    from humotech.onboarding import progress as onboarding_progress
+
+    state = onboarding_progress.of_employee(employee_id)
+    return state is not None and not state.completed
+
+
 class BotLinkView(APIView):
     """Погашение ссылки. Вызывает только бот, пользователя за запросом нет."""
 
@@ -264,7 +316,67 @@ class BotLinkView(APIView):
         # и знать его боту незачем — он только сообщает человеку,
         # что привязка ждёт подтверждения.
         return Response(
-            {"status": account.status, "employee_known": True},
+            {
+                "status": account.status,
+                "employee_known": True,
+                "onboarding_required": _onboarding_required(account.employee_id),
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class BotLinkAcceptView(BotLinkView):
+    """Подтверждение условий сотрудником; HR в этом шаге не участвует."""
+    @extend_schema(request=BotLinkAcceptSerializer, responses={200: BotLinkResultSerializer}, tags=["Telegram"])
+    def post(self, request):
+        payload = validated(BotLinkAcceptSerializer, request.data)
+        account = TelegramLinkService().accept_terms(telegram_user_id=payload["telegram_user_id"])
+        return Response({
+            "status": account.status,
+            "employee_known": True,
+            "onboarding_required": _onboarding_required(account.employee_id),
+        })
+
+
+class BotRecognizeView(APIView):
+    """Узнавание сотрудника по его имени в Telegram при первом запуске.
+
+    Бот не может написать первым — это правило Telegram. Но когда
+    человек открывает бота сам, он приносит своё `@username`; если
+    кадровик указал его в карточке, ссылка не нужна вовсе.
+
+    Доступа это не даёт: получается та же привязка `PENDING`, что и по
+    ссылке, и подтверждает её всё тот же кадровик.
+    """
+
+    authentication_classes: list = []
+    permission_classes = [IsTelegramBot]
+    throttle_scope = "telegram_bot_link"
+    throttle_classes = [ScopedRateThrottle]
+
+    @extend_schema(
+        operation_id="telegram_bot_recognize",
+        summary="Узнать сотрудника по имени в Telegram",
+        description=(
+            "Вызывает только бот. Возвращает то, чем поздороваться: имя, "
+            "офис, график и руководителя. Привязка при этом создаётся "
+            "ожидающей подтверждения HR."
+        ),
+        request=BotRecognizeSerializer,
+        responses={201: WelcomeSerializer},
+        tags=["Telegram"],
+    )
+    def post(self, request):
+        payload = validated(BotRecognizeSerializer, request.data)
+        service = TelegramLinkService()
+        account = service.recognize(
+            telegram_username=payload.get("telegram_username") or None,
+            telegram_user_id=payload["telegram_user_id"],
+            telegram_chat_id=payload["telegram_chat_id"],
+            language_code=payload.get("language_code") or None,
+        )
+        return Response(
+            {"status": account.status, **welcome_facts(account.employee)},
             status=status.HTTP_201_CREATED,
         )
 
@@ -360,10 +472,36 @@ class BotOutboxView(APIView):
         from django.conf import settings
 
         from humotech.notifications.outbox import claim, reclaim_stale
+        from humotech.surveys.automations import run_due
+        from humotech.surveys.services import dispatch_due, remind_due
 
         # Уборка перед выдачей: строки, зависшие в RUNNING после падения
         # отправщика, иначе не ушли бы никогда.
         reclaimed = reclaim_stale()
+
+        # Опросы, которым подошёл срок: запланированные и повторяющиеся.
+        # Здесь, а не в отдельном планировщике: бот и так спрашивает
+        # очередь каждые несколько секунд, а собственный планировщик ради
+        # двух дат в году был бы лишней движущейся частью, о падении
+        # которой узнали бы только по ненаступившему опросу. Запрос
+        # дешёвый: частичный индекс по `next_send_at`, и почти всегда он
+        # не находит ничего.
+        # Здесь же — напоминания тем, кто не закончил, закрытие
+        # просроченных рассылок и автоматические опросы по событиям.
+        # Все трое стоят на частичных индексах и почти всегда не
+        # находят ничего.
+        #
+        # Ошибка здесь не должна остановить выдачу сообщений: это
+        # разные работы, и одно криво настроенное правило опроса не
+        # повод оставить всю компанию без уведомлений. Но и молча
+        # проглотить её нельзя: о ненаступившем опросе иначе не
+        # узнать вовсе.
+        for tick in (dispatch_due, remind_due, run_due):
+            try:
+                tick()
+            except Exception:
+                log.exception("периодическая работа %s не сработала", tick.__name__)
+
         batch = claim(limit=settings.NOTIFICATIONS["BATCH_SIZE"])
         return Response(
             {
@@ -374,6 +512,15 @@ class BotOutboxView(APIView):
                         "text": item.text,
                         "type": item.notification_type,
                         "attempts": item.attempts,
+                        # На что ссылается уведомление. Бот прикладывает
+                        # по нему кнопку: без этого он знает, что опрос
+                        # пришёл, но не знает какой.
+                        "entity_id": item.related_entity_id,
+                        # Что приложить к сообщению и от чьего имени это
+                        # скачать. Сам файл в очередь не кладётся: он
+                        # собирается из заявки на каждое обращение.
+                        "attachment": item.attachment,
+                        "telegram_user_id": item.telegram_user_id,
                     }
                     for item in batch
                 ],
@@ -390,9 +537,14 @@ class BotOutboxView(APIView):
         tags=["Telegram"],
     )
     def post(self, request):
+        import uuid as _uuid
+
         from humotech.notifications.outbox import mark_failed, mark_sent
 
-        results = request.data.get("results")
+        # Тело может оказаться списком, строкой или `null`: у них нет
+        # `.get`, и без проверки это 500, а не понятный отказ.
+        data = request.data if isinstance(request.data, dict) else {}
+        results = data.get("results")
         if not isinstance(results, list):
             return Response(
                 {
@@ -405,15 +557,34 @@ class BotOutboxView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # `accepted` — сколько отчётов реально изменили строку. Отчёт
+        # о строке, которую бот не держит (чужая, уже закрытая, снятая
+        # человеком, несуществующая), ничего не меняет и не считается.
         accepted = 0
         for item in results[:200]:
-            if not isinstance(item, dict) or not item.get("id"):
+            if not isinstance(item, dict):
                 continue
-            if item.get("sent"):
-                mark_sent(item["id"])
-            else:
+            raw_id = item.get("id")
+            if not isinstance(raw_id, str) or len(raw_id) > 64:
+                continue
+            try:
+                notification_id = _uuid.UUID(raw_id)
+            except ValueError:
+                continue
+            sent = item.get("sent")
+            # Только настоящий `true`/`false`: строка `"false"` непуста
+            # и раньше засчитывалась как успех.
+            if sent is True:
+                changed = mark_sent(notification_id)
+            elif sent is False:
                 # Текст ошибки от Telegram может содержать эхо запроса,
                 # то есть само уведомление. Наружу берём только код.
-                mark_failed(item["id"], error=str(item.get("error") or "unknown"))
-            accepted += 1
+                error = item.get("error")
+                changed = mark_failed(
+                    notification_id,
+                    error=error if isinstance(error, str) and error else "unknown",
+                )
+            else:
+                continue
+            accepted += int(bool(changed))
         return Response({"accepted": accepted})

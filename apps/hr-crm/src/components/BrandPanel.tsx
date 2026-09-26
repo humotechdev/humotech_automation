@@ -9,7 +9,7 @@
  */
 
 import { DecorChart } from './DecorChart';
-import { Wordmark } from './Logo';
+import { BrandLockup } from './Logo';
 
 const COLUMNS = [
   { title: 'Единый учёт', hint: 'Сотрудники, отделы, должности' },
@@ -21,7 +21,12 @@ export function BrandPanel() {
   return (
     <aside className="brand">
       <div className="brand__head">
-        <Wordmark />
+        {/* Тот же фирменный файл, что в боковом меню CRM: знак с надписью
+            для тёмного фона. Собирать надпись шрифтом отдельно значило бы
+            иметь два разных логотипа в одном продукте. */}
+        <div className="brand__logo">
+          <BrandLockup />
+        </div>
         <p className="brand__tagline">Единое управление персоналом</p>
       </div>
 

@@ -175,6 +175,44 @@ class TestLifecycle:
         # на вопрос «где приложили пропуск» нельзя.
         assert OfficeQrPoint.objects.filter(id=issued.point.id).exists()
 
+    def test_unused_point_can_be_deleted(self, service, qr_actor, office):
+        # Опечатку в справочнике надо уметь убрать совсем: точка, по
+        # которой никто не отмечался, ничего не объясняет и никому не
+        # нужна — держать её выключенной значит копить мусор.
+        issued = service.create(
+            qr_actor, office_id=office.id, code="TYPO", name="Опечатка",
+            qr_mode="ROTATING", rotation_seconds=30,
+        )
+
+        service.delete(qr_actor, issued.point.id)
+
+        assert not OfficeQrPoint.objects.filter(id=issued.point.id).exists()
+
+    def test_point_with_marks_is_not_deleted(
+        self, service, qr_actor, organization, employee, office
+    ):
+        # Обратная сторона: удалить точку, через которую люди ходили,
+        # значит стереть ответ на вопрос «в какую дверь человек вошёл».
+        from django.utils.timezone import now as django_now
+
+        from humotech.attendance.models import AttendanceEvent
+
+        point = make_qr_point(organization, office, code="USED")
+        AttendanceEvent.objects.create(
+            organization=organization,
+            employee=employee,
+            office=office,
+            qr_point=point,
+            event_type="ENTRY",
+            occurred_at=django_now(),
+            source="QR",
+            verification_status="ACCEPTED",
+        )
+
+        with pytest.raises(Conflict):
+            service.delete(qr_actor, point.id)
+        assert OfficeQrPoint.objects.filter(id=point.id).exists()
+
     def test_rotating_period_is_bounded(self, service, qr_actor, office):
         from humotech.core.errors import ValidationFailed
 

@@ -13,7 +13,7 @@ import { messageFor } from '../api/errors';
 import { BrandPanel } from '../components/BrandPanel';
 import { LanguageSwitch } from '../components/LanguageSwitch';
 import { Wordmark } from '../components/Logo';
-import { EyeIcon, EyeOffIcon, LockIcon, ShieldIcon, UserIcon } from '../components/icons';
+import { AppIcon, ICON_SIZE } from '../components/AppIcon';
 import { forgetLogin, rememberLogin, rememberedLogin } from '../features/auth/remembered';
 import { useSession } from '../features/auth/session';
 
@@ -83,7 +83,7 @@ export function LoginPage() {
                   Логин
                 </label>
                 <div className="field__box">
-                  <UserIcon className="field__icon" />
+                  <AppIcon name="user" size={ICON_SIZE.nav} className="field__icon" />
                   <input
                     id={loginId}
                     className="field__input"
@@ -112,7 +112,7 @@ export function LoginPage() {
                   Пароль
                 </label>
                 <div className="field__box">
-                  <LockIcon className="field__icon" />
+                  <AppIcon name="lock" size={ICON_SIZE.nav} className="field__icon" />
                   <input
                     id={passwordId}
                     className="field__input"
@@ -132,7 +132,8 @@ export function LoginPage() {
                     aria-pressed={visible}
                     onClick={() => setVisible((was) => !was)}
                   >
-                    {visible ? <EyeOffIcon /> : <EyeIcon />}
+                    {visible ? <AppIcon name="eye-off" size={ICON_SIZE.nav} />
+                             : <AppIcon name="eye" size={ICON_SIZE.nav} />}
                   </button>
                 </div>
                 {failed.password && (
@@ -170,7 +171,7 @@ export function LoginPage() {
             </form>
 
             <footer className="form-side__footer">
-              <ShieldIcon className="form-side__shield" />
+              <AppIcon name="admin" size={ICON_SIZE.card} className="form-side__shield" />
               <div>
                 <p>Доступ только для авторизованных сотрудников</p>
                 <p>Нет доступа? Обратитесь к администратору</p>

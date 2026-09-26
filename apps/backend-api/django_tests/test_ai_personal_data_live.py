@@ -96,6 +96,8 @@ def add_absence(db, organization, employee, *, code, name, start, end, status):
         origin_request_id=request.id,
         start_at=start,
         end_at=end,
+        start_date=start.date(),
+        end_date=end.date(),
         status=status,
     )
     return absence_type, absence

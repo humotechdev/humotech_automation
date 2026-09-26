@@ -28,6 +28,16 @@ EMPLOYMENT_STATUSES = ("ACTIVE", "PROBATION", "SUSPENDED", "TERMINATED", "ARCHIV
 EMPLOYMENT_TYPES = ("FULL_TIME", "PART_TIME", "CONTRACT", "INTERN")
 WORK_MODES = ("ONSITE", "HYBRID", "REMOTE")
 OFFICE_ACCESS_TYPES = ("PRIMARY", "TEMPORARY", "PERMANENT", "VISITOR")
+# Документы при приёме. «Будет сформирован» — это не файл, а обещание
+# системы: договор и приказ печатаются позже, и до тех пор их состояние
+# отличается и от «нет», и от «загружен».
+EMPLOYEE_DOCUMENT_KINDS = ("IDENTITY", "CONTRACT", "HIRE_ORDER", "OTHER")
+# Пол и семейное положение — анкетные поля кадровой карточки. Оба
+# необязательны: у сотрудников, заведённых до их появления, значения нет,
+# и требовать его задним числом означало бы не дать открыть их карточку.
+GENDERS = ("MALE", "FEMALE")
+MARITAL_STATUSES = ("SINGLE", "MARRIED", "DIVORCED", "WIDOWED")
+EMPLOYEE_DOCUMENT_STATUSES = ("MISSING", "UPLOADED", "GENERATED_LATER", "REVIEW")
 
 # --- пользователи ---
 USER_STATUSES = ("ACTIVE", "INACTIVE", "LOCKED", "ARCHIVED")
@@ -37,6 +47,35 @@ SCHEDULE_STATUSES = ("ACTIVE", "INACTIVE", "ARCHIVED")
 CALENDAR_EXCEPTION_TYPES = ("HOLIDAY", "SHORT_DAY", "WORKING_WEEKEND", "CLOSURE")
 
 # --- QR ---
+# --- опросы сотрудников ---
+#
+# Опрос именной: HR видит, кто и как ответил. Анонимного вида здесь нет
+# и не появится незаметно — это другой продукт с другими обещаниями.
+SURVEY_QUESTION_KINDS = ("SINGLE", "MULTI", "SCALE", "TEXT")
+#: Жизнь шаблона. Опубликованный нельзя молча править: по нему уже
+#: спрашивали людей, и переписанный вопрос сделал бы прежние ответы
+#: ответами на другой вопрос. Правка создаёт новую редакцию.
+SURVEY_TEMPLATE_STATUSES = ("DRAFT", "PUBLISHED", "ARCHIVED")
+SURVEY_CAMPAIGN_STATUSES = ("DRAFT", "SCHEDULED", "ACTIVE", "FINISHED", "CANCELLED")
+#: Кого спросить. Регион и должность — те же оси, по которым HR и так
+#: делит компанию в остальных разделах: «все продавцы» и «весь
+#: Самарканд» встречаются чаще, чем список фамилий.
+SURVEY_AUDIENCE_KINDS = (
+    "EMPLOYEES", "DEPARTMENT", "OFFICE", "REGION", "POSITION", "ALL",
+)
+#: `SKIPPED` — человеку опрос отправить некуда: нет привязки Telegram
+#: или он уже не работает. Это исход, а не ошибка: без него такая
+#: строка висела бы вечно в «отправляем» и портила бы весь счёт.
+#: `EXPIRED` — срок ответа вышел, а опрос не пройден.
+SURVEY_RECIPIENT_STATUSES = (
+    "PENDING", "SENT", "STARTED", "COMPLETED", "SKIPPED", "EXPIRED",
+)
+
+#: Событие, по которому опрос уходит сам.
+SURVEY_TRIGGER_KINDS = (
+    "PROBATION_END", "FIRST_DAY", "DAYS_AFTER_HIRE", "BIRTHDAY", "SCHEDULE",
+)
+
 QR_DIRECTION_MODES = ("ENTRY", "EXIT", "BOTH")
 QR_MODES = ("STATIC", "ROTATING")
 QR_DISPLAY_SESSION_STATUSES = ("ACTIVE", "EXPIRED", "REVOKED", "CLOSED")
@@ -52,6 +91,10 @@ ATTENDANCE_EVENT_TYPES = ("ENTRY", "EXIT")
 ATTENDANCE_SOURCES = ("QR", "MANUAL", "IMPORT")
 VERIFICATION_STATUSES = ("ACCEPTED", "REJECTED", "REVIEW")
 ATTENDANCE_SESSION_STATUSES = ("OPEN", "CLOSED", "CORRECTED", "INVALID")
+#: Что человек сам сказал про свой день в ответ на напоминание.
+#: «Не приду» здесь — это предупреждение, а не оформленное отсутствие:
+#: отпуск и больничный проходят согласование и живут своими заявками.
+DAY_NOTICE_KINDS = ("LATE", "ABSENT")
 CORRECTION_REQUEST_STATUSES = (
     "DRAFT", "SUBMITTED", "IN_REVIEW", "APPROVED", "REJECTED", "CANCELLED",
 )
@@ -66,7 +109,20 @@ DOCUMENT_VERIFICATION_STATUSES = ("PENDING", "VERIFIED", "REJECTED")
 FILE_SCAN_STATUSES = ("PENDING", "CLEAN", "INFECTED", "FAILED")
 ABSENCE_ACTIONS = (
     "CREATED", "SUBMITTED", "TAKEN_IN_REVIEW", "APPROVED", "REJECTED",
-    "CANCELLED", "DOCUMENT_ATTACHED", "DOCUMENT_VERIFIED", "COMMENTED",
+    "CANCELLED", "DOCUMENT_ATTACHED", "DOCUMENT_VERIFIED",
+    # Справку не приняли. Отдельно от `DOCUMENT_VERIFIED`: «проверен» и
+    # «отклонён» — разные исходы, и записывать отказ как проверку значит
+    # потерять его в истории заявки.
+    "DOCUMENT_REJECTED", "COMMENTED",
+    # Кадровик проставил фактические даты по справке. Отдельное
+    # действие, а не комментарий: по нему в истории заявки видно, что
+    # период в ней — из справки, а не со слов заболевшего.
+    "PERIOD_SET",
+    # Кадровик подтвердил больничный поверх реальных отметок входа и
+    # выхода. Отдельное действие: «утвердил» и «утвердил, зная, что
+    # человек в эти дни отмечался» — разные решения, и второе должно
+    # быть видно в истории само по себе, с причиной.
+    "MARKS_OVERRIDDEN",
 )
 
 # --- Telegram, знания, вопросы, уведомления ---
@@ -91,6 +147,48 @@ TELEGRAM_INVITATION_STATUSES = (
 )
 # Статусы, при которых приглашение ещё «живое» и занимает место у сотрудника.
 TELEGRAM_INVITATION_OPEN_STATUSES = ("ACTIVE", "PENDING_CONFIRMATION")
+
+# --- первичное ознакомление ---
+#
+# Где человек в программе. Статус ВЫЧИСЛЯЕМЫЙ: он хранится в строке ради
+# списков и фильтров, но правду о допуске говорит не он, а пересчёт —
+# см. `humotech/onboarding/progress.py`. Иначе публикация новой версии
+# обязательного документа не смогла бы вернуть уже «завершившего»
+# человека к подтверждению: колонка осталась бы COMPLETED.
+#
+#   NOT_STARTED                — приглашение выдано, бот ещё не открыт;
+#   IN_PROGRESS                — читает информационные карточки;
+#   INFO_COMPLETED             — все карточки прочитаны, документы не начаты;
+#   POLICIES_IN_PROGRESS       — часть обязательных документов подтверждена;
+#   COMPLETED                  — карточки прочитаны, все документы приняты;
+#   UPDATE_REQUIRED            — программу прошёл, но вышла новая редакция
+#                                обязательного документа и ждёт согласия;
+#   BLOCKED_BY_DECLINED_POLICY — человек отказался подтвердить документ.
+#
+# Ни один из статусов НЕ закрывает доступ. «BLOCKED» в последнем имени
+# относится к программе, а не к боту: отказавшийся продолжает
+# отмечаться и подавать заявки, а кадровик видит его в списке
+# требующих внимания и идёт разговаривать.
+#
+# UPDATE_REQUIRED отделён от POLICIES_IN_PROGRESS намеренно: «ещё не
+# дошёл до документов» и «прошёл всё, но текст поменялся» — разные
+# истории, и кадровик делает в них разное.
+ONBOARDING_STATUSES = (
+    "NOT_STARTED", "IN_PROGRESS", "INFO_COMPLETED",
+    "POLICIES_IN_PROGRESS", "COMPLETED", "UPDATE_REQUIRED",
+    "BLOCKED_BY_DECLINED_POLICY",
+)
+
+# Жизненный цикл РЕДАКЦИИ обязательного документа. Версия неизменяема
+# после публикации: подтверждение сотрудника относится к конкретному
+# тексту, и правка опубликованного означала бы, что человек согласился
+# не с тем, что подписано его именем.
+POLICY_VERSION_STATUSES = ("DRAFT", "PUBLISHED", "ARCHIVED")
+
+# Что сотрудник решил по конкретной редакции. Отказ — такое же решение,
+# как согласие: он записывается, а не стирается, иначе «не подтвердил»
+# и «не дошёл» стали бы неразличимы.
+POLICY_DECISIONS = ("ACCEPTED", "DECLINED")
 
 # --- база знаний AI-ассистента ---
 KNOWLEDGE_SOURCE_TYPES = ("FAQ", "POLICY", "INSTRUCTION", "DOCUMENT")
@@ -118,9 +216,30 @@ EXPORT_JOB_STATUSES = (
 SCOPE_LEVEL_GLOBAL = 1
 SCOPE_LEVEL_REGION = 2
 SCOPE_LEVEL_OFFICE = 3
-QUESTION_STATUSES = (
-    "NEW", "AI_ANSWERED", "ESCALATED_TO_HR", "HR_ANSWERED", "CLOSED",
+# --- обращения сотрудников ---
+# NEW — никто не взял; IN_PROGRESS — у ответственного; WAITING_EMPLOYEE —
+# кадровик спросил уточнение и ждёт человека; CLOSED — вопрос снят.
+QUESTION_STATUSES = ("NEW", "IN_PROGRESS", "WAITING_EMPLOYEE", "CLOSED")
+QUESTION_PRIORITIES = ("LOW", "NORMAL", "HIGH", "URGENT")
+# Тема вопроса, а не вид заявки: отпуск и больничный здесь — о чём
+# спрашивают, оформляются они по-прежнему в «Заявках».
+QUESTION_CATEGORIES = (
+    "VACATION", "SICK_LEAVE", "ATTENDANCE", "SCHEDULE", "SALARY",
+    "DOCUMENTS", "TELEGRAM", "OTHER",
 )
+QUESTION_MESSAGE_KINDS = ("EMPLOYEE", "HR", "SYSTEM")
+QUESTION_MESSAGE_SOURCES = ("TELEGRAM", "CRM", "SYSTEM")
+# Системные события ленты. Каждое изменение состояния или ответственного
+# оставляет строку — лента и журнал аудита рассказывают одно и то же.
+QUESTION_EVENTS = (
+    "CREATED", "TAKEN", "ASSIGNED", "TRANSFERRED", "PRIORITY", "CATEGORY",
+    "WAITING_EMPLOYEE", "RESUMED", "CLOSED", "REOPENED", "STARTED",
+)
+# Чем кончилась попытка ассистента подготовить черновик.
+QUESTION_DRAFT_STATUSES = ("READY", "LOW_CONFIDENCE", "CONFLICT", "NO_SOURCES")
+# Доставка ответа HR глазами кадровика — выводится из строки очереди.
+# UNKNOWN — ответ перенесён из времён до очереди, строки у него нет.
+QUESTION_DELIVERY_STATUSES = ("QUEUED", "DELIVERED", "READ", "FAILED", "UNKNOWN")
 NOTIFICATION_CHANNELS = ("TELEGRAM", "EMAIL", "PUSH", "IN_APP")
 # Очередь отправки (transactional outbox). PENDING — это и есть «в очереди»:
 # заводить отдельный QUEUED значило бы иметь два имени одного состояния.
@@ -138,16 +257,33 @@ NOTIFICATION_ATTEMPT_OUTCOMES = ("SENT", "FAILED", "CANCELLED")
 # --- роли, создаваемые сидом ---
 SYSTEM_ROLE_CODES = (
     "SUPER_ADMIN", "HR_ADMIN", "REGIONAL_HR", "OFFICE_ADMIN",
-    "MANAGER", "ACCOUNTANT", "TECH_ADMIN",
+    "MANAGER", "ACCOUNTANT", "TECH_ADMIN", "VIEWER",
 )
 
-def status_check(field: str, values: tuple[str, ...], name: str) -> models.CheckConstraint:
+# Роли, которые предлагают при выдаче доступа в интерфейсе. Каталог шире:
+# в нём есть служебные и переносные роли, и отдавать их выбором из списка
+# незачем. Уже выданную роль вне этого набора интерфейс всё равно
+# показывает — иначе у живого администратора роль выглядела бы пустой.
+OFFERED_ROLE_CODES = (
+    "SUPER_ADMIN", "HR_ADMIN", "OFFICE_ADMIN", "MANAGER", "VIEWER",
+)
+
+def status_check(
+    field: str, values: tuple[str, ...], name: str, *, nullable: bool = False
+) -> models.CheckConstraint:
     """`CHECK (field IN (...))` с точным именем ограничения.
 
     Имя задаётся явно, а не генерируется Django: на него ссылается перевод
     ошибок целостности в понятные сообщения, и оно уже есть в базе.
+
+    `nullable=True` разрешает NULL. Без него необязательное поле с таким
+    ограничением стало бы обязательным на уровне базы: `NULL IN (...)`
+    даёт NULL, а не истину, и строка без значения не прошла бы проверку.
     """
-    return models.CheckConstraint(condition=Q(**{f"{field}__in": list(values)}), name=name)
+    condition = Q(**{f"{field}__in": list(values)})
+    if nullable:
+        condition = Q(**{f"{field}__isnull": True}) | condition
+    return models.CheckConstraint(condition=condition, name=name)
 
 
 def choices(values: tuple[str, ...]) -> list[tuple[str, str]]:

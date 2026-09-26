@@ -150,3 +150,10 @@ class ScheduleAssignmentSerializer(serializers.ModelSerializer):
 class ScheduleAssignSerializer(serializers.Serializer):
     employee_id = serializers.UUIDField()
     valid_from = serializers.DateField()
+
+
+class DepartmentAssignSerializer(serializers.Serializer):
+    """Назначение графика отделу — снимок состава на дату."""
+
+    department_id = serializers.UUIDField()
+    valid_from = serializers.DateField()

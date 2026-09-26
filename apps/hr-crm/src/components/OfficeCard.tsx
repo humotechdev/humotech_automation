@@ -12,20 +12,28 @@
  *    доступность — свежий сигнал от самого экрана. Называть первое
  *    вторым значит показывать работающим то, что могло погаснуть месяц
  *    назад.
+ *
+ * Карточка плотная: обзор целиком помещается в правую колонку без
+ * прокрутки. Факты идут строками и колонками, а не отдельной плашкой
+ * на каждый, — так в той же высоте видно в несколько раз больше.
+ * Классы — свои, с префиксом `ofc-`: общие `.queue`, `.facts`, `.trio`
+ * живут и на главной, и сжимать их здесь значило бы менять её.
  */
 
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 
 import * as api from '../api/crm';
-import { Icon } from './nav-icons';
+import { AppIcon } from './AppIcon';
+import { AppSelectField } from './AppSelect';
 import { initials } from './AppShell';
 import { messageFor } from '../api/errors';
-import { longDate, useBlock, type Block } from '../features/dashboard/data';
+import { formatTime, longDate, today, useBlock, type Block } from '../features/dashboard/data';
 import { needsSetup, type OfficeStats } from '../pages/OfficesPage';
 
 const TABS = ['Обзор', 'Сотрудники', 'QR и геозона'] as const;
 
-const DIRECTION: Record<string, string> = {
+export const DIRECTION: Record<string, string> = {
   ENTRY: 'Только вход',
   EXIT: 'Только выход',
   BOTH: 'Вход и выход',
@@ -34,51 +42,55 @@ const DIRECTION: Record<string, string> = {
 type Props = {
   row: OfficeStats;
   canManage: boolean;
+  updated?: Date | null;
   onClose: () => void;
-  onChanged: () => void;
 };
 
-export function OfficeCard({ row, canManage, onClose, onChanged }: Props) {
+export function OfficeCard({ row, canManage, updated = null, onClose }: Props) {
   const [tab, setTab] = useState<(typeof TABS)[number]>('Обзор');
   const office = row.office;
+  const active = office.status === 'ACTIVE';
 
   return (
-    <aside className="panel side-panel" aria-label="Карточка офиса">
-      <header className="side-panel__head">
-        <span className="avatar avatar--square">
-          <Icon name="building" size={18} />
+    <aside className="ofc" aria-label="Карточка офиса">
+      <header className="ofc-head">
+        <span className="ofc-head__icon" aria-hidden="true">
+          <AppIcon name="building" size={18} />
         </span>
-        <span className="side-panel__title side-panel__title--stack">
-          <span>{office.name}</span>
-          <span className="who__id">{office.region_name ?? '—'}</span>
-        </span>
-        <button type="button" className="tool" aria-label="Закрыть" onClick={onClose}>✕</button>
+        <div className="ofc-head__text">
+          {/* Название и состояние — в одной строке. Состояний у офиса
+              два: включён он или выключен. «Требует внимания» — это про
+              настройку, и ему место в «Контроле доступа», а не рядом с
+              названием, где его читали как третий статус. */}
+          <p className="ofc-head__name" title={office.name}>
+            {office.name}
+            <span className={`ofc-state ofc-state--${active ? 'ok' : 'off'}`}>
+              {active ? 'Активен' : 'Неактивен'}
+            </span>
+          </p>
+          <p className="ofc-head__meta">
+            <span className="ofc-head__id">{office.region_name ?? ''}</span>
+          </p>
+        </div>
+        <button type="button" className="ofc-close" aria-label="Закрыть" onClick={onClose}>
+          <AppIcon name="close" size={16} />
+        </button>
       </header>
 
-      <div className="side-panel__meta">
-        <span className="state">
-          <i className="state__dot" />
-          {office.status === 'ACTIVE' ? 'Активен' : office.status}
-        </span>
-        <span className="who__id">{office.code}</span>
-      </div>
-
-      <div className="tabs tabs--drawer" role="tablist">
+      <div className="ofc-tabs" role="tablist" aria-label="Разделы карточки офиса">
         {TABS.map((item) => (
           <button key={item} type="button" role="tab" aria-selected={item === tab}
-                  className={item === tab ? 'tab tab--on' : 'tab'}
+                  className={item === tab ? 'ofc-tab ofc-tab--on' : 'ofc-tab'}
                   onClick={() => setTab(item)}>
             {item}
           </button>
         ))}
       </div>
 
-      <div className="side-panel__body">
-        {tab === 'Обзор' && (
-          <Overview row={row} canManage={canManage} onChanged={onChanged} />
-        )}
+      <div className="ofc-body">
+        {tab === 'Обзор' && <Overview row={row} canManage={canManage} updated={updated} />}
         {tab === 'Сотрудники' && <Staff officeId={office.id} />}
-        {tab === 'QR и геозона' && <Points row={row} />}
+        {tab === 'QR и геозона' && <Points row={row} canManage={canManage} />}
       </div>
     </aside>
   );
@@ -86,140 +98,128 @@ export function OfficeCard({ row, canManage, onClose, onChanged }: Props) {
 
 // --- обзор -----------------------------------------------------------------
 
-function Overview({ row, canManage, onChanged }: {
-  row: OfficeStats; canManage: boolean; onChanged: () => void;
+function Overview({ row, canManage, updated }: {
+  row: OfficeStats; canManage: boolean; updated: Date | null;
 }) {
-  const [editing, setEditing] = useState(false);
   const office = row.office;
-  const inOffice = row.counts['IN_OFFICE'] ?? 0;
-  const left = row.counts['LEFT'] ?? 0;
-  const missing = row.counts['NOT_COME'] ?? 0;
+  const count = (key: string) => row.counts[key] ?? 0;
+  const inOffice = count('IN_OFFICE');
+  // Ушедшие входят в «по графику»: день у них уже случился.
+  const left = count('LEFT');
+  const missing = count('NOT_COME');
   const staff = Object.values(row.counts).reduce((sum, value) => sum + value, 0);
-
-  if (editing) {
-    return (
-      <OfficeForm
-        office={office}
-        onCancel={() => setEditing(false)}
-        onDone={() => {
-          setEditing(false);
-          onChanged();
-        }}
-      />
-    );
-  }
+  const placed = office.latitude !== null && office.longitude !== null;
 
   return (
     <>
-      <p className="side-panel__label">
-        {longDate(new Date().toISOString().slice(0, 10))} · По данным отметок
+      <p className="ofc-date">
+        {longDate(today())} · по данным отметок
+        {updated && <> · обновлено в {formatTime(updated)}</>}
       </p>
-      <ul className="trio">
-        <li><span className="trio__label">В штате</span><span className="trio__value">{staff}</span></li>
-        <li><span className="trio__label">По графику</span>
-            <span className="trio__value">{inOffice + left + missing}</span></li>
-        <li><span className="trio__label">В офисе</span><span className="trio__value">{inOffice}</span></li>
+
+      <ul className="ofc-metrics">
+        <Metric label="В штате" value={staff} />
+        <Metric label="По графику" value={inOffice + left + missing} />
+        <Metric label="В офисе" value={inOffice} tone="ok" />
+        <Metric label="Нет отметки" value={missing} tone={missing > 0 ? 'warn' : undefined} />
       </ul>
-      <p className="side-panel__text muted">
-        Уже ушли: {left} <span className="dot">·</span> Нет отметки: {missing}
+
+      <p className="ofc-line">
+        Опоздали: <b>{row.late ?? '—'}</b>
+        <i aria-hidden="true">·</i>
+        В отпуске: <b>{count('VACATION')}</b>
+        <i aria-hidden="true">·</i>
+        На больничном: <b>{count('SICK_LEAVE')}</b>
       </p>
 
-      <dl className="facts">
-        <div className="facts__row"><dt>Регион</dt><dd>{office.region_name ?? '—'}</dd></div>
-        <div className="facts__row">
-          <dt>Адрес</dt>
-          <dd>{office.address || <span className="muted">Не указан</span>}</dd>
-        </div>
-        <div className="facts__row"><dt>Часовой пояс</dt><dd>{office.timezone}</dd></div>
-      </dl>
+      <section className="ofc-block" aria-label="Офис">
+        <h3 className="ofc-block__title">Офис</h3>
+        {/* Пояс в стране один, и строка про него ничего не решала.
+            Адрес виден в настройке офиса, где его и меняют. */}
+        <dl className="ofc-facts">
+          <div><dt>Регион</dt><dd>{office.region_name ?? '—'}</dd></div>
+          <div><dt>Название</dt><dd title={office.name}>{office.name}</dd></div>
+        </dl>
+      </section>
 
-      <div className="geo">
-        <Icon name="pin" size={18} />
-        <span className="geo__text">
-          <span className="geo__head">
-            Геозона
-            <span className="pill">
-              {needsSetup(row)
-                ? 'Требует настройки'
-                : office.geofence_radius_m
-                  ? 'Настроена'
-                  : 'Не задана'}
-            </span>
-          </span>
-          <span className="geo__note">
-            {office.geofence_radius_m
-              ? `Радиус ${office.geofence_radius_m} м`
-              : 'Координаты и радиус не заданы'}
-          </span>
-          <span className="geo__note">{geoNote(row)}</span>
-        </span>
+      <section className="ofc-block" aria-label="Контроль доступа">
+        <h3 className="ofc-block__title">Контроль доступа</h3>
+        <dl className="ofc-facts ofc-facts--three">
+          <div>
+            <dt>QR-точки</dt>
+            <dd>{row.pointsKnown === false ? 'нет доступа' : row.points.length}</dd>
+          </div>
+          <div>
+            <dt>Геозона</dt>
+            <dd>{office.geofence_radius_m ? `${office.geofence_radius_m} м` : 'не задана'}</dd>
+          </div>
+          <div>
+            <dt>Координаты</dt>
+            <dd className={placed ? undefined : 'ofc-warn'}>{placed ? 'настроены' : 'не настроены'}</dd>
+          </div>
+        </dl>
+        <p className={needsSetup(row) ? 'ofc-note ofc-note--warn' : 'ofc-note'}>
+          Геолокация: {geoNote(row)}
+        </p>
+      </section>
+
+      <div className="ofc-actions">
+        <Link className="ofc-btn" to={`/offices/${office.id}/setup`}>
+          <AppIcon name="building" size={16} />
+          Открыть офис
+        </Link>
+        {canManage && (
+          <Link className="ofc-btn ofc-btn--blue" to={`/offices/${office.id}/setup?tab=geo`}>
+            <AppIcon name="settings" size={16} />
+            Настроить
+          </Link>
+        )}
       </div>
-
-      <p className="side-panel__label">QR-точки <span className="chip">{row.points.length}</span></p>
-      {row.points.length === 0 ? (
-        <p className="empty">Точек нет.</p>
-      ) : (
-        <ul className="queue">
-          {row.points.slice(0, 3).map((point) => (
-            <li key={point.id} className="queue__row">
-              <Icon name="database" size={16} />
-              <span className="queue__text">
-                <span className="queue__title">{point.name}</span>
-                <span className="queue__note">
-                  {DIRECTION[point.direction_mode] ?? point.direction_mode}
-                </span>
-              </span>
-              <span className="queue__count">{point.is_active ? 'Активна' : 'Выкл.'}</span>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      {canManage && (
-        <button type="button" className="btn btn--dark" onClick={() => setEditing(true)}>
-          <Icon name="settings" size={16} />
-          Редактировать офис
-        </button>
-      )}
-      <a className="linky" href={`/attendance?office_id=${office.id}`}>
-        Открыть посещаемость →
-      </a>
     </>
+  );
+}
+
+function Metric({ label, value, tone }: { label: string; value: number; tone?: 'ok' | 'warn' | undefined }) {
+  return (
+    <li className={tone ? `ofc-metric ofc-metric--${tone}` : 'ofc-metric'}>
+      <b>{value}</b>
+      <span>{label}</span>
+    </li>
   );
 }
 
 /** Что именно требует геолокацию — по фактическим точкам, а не «обеим». */
 function geoNote(row: OfficeStats): string {
+  if (row.pointsKnown === false) return 'точки недоступны';
   const wants = row.points.filter((point) => point.require_geolocation);
   if (row.points.length === 0) return 'QR-точек нет';
-  if (wants.length === 0) return 'Ни одна точка геолокацию не требует';
+  if (wants.length === 0) return 'ни одна точка её не требует';
   if (wants.length === row.points.length) {
     return `Обязательна для всех ${row.points.length} точек`;
   }
-  return `Обязательна для ${wants.length} из ${row.points.length} точек`;
+  return `обязательна для ${wants.length} из ${row.points.length} точек`;
 }
 
-// --- форма офиса -----------------------------------------------------------
+// --- основное: правка офиса ------------------------------------------------
 
 /**
- * Правка офиса. Поля — те, что есть у модели; новых обязательных здесь
- * не заводится.
- *
- * Координаты и радиус можно задать, но обязательность геолокации у
- * QR-точки этим НЕ включается: это отдельная настройка точки, и
- * включать её молча было бы подменой чужого решения.
+ * Название, адрес и часовой пояс офиса. Расположение и радиус правятся
+ * на карте во вкладке «Геолокация» — вводить координаты числами HR не
+ * должен.
  */
-function OfficeForm({ office, onCancel, onDone }: {
-  office: api.OfficeFull; onCancel: () => void; onDone: () => void;
+export function OfficeForm({ office, onCancel, onDone }: {
+  office: api.OfficeFull; onCancel?: () => void; onDone: (office: api.OfficeFull) => void;
 }) {
+  // Ни адреса, ни часового пояса. Адрес подставляется сам, когда точку
+  // ставят на карту, — набирать его руками значит держать два ответа на
+  // вопрос «где офис». Пояс в Узбекистане один, и выбирать тут нечего.
   const [form, setForm] = useState({
     name: office.name,
-    address: office.address ?? '',
-    timezone: office.timezone,
-    latitude: office.latitude === null ? '' : String(office.latitude),
-    longitude: office.longitude === null ? '' : String(office.longitude),
-    geofence_radius_m: office.geofence_radius_m === null ? '' : String(office.geofence_radius_m),
+    // Пустая строка, а не null: `AppSelectField` работает со строкой, и
+    // «регион не выбран» здесь — это не значение, а его отсутствие.
+    region_id: office.region_id ?? '',
   });
+  const [regions] = useBlock((signal) => api.regions(signal), 'office-regions');
   const [sending, setSending] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
   const [fields, setFields] = useState<Record<string, string[]>>({});
@@ -233,19 +233,14 @@ function OfficeForm({ office, onCancel, onDone }: {
     setFailed(null);
     setFields({});
     try {
-      await api.updateOffice(office.id, {
+      const saved = await api.updateOffice(office.id, {
         name: form.name,
-        address: form.address || null,
-        timezone: form.timezone,
-        latitude: form.latitude === '' ? null : Number(form.latitude),
-        longitude: form.longitude === '' ? null : Number(form.longitude),
-        geofence_radius_m:
-          form.geofence_radius_m === '' ? null : Number(form.geofence_radius_m),
+        region_id: form.region_id,
       });
-      onDone();
+      onDone(saved);
     } catch (error) {
-      // Введённое остаётся в форме: набирать координаты заново из-за
-      // отказа сервера — худшее, что можно предложить.
+      // Введённое остаётся в форме: набирать заново из-за отказа сервера
+      // — худшее, что можно предложить.
       setFailed(messageFor(error));
       const details = (error as { fields?: Record<string, string[]> }).fields;
       if (details) setFields(details);
@@ -255,63 +250,66 @@ function OfficeForm({ office, onCancel, onDone }: {
   }
 
   return (
-    <div className="form-grid">
-      <Field label="Название" value={form.name} onChange={set('name')} errors={fields['name']} />
-      <Field label="Адрес" value={form.address} onChange={set('address')}
-             errors={fields['address']} placeholder="Не указан" />
-      <Field label="Часовой пояс" value={form.timezone} onChange={set('timezone')}
-             errors={fields['timezone']} />
+    <div className="ofs-form">
+      <Field label="Название офиса" value={form.name} onChange={set('name')} errors={fields['name']} />
 
-      <p className="side-panel__label">Геозона</p>
-      <p className="side-panel__text muted">
-        Координаты и радиус нужны для проверки присутствия. Обязательность
-        геолокации включается у самой QR-точки — здесь она не меняется.
-      </p>
-      <Field label="Широта" value={form.latitude} onChange={set('latitude')}
-             errors={fields['latitude']} placeholder="от −90 до 90" />
-      <Field label="Долгота" value={form.longitude} onChange={set('longitude')}
-             errors={fields['longitude']} placeholder="от −180 до 180" />
-      <Field label="Радиус, м" value={form.geofence_radius_m}
-             onChange={set('geofence_radius_m')} errors={fields['geofence_radius_m']} />
+      <label className="ofs-field">
+        <span className="ofs-field__label">Регион</span>
+        <AppSelectField label="Регион" value={form.region_id} searchable
+                        onChange={set('region_id')}>
+          {regions.state === 'ready'
+            ? regions.data.items.map((one) => (
+                <option key={one.id} value={one.id}>{one.name}</option>
+              ))
+            : <option value={form.region_id}>{office.region_name ?? '—'}</option>}
+        </AppSelectField>
+        {fields['region_id'] && (
+          <span className="ofs-field__error">{fields['region_id'].join(' ')}</span>
+        )}
+      </label>
 
-      {failed && <p className="empty empty--bad" role="alert">{failed}</p>}
+      {failed && <p className="ofs-alert" role="alert">{failed}</p>}
 
-      <div className="side-panel__actions">
-        <button type="button" className="btn btn--dark" disabled={sending}
+      <div className="ofs-actions">
+        <button type="button" className="ofs-btn ofs-btn--blue" disabled={sending}
                 onClick={() => void save()}>
-          {sending ? 'Сохраняем…' : 'Сохранить'}
+          {sending ? 'Сохраняем…' : 'Сохранить изменения'}
         </button>
-        <button type="button" className="btn" disabled={sending} onClick={onCancel}>
-          Отмена
-        </button>
+        {onCancel && (
+          <button type="button" className="ofs-btn" disabled={sending} onClick={onCancel}>
+            Отменить изменения
+          </button>
+        )}
       </div>
     </div>
   );
 }
 
-function Field({ label, value, onChange, errors, placeholder }: {
+export function Field({ label, value, onChange, errors, placeholder, inputMode }: {
   label: string; value: string; onChange: (value: string) => void;
   errors?: string[] | undefined; placeholder?: string | undefined;
+  inputMode?: 'decimal' | 'numeric' | undefined;
 }) {
   return (
-    <label className="form-grid__field">
-      <span className="form-grid__label">{label}</span>
+    <label className="ofs-field">
+      <span className="ofs-field__label">{label}</span>
       <input
-        className="form-grid__input"
+        className="ofs-field__input"
         value={value}
         placeholder={placeholder ?? ''}
         aria-label={label}
         aria-invalid={errors ? true : undefined}
+        {...(inputMode ? { inputMode } : {})}
         onChange={(event) => onChange(event.target.value)}
       />
-      {errors && <span className="form-grid__error">{errors.join(' ')}</span>}
+      {errors && <span className="ofs-field__error">{errors.join(' ')}</span>}
     </label>
   );
 }
 
 // --- сотрудники ------------------------------------------------------------
 
-function Staff({ officeId }: { officeId: string }) {
+export function Staff({ officeId }: { officeId: string }) {
   const [search, setSearch] = useState('');
   const [cursor, setCursor] = useState('');
 
@@ -326,8 +324,8 @@ function Staff({ officeId }: { officeId: string }) {
 
   return (
     <>
-      <label className="find find--wide">
-        <Icon name="search" size={16} />
+      <label className="ofc-find">
+        <AppIcon name="search" size={16} />
         <input type="search" value={search} placeholder="Поиск сотрудника"
                aria-label="Поиск сотрудника офиса"
                onChange={(event) => { setSearch(event.target.value); setCursor(''); }} />
@@ -336,19 +334,17 @@ function Staff({ officeId }: { officeId: string }) {
       <Body block={list} name="сотрудников">
         {(data) =>
           data.items.length === 0 ? (
-            <p className="empty">В этом офисе никого не назначено.</p>
+            <p className="ofc-empty">В этом офисе никого не назначено.</p>
           ) : (
-            <ul className="queue">
+            <ul className="ofc-rows">
               {data.items.map((person) => (
-                <li key={person.id} className="queue__row">
-                  <span className="avatar avatar--sm">{initials(person.full_name)}</span>
-                  <span className="queue__text">
-                    <span className="queue__title">{person.full_name}</span>
-                    <span className="queue__note">
-                      {person.current_assignment?.position_name ?? '—'}
-                    </span>
+                <li key={person.id} className="ofc-row">
+                  <span className="ofc-row__face" aria-hidden="true">{initials(person.full_name)}</span>
+                  <span className="ofc-row__text">
+                    <b title={person.full_name}>{person.full_name}</b>
+                    <small>{person.current_assignment?.position_name ?? '—'}</small>
                   </span>
-                  <a className="linky" href={`/employees?employee=${person.id}`}>Открыть</a>
+                  <Link className="ofc-link" to={`/employees/${person.id}`}>Открыть</Link>
                 </li>
               ))}
             </ul>
@@ -356,17 +352,17 @@ function Staff({ officeId }: { officeId: string }) {
         }
       </Body>
 
-      <div className="side-panel__actions">
-        <button type="button" className="btn" disabled={!cursor} onClick={() => setCursor('')}>
+      <div className="ofc-pager">
+        <button type="button" className="ofc-btn" disabled={!cursor} onClick={() => setCursor('')}>
           Назад
         </button>
-        <button type="button" className="btn btn--dark"
+        <button type="button" className="ofc-btn"
                 disabled={list.state !== 'ready' || !list.data.has_more}
                 onClick={() => list.state === 'ready' && setCursor(list.data.next_cursor ?? '')}>
           Далее
         </button>
       </div>
-      <p className="side-panel__text muted">
+      <p className="ofc-note">
         Перевод в другой офис выполняется сменой назначения — там сохраняется история.
       </p>
     </>
@@ -375,64 +371,76 @@ function Staff({ officeId }: { officeId: string }) {
 
 // --- QR и геозона ----------------------------------------------------------
 
-function Points({ row }: { row: OfficeStats }) {
+function Points({ row, canManage }: { row: OfficeStats; canManage: boolean }) {
   const [devices] = useBlock((signal) => api.qrDevices(signal), `devices|${row.office.id}`);
+  const office = row.office;
+  const placed = office.latitude !== null && office.longitude !== null;
 
   return (
     <>
-      <div className="geo">
-        <Icon name="pin" size={18} />
-        <span className="geo__text">
-          <span className="geo__head">
-            Геозона
-            <span className="pill">
-              {row.office.geofence_radius_m ? 'Настроена' : 'Не задана'}
-            </span>
-          </span>
-          <span className="geo__note">
-            {row.office.latitude !== null && row.office.longitude !== null
-              ? `${row.office.latitude}, ${row.office.longitude}`
-              : 'Координаты не заданы'}
-          </span>
-          <span className="geo__note">{geoNote(row)}</span>
-        </span>
-      </div>
+      <dl className="ofc-facts ofc-facts--three">
+        <div>
+          <dt>Геозона</dt>
+          <dd>{office.geofence_radius_m ? `${office.geofence_radius_m} м` : 'не задана'}</dd>
+        </div>
+        <div>
+          <dt>Координаты</dt>
+          <dd className={placed ? undefined : 'ofc-warn'}>
+            {placed ? `${Number(office.latitude).toFixed(5)}, ${Number(office.longitude).toFixed(5)}` : 'не заданы'}
+          </dd>
+        </div>
+        <div>
+          <dt>QR-точки</dt>
+          <dd>{row.pointsKnown === false ? 'нет доступа' : row.points.length}</dd>
+        </div>
+      </dl>
+      <p className={needsSetup(row) ? 'ofc-note ofc-note--warn' : 'ofc-note'}>
+        Геолокация: {geoNote(row)}
+      </p>
 
-      <p className="side-panel__label">QR-точки</p>
+      {canManage && (
+        <Link className="ofc-btn ofc-btn--blue ofc-btn--wide" to={`/offices/${office.id}/setup?tab=qr`}>
+          <AppIcon name="settings" size={16} />
+          Настроить офис
+        </Link>
+      )}
+
       {row.points.length === 0 ? (
-        <p className="empty">Точек нет.</p>
+        <p className="ofc-empty">Точек нет.</p>
       ) : (
-        <ul className="queue">
+        <ul className="ofc-rows ofc-rows--scroll">
           {row.points.map((point) => {
             const bound =
               devices.state === 'ready'
                 ? devices.data.find((device) => device.qr_point_id === point.id)
                 : undefined;
             return (
-              <li key={point.id} className="queue__row">
-                <Icon name="database" size={16} />
-                <span className="queue__text">
-                  <span className="queue__title">{point.name}</span>
-                  <span className="queue__note">
+              <li key={point.id} className="ofc-row">
+                <span className="ofc-row__text">
+                  <b title={point.name}>{point.name}</b>
+                  <small>
                     {DIRECTION[point.direction_mode] ?? point.direction_mode}
-                    {point.require_geolocation ? ' · геолокация обязательна' : ''}
-                  </span>
-                  <span className="queue__note">
-                    {bound
-                      ? `Экран привязан${bound.last_seen_at ? `, был на связи ${bound.last_seen_at.slice(11, 16)}` : ', на связи не был'}`
-                      : 'Экран не привязан'}
-                  </span>
+                    {point.qr_mode === 'STATIC' ? ' · печатный код' : ''}
+                    {point.require_geolocation ? ' · геолокация' : ''}
+                    {point.qr_mode === 'ROTATING' && (
+                      <>
+                        {' · '}
+                        {bound
+                          ? `Экран привязан${bound.last_seen_at ? `, был на связи ${bound.last_seen_at.slice(11, 16)}` : ', на связи не был'}`
+                          : 'Экран не привязан'}
+                      </>
+                    )}
+                  </small>
                 </span>
-                <span className="queue__count">{point.is_active ? 'Активна' : 'Выкл.'}</span>
+                <span className={point.is_active ? 'ofc-state ofc-state--ok' : 'ofc-state ofc-state--off'}>
+                  <i aria-hidden="true" />
+                  {point.is_active ? 'Активна' : 'Выкл.'}
+                </span>
               </li>
             );
           })}
         </ul>
       )}
-      <p className="side-panel__text muted">
-        Создание точек, перевыпуск токена и сопряжение экрана в API CRM пока не
-        открыты — это делается командой на сервере.
-      </p>
     </>
   );
 }
@@ -440,8 +448,8 @@ function Points({ row }: { row: OfficeStats }) {
 function Body<T>({ block, name, children }: {
   block: Block<T>; name: string; children: (data: T) => React.ReactNode;
 }) {
-  if (block.state === 'loading') return <p className="empty">Загружаем {name}…</p>;
-  if (block.state === 'denied') return <p className="empty">Нет доступа.</p>;
-  if (block.state === 'error') return <p className="empty empty--bad">Не удалось загрузить {name}.</p>;
+  if (block.state === 'loading') return <p className="ofc-empty">Загружаем {name}…</p>;
+  if (block.state === 'denied') return <p className="ofc-empty">Нет доступа.</p>;
+  if (block.state === 'error') return <p className="ofc-empty ofc-empty--bad">Не удалось загрузить {name}.</p>;
   return <>{children(block.data)}</>;
 }

@@ -19,11 +19,15 @@ from humotech.accounts.rbac_views import (
     UserGrantsView,
 )
 from humotech.audit.views import AuditLogView
-from humotech.core.queue_views import RequestQueueView
+from humotech.core.queue_views import RequestCountsView, RequestQueueView
 from humotech.analytics.views import (
+    AnalyticsOverviewView,
     AnalyticsView,
     ComparisonView,
     DashboardView,
+    MovementView,
+    ProbationView,
+    TeamView,
 )
 from humotech.attendance.views import (
     AttendanceViewSet,
@@ -35,8 +39,15 @@ from humotech.attendance.views import (
 )
 from humotech.departments.views import DepartmentViewSet, PositionViewSet
 from humotech.employees.views import EmployeeViewSet
+from humotech.absences.type_views import AbsenceTypeViewSet
 from humotech.absences.views import (
+    AbsenceApplicationReceivedView,
+    AbsenceApplicationView,
+    AbsencePeriodView,
+    AbsenceDocumentDecisionView,
     AbsenceDecisionView,
+    AbsenceRequestView,
+    AbsenceDocumentDownloadView,
     PendingAbsenceRequestsView,
 )
 from humotech.knowledge.views import (
@@ -44,8 +55,28 @@ from humotech.knowledge.views import (
     KnowledgeIndexJobViewSet,
     KnowledgeSourceViewSet,
 )
+from humotech.notifications.feed_views import (
+    FeedCountsView,
+    FeedItemView,
+    FeedReadAllView,
+    FeedView,
+)
 from humotech.notifications.views import NotificationViewSet
 from humotech.offices.views import OfficeViewSet
+from humotech.onboarding.views import (
+    EmployeeOnboardingActionView,
+    EmployeeOnboardingView,
+    OnboardingCountsView,
+    OnboardingRemindView,
+    OnboardingExportView,
+    OnboardingProgressView,
+    OnboardingSectionViewSet,
+    PolicyCategoryViewSet,
+    PolicyDocumentViewSet,
+    PolicyVersionFileView,
+    PolicyVersionPublishView,
+    PolicyVersionView,
+)
 from humotech.organizations.views import (
     IntegrationsView,
     OrganizationSettingDetailView,
@@ -63,12 +94,24 @@ from humotech.questions.views import (
     UnansweredQuestionViewSet,
 )
 from humotech.regions.views import RegionViewSet
+from humotech.reports.builder_views import (
+    ReportCatalogView,
+    ReportPreviewView,
+    ReportTemplateViewSet,
+)
 from humotech.reports.job_views import ExportJobViewSet
 from humotech.reports.views import ExportView
 from humotech.schedules.calendar_views import CalendarExceptionViewSet
 from humotech.schedules.views import EmployeeScheduleViewSet, WorkScheduleViewSet
+from humotech.surveys.views import (
+    SurveyAutomationViewSet,
+    SurveyCampaignViewSet,
+    SurveyTemplateViewSet,
+)
 from humotech.telegram.views import (
+    BotLinkAcceptView,
     BotLinkView,
+    BotRecognizeView,
     BotOutboxView,
     EmployeeTelegramDisconnectView,
     EmployeeTelegramView,
@@ -85,6 +128,9 @@ router.register("work-schedules", WorkScheduleViewSet, basename="work-schedule")
 router.register("qr-points", QrPointViewSet, basename="qr-point")
 router.register("departments", DepartmentViewSet, basename="department")
 router.register("positions", PositionViewSet, basename="position")
+# Справочник причин отсутствия. Удаления у него нет: вид живёт в истории
+# заявок, убирают его выключением.
+router.register("absence-types", AbsenceTypeViewSet, basename="absence-type")
 router.register("users", CrmUserViewSet, basename="crm-user")
 # Очередь уведомлений глазами кадровика: почему сообщение не дошло
 # и как отправить его снова. Отправляет по-прежнему бот.
@@ -112,11 +158,39 @@ router.register(
 # Фоновые выгрузки. Мгновенная выгрузка ниже остаётся: короткий отчёт
 # незачем прогонять через заказ, ожидание и скачивание.
 router.register("export-jobs", ExportJobViewSet, basename="export-job")
+# Личные шаблоны конструктора отчётов.
+router.register("report-templates", ReportTemplateViewSet, basename="report-template")
 router.register(
     "calendar-exceptions", CalendarExceptionViewSet, basename="calendar-exception"
 )
 router.register(
     "telegram/invitations", TelegramInvitationViewSet, basename="telegram-invitation"
+)
+# Опросы сотрудников. Шаблон — набор вопросов, который переиспользуют;
+# рассылка — одно обращение к названному кругу людей. Разделены не для
+# симметрии: правка шаблона не должна менять то, что уже спросили.
+router.register(
+    "surveys/templates", SurveyTemplateViewSet, basename="survey-template"
+)
+router.register(
+    "surveys/campaigns", SurveyCampaignViewSet, basename="survey-campaign"
+)
+# Автоматизация — третья сущность, а не разновидность рассылки:
+# у правила нет получателей и не будет до самого события.
+router.register(
+    "surveys/automations", SurveyAutomationViewSet, basename="survey-automation"
+)
+# Первичное ознакомление. Разделы и документы — разные справочники:
+# карточка рассказывает о компании, документ обязывает, и версионируются
+# они по-разному.
+router.register(
+    "onboarding/sections", OnboardingSectionViewSet, basename="onboarding-section"
+)
+router.register(
+    "onboarding/documents", PolicyDocumentViewSet, basename="policy-document"
+)
+router.register(
+    "onboarding/categories", PolicyCategoryViewSet, basename="policy-category"
 )
 
 urlpatterns = [
@@ -142,9 +216,63 @@ urlpatterns = [
         EmployeeTelegramDisconnectView.as_view(),
         name="employee-telegram-disconnect",
     ),
+    # Первичное ознакомление одного человека — там же, где всё остальное
+    # про него. Действие стоит в пути, а не в теле: каждое из них —
+    # отдельное решение с отдельной записью в журнале.
+    path(
+        "employees/<uuid:employee_pk>/onboarding",
+        EmployeeOnboardingView.as_view(),
+        name="employee-onboarding",
+    ),
+    path(
+        "employees/<uuid:employee_pk>/onboarding/<str:action>",
+        EmployeeOnboardingActionView.as_view(),
+        name="employee-onboarding-action",
+    ),
+    # Сводка по всем. `counts` и `export` стоят ВЫШЕ общего маршрута
+    # разделов: путь читается сверху вниз.
+    path(
+        "onboarding/progress",
+        OnboardingProgressView.as_view(),
+        name="onboarding-progress",
+    ),
+    path(
+        "onboarding/remind", OnboardingRemindView.as_view(),
+        name="onboarding-remind",
+    ),
+    path(
+        "onboarding/counts", OnboardingCountsView.as_view(),
+        name="onboarding-counts",
+    ),
+    path(
+        "onboarding/export", OnboardingExportView.as_view(),
+        name="onboarding-export",
+    ),
+    # Редакция документа. Публикация вынесена отдельным адресом: это не
+    # правка полей, а решение, закрывающее бота всем, кто её не принял.
+    path(
+        "onboarding/versions/<uuid:version_id>",
+        PolicyVersionView.as_view(), name="policy-version",
+    ),
+    path(
+        "onboarding/versions/<uuid:version_id>/publish",
+        PolicyVersionPublishView.as_view(), name="policy-version-publish",
+    ),
+    path(
+        "onboarding/versions/<uuid:version_id>/file",
+        PolicyVersionFileView.as_view(), name="policy-version-file",
+    ),
     # Вход бота. Пользователя за ним нет: обращается сам бот, предъявляя
     # общий секрет, а право на операцию даёт токен приглашения.
     path("telegram/bot/link", BotLinkView.as_view(), name="telegram-bot-link"),
+    path("telegram/bot/link/accept", BotLinkAcceptView.as_view(), name="telegram-bot-link-accept"),
+    # Узнавание по имени в Telegram: когда человек открыл бота сам, без
+    # ссылки. Привязка получается такой же ожидающей подтверждения.
+    path(
+        "telegram/bot/recognize",
+        BotRecognizeView.as_view(),
+        name="telegram-bot-recognize",
+    ),
     # Очередь уведомлений. Бот забирает её отсюда, а не из базы: подключения
     # к PostgreSQL у него нет и заводить его ради двух запросов не нужно.
     path("telegram/bot/outbox", BotOutboxView.as_view(), name="telegram-bot-outbox"),
@@ -178,13 +306,49 @@ urlpatterns = [
     # Общая очередь заявок: отсутствия и исправления отметок одним
     # списком. Склеить две страницы на клиенте нельзя — получилась бы
     # не очередь, а произвольная смесь двух её половин.
+    # Лента событий кадровика. Не очередь отправки (`notifications`):
+    # та отвечает, ушло ли сообщение сотруднику, а эта — что случилось
+    # в кадровом контуре и ждёт человека.
+    path("notification-feed", FeedView.as_view(), name="notification-feed"),
+    path(
+        "notification-feed/counts",
+        FeedCountsView.as_view(),
+        name="notification-feed-counts",
+    ),
+    path(
+        "notification-feed/read-all",
+        FeedReadAllView.as_view(),
+        name="notification-feed-read-all",
+    ),
+    # Ключ события составной («вид:запись»), поэтому в адресе он
+    # строкой: UUID-конвертер такой ключ не пропустит.
+    path(
+        "notification-feed/<str:event_id>",
+        FeedItemView.as_view(),
+        name="notification-feed-item",
+    ),
     path("requests", RequestQueueView.as_view(), name="requests-queue"),
+    # Счётчики вкладок очереди одним ответом: по одной строке на вкладку
+    # видно только «есть или нет», а не сколько.
+    path("requests/counts", RequestCountsView.as_view(), name="requests-counts"),
     # Аналитика. Каждая доля приходит с числителем, знаменателем и
     # словесным определением формулы: процент без них проверить нечем.
     path("analytics", AnalyticsView.as_view(), name="analytics"),
     path("analytics/compare", ComparisonView.as_view(), name="analytics-compare"),
+    # Движение сотрудников. Отдельно от посещаемости: там единица
+    # измерения — дни, здесь — люди.
+    path("analytics/movement", MovementView.as_view(), name="analytics-movement"),
+    # Всё для страницы «Аналитика» одним ответом: сводка с прошлым
+    # периодом, дни, рейтинг офисов, ритм прихода, дни недели.
+    path("analytics/overview", AnalyticsOverviewView.as_view(), name="analytics-overview"),
+    # Люди за период: «Команда» и «Стажировки» страницы аналитики.
+    path("analytics/team", TeamView.as_view(), name="analytics-team"),
+    path("analytics/probation", ProbationView.as_view(), name="analytics-probation"),
     # Выгрузки. Право reports.export проверяется отдельно от прав на сами
     # данные: выгрузка не должна быть обходным путём к закрытому экрану.
+    # Конструктор отчётов: поля видов и предпросмотр до заказа файла.
+    path("reports/catalog", ReportCatalogView.as_view(), name="report-catalog"),
+    path("reports/preview", ReportPreviewView.as_view(), name="report-preview"),
     path("reports/<str:kind>/export", ExportView.as_view(), name="report-export"),
     # Журнал изменений. Только чтение: метода записи здесь нет намеренно,
     # единственный способ появиться в журнале — быть записанным сервисом,
@@ -252,8 +416,33 @@ urlpatterns = [
     # он следующим этапом, — но подтверждать больничные надо уже сейчас.
     path("absence-requests/pending", PendingAbsenceRequestsView.as_view(),
          name="absence-requests-pending"),
+    # Чтение одной заявки. Раньше маршрута с <str:decision>: тот ловит
+    # любой хвост, а у этого хвоста нет вовсе.
+    path("absence-requests/<uuid:request_id>", AbsenceRequestView.as_view(),
+         name="absence-request"),
+    # Заявление для печати. Раньше маршрута с <str:decision>: иначе
+    # «application» разобралось бы как решение по заявке.
+    path("absence-requests/<uuid:request_id>/application",
+         AbsenceApplicationView.as_view(), name="absence-request-application"),
+    # Оба пункта проверки кадровика. Стоят РАНЬШЕ общего маршрута с
+    # <str:decision>: иначе «period» и «application-received» разобрались
+    # бы как решения по заявке.
+    path("absence-requests/<uuid:request_id>/period",
+         AbsencePeriodView.as_view(), name="absence-request-period"),
+    path("absence-requests/<uuid:request_id>/application-received",
+         AbsenceApplicationReceivedView.as_view(),
+         name="absence-request-application-received"),
     path("absence-requests/<uuid:request_id>/<str:decision>",
          AbsenceDecisionView.as_view(), name="absence-request-decision"),
+    path("absence-requests/<uuid:request_id>/documents/<uuid:document_id>/download",
+         AbsenceDocumentDownloadView.as_view(),
+         name="absence-request-document-download"),
+    # Решение по справке. Отдельно от решения по заявке: одобренный
+    # больничный с отклонённой справкой — законное состояние.
+    path("absence-requests/<uuid:request_id>/documents/<uuid:document_id>/"
+         "<str:decision>",
+         AbsenceDocumentDecisionView.as_view(),
+         name="absence-request-document-decision"),
     # Личный кабинет сотрудника. Один набор endpoint'ов на Mini App и бота:
     # разные клиенты, но одни и те же цифры.
     path("me/", include("humotech.selfservice.urls")),

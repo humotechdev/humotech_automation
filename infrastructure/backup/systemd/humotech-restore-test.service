@@ -1,0 +1,10 @@
+[Unit]
+Description=HUMOTECH: проверка восстановления последней копии
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+Environment=BACKUP_CONFIG=/etc/humotech/backup.env
+ExecStart=/opt/humotech/infrastructure/backup/restore-test.sh
+Nice=10

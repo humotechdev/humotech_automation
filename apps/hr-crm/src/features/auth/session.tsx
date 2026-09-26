@@ -68,7 +68,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         // сессии вовсе — она жива, просто спросить не у кого.
         const broken =
           failure instanceof ApiFailure
-          && (failure.kind === 'offline' || failure.kind === 'server');
+          && (failure.kind === 'offline' || failure.kind === 'server'
+            // «Подождите» от ограничителя тоже ничего не говорит о сессии.
+            || failure.kind === 'throttled');
         setState({ status: broken ? 'unavailable' : 'anonymous' });
       });
     return () => stop.abort();

@@ -22,7 +22,9 @@ from humotech.core.enums import (
     choices,
     status_check,
 )
+from humotech.core.functions import TransactionNow
 from humotech.core.models import (
+    CreatedAtModel,
     OrganizationScopedModel,
     TimestampedModel,
     UUIDPrimaryKeyModel,
@@ -186,3 +188,56 @@ class NotificationAttempt(UUIDPrimaryKeyModel, TimestampedModel):
 
     def __str__(self) -> str:
         return f"{self.notification_id} #{self.number} {self.outcome}"
+
+
+class FeedRead(UUIDPrimaryKeyModel, OrganizationScopedModel, CreatedAtModel):
+    """Отметка «прочитано» ОДНОГО пользователя об одном событии ленты.
+
+    Лента кадровика (`feed.py`) не хранится: она собирается из заявок,
+    сессий, обращений и очереди отправки. Хранить нечего — кроме того,
+    что нельзя вывести из данных: кто из кадровиков это событие уже
+    видел. Поэтому таблица одна и маленькая.
+
+    Ключ события составной — вид и запись-источник, а не выдуманный
+    идентификатор: только по паре можно вернуться к строке, из которой
+    событие собрано, и только так отметка переживает пересборку ленты.
+
+    Прочтение у каждого своё: уникальность по (пользователь, вид,
+    запись). Кадровик, прочитавший заявку, не отмечает её прочитанной
+    для соседнего кадровика — они разбирают очередь вдвоём.
+    """
+
+    user = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.CASCADE,
+        db_column="user_id",
+        db_index=False,
+        related_name="+",
+    )
+    event_type = models.CharField(max_length=40)
+    entity_id = models.UUIDField()
+    read_at = models.DateTimeField(db_default=TransactionNow())
+
+    class Meta:
+        db_table = "notification_feed_reads"
+        verbose_name = "прочтение события ленты"
+        verbose_name_plural = "прочтения событий ленты"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "event_type", "entity_id"],
+                name="uq_notification_feed_reads_event",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["organization"],
+                name="ix_notification_feed_reads_org",
+            ),
+            models.Index(
+                fields=["user", "event_type"],
+                name="ix_notification_feed_reads_user",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.user_id} {self.event_type}:{self.entity_id}"
