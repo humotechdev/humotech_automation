@@ -2,12 +2,12 @@
  * Офисы и регионы: карта сети, лента, список, карточка офиса и регионы.
  *
  * Главное, что проверяется: статус офиса и состояние его настройки —
- * разные величины; офис без координат на карту не ставится; маркер стоит
- * по координатам, а не по названию региона; отказ сервера не выдаётся за
- * ноль; привязанный экран не называется доступным.
+ * разные величины; офис без координат учтён отдельно («Без координат»);
+ * офис попадает в область по региону, а не только по точке; отказ
+ * сервера не выдаётся за ноль; привязанный экран не называется доступным.
  */
 
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
 
 import { needsSetup } from '../src/pages/OfficesPage';
@@ -97,32 +97,50 @@ function network(
   });
 }
 
+/** Карточка офиса в ленте внизу страницы. */
+async function officeCard(id: string): Promise<HTMLElement> {
+  await waitFor(() => expect(document.querySelector(`[data-office-id="${id}"]`)).not.toBeNull());
+  return document.querySelector(`[data-office-id="${id}"]`) as HTMLElement;
+}
+
+/** Число дня в карточке ленты: «В офисе», «Отпуск», «Больничный». */
+const dayNumber = (card: HTMLElement, title: string) =>
+  within(card).getByText(title).parentElement?.querySelector('b')?.textContent;
+
 describe('карта сети', () => {
-  test('лента берёт числа с сервера: в офисе из тех, кого ждали', async () => {
-    // 32 в офисе, по графику 32 + 2 ушли + 2 не пришли = 36.
+  test('лента берёт числа дня с сервера', async () => {
+    // Сервер: 32 в офисе, 2 ушли, 2 не пришли, 4 в отпуске, 2 на
+    // больничном — за офисом числятся 42.
     network();
     renderApp('/offices');
 
-    // В карточке офиса рядом с числами стоит «в офисе», поэтому поиск
-    // по вхождению, а не по точному совпадению строки.
-    expect(await screen.findByText(/32 из 36/)).toBeTruthy();
-    expect(screen.getAllByText('42').length).toBeGreaterThan(0);
+    const card = await officeCard('o-1');
+    await waitFor(() => expect(dayNumber(card, 'В офисе')).toBe('32'));
+    expect(dayNumber(card, 'Отпуск')).toBe('4');
+    expect(dayNumber(card, 'Больничный')).toBe('2');
+    expect(card.textContent).toContain('Сотрудники: 42');
   });
 
   test('офис без координат на карту не ставится', async () => {
+    // Точек офисов на карте нет (решение от 26.09): офис без координат
+    // учитывается в легенде отдельно и помечен «Геопозиция: нет».
     network();
     renderApp('/offices');
 
-    await screen.findByText(/32 из 36/);
     await waitFor(() => expect(screen.getByText('Без координат: 1')).toBeTruthy());
-    expect(screen.queryByRole('button', { name: 'Офис Главный офис' })).toBeNull();
+    expect((await officeCard('o-1')).textContent).toContain('Геопозиция: нет');
   });
 
-  test('маркер стоит по координатам и открывает карточку офиса', async () => {
+  test('офис с координатами учтён на карте, карточка открывается из ленты', async () => {
     network(() => null, PLACED);
     renderApp('/offices');
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Офис Главный офис' }));
+    const card = await officeCard('o-1');
+    await waitFor(() => expect(card.textContent).toContain('Геопозиция: есть'));
+    // Все офисы с координатами — строки «Без координат» в легенде нет.
+    expect(screen.queryByText(/Без координат/)).toBeNull();
+
+    fireEvent.click(card);
 
     expect(await screen.findByRole('complementary', { name: 'Карточка офиса' })).toBeTruthy();
   });
@@ -131,7 +149,11 @@ describe('карта сети', () => {
     network(() => null, PLACED);
     renderApp('/offices');
 
-    const area = await screen.findByRole('button', { name: 'город Ташкент' });
+    // У Ташкента две кнопки с одним названием: сама область и точка
+    // города поверх неё (область слишком мала, чтобы в неё попадать).
+    // Здесь — область.
+    const [area] = await screen.findAllByRole('button', { name: 'город Ташкент' });
+    if (!area) throw new Error('нет области «город Ташкент»');
     fireEvent.click(area);
 
     await waitFor(() => expect(area.getAttribute('aria-pressed')).toBe('true'));
@@ -141,21 +163,26 @@ describe('карта сети', () => {
 
   test('активный офис может требовать настройки', async () => {
     // Статус и настройка — разные величины: точка требует геолокацию,
-    // а координат у офиса нет, и проверка молча не работает.
-    network();
-    renderApp('/offices');
+    // а координат у офиса нет, и проверка молча не работает. Офис стоит
+    // в «город Ташкент» — под этой областью он и виден.
+    network(() => null, { ...OFFICE, region_name: 'город Ташкент' });
+    renderApp('/offices?area=UZ-TK');
 
-    // Метка стоит и в ленте офисов, и в списке «Требуют внимания»:
-    // это одно состояние, показанное в двух местах.
-    expect((await screen.findAllByText('Геозона не настроена')).length).toBeGreaterThan(0);
+    const panel = await screen.findByRole('complementary', { name: 'Выбранный регион' });
+    await waitFor(() => expect(within(panel).getByText('1 офис без геозоны')).toBeTruthy());
+    expect(within(panel).getByText('Активен')).toBeTruthy();
   });
 
   test('отказ в QR-точках не выдаётся за ноль', async () => {
     network((path) => (path.includes('/qr-points/') ? json(403, { error: {} }) : null));
-    renderApp('/offices');
+    renderApp('/offices?office=o-1');
 
-    expect(await screen.findByText('QR-точки: нет доступа')).toBeTruthy();
-    expect(screen.queryByText(/0 QR-точек/)).toBeNull();
+    // В ленте — прочерк, а не ноль; в карточке офиса — «нет доступа».
+    const card = await officeCard('o-1');
+    await waitFor(() => expect(card.textContent).toContain('QR: —'));
+    expect(card.textContent).not.toContain('QR: 0');
+    const aside = await screen.findByRole('complementary', { name: 'Карточка офиса' });
+    expect(within(aside).getAllByText('нет доступа').length).toBeGreaterThan(0);
   });
 
   test('ошибка не превращается в «офисов нет»', async () => {
@@ -217,10 +244,15 @@ describe('выбор области на карте', () => {
     manyOffices();
     renderApp('/offices?area=UZ-BU');
 
-    expect(await screen.findByText('Бухара центр')).toBeTruthy();
-    expect(screen.getByText('Бухара склад')).toBeTruthy();
-    // Чужой офис в выборку не попадает.
-    expect(screen.queryByText('Ташкент офис')).toBeNull();
+    // И в панели выбранной области, и в ленте — оба бухарских офиса;
+    // чужой офис в выборку не попадает ни там, ни там.
+    const panel = await screen.findByRole('complementary', { name: 'Выбранный регион' });
+    const strip = screen.getByRole('region', { name: 'Офисы' });
+    for (const place of [panel, strip]) {
+      await waitFor(() => expect(within(place).getByText('Бухара центр')).toBeTruthy());
+      expect(within(place).getByText('Бухара склад')).toBeTruthy();
+      expect(within(place).queryByText('Ташкент офис')).toBeNull();
+    }
   });
 
   test('без выбранной области видны все офисы', async () => {
@@ -232,29 +264,36 @@ describe('выбор области на карте', () => {
   });
 });
 
-describe('список', () => {
-  test('кнопка «Требует настройки» не выглядит применённой до нажатия', async () => {
+describe('отбор ленты', () => {
+  test('отбор не выглядит применённым до нажатия', async () => {
+    // Отборы ленты — «Все / Активные / Неактивные» (69a2b0e); прежний
+    // отдельный список с «Требует настройки» убран.
     network();
-    renderApp('/offices?view=list');
+    renderApp('/offices');
 
-    const button = await screen.findByRole('button', { name: /Требует настройки/ });
+    const button = await screen.findByRole('button', { name: 'Неактивные' });
     expect(button.getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByRole('button', { name: 'Все' }).getAttribute('aria-pressed')).toBe('true');
 
     fireEvent.click(button);
     await waitFor(() =>
-      expect(
-        screen.getByRole('button', { name: /Требует настройки/ }).getAttribute('aria-pressed'),
-      ).toBe('true'),
+      expect(screen.getByRole('button', { name: 'Неактивные' }).getAttribute('aria-pressed')).toBe('true'),
     );
+    expect(screen.getByRole('button', { name: 'Все' }).getAttribute('aria-pressed')).toBe('false');
   });
 });
 
 describe('карточка офиса', () => {
   test('пустой адрес показывается как «Не указан»', async () => {
-    network();
-    renderApp('/offices?office=o-1');
+    // Адрес показывается в настройке офиса, где его и меняют (в карточке
+    // на странице «Офисы» его нет намеренно — см. OfficeCard).
+    network((path, method) =>
+      method === 'GET' && /\/offices\/o-1\/$/.test(path) ? json(200, OFFICE) : null);
+    renderApp('/offices/o-1/setup');
 
-    expect(await screen.findByText('Не указан')).toBeTruthy();
+    const summary = await screen.findByRole('complementary', { name: 'Краткая карточка офиса' });
+    const address = within(summary).getByText('Адрес', { selector: 'dt' }).parentElement;
+    expect(address?.querySelector('dd')?.textContent).toBe('Не указан');
   });
 
   test('состояние геолокации описывает фактические точки', async () => {
@@ -309,9 +348,9 @@ describe('настройка офиса', () => {
     });
     renderApp('/offices/o-1/setup');
 
-    const name = await screen.findByLabelText('Название');
+    const name = await screen.findByLabelText('Название офиса');
     fireEvent.change(name, { target: { value: 'Главный офис 2' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Сохранить изменения' }));
 
     await screen.findByRole('alert');
     expect((name as HTMLInputElement).value).toBe('Главный офис 2');
@@ -320,7 +359,10 @@ describe('настройка офиса', () => {
 });
 
 describe('регионы', () => {
-  test('вкладка показывает регионы и действие по правам', async () => {
+  test('таблица регионов показывает офисы и людей региона', async () => {
+    // Прежняя вкладка регионов стала таблицей рядом с картой; старая
+    // ссылка `?view=regions` открывает карту. Действия «Отключить» в
+    // таблице нет (решение от 26.09).
     network((path) =>
       path.includes('/auth/')
         ? json(200, { ...USER, permissions: ['offices.read', 'regions.manage'] })
@@ -328,8 +370,12 @@ describe('регионы', () => {
     );
     renderApp('/offices?view=regions');
 
-    expect(await screen.findByText('Центральный регион')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Отключить' })).toBeTruthy();
+    expect(await screen.findByRole('region', { name: 'Карта сети' })).toBeTruthy();
+    const table = await screen.findByRole('complementary', { name: 'Регионы сети' });
+    await waitFor(() => expect(within(table).getByText('Центральный регион')).toBeTruthy());
+    const cells = within(table).getByText('Центральный регион').closest('tr')?.querySelectorAll('td');
+    // Офисов: 1; людей: 42 — те же числа, что в ленте.
+    await waitFor(() => expect([...(cells ?? [])].map((one) => one.textContent)).toEqual(['1', '42']));
   });
 });
 

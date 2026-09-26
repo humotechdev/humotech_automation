@@ -1,6 +1,6 @@
 /**
  * Список сотрудников: адрес хранит состояние, счётчики не зависят от
- * выбранной вкладки, номер страницы превращается в сдвиг выборки.
+ * выбранной занятости, номер страницы превращается в сдвиг выборки.
  *
  * Имя выбранного сотрудника на странице дважды — в карточке списка и в
  * правой колонке, поэтому поиск по имени берёт все совпадения.
@@ -70,26 +70,48 @@ function network(handler: (path: string) => Response | null = () => null) {
 const listCalls = (calls: { url: string }[]) =>
   calls.filter((c) => c.url.includes('/employees/?') && !c.url.includes('counts') && !c.url.includes('highlights'));
 
+/**
+ * Отбор по занятости — многозначный список «Занятость» (вкладки статусов
+ * заменены им в 66a836d): кнопка открывает флажки, «Готово» закрывает.
+ */
+function pickEmployment(label: string) {
+  fireEvent.click(screen.getByRole('button', { name: /^Занятость:/ }));
+  fireEvent.click(screen.getByRole('checkbox', { name: label }));
+  fireEvent.click(screen.getByRole('button', { name: 'Готово' }));
+}
+
 describe('список', () => {
   test('карточка показывает сведения из ответа сервера', async () => {
-    network();
+    network((path) => (/\/employees\/e-1\/$/.test(path) ? json(200, PERSON) : null));
     renderApp('/employees');
 
     expect((await screen.findAllByText('Каримов Алишер')).length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Ташкент').length).toBeGreaterThan(0);
+    // Место работы — регион и офис из назначения одной строкой.
+    expect(screen.getAllByText('Центр · Ташкент').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Специалист поддержки').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Операционный отдел').length).toBeGreaterThan(0);
     // В графике нет дней и часов — показывается его название, а не пустота.
     expect(screen.getAllByText('Пятидневка 09:00–18:00').length).toBeGreaterThan(0);
+
+    // Отдела на карточке списка нет с переделки 66a836d; HR видит его в
+    // профиле, куда ведёт «Открыть профиль». Должность, отдел и офис
+    // сервер отдаёт внутри current_assignment — панель «Профиль» раньше
+    // читала их с верхнего уровня и показывала «—» у каждого сотрудника.
+    const [open] = await screen.findAllByRole('button', { name: 'Открыть профиль' });
+    fireEvent.click(open as HTMLElement);
+    const fact = async (label: string) =>
+      (await screen.findByText(label, { selector: 'dt' })).parentElement?.querySelector('dd')?.textContent;
+    expect(await fact('Отдел')).toBe('Операционный отдел');
+    expect(await fact('Должность')).toBe('Специалист поддержки');
+    expect(await fact('Офис')).toBe('Ташкент');
   });
 
-  test('счётчики вкладок не зависят от выбранной вкладки', async () => {
-    // Иначе, выбрав «Активные», человек видел бы нули у остальных.
+  test('счётчики не зависят от выбранной занятости', async () => {
+    // Иначе, выбрав «Работает», человек видел бы нули у остальных.
     const calls = network();
     renderApp('/employees');
     await screen.findAllByText('Каримов Алишер');
 
-    fireEvent.click(screen.getByRole('tab', { name: /Уволенные/ }));
+    pickEmployment('Уволен');
 
     await waitFor(() =>
       expect(listCalls(calls).some((c) => c.url.includes('status=TERMINATED'))).toBe(true),
@@ -103,7 +125,7 @@ describe('список', () => {
     renderApp('/employees');
     await screen.findAllByText('Каримов Алишер');
 
-    fireEvent.change(screen.getByLabelText('Поиск по ФИО, должности или Telegram'), {
+    fireEvent.change(screen.getByLabelText('Поиск по имени, должности или Telegram'), {
       target: { value: 'Кар' },
     });
 
@@ -114,9 +136,9 @@ describe('список', () => {
   });
 
   test('номер страницы уходит на сервер сдвигом выборки', async () => {
-    // На странице шестнадцать человек, поэтому для второй страницы их
-    // должно быть больше. Вторая запрашивается сдвигом, а не курсором:
-    // на неё можно перейти сразу.
+    // На странице пятнадцать человек (карточки по три в ряд), поэтому
+    // для второй страницы их должно быть больше. Вторая запрашивается
+    // сдвигом, а не курсором: на неё можно перейти сразу.
     const calls = network((path) =>
       path.includes('/employees/counts')
         ? json(200, { total: 20, ACTIVE: 20, SUSPENDED: 0, TERMINATED: 0 })
@@ -128,18 +150,18 @@ describe('список', () => {
     fireEvent.click(screen.getByRole('button', { name: '2' }));
 
     await waitFor(() =>
-      expect(listCalls(calls).some((c) => c.url.includes('offset=16'))).toBe(true),
+      expect(listCalls(calls).some((c) => c.url.includes('offset=15'))).toBe(true),
     );
     expect(screen.queryByRole('button', { name: '3' })).toBeNull();
   });
 
-  test('смена вкладки начинает выборку с первой страницы', async () => {
+  test('смена отбора занятости начинает выборку с первой страницы', async () => {
     // Страница прошлого набора указывает в чужие строки.
     const calls = network();
     renderApp('/employees?page=2');
     await screen.findAllByText('Каримов Алишер');
 
-    fireEvent.click(screen.getByRole('tab', { name: /Активные/ }));
+    pickEmployment('Работает');
 
     await waitFor(() => {
       const last = listCalls(calls).pop();

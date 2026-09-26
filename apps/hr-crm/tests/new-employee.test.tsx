@@ -127,19 +127,44 @@ function setDate(label: string, value: string) {
   fireEvent.keyDown(input, { key: 'Enter' });
 }
 
-/** Заполнить форму целиком — так, как это делает человек. */
-async function fill() {
+/*
+ * Форма приёма — мастер из трёх шагов: «Личные данные», «Работа и
+ * график», «Документы». Вперёд — кнопкой «Далее…», и только через
+ * проверку текущего шага; «Добавить сотрудника» есть лишь на последнем.
+ */
+const next = () => fireEvent.click(screen.getByRole('button', { name: /^Далее/ }));
+/** Какой шаг открыт: заголовок карточки шага. */
+const stepTitle = () => screen.getByRole('heading', { level: 2 }).textContent;
+
+/** Шаг «Личные данные». */
+function fillPerson(pinfl = '39803141234567') {
   type('Фамилия', 'Каримова');
   type('Имя', 'Нигина');
   setDate('Дата рождения', '14.03.1998');
-  type('ПИНФЛ', '39803141234567');
+  type('ПИНФЛ', pinfl);
   type('Телефон', '+998 90 123 45 67');
+}
+
+/** Шаг «Работа и график». */
+async function fillWork() {
   setDate('Дата начала работы', '15.09.2026');
   await choose('Регион', 'Ташкент');
   await choose('Офис', 'Головной офис');
   await choose('Отдел', 'Отдел кадров');
   await choose('Должность', 'HR-специалист');
   await choose('График работы', 'Пятидневка · 09:00–18:00');
+}
+
+/**
+ * Пройти мастер целиком — так, как это делает человек, — и остановиться
+ * на шаге «Документы», где стоит «Добавить сотрудника».
+ */
+async function fill() {
+  fillPerson();
+  next();
+  await fillWork();
+  next();
+  await screen.findByRole('heading', { level: 2, name: 'Документы' });
 }
 
 /** Подложить файл в скрытое поле — то же, что выбрать его в окне. */
@@ -161,14 +186,15 @@ describe('фотография и документы', () => {
     const { calls, sent } = network();
     await openForm();
 
+    // Фотография — на первом шаге, рядом с личными данными.
     attachFile('Фотография сотрудника', png());
     // Пока файл записывается, приём не начинается: сотрудник без ещё
     // не дописанной фотографии — это вторая попытка её приложить.
     await waitFor(() =>
       expect(calls.some((one) => one.url.includes('/employees/attachments'))).toBe(true));
-    await waitFor(() => expect(add().hasAttribute('disabled')).toBe(false));
 
     await fill();
+    await waitFor(() => expect(add().hasAttribute('disabled')).toBe(false));
     fireEvent.click(add());
     fireEvent.click(confirm());
 
@@ -177,22 +203,28 @@ describe('фотография и документы', () => {
   });
 
   test('документ уходит вместе с сотрудником, а не отдельным шагом', async () => {
-    const { sent } = network();
+    const { calls, sent } = network();
     await openForm();
-
-    fireEvent.click(screen.getByRole('button', { name: /Добавить документ/ }));
-    attachFile(/^Файл документа/, pdf());
-    await waitFor(() => expect(screen.getByText('passport.pdf')).toBeTruthy());
-
     await fill();
+
+    // Документы — строки из перечня на шаге «Документы»; вид и название
+    // берутся из строки, а не из имени файла.
+    attachFile('Файл документа: Паспорт или ID-карта', pdf());
+    // Строка показывает имя файла и размер: «passport.pdf · 4 Б».
+    await waitFor(() => expect(screen.getByText(/^passport\.pdf · /)).toBeTruthy());
+    await waitFor(() => expect(add().hasAttribute('disabled')).toBe(false));
+
     fireEvent.click(add());
     fireEvent.click(confirm());
 
     await waitFor(() => expect(sent).toHaveLength(1));
     const body = sent[0] as Record<string, unknown>;
     expect(body['documents']).toEqual([
-      { kind: 'IDENTITY', file_id: 'f-1', title: 'passport.pdf' },
+      { kind: 'IDENTITY', file_id: 'f-1', title: 'Паспорт или ID-карта' },
     ]);
+    // Отдельной привязки к уже созданному сотруднику нет: бумага уходит
+    // в том же запросе приёма.
+    expect(calls.some((one) => /\/employees\/[^/]+\/documents/.test(one.url))).toBe(false);
   });
 
   test('не загрузившийся файл не даёт закончить приём', async () => {
@@ -204,8 +236,7 @@ describe('фотография и документы', () => {
     await openForm();
     await fill();
 
-    fireEvent.click(screen.getByRole('button', { name: /Добавить документ/ }));
-    attachFile(/^Файл документа/, pdf());
+    attachFile('Файл документа: Паспорт или ID-карта', pdf());
 
     // Строка осталась на месте, кнопка заперта: молча выкинуть
     // приложенный файл и создать сотрудника без него нельзя.
@@ -217,9 +248,14 @@ describe('фотография и документы', () => {
   test('пол и семейное положение уходят кодами, а не подписями', async () => {
     const { sent } = network();
     await openForm();
-    await fill();
+    // Пол и семейное положение — на шаге «Личные данные».
+    fillPerson();
     await choose('Пол', 'Мужской');
     await choose('Семейное положение', 'Женат / замужем');
+    next();
+    await fillWork();
+    next();
+    await screen.findByRole('heading', { level: 2, name: 'Документы' });
 
     fireEvent.click(add());
     fireEvent.click(confirm());
@@ -253,29 +289,44 @@ describe('форма приёма', () => {
     const { sent } = network();
     await openForm();
 
-    fireEvent.click(add());
+    // Пустой первый шаг дальше не пускает: ошибки у всех пяти
+    // обязательных полей — фамилия, имя, дата рождения, ПИНФЛ, телефон.
+    next();
+    expect(stepTitle()).toBe('Личные данные');
+    expect(screen.getAllByText('Заполните поле')).toHaveLength(5);
 
-    // Ни подтверждения, ни запроса: ошибки стоят у полей.
+    // Пустой второй шаг тоже: дата начала, регион, офис, отдел,
+    // должность, график (тип занятости выбран заранее).
+    fillPerson();
+    next();
+    await screen.findByRole('heading', { level: 2, name: 'Работа и график' });
+    next();
+    expect(stepTitle()).toBe('Работа и график');
+    expect(screen.getAllByText('Заполните поле')).toHaveLength(6);
+
+    // Ни подтверждения, ни запроса.
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(sent).toHaveLength(0);
-    expect(screen.getAllByText('Заполните поле').length).toBeGreaterThan(5);
   });
 
   test('ПИНФЛ короче четырнадцати цифр не пропускается', async () => {
     const { sent } = network();
     await openForm();
-    await fill();
-    type('ПИНФЛ', '123');
+    fillPerson('123');
 
-    fireEvent.click(add());
+    next();
 
     expect(screen.getByText('ПИНФЛ состоит из 14 цифр')).toBeTruthy();
+    expect(stepTitle()).toBe('Личные данные');
     expect(sent).toHaveLength(0);
   });
 
   test('регион сужает список офисов', async () => {
     network();
     await openForm();
+    fillPerson();
+    next();
+    await screen.findByRole('heading', { level: 2, name: 'Работа и график' });
 
     await choose('Регион', 'Ташкент');
     fireEvent.click(screen.getByRole('button', { name: /^Офис/ }));
@@ -313,7 +364,11 @@ describe('форма приёма', () => {
 
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(sent).toHaveLength(0);
-    // Заполненное осталось на месте: окно закрывали, а не форму.
+    // Заполненное осталось на месте: окно закрывали, а не форму. Личные
+    // данные — на первом шаге, туда и возвращаемся.
+    fireEvent.click(screen.getByRole('button', { name: /Назад$/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Назад$/ }));
+    expect(stepTitle()).toBe('Личные данные');
     expect(field('Фамилия').value).toBe('Каримова');
   });
 
@@ -417,8 +472,10 @@ describe('отказы сервера', () => {
 
     await screen.findByText('Сотрудник с таким ПИНФЛ уже есть');
     // Окно подтверждения закрылось: править надо форму, а не смотреть на
-    // сводку поверх неё.
+    // сводку поверх неё. И форма открыта на том шаге, где поле ПИНФЛ.
     expect(screen.queryByRole('dialog')).toBeNull();
+    expect(stepTitle()).toBe('Личные данные');
+    expect(field('ПИНФЛ').value).toBe('39803141234567');
   });
 
   test('отказ без имени поля объясняется одной строкой над формой', async () => {

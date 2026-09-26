@@ -52,6 +52,10 @@ const text = (person: Person, key: string): string | null => {
   return value === null || value === undefined ? null : String(value);
 };
 
+/** Текущее назначение: где, кем и в каком отделе человек работает сейчас. */
+const assignmentOf = (person: Person): Person =>
+  (person['current_assignment'] ?? {}) as Person;
+
 export function EmployeePage() {
   const { id = '' } = useParams();
   const session = useSession();
@@ -213,7 +217,7 @@ function Header({ person, back, tools }: { person: Person; back: string; tools: 
   const hasPhoto = person['photo'] !== null && person['photo'] !== undefined;
   // Должность, отдел и офис живут в текущем назначении, а не в самой
   // карточке: на верхнем уровне этих полей нет, и строки выходили пустыми.
-  const assignment = (person['current_assignment'] ?? {}) as Person;
+  const assignment = assignmentOf(person);
   const first = text(assignment, 'position_name') ?? '';
   const second = [text(assignment, 'department_name'), text(assignment, 'office_name')]
     .filter(Boolean).join(' · ');
@@ -383,9 +387,12 @@ function Overview({ id, person, zone, rights, onGo, onChanged }: {
             <h3 className="panel__title">Профиль</h3>
             <dl className="facts">
               <Fact label="Дата приёма" value={text(person, 'hire_date')} />
-              <Fact label="Должность" value={text(person, 'position_name')} />
-              <Fact label="Отдел" value={text(person, 'department_name')} />
-              <Fact label="Офис" value={text(person, 'office_name')} />
+              {/* Должность, отдел и офис — в текущем назначении, как и в
+                  шапке: на верхнем уровне карточки этих полей нет, и строки
+                  выходили «—» у каждого сотрудника. */}
+              <Fact label="Должность" value={text(assignmentOf(person), 'position_name')} />
+              <Fact label="Отдел" value={text(assignmentOf(person), 'department_name')} />
+              <Fact label="Офис" value={text(assignmentOf(person), 'office_name')} />
               <Fact label="Телефон" value={text(person, 'phone')} />
               <Fact label="Рабочая почта" value={text(person, 'corporate_email')} />
               <Fact label="Пол" value={GENDER[text(person, 'gender') ?? ''] ?? null} />
