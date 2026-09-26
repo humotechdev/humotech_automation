@@ -1,0 +1,10 @@
+[Unit]
+Description=Docker хоста через смонтированный сокет (заглушка для стенда проверки бэкапа)
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/docker info --format '{{.ServerVersion}}'
+
+[Install]
+WantedBy=multi-user.target

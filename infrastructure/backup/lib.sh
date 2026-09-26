@@ -41,6 +41,16 @@ load_config() {
     # Тома, которым разрешено быть пустыми (логические имена: ключ тома
     # compose или имя тома в режиме 2). Остальной пустой том — ошибка.
     : "${BACKUP_ALLOW_EMPTY_VOLUMES:=}"
+    # Временные тома (выгрузки): приложение может законно удалить файл прямо
+    # во время копирования. Для них это предупреждение, а не отказ. Для всех
+    # остальных томов пропажа файла во время архивации — отказ.
+    : "${BACKUP_TRANSIENT_VOLUMES:=}"
+    # Запас места: копия не начинается, если на разделе BACKUP_DIR свободно
+    # меньше BACKUP_MIN_FREE_MB; при заполнении выше BACKUP_DISK_WARN_PERCENT
+    # и при BACKUP_UNSENT_WARN и более неотправленных копиях — предупреждение.
+    : "${BACKUP_MIN_FREE_MB:=2048}"
+    : "${BACKUP_DISK_WARN_PERCENT:=85}"
+    : "${BACKUP_UNSENT_WARN:=3}"
     # Том с документами: в нём файлов не меньше, чем живых строк в таблице
     # files. Пусто — первый из списка томов.
     : "${BACKUP_MEDIA_VOLUME:=}"
@@ -68,8 +78,12 @@ load_config() {
     done
     [ -z "$BACKUP_COMPOSE_PROJECT" ] || [[ "$BACKUP_COMPOSE_PROJECT" =~ ^[a-z0-9][a-z0-9_-]*$ ]] \
         || die "BACKUP_COMPOSE_PROJECT: недопустимое имя проекта"
-    for name in $BACKUP_VOLUMES $BACKUP_COMPOSE_VOLUMES $BACKUP_ALLOW_EMPTY_VOLUMES $BACKUP_MEDIA_VOLUME; do
+    for name in $BACKUP_VOLUMES $BACKUP_COMPOSE_VOLUMES $BACKUP_ALLOW_EMPTY_VOLUMES \
+                $BACKUP_TRANSIENT_VOLUMES $BACKUP_MEDIA_VOLUME; do
         [[ "$name" =~ ^[A-Za-z0-9_.-]+$ ]] || die "недопустимое имя тома в настройках"
+    done
+    for name in BACKUP_MIN_FREE_MB BACKUP_DISK_WARN_PERCENT BACKUP_UNSENT_WARN BACKUP_KEEP_DAILY BACKUP_KEEP_MONTHLY; do
+        [[ "${!name}" =~ ^[0-9]+$ ]] || die "$name: ожидается целое число"
     done
     case "$BACKUP_ENCRYPTION" in age|gpg|none) ;; *) die "BACKUP_ENCRYPTION: age, gpg или none" ;; esac
 }
@@ -113,6 +127,8 @@ resolve_sources() {
     fi
     [ "${#VOL_KEYS[@]}" -gt 0 ] || die "не задано ни одного тома с файлами"
     [ -n "$BACKUP_MEDIA_VOLUME" ] || BACKUP_MEDIA_VOLUME="${VOL_KEYS[0]}"
+    ! in_list "$BACKUP_MEDIA_VOLUME" "$BACKUP_TRANSIENT_VOLUMES" \
+        || die "том документов $BACKUP_MEDIA_VOLUME не может быть временным (BACKUP_TRANSIENT_VOLUMES)"
 }
 
 # in_list <слово> <список через пробел>
@@ -164,11 +180,13 @@ decrypt_file() {
         *.age)
             need age
             [ -n "$BACKUP_AGE_IDENTITY_FILE" ] || die "для .age нужен BACKUP_AGE_IDENTITY_FILE"
-            age -d -i "$BACKUP_AGE_IDENTITY_FILE" -o "$out" "$src"
+            age -d -i "$BACKUP_AGE_IDENTITY_FILE" -o "$out" "$src" \
+                || die "не удалось расшифровать $(basename "$src"): неверный ключ или файл повреждён"
             ;;
         *.gpg)
             need gpg
-            gpg --batch --yes --quiet --decrypt --output "$out" "$src"
+            gpg --batch --yes --quiet --decrypt --output "$out" "$src" \
+                || die "не удалось расшифровать $(basename "$src"): неверный ключ или файл повреждён"
             ;;
         *) cp "$src" "$out" ;;
     esac

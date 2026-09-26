@@ -8,19 +8,23 @@
 # одноразовый контейнер PostgreSQL:
 #   * без опубликованных портов и во внутренней сети без выхода наружу;
 #   * со случайным именем и случайным паролем, которые нигде не печатаются;
-#   * контейнер, сеть и расшифрованные файлы удаляются при любом исходе.
+#   * контейнер, сеть, временные тома и расшифрованные файлы удаляются при
+#     любом исходе.
 #
 # Что проверяется:
 #   1. SHA256SUMS — копия не повреждена (от подмены целиком суммы без
 #      подписи не защищают — это задача Object Lock и ключа «только запись»);
-#   2. pg_restore завершается без ошибок (--exit-on-error);
-#   3. число строк в КАЖДОЙ таблице равно записанному в manifest.tsv;
-#   4. миграции по приложениям и расширения (vector, btree_gist) совпадают;
+#   2. расшифровка — неверный ключ или испорченный файл дают явную ошибку;
+#   3. pg_restore завершается без ошибок (--exit-on-error);
+#   4. число строк в КАЖДОЙ таблице, миграции и расширения совпадают с
+#      manifest.tsv;
 #   5. если задан BACKUP_VERIFY_APP_IMAGE — `manage.py migrate --check`
 #      образом приложения: схема восстановленной базы соответствует коду;
 #   6. файлы томов ВОССТАНАВЛИВАЮТСЯ во временные тома Docker, и каждый
 #      файл сверяется по SHA-256 со списком, снятым при копировании;
-#      число файлов совпадает с манифестом.
+#   7. документы: живые строки files ВОССТАНОВЛЕННОЙ базы совпадают со
+#      списком документов копии, и каждый такой документ есть в
+#      восстановленном томе с тем же SHA-256, что files.checksum_sha256.
 #
 # Код выхода 0 — копия пригодна. Любое расхождение — код 1 и строка
 # «ПРОВЕРКА НЕ ПРОЙДЕНА» в журнале.
@@ -62,6 +66,9 @@ cleanup() {
 trap cleanup EXIT
 
 fail() { log "РАСХОЖДЕНИЕ: $*"; failures=$((failures + 1)); }
+# find_part <шаблон имени без суффикса шифрования> — имя файла копии или пусто.
+find_part() { ls -1 "$set_dir" | grep -E "^$1(\.age|\.gpg)?$" | head -n 1 || true; }
+helper() { docker run --rm --network none "$@"; }
 
 # --- 1. Целостность ---------------------------------------------------------
 log "копия: $set_dir"
@@ -73,11 +80,21 @@ log "копия: $set_dir"
 ) >/dev/null || die "контрольная сумма не сходится — копия повреждена"
 log "контрольные суммы: в порядке"
 
-db_file="$(ls -1 "$set_dir" | grep -E '^db\.dump(\.age|\.gpg)?$' | head -n 1)"
+# --- 2. Расшифровка ----------------------------------------------------------
+db_file="$(find_part 'db\.dump')"
 [ -n "$db_file" ] || die "в копии нет db.dump"
 decrypt_file "$set_dir/$db_file" "$tmp/db.dump"
+docs_file="$(find_part 'documents\.tsv')"
+[ -n "$docs_file" ] || die "в копии нет списка документов (documents.tsv)"
+decrypt_file "$set_dir/$docs_file" "$tmp/documents.tsv"
+media_key="$(awk -F'\t' '$1 == "meta" && $2 == "media_volume" {print $3}' "$set_dir/manifest.tsv")"
+[ -n "$media_key" ] || die "в манифесте не указан том документов"
+docs_expected="$(awk -F'\t' '$1 == "meta" && $2 == "documents" {print $3}' "$set_dir/manifest.tsv")"
+[ "$(grep -c . "$tmp/documents.tsv" || true)" = "${docs_expected:-x}" ] \
+    || fail "в списке документов $(grep -c . "$tmp/documents.tsv" || true) строк, в манифесте ${docs_expected:-нет числа}"
+log "расшифровка: в порядке (документов в копии: ${docs_expected:-?})"
 
-# --- 2. Одноразовый PostgreSQL ---------------------------------------------
+# --- 3. Одноразовый PostgreSQL ---------------------------------------------
 pg_password="$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')"
 docker network create --internal "$network" >/dev/null
 docker run -d --name "$container" --network "$network" \
@@ -103,7 +120,7 @@ docker exec "$container" pg_restore -U "$BACKUP_PG_USER" -d "$db" \
     || die "pg_restore завершился с ошибкой"
 log "pg_restore: без ошибок за $(( $(date +%s) - started )) с"
 
-# --- 3–4. Таблицы, миграции, расширения ------------------------------------
+# --- 4. Таблицы, миграции, расширения ----------------------------------------
 psql_q() { docker exec -i "$container" psql -X -q -At -F $'\t' -v ON_ERROR_STOP=1 -U "$BACKUP_PG_USER" -d "$db"; }
 
 {
@@ -147,15 +164,56 @@ else
     log "migrate --check пропущен (BACKUP_VERIFY_APP_IMAGE не задан)"
 fi
 
-# --- 6. Файлы томов -----------------------------------------------------------
+# --- 6–7. Файлы томов и документы -----------------------------------------------
 # Архив распаковывается во временный том (как при настоящем восстановлении),
 # затем внутри контейнера `sha256sum -c` сверяет каждый файл со списком.
+check_documents() {  # check_documents <временный том с документами>
+    local target="$1"
+    # Живые документы ВОССТАНОВЛЕННОЙ базы — тем же запросом, что при копировании.
+    echo "SELECT format('SELECT storage_key, checksum_sha256 FROM public.files WHERE deleted_at IS NULL AND storage_provider = %L ORDER BY storage_key', 'local') WHERE to_regclass('public.files') IS NOT NULL
+\\gexec" | psql_q > "$tmp/db-documents.tsv"
+    sort "$tmp/db-documents.tsv" > "$tmp/db-documents.sorted"
+    sort "$tmp/documents.tsv" > "$tmp/copy-documents.sorted"
+    if ! diff -q "$tmp/db-documents.sorted" "$tmp/copy-documents.sorted" >/dev/null; then
+        # Ключи хранения случайные и персональных данных не содержат.
+        local only_db only_copy
+        only_db="$(comm -23 "$tmp/db-documents.sorted" "$tmp/copy-documents.sorted" | grep -c . || true)"
+        only_copy="$(comm -13 "$tmp/db-documents.sorted" "$tmp/copy-documents.sorted" | grep -c . || true)"
+        comm -3 "$tmp/db-documents.sorted" "$tmp/copy-documents.sorted" | cut -f1 | sed 's/^[[:space:]]*/    /' | head -n 5 >&2
+        fail "расхождение базы с архивом: записей files только в восстановленной базе — $only_db, только в списке копии — $only_copy"
+    fi
+    local total
+    total="$(grep -c . "$tmp/db-documents.tsv" || true)"
+    if [ "$total" -eq 0 ]; then
+        log "документы: в восстановленной базе нет живых записей files"
+        return 0
+    fi
+    # Каждый документ восстановленной базы — в восстановленном томе, с тем же хэшем.
+    awk -F'\t' '{print $2 "  ./" $1}' "$tmp/db-documents.tsv" > "$tmp/db-documents.check"
+    helper -i -v "$target:/dst:ro" "$BACKUP_HELPER_IMAGE" sh -c 'cd /dst && sha256sum -c - 2>/dev/null' \
+        < "$tmp/db-documents.check" > "$tmp/db-documents.result" || true
+    local missing changed
+    missing="$(grep -c ': FAILED open or read$' "$tmp/db-documents.result" || true)"
+    changed="$(grep -c ': FAILED$' "$tmp/db-documents.result" || true)"
+    local ok
+    ok="$(grep -c ': OK$' "$tmp/db-documents.result" || true)"
+    if [ "$missing" -gt 0 ] || [ "$changed" -gt 0 ] || [ "$ok" -ne "$total" ]; then
+        grep -v ': OK$' "$tmp/db-documents.result" | sed 's/^/    /' | head -n 5 >&2
+        [ "$missing" -gt 0 ] && fail "документы: нет файла в восстановленном томе — $missing из $total"
+        [ "$changed" -gt 0 ] && fail "документы: подменено содержимое (SHA-256 не совпадает с files.checksum_sha256) — $changed из $total"
+        [ "$missing" -eq 0 ] && [ "$changed" -eq 0 ] && fail "документы: подтверждено $ok из $total"
+        return 0
+    fi
+    log "документы: все $total записей files восстановленной базы найдены в восстановленном томе, SHA-256 совпадают"
+}
+
 volumes_seen=0
+documents_checked=0
 while IFS=$'\t' read -r kind key vol expected; do
     [ "$kind" = "volume" ] || continue
     volumes_seen=$((volumes_seen + 1))
-    arch="$(ls -1 "$set_dir" | grep -E "^volume-$key\.tar\.gz(\.age|\.gpg)?$" | head -n 1)"
-    sums="$(ls -1 "$set_dir" | grep -E "^volume-$key\.sha256(\.age|\.gpg)?$" | head -n 1)"
+    arch="$(find_part "volume-$key\\.tar\\.gz")"
+    sums="$(find_part "volume-$key\\.sha256")"
     [ -n "$arch" ] || { fail "нет архива тома $key"; continue; }
     [ -n "$sums" ] || { fail "нет списка контрольных сумм тома $key"; continue; }
     decrypt_file "$set_dir/$arch" "$tmp/vol.tar.gz"
@@ -163,21 +221,21 @@ while IFS=$'\t' read -r kind key vol expected; do
     target="${container}_vol_$key"
     docker volume create --label humotech.purpose=restore-test "$target" >/dev/null
     restore_volumes+=("$target")
-    if ! docker run --rm -i --network none -v "$target:/dst" "$BACKUP_HELPER_IMAGE"             tar -xzf - -C /dst < "$tmp/vol.tar.gz"; then
+    if ! helper -i -v "$target:/dst" "$BACKUP_HELPER_IMAGE" tar -xzf - -C /dst < "$tmp/vol.tar.gz"; then
         fail "том $key: архив не распаковался"; rm -f "$tmp/vol.tar.gz" "$tmp/vol.sha256"; continue
     fi
-    got="$(docker run --rm --network none -v "$target:/dst:ro" "$BACKUP_HELPER_IMAGE" sh -c 'find /dst -type f | wc -l' | tr -dc '0-9')"
+    got="$(helper -v "$target:/dst:ro" "$BACKUP_HELPER_IMAGE" sh -c 'find /dst -type f | wc -l' | tr -dc '0-9')"
     if [ ! -s "$tmp/vol.sha256" ]; then
         # Пустой том: сверять нечего (sha256sum -c на пустом списке —
         # ошибка), важно лишь, что и восстановилось ноль файлов.
         sums_ok=1
-    elif docker run --rm -i --network none -v "$target:/dst:ro" "$BACKUP_HELPER_IMAGE"             sh -c 'cd /dst && sha256sum --quiet -c -' < "$tmp/vol.sha256" >/dev/null 2>&1; then
+    elif helper -i -v "$target:/dst:ro" "$BACKUP_HELPER_IMAGE" \
+            sh -c 'cd /dst && sha256sum --quiet -c -' < "$tmp/vol.sha256" >/dev/null 2>&1; then
         sums_ok=1
     else
         sums_ok=0
     fi
     rm -f "$tmp/vol.tar.gz" "$tmp/vol.sha256"
-    docker volume rm -f "$target" >/dev/null 2>&1 || true
     if [ "$sums_ok" -ne 1 ]; then
         fail "том $key: восстановленные файлы не совпадают с контрольными суммами"
     elif [ "$got" != "$expected" ]; then
@@ -187,11 +245,17 @@ while IFS=$'\t' read -r kind key vol expected; do
     else
         log "том $key ($vol): восстановлено файлов $got, SHA-256 всех совпали"
     fi
+    if [ "$key" = "$media_key" ]; then
+        check_documents "$target"
+        documents_checked=1
+    fi
+    docker volume rm -f "$target" >/dev/null 2>&1 || true
 done < "$set_dir/manifest.tsv"
 [ "$volumes_seen" -gt 0 ] || fail "в манифесте нет ни одного тома с файлами"
+[ "$documents_checked" = 1 ] || fail "том документов $media_key не найден среди томов копии — документы не проверены"
 
 if [ "$failures" -gt 0 ]; then
     log "ПРОВЕРКА НЕ ПРОЙДЕНА: расхождений $failures"
     exit 1
 fi
-log "ПРОВЕРКА ПРОЙДЕНА: копия $(basename "$set_dir") восстанавливается полностью (база и файлы)"
+log "ПРОВЕРКА ПРОЙДЕНА: копия $(basename "$set_dir") восстанавливается полностью (база, файлы и документы)"
