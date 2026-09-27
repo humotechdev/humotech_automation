@@ -9,9 +9,13 @@
  * только тонкие линии: это одно рабочее место, а не три виджета.
  *
  * Выбор, вкладка и фильтры живут в адресе и переживают обновление и
- * ссылку коллеге. Данные обновляются опросом раз в 15 секунд, пока
- * вкладка видна: другого канала обновлений у CRM нет. Опрос не выбрасывает
- * показанное — ни прокрутка, ни набранный ответ не прыгают.
+ * ссылку коллеге. Данные живые: поток событий CRM сообщает, какое
+ * обращение изменилось, и страница перечитывает очередь, счётчики и,
+ * если нужно, открытую переписку — обычными запросами, с текущими
+ * фильтрами. Сигнал сам ничего не вставляет в список: сообщение из
+ * обращения вне выбранной вкладки меняет числа, но не саму вкладку.
+ * Без потока (сеть, старый браузер) — редкий резервный опрос. Ничего из
+ * показанного не выбрасывается: ни прокрутка, ни набранный ответ.
  *
  * Подсказка из базы знаний — подсказка, а не ответ: она никогда не уходит
  * сотруднику сама. Кадровик открывает её, читает и сам решает, вставить
@@ -31,10 +35,19 @@ import { AppIcon, type AppIconName } from '../components/AppIcon';
 import { AppPopover, AppSelectField } from '../components/AppSelect';
 import { useSession } from '../features/auth/session';
 import { useBlock, type Block } from '../features/dashboard/data';
+import { liveState, onLive, onLiveState } from '../features/realtime/events';
 import { useStickyState } from '../features/shell/sticky';
 import '../styles/questions.css';
 
-const REFRESH_MS = 15_000;
+/** Резервный опрос, пока потока событий нет. */
+const FALLBACK_MS = 30_000;
+/**
+ * Опрос и при живом потоке, но редкий: обращение становится срочным или
+ * просроченным само, по времени, и никакого события об этом нет.
+ */
+const SLOW_MS = 3 * 60_000;
+/** Серия сигналов — одно перечитывание. */
+const COALESCE_MS = 200;
 const PAGE = 30;
 const MAX_LIMIT = 200;
 /** Столько же принимает сервер; проверка здесь — чтобы не ждать отказа. */
@@ -87,10 +100,17 @@ const PRIORITY_TITLE: Record<api.QuestionPriority, string> = {
   URGENT: 'Срочный',
 };
 
+/**
+ * Состояние доставки ответа — ровно то, что известно.
+ *
+ * «Отправлено» — Telegram принял сообщение от бота. Подтверждения
+ * прочтения бот от Telegram не получает вовсе, поэтому «Прочитано» здесь
+ * не пишется никогда: оно было бы догадкой.
+ */
 const DELIVERY_TITLE: Record<api.DeliveryStatus, string> = {
   QUEUED: 'Отправляется',
-  DELIVERED: 'Доставлено',
-  READ: 'Прочитано',
+  DELIVERED: 'Отправлено',
+  READ: 'Отправлено',
   FAILED: 'Не доставлено',
   UNKNOWN: 'Доставка неизвестна',
 };
@@ -139,6 +159,21 @@ const MONTHS_SHORT = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн'
 
 type Act = (label: string, action: () => Promise<api.Question>, done?: string) => Promise<api.Question | null>;
 
+/** Свой ответ, уже показанный «Отправляется», но ещё не подтверждённый сервером. */
+type Pending = { key: string; questionId: string; text: string; file: string | null; at: string };
+
+/** Последнее сообщение сотрудника в переписке — то, что HR увидел. */
+function lastEmployeeMessage(question: api.Question): string | null {
+  for (let index = question.messages.length - 1; index >= 0; index -= 1) {
+    const one = question.messages[index];
+    if (one?.kind === 'EMPLOYEE') return one.id;
+  }
+  return null;
+}
+
+/** До нижнего края ближе этого — «читает последнее», и прокрутка следует за лентой. */
+const BOTTOM_SLACK_PX = 48;
+
 // --- страница ----------------------------------------------------------------
 
 export function QuestionsPage() {
@@ -180,19 +215,16 @@ export function QuestionsPage() {
     return () => window.clearTimeout(timer);
   }, [draftSearch, search, patch]);
 
-  // --- опрос: только пока вкладка видна ---
+  // --- резервный опрос: часто без потока, редко — с ним ---
   const [tick, setTick] = useState(0);
+  const [live, setLive] = useState(liveState() === 'live');
+  useEffect(() => onLiveState((next) => setLive(next === 'live')), []);
   useEffect(() => {
-    const bump = () => {
+    const timer = window.setInterval(() => {
       if (!document.hidden) setTick((n) => n + 1);
-    };
-    const timer = window.setInterval(bump, REFRESH_MS);
-    document.addEventListener('visibilitychange', bump);
-    return () => {
-      window.clearInterval(timer);
-      document.removeEventListener('visibilitychange', bump);
-    };
-  }, []);
+    }, live ? SLOW_MS : FALLBACK_MS);
+    return () => window.clearInterval(timer);
+  }, [live]);
 
   const filters = useMemo<api.QuestionQuery>(
     () => ({
@@ -245,6 +277,41 @@ export function QuestionsPage() {
     canRead && Boolean(currentId),
   );
 
+  // --- живые сигналы -------------------------------------------------------
+  //
+  // Сигнал говорит только «какое обращение изменилось». Очередь и счётчики
+  // перечитываются всегда — с текущими фильтрами, поэтому обращение вне
+  // вкладки меняет числа, но не список. Переписка — только если сигнал про
+  // открытое обращение. Серия сигналов даёт одно перечитывание.
+  const openRef = useRef(currentId);
+  openRef.current = currentId;
+  const reloadsRef = useRef({ reloadList, reloadCounts, reloadDetail, reloadContext });
+  reloadsRef.current = { reloadList, reloadCounts, reloadDetail, reloadContext };
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let detail = false;
+    let everything = false;
+    const flush = () => {
+      timer = null;
+      const run = reloadsRef.current;
+      run.reloadList();
+      run.reloadCounts();
+      if (detail || everything) run.reloadDetail();
+      if (everything) run.reloadContext();
+      detail = false;
+      everything = false;
+    };
+    const stop = onLive((signal) => {
+      if (signal.type === 'resync') everything = true;
+      else if (signal.id === openRef.current) detail = true;
+      if (timer === null) timer = setTimeout(flush, COALESCE_MS);
+    });
+    return () => {
+      stop();
+      if (timer !== null) clearTimeout(timer);
+    };
+  }, []);
+
   // Ответ действия показывается сразу, не дожидаясь следующего опроса.
   const [override, setOverride] = useState<api.Question | null>(null);
   useEffect(() => setOverride(null), [detailBlock]);
@@ -264,21 +331,34 @@ export function QuestionsPage() {
     return () => document.body.classList.remove('tk-type');
   }, []);
 
-  // Открыл — значит прочитал. Один раз на обращение, без повторов в опросе.
-  // На узком экране без явного выбора переписка скрыта: первое обращение
-  // выбрано лишь по умолчанию, и человек его не видел.
-  const readOnce = useRef(new Set<string>());
+  // Увидел — значит прочитал. Отметка — по последнему сообщению сотрудника
+  // на экране, а не «по обращению раз и навсегда»: новое сообщение в том же
+  // обращении снова требует отметки. Сервер отметку не снимет, если после
+  // показанного сообщения пришло ещё одно, которого HR не видел.
+  //
+  // Не отмечается скрытое: вкладка в фоне или узкий экран, где первое
+  // обращение выбрано лишь по умолчанию и переписка не показана.
+  const [visible, setVisible] = useState(() => document.visibilityState !== 'hidden');
   useEffect(() => {
-    if (!detail || !detail.unread || readOnce.current.has(detail.id)) return;
+    const update = () => setVisible(document.visibilityState !== 'hidden');
+    document.addEventListener('visibilitychange', update);
+    return () => document.removeEventListener('visibilitychange', update);
+  }, []);
+  const readDone = useRef(new Set<string>());
+  useEffect(() => {
+    if (!detail || !detail.unread || !visible) return;
     if (!picked && window.matchMedia?.('(max-width: 860px)').matches) return;
-    readOnce.current.add(detail.id);
-    api.readQuestion(detail.id)
+    const seen = lastEmployeeMessage(detail);
+    const mark = `${detail.id}:${seen ?? ''}`;
+    if (readDone.current.has(mark)) return;
+    readDone.current.add(mark);
+    api.readQuestion(detail.id, seen)
       .then(() => {
         reloadList();
         reloadCounts();
       })
-      .catch(() => readOnce.current.delete(detail.id));
-  }, [detail, picked, reloadList, reloadCounts]);
+      .catch(() => readDone.current.delete(mark));
+  }, [detail, picked, visible, reloadList, reloadCounts]);
 
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ tone: 'error' | 'ok'; text: string } | null>(null);
@@ -314,6 +394,36 @@ export function QuestionsPage() {
     [reloadDetail, reloadList, reloadCounts, reloadContext],
   );
 
+  // --- свежие строки очереди: короткая подсветка, без мигания всей страницы ---
+  const seenRows = useRef<Map<string, string> | null>(null);
+  const [fresh, setFresh] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    if (list.state !== 'ready') return;
+    const before = seenRows.current;
+    const now = new Map(list.data.items.map((row) => [row.id, row.last_message_at]));
+    seenRows.current = now;
+    // Первый показ — не «новое»: подсвечивается только изменившееся.
+    if (before === null) return;
+    const changed = [...now].filter(([id, at]) => before.get(id) !== at).map(([id]) => id);
+    if (changed.length === 0) return;
+    setFresh(new Set(changed));
+    const timer = window.setTimeout(() => setFresh(new Set()), 1600);
+    return () => window.clearTimeout(timer);
+  }, [list]);
+
+  // --- ответ «Отправляется» до ответа сервера ---
+  const [pending, setPending] = useState<Pending[]>([]);
+  const canResend = (user?.permissions ?? []).includes('notifications.manage');
+  const resend = useCallback(async (notificationId: string) => {
+    try {
+      await api.retryNotification(notificationId);
+      setNotice(null);
+    } catch (error) {
+      setNotice({ tone: 'error', text: failureText(error) });
+    }
+    reloadDetail();
+  }, [reloadDetail]);
+
   // Набранный ответ у каждого обращения свой и не теряется при переходе —
   // ни к другому обращению, ни в другой раздел CRM.
   const [replies, setReplies] = useStickyState<Record<string, string>>('questions.replies', {});
@@ -341,9 +451,6 @@ export function QuestionsPage() {
   const quickCount = (key: QuickKey) =>
     counts.state === 'ready' && key !== 'all' ? counts.data.quick[key] : null;
   const total = counts.state === 'ready' ? counts.data.quick.all : null;
-  const badges = counts.state === 'ready' && counts.data.statuses.NEW > 0
-    ? { questions: counts.data.statuses.NEW }
-    : {};
   const filtered = Boolean(search || office || assignee || quick !== 'all');
 
   const closeWith = async (reason: string) => {
@@ -353,7 +460,7 @@ export function QuestionsPage() {
   };
 
   return (
-    <AppShell breadcrumb="Обращения" section="questions" badges={badges}>
+    <AppShell breadcrumb="Обращения" section="questions">
       <div className="tk">
         <section className="tk-sheet">
           <header className="tk-head">
@@ -450,6 +557,7 @@ export function QuestionsPage() {
                   <ul className="tk-rows">
                     {items.map((item) => (
                       <QueueRow key={item.id} row={item} on={item.id === currentId}
+                                fresh={fresh.has(item.id)}
                                 onPick={(id) => patch({ id })} />
                     ))}
                   </ul>
@@ -499,6 +607,11 @@ export function QuestionsPage() {
                   reply={reply}
                   setReply={setReply}
                   act={act}
+                  pending={pending.filter((one) => one.questionId === detail.id)}
+                  onSending={(one) => setPending((was) => [...was.filter((x) => x.key !== one.key), one])}
+                  onSent={(key) => setPending((was) => was.filter((x) => x.key !== key))}
+                  canResend={canResend}
+                  onResend={resend}
                   onBack={() => patch({ id: null })}
                   onContext={() => setSideOpen(true)}
                 />
@@ -552,9 +665,14 @@ export function QuestionsPage() {
 
 // --- очередь -------------------------------------------------------------------
 
-function QueueRow({ row, on, onPick }: { row: api.QuestionRow; on: boolean; onPick: (id: string) => void }) {
+function QueueRow({ row, on, fresh = false, onPick }: {
+  row: api.QuestionRow; on: boolean; fresh?: boolean; onPick: (id: string) => void;
+}) {
   const classes = ['tk-row'];
   if (on) classes.push('tk-row--on');
+  // Строка, которую только что изменило новое сообщение: короткая мягкая
+  // подсветка. Мигать всей очередью незачем — изменилась одна строка.
+  if (fresh) classes.push('tk-row--fresh');
   if (row.unread) classes.push('tk-row--unread');
   return (
     <li>
@@ -604,6 +722,7 @@ function QueueSkeleton() {
 
 function Conversation({
   question, context, busy, notice, reply, setReply, act, onBack, onContext,
+  pending, onSending, onSent, canResend, onResend,
 }: {
   question: api.Question;
   context: api.QuestionContext | null;
@@ -614,17 +733,56 @@ function Conversation({
   act: Act;
   onBack: () => void;
   onContext: () => void;
+  pending: Pending[];
+  onSending: (one: Pending) => void;
+  onSent: (key: string) => void;
+  canResend: boolean;
+  onResend: (notificationId: string) => Promise<void>;
 }) {
   const [menu, setMenu] = useState(false);
   const thread = useRef<HTMLDivElement | null>(null);
   const actions = question.actions;
   const id = question.id;
 
-  // Новое сообщение — прокрутка вниз. Опрос без новых сообщений прокрутку не трогает.
-  useEffect(() => {
+  // Реплики, которые сервер уже вернул в ленте, из «отправляется» уходят:
+  // одна и та же реплика не рисуется дважды.
+  const known = new Set(question.messages.map((one) => one.client_request_id).filter(Boolean));
+  const waiting = pending.filter((one) => !known.has(one.key));
+
+  // --- прокрутка ---
+  //
+  // Лента следует за новыми сообщениями, только если HR и так внизу.
+  // Если он читает старое — ленту не дёргаем, а показываем кнопку
+  // «Новые сообщения». Свой ответ прокручивает вниз всегда.
+  const atBottom = useRef(true);
+  const [unseen, setUnseen] = useState(0);
+  const shown = question.messages.length + waiting.length;
+  const shownBefore = useRef<number | null>(null);
+  const toBottom = useCallback(() => {
     const box = thread.current;
     if (box) box.scrollTop = box.scrollHeight;
-  }, [question.messages.length]);
+    atBottom.current = true;
+    setUnseen(0);
+  }, []);
+  useEffect(() => {
+    const before = shownBefore.current;
+    shownBefore.current = shown;
+    if (before === null) {
+      toBottom();
+      return;
+    }
+    if (shown <= before) return;
+    const last = waiting.length > 0 ? null : question.messages[question.messages.length - 1];
+    const mine = waiting.length > 0 || last?.kind === 'HR';
+    if (mine || atBottom.current) toBottom();
+    else setUnseen((n) => n + (shown - before));
+  }, [shown, question.messages, waiting.length, toBottom]);
+  const onScroll = () => {
+    const box = thread.current;
+    if (!box) return;
+    atBottom.current = box.scrollHeight - box.scrollTop - box.clientHeight <= BOTTOM_SLACK_PX;
+    if (atBottom.current) setUnseen(0);
+  };
 
   const where = [question.office?.name ?? context?.employee.office?.name, context?.employee.department]
     .filter(Boolean).join(' · ');
@@ -689,8 +847,8 @@ function Conversation({
         </p>
       )}
 
-      <div className="tk-thread" ref={thread}>
-        <Thread question={question} />
+      <div className="tk-thread" ref={thread} onScroll={onScroll}>
+        <Thread question={question} pending={waiting} canResend={canResend} onResend={onResend} />
         {question.status === 'CLOSED' && (
           <p className="tk-event tk-event--closed">
             Обращение закрыто{question.closed_at ? ` ${fullDay(question.closed_at)} в ${clock(question.closed_at)}` : ''}
@@ -699,6 +857,12 @@ function Conversation({
           </p>
         )}
       </div>
+      {unseen > 0 && (
+        <button type="button" className="tk-newer" onClick={toBottom}>
+          <AppIcon name="next" size={16} />
+          Новые сообщения
+        </button>
+      )}
 
       {actions.reply ? (
         <Composer
@@ -706,13 +870,24 @@ function Conversation({
           value={reply}
           onChange={setReply}
           sending={busy === 'reply'}
-          onSend={(body) => act(
-            'reply',
-            () => (body.file
-              ? api.replyQuestionWithFile(id, { ...body, file: body.file })
-              : api.replyQuestion(id, { text: body.text, after: body.after, client_request_id: body.client_request_id })),
-            'Ответ отправлен в Telegram',
-          )}
+          onSend={async (body) => {
+            // Реплика видна сразу, «Отправляется». Не «отправлено»: успешный
+            // ответ сервера значит лишь, что она сохранена и стоит в очереди
+            // Telegram. «Отправлено» появится, когда бот её действительно
+            // отправит, — сигналом потока событий.
+            onSending({
+              key: body.client_request_id, questionId: id, text: body.text,
+              file: body.file ? body.file.name : null, at: new Date().toISOString(),
+            });
+            const fresh = await act(
+              'reply',
+              () => (body.file
+                ? api.replyQuestionWithFile(id, { ...body, file: body.file })
+                : api.replyQuestion(id, { text: body.text, after: body.after, client_request_id: body.client_request_id })),
+            );
+            onSent(body.client_request_id);
+            return fresh;
+          }}
         />
       ) : (
         <div className="tk-compose tk-compose--off">
@@ -727,7 +902,12 @@ function Conversation({
   );
 }
 
-function Thread({ question }: { question: api.Question }) {
+function Thread({ question, pending = [], canResend = false, onResend }: {
+  question: api.Question;
+  pending?: Pending[];
+  canResend?: boolean;
+  onResend?: ((notificationId: string) => Promise<void>) | undefined;
+}) {
   const out: ReactNode[] = [];
   let day = '';
   for (const message of question.messages) {
@@ -778,7 +958,9 @@ function Thread({ question }: { question: api.Question }) {
             {file}
             <span className="tk-msg__time">
               <time dateTime={message.created_at}>{clock(message.created_at)}</time>
-              {message.delivery && <Delivery delivery={message.delivery} />}
+              {message.delivery && (
+                <Delivery delivery={message.delivery} canResend={canResend} onResend={onResend} />
+              )}
             </span>
           </div>
         </article>,
@@ -799,26 +981,76 @@ function Thread({ question }: { question: api.Question }) {
       </article>,
     );
   }
+  for (const one of pending) {
+    // Свой ответ до подтверждения сервером: тот же вид, что у ответа HR,
+    // и честное «Отправляется».
+    out.push(
+      <article key={`pending-${one.key}`} className="tk-msg tk-msg--mine tk-msg--pending">
+        <div className="tk-msg__bubble">
+          {one.text && (
+            <p className="tk-msg__text">
+              {one.text}
+              <span className="tk-msg__pad" aria-hidden="true" />
+            </p>
+          )}
+          {one.file && (
+            <span className="tk-file">
+              <AppIcon name="attach" size={16} />
+              <span className="tk-file__name">{one.file}</span>
+            </span>
+          )}
+          <span className="tk-msg__time">
+            <time dateTime={one.at}>{clock(one.at)}</time>
+            <Delivery delivery={{ status: 'QUEUED', sent_at: null, read_at: null, error: null }} />
+          </span>
+        </div>
+      </article>,
+    );
+  }
   return <>{out}</>;
 }
 
-function Delivery({ delivery }: { delivery: NonNullable<api.QuestionMessage['delivery']> }) {
+function Delivery({ delivery, canResend = false, onResend }: {
+  delivery: NonNullable<api.QuestionMessage['delivery']>;
+  canResend?: boolean;
+  onResend?: ((notificationId: string) => Promise<void>) | undefined;
+}) {
   const title = DELIVERY_TITLE[delivery.status];
+  const [retrying, setRetrying] = useState(false);
   if (delivery.status === 'FAILED') {
+    const id = delivery.notification_id;
+    const can = Boolean(id && onResend && canResend && delivery.can_retry);
     return (
-      <span className="tk-delivery tk-delivery--bad">
+      <span className="tk-delivery tk-delivery--bad" role="status">
         {title}{delivery.error ? `: ${TELEGRAM_REASON[delivery.error] ?? delivery.error}` : ''}
+        {can && (
+          <button type="button" className="tk-delivery__retry" disabled={retrying}
+                  onClick={() => {
+                    setRetrying(true);
+                    void onResend!(id!).finally(() => setRetrying(false));
+                  }}>
+            {retrying ? 'Отправляем…' : 'Отправить снова'}
+          </button>
+        )}
       </span>
     );
   }
   if (delivery.status === 'READ' || delivery.status === 'DELIVERED') {
+    // Одна галочка и «Отправлено»: Telegram принял сообщение. Двух галочек
+    // нет — подтверждения прочтения у бота не бывает.
     return (
-      <span className={`tk-delivery tk-delivery--${delivery.status}`} role="img" aria-label={title} title={title}>
-        <AppIcon name={delivery.status === 'READ' ? 'ticks' : 'tick'} size={16} />
+      <span className="tk-delivery tk-delivery--sent" role="status" title={title}>
+        <AppIcon name="tick" size={16} />
+        <span className="tk-delivery__text">{title}</span>
       </span>
     );
   }
-  return <span className="tk-delivery" role="img" aria-label={title} title={title}><AppIcon name="clock" size={16} /></span>;
+  return (
+    <span className="tk-delivery" role="status" title={title}>
+      <AppIcon name="clock" size={16} />
+      <span className="tk-delivery__text">{title}</span>
+    </span>
+  );
 }
 
 // --- ответ --------------------------------------------------------------------

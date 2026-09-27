@@ -340,8 +340,12 @@ describe('ответ в Telegram', () => {
     expect(body.after).toBe('KEEP');
     expect(body.client_request_id).toBeTruthy();
 
+    // Пока сервер не ответил, реплика уже видна — «Отправляется», не «отправлено».
+    expect(await screen.findByText('Отправляется')).toBeTruthy();
     release(json(200, { ...QUESTION, status: 'IN_PROGRESS' }));
-    expect(await screen.findByText('Ответ отправлен в Telegram')).toBeTruthy();
+    await waitFor(() => expect((field as HTMLTextAreaElement).value).toBe(''));
+    // Успешный ответ CRM — это «сохранено и в очереди», а не доставка.
+    expect(screen.queryByText('Ответ отправлен в Telegram')).toBeNull();
     expect(posts(calls, 'reply')).toHaveLength(1);
   });
 

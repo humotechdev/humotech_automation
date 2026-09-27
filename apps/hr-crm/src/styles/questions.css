@@ -1090,3 +1090,78 @@ a.tk-person__name:hover { color: var(--tk-blue); }
   .tk-thread { padding: 12px 16px; }
   .tk-msg { max-width: 92%; }
 }
+
+/* --- живая переписка ------------------------------------------------------- */
+
+/* Свой ответ: время и состояние доставки — строкой под текстом. Слово
+   состояния («Отправляется», «Отправлено», «Не доставлено: …») длиннее
+   распорки в последней строке и перекрывало бы текст. */
+.tk-msg--mine .tk-msg__pad { display: none; }
+.tk-msg--mine .tk-msg__time {
+  position: static;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+.tk-delivery { gap: 3px; }
+.tk-delivery__text { font-size: 12px; }
+.tk-delivery--sent { color: var(--tk-blue); }
+.tk-delivery__retry {
+  margin-left: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--tk-blue);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.tk-delivery__retry:disabled { color: var(--tk-muted); cursor: default; }
+
+/* До ответа сервера реплика чуть бледнее — она ещё не записана. */
+.tk-msg--pending .tk-msg__bubble { opacity: 0.72; }
+
+/* «Новые сообщения»: HR читает старое, а внизу появилось новое. */
+.tk-talk__body { position: relative; }
+.tk-newer {
+  position: absolute;
+  left: 50%;
+  bottom: 96px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid #b9d0ec;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 4px 14px rgba(17, 47, 90, 0.12);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--tk-blue);
+  cursor: pointer;
+  transform: translateX(-50%);
+  animation: tk-newer-in 0.18s ease-out;
+}
+.tk-newer svg { transform: rotate(90deg); }
+@keyframes tk-newer-in {
+  from { opacity: 0; transform: translate(-50%, 6px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* Строка очереди, которую только что изменило сообщение: мягкая
+   подсветка на полторы секунды, без мигания всей очереди. */
+.tk-row--fresh { animation: tk-row-fresh 1.5s ease-out; }
+@keyframes tk-row-fresh {
+  from { background-color: var(--tk-soft-2); }
+  to { background-color: transparent; }
+}
+.tk-row--on.tk-row--fresh { animation: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .tk-row--fresh, .tk-newer { animation: none; }
+}

@@ -33,6 +33,7 @@ import { AuditPage } from '../pages/admin/AuditPage';
 import { LoginPage } from '../pages/LoginPage';
 import { useSession } from '../features/auth/session';
 import { ShellLayout } from '../components/AppShell';
+import { probeSession, startLive, stopLive } from '../features/realtime/session-probe';
 import { forgetNavigation } from '../features/shell/memory';
 
 export function App() {
@@ -126,6 +127,15 @@ function Protected() {
   useEffect(() => {
     if (session.status === 'anonymous') forgetNavigation();
   }, [session.status]);
+
+  // Поток событий — одному вошедшему с правом на обращения. Выход
+  // закрывает его через forgetNavigation выше.
+  const reads = session.status === 'authenticated'
+    && session.user.permissions.includes('questions.read');
+  useEffect(() => {
+    if (reads) startLive(probeSession);
+    else stopLive();
+  }, [reads]);
 
   if (session.status === 'checking') return <Checking />;
   // Сначала сбой связи, потом отсутствие доступа: перепутать их значит

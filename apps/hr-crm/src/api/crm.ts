@@ -1367,7 +1367,13 @@ export type QuestionMessage = {
     sent_at: string | null;
     read_at: string | null;
     error: string | null;
+    /** Строка очереди Telegram — для повтора отправки. */
+    notification_id?: string | null;
+    /** Повтор разрешён состоянием и правом `notifications.manage`. */
+    can_retry?: boolean;
   } | null;
+  /** Ключ повтора своего ответа: по нему узнаётся «Отправляется» на экране. */
+  client_request_id?: string | null;
   /** Файл к ответу HR: сотрудник получил его документом. */
   attachment?: { name: string; mime_type: string; size_bytes: number } | null;
 };
@@ -1501,8 +1507,15 @@ export const question = (id: string, signal?: AbortSignal) =>
 export const questionContext = (id: string, signal?: AbortSignal) =>
   request<QuestionContext>(`${QUESTIONS}/${id}/context/`, signal ? { signal } : {});
 
-export const readQuestion = (id: string) =>
-  request<{ id: string; unread: boolean }>(`${QUESTIONS}/${id}/read/`, { method: 'POST', body: {} });
+/**
+ * Отметить прочитанным то, что было на экране. `seenMessageId` — последнее
+ * показанное сообщение: пришедшее после него сервер прочитанным не считает.
+ */
+export const readQuestion = (id: string, seenMessageId?: string | null) =>
+  request<{ id: string; unread: boolean }>(`${QUESTIONS}/${id}/read/`, {
+    method: 'POST',
+    body: seenMessageId ? { seen_message_id: seenMessageId } : {},
+  });
 
 const questionAction = (id: string, action: string, body: Record<string, unknown> = {}) =>
   request<Question>(`${QUESTIONS}/${id}/${action}/`, { method: 'POST', body });

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 import uuid
 
@@ -34,6 +35,8 @@ from django.http import JsonResponse, StreamingHttpResponse
 from django.utils import timezone
 
 from humotech.realtime import broker as broker_module
+
+logger = logging.getLogger("humotech.realtime")
 
 #: Пульс. Именованное событие, а не комментарий SSE: комментарий не
 #: доходит до JavaScript, и полуживое соединение после сна ноутбука
@@ -188,11 +191,21 @@ async def question_events(request):
                     user_id, organization_id, event.get("id")
                 ):
                     continue
+                sent = round(time.time(), 3)
+                if isinstance(event.get("at"), (int, float)):
+                    # Задержка «изменение зафиксировано → сигнал ушёл в
+                    # поток». Идентификатор обращения — не персональные
+                    # данные, текста здесь нет.
+                    logger.info(
+                        "sse question=%s what=%s lag_ms=%d",
+                        str(event.get("id"))[:8], event.get("what"),
+                        (sent - event["at"]) * 1000,
+                    )
                 yield _frame("question", {
                     "id": event.get("id"),
                     "what": event.get("what"),
                     "at": event.get("at"),
-                    "sent": round(time.time(), 3),
+                    "sent": sent,
                 })
         finally:
             # Клиент ушёл — Django отменяет генератор, и подписка должна
