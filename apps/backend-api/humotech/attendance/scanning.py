@@ -38,6 +38,7 @@ from humotech.attendance.models import AttendanceEvent, AttendanceSession
 from humotech.attendance.services import RejectionReason, register_scan
 from humotech.core.clientip import address_in_networks
 from humotech.core.errors import constraint_name_of
+from humotech.offices.geo import CIRCLE
 from humotech.offices.models import OfficeNetwork
 from humotech.qr_codes import stickers
 from humotech.qr_codes.models import OfficeQrPoint
@@ -60,6 +61,11 @@ class ScanStatus:
     OFFICE_NOT_ALLOWED = "OFFICE_NOT_ALLOWED"
     OUTSIDE_GEOFENCE = "OUTSIDE_GEOFENCE"
     LOCATION_TOO_VAGUE = "LOCATION_TOO_VAGUE"
+    # Погрешность пересекает границу контура: ни «да», ни «нет» честно
+    # сказать нельзя, нужна новая точка.
+    LOCATION_AMBIGUOUS = "LOCATION_AMBIGUOUS"
+    # Точка получена слишком давно — это место, где человек был.
+    LOCATION_STALE = "LOCATION_STALE"
     NETWORK_REQUIRED = "NETWORK_REQUIRED"
     GEOLOCATION_REQUIRED = "GEOLOCATION_REQUIRED"
     # Печатный код, которого больше нет: наклейку перевыпустили или
@@ -87,6 +93,8 @@ _REJECTION_TO_STATUS = {
     RejectionReason.GEOLOCATION_REQUIRED: ScanStatus.GEOLOCATION_REQUIRED,
     RejectionReason.OUTSIDE_GEOFENCE: ScanStatus.OUTSIDE_GEOFENCE,
     RejectionReason.LOCATION_TOO_VAGUE: ScanStatus.LOCATION_TOO_VAGUE,
+    RejectionReason.LOCATION_AMBIGUOUS: ScanStatus.LOCATION_AMBIGUOUS,
+    RejectionReason.LOCATION_STALE: ScanStatus.LOCATION_STALE,
     RejectionReason.CLOCK_DRIFT: ScanStatus.QR_EXPIRED,
     RejectionReason.GEOFENCE_NOT_CONFIGURED: ScanStatus.GEOFENCE_NOT_CONFIGURED,
     RejectionReason.TOO_SOON: ScanStatus.TOO_SOON,
@@ -111,9 +119,12 @@ class ScanOutcome:
     #: Направление точки: ENTRY, EXIT или BOTH. По нему бот объясняет
     #: отказ «эта точка только для входа», не угадывая.
     point_mode: str | None = None
-    #: Расстояние до офиса в метрах и допустимый радиус — если сравнивали.
+    #: Расстояние в метрах — если сравнивали. У круга — до центра офиса,
+    #: у контура — до его границы. Радиус есть только у круга.
     distance_m: float | None = None
     radius_m: int | None = None
+    #: Какой геозоной проверяли: CIRCLE, POLYGON или None — не проверяли.
+    geofence_kind: str | None = None
     #: Часовой пояс офиса: время отметки человеку показывается в нём.
     office_timezone: str | None = None
 
@@ -131,6 +142,8 @@ def scan(
     latitude=None,
     longitude=None,
     accuracy_m=None,
+    location_age_s=None,
+    location_source: str | None = None,
     source: str = "QR",
     now: datetime | None = None,
 ) -> ScanOutcome:
@@ -153,7 +166,9 @@ def scan(
         return _scan_sticker(
             context, secret=secret, moment=moment, ip_address=ip_address,
             client_event_id=client_event_id, latitude=latitude,
-            longitude=longitude, accuracy_m=accuracy_m, source=source,
+            longitude=longitude, accuracy_m=accuracy_m,
+            location_age_s=location_age_s, location_source=location_source,
+            source=source,
         )
 
     try:
@@ -217,6 +232,8 @@ def scan(
             latitude=latitude,
             longitude=longitude,
             location_accuracy_m=accuracy_m,
+            location_age_s=location_age_s,
+            location_source=location_source,
             client_event_id=client_event_id,
             source=source,
         )
@@ -235,7 +252,7 @@ def scan(
 
 def _scan_sticker(
     context, *, secret, moment, ip_address, client_event_id, latitude,
-    longitude, accuracy_m, source,
+    longitude, accuracy_m, location_age_s, location_source, source,
 ) -> ScanOutcome:
     """Скан печатного кода: точка — по хешу секрета, строгая геозона.
 
@@ -275,6 +292,8 @@ def _scan_sticker(
             latitude=latitude,
             longitude=longitude,
             location_accuracy_m=accuracy_m,
+            location_age_s=location_age_s,
+            location_source=location_source,
             client_event_id=client_event_id,
             source=source,
             strict_location=True,
@@ -292,15 +311,7 @@ def _scan_sticker(
 def _outcome(result, point: OfficeQrPoint, *, employee_id) -> ScanOutcome:
     """Результат правила -> ответ. Один на оба вида кода."""
     event = result.event
-    distance = float(event.distance_m) if event.distance_m is not None else None
-    common = {
-        "office_name": point.office.name,
-        "point_name": point.name,
-        "point_mode": point.direction_mode,
-        "distance_m": distance,
-        "radius_m": point.office.geofence_radius_m,
-        "office_timezone": point.office.timezone,
-    }
+    common = _place_of(event, point)
 
     if not result.accepted:
         logger.info(
@@ -368,16 +379,7 @@ def _replay(
         extra={"employee_id": str(employee_id)},
     )
 
-    common = {
-        "office_name": point.office.name,
-        "point_name": point.name,
-        "point_mode": point.direction_mode,
-        "distance_m": (
-            float(first.distance_m) if first.distance_m is not None else None
-        ),
-        "radius_m": point.office.geofence_radius_m,
-        "office_timezone": point.office.timezone,
-    }
+    common = _place_of(first, point)
 
     if first.verification_status != "ACCEPTED":
         return ScanOutcome(
@@ -399,6 +401,31 @@ def _replay(
         occurred_at=first.occurred_at,
         **common,
     )
+
+
+def _place_of(event: AttendanceEvent, point: OfficeQrPoint) -> dict:
+    """Офис, точка и расстояние — общая часть любого ответа на скан.
+
+    Какой геозоной проверяли, берётся из самой записи, а не из офиса
+    сейчас: HR мог перерисовать контур между первой попыткой и её
+    повтором, и ответ на повтор должен описывать ту же проверку.
+    """
+    kind = (event.event_metadata or {}).get("geofence_kind")
+    return {
+        "office_name": point.office.name,
+        "point_name": point.name,
+        "point_mode": point.direction_mode,
+        "distance_m": (
+            float(event.distance_m) if event.distance_m is not None else None
+        ),
+        # Радиус имеет смысл только у круга: «вы в 40 м от границы, радиус
+        # 70 м» про контур читалось бы как бессмыслица.
+        "radius_m": (
+            point.office.geofence_radius_m if kind in (None, CIRCLE) else None
+        ),
+        "geofence_kind": kind,
+        "office_timezone": point.office.timezone,
+    }
 
 
 def _inside_office_network(point: OfficeQrPoint, ip_address: str | None):

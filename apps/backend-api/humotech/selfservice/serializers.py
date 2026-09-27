@@ -51,6 +51,17 @@ class ScanRequestSerializer(serializers.Serializer):
         min_value=Decimal("0"), required=False, allow_null=True,
     )
 
+    # Сколько секунд прошло от получения точки до отправки, и откуда она.
+    # Присылает клиент — это не доказательство, а материал для разбора и
+    # защита от собственной ошибки клиента: точка, взятая до скана.
+    location_age_s = serializers.DecimalField(
+        max_digits=8, decimal_places=2, min_value=Decimal("0"),
+        required=False, allow_null=True,
+    )
+    location_source = serializers.ChoiceField(
+        choices=("telegram", "browser"), required=False, allow_null=True,
+    )
+
     def validate(self, attrs):
         """Координата без пары бессмысленна."""
         has_lat = attrs.get("latitude") is not None

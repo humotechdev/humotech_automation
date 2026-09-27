@@ -400,6 +400,10 @@ def snapshot(obj, fields: tuple[str, ...]) -> dict:
             result[name] = None
         elif isinstance(value, (str, int, float, bool)):
             result[name] = value
+        elif isinstance(value, (list, dict)):
+            # JSON-поле (контур офиса) — как есть, а не строкой `repr`:
+            # в журнале его читают по вершинам, а не по кавычкам Python.
+            result[name] = value
         else:
             result[name] = str(value)
     return result

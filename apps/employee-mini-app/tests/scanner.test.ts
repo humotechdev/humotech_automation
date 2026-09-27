@@ -24,7 +24,15 @@ import {
   scanWithTelegram,
   telegramScanner,
 } from '../src/scanner';
-import { requestPosition } from '../src/telegram';
+import {
+  FIX_MAX_AGE_MS,
+  FIX_PROBLEMS,
+  type Fix,
+  type Position,
+  fixAfterScan,
+  isFresh,
+  locate,
+} from '../src/telegram';
 
 function windowWith(webApp: object | null): Window {
   return (webApp ? { Telegram: { WebApp: webApp } } : {}) as unknown as Window;
@@ -89,7 +97,8 @@ describe('итог отметки', () => {
       'QR_INVALID', 'QR_ALREADY_USED', 'QR_POINT_INACTIVE',
       'OFFICE_NOT_ALLOWED', 'OUTSIDE_GEOFENCE', 'LOCATION_TOO_VAGUE',
       'NETWORK_REQUIRED', 'GEOLOCATION_REQUIRED', 'QR_REVOKED',
-      'GEOFENCE_NOT_CONFIGURED', 'TOO_SOON',
+      'GEOFENCE_NOT_CONFIGURED', 'TOO_SOON', 'LOCATION_AMBIGUOUS',
+      'LOCATION_STALE',
     ]) {
       expect(SCAN_RESULTS[status], status).toBeTruthy();
     }
@@ -108,6 +117,22 @@ describe('итог отметки', () => {
     const view = scanView({ status: 'OUTSIDE_GEOFENCE', distance_m: null,
                             radius_m: null });
     expect(view.hint).toBe(SCAN_RESULTS.OUTSIDE_GEOFENCE!.hint);
+  });
+
+  it('у контура — расстояние до границы и никакого радиуса', () => {
+    const view = scanView({
+      status: 'OUTSIDE_GEOFENCE', distance_m: 147.7, radius_m: null,
+      geofence_kind: 'POLYGON',
+    });
+    expect(view.title).toBe('Вы вне территории офиса');
+    expect(view.hint).toContain('148 м');
+    expect(view.hint).not.toMatch(/null|радиус/);
+  });
+
+  it('неоднозначная точка просит повторить и называет, куда идти', () => {
+    const view = scanView({ status: 'LOCATION_AMBIGUOUS' });
+    expect(view.hint).toMatch(/ещё раз/);
+    expect(view.hint).toMatch(/отдел кадров/);
   });
 
   it('незнакомый ответ не роняет экран', () => {
@@ -178,41 +203,70 @@ describe('ключ попытки', () => {
 // --- откуда берётся место --------------------------------------------------
 
 describe('определение места', () => {
+  type Reading = {
+    latitude: number;
+    longitude: number;
+    accuracy?: number | null;
+    /** Время точки у браузера. Нет — «только что». */
+    timestamp?: number;
+  };
+
   /** Телефон, отдающий точки одну за другой. */
-  function phone(
-    fixes: Array<{ latitude: number; longitude: number; accuracy: number }>,
-    webApp: object | null = null,
-  ) {
+  function phone(fixes: Reading[], webApp: object | null = null) {
     const clearWatch = vi.fn();
+    const store = new Map<string, string>();
     const source = {
       ...(webApp ? { Telegram: { WebApp: webApp } } : {}),
+      localStorage: {
+        getItem: (key: string) => store.get(key) ?? null,
+        setItem: (key: string, value: string) => store.set(key, value),
+      },
       navigator: {
         geolocation: {
           getCurrentPosition: vi.fn(),
           clearWatch,
           watchPosition: vi.fn((ok: (position: unknown) => void) => {
-            for (const fix of fixes) ok({ coords: fix });
+            for (const { timestamp, ...coords } of fixes) {
+              ok({ coords, ...(timestamp !== undefined ? { timestamp } : {}) });
+            }
             return 7;
           }),
         },
       },
     } as unknown as Window;
-    return { source, clearWatch };
+    return { source, clearWatch, store };
+  }
+
+  /** Telegram 8.0 с `LocationManager`, отдающим одну точку. */
+  function telegramGiving(location: Record<string, number | null> | null) {
+    return {
+      version: '8.0',
+      isVersionAtLeast: () => true,
+      LocationManager: {
+        isInited: true,
+        getLocation: (done: (value: unknown) => void) => done(location),
+      },
+    };
+  }
+
+  function placeOrFail(fix: Fix): Position {
+    if (!fix.ok) throw new Error(`нет точки: ${fix.problem}`);
+    return fix.position;
   }
 
   it('берётся самая точная точка, а не первая', async () => {
     // Первой почти всегда приходит точка по вышкам — она мгновенная и
-    // врёт на сотню метров. Спутниковая приходит следом. Взять первую
-    // значит отказать человеку, стоящему у самой двери.
+    // врёт на сотню метров. Спутниковая приходит следом.
     const { source } = phone([
       { latitude: 41.305215, longitude: 69.335188, accuracy: 100 },
       { latitude: 41.304151, longitude: 69.332442, accuracy: 12 },
     ]);
 
-    const place = await requestPosition({ source });
+    const place = placeOrFail(await locate({ source }));
 
-    expect(place?.accuracy).toBe(12);
-    expect(place?.latitude).toBe(41.304151);
+    expect(place.accuracy).toBe(12);
+    expect(place.latitude).toBe(41.304151);
+    expect(place.source).toBe('browser');
   });
 
   it('хорошая точка прекращает ожидание сразу', async () => {
@@ -220,63 +274,172 @@ describe('определение места', () => {
       { latitude: 41.304151, longitude: 69.332442, accuracy: 8 },
     ]);
 
-    await requestPosition({ source });
+    await locate({ source });
 
     // Наблюдение снимается: держать включённым GPS после ответа незачем.
     expect(clearWatch).toHaveBeenCalledWith(7);
   });
 
   it('грубая точка Telegram уточняется браузером', async () => {
-    // `LocationManager` отдаёт ровно одну точку и второй раз даст ту же.
-    // Если она грубая, единственный способ узнать место точнее —
-    // дождаться спутников браузерным наблюдением.
     const { source } = phone(
       [{ latitude: 41.304151, longitude: 69.332442, accuracy: 9 }],
-      {
-        version: '8.0',
-        isVersionAtLeast: () => true,
-        LocationManager: {
-          isInited: true,
-          getLocation: (done: (location: unknown) => void) =>
-            done({ latitude: 41.305215, longitude: 69.335188,
-                   horizontal_accuracy: 100 }),
-        },
-      },
+      telegramGiving({ latitude: 41.305215, longitude: 69.335188, horizontal_accuracy: 100 }),
     );
 
-    const place = await requestPosition({ source });
+    const place = placeOrFail(await locate({ source }));
 
-    expect(place?.accuracy).toBe(9);
-    expect(place?.latitude).toBe(41.304151);
+    expect(place.accuracy).toBe(9);
+    expect(place.latitude).toBe(41.304151);
   });
 
   it('точную точку Telegram браузером не переспрашивают', async () => {
     const { source } = phone(
       [{ latitude: 41.3, longitude: 69.3, accuracy: 5 }],
-      {
-        version: '8.0',
-        isVersionAtLeast: () => true,
-        LocationManager: {
-          isInited: true,
-          getLocation: (done: (location: unknown) => void) =>
-            done({ latitude: 41.304151, longitude: 69.332442,
-                   horizontal_accuracy: 11 }),
-        },
-      },
+      telegramGiving({ latitude: 41.304151, longitude: 69.332442, horizontal_accuracy: 11 }),
     );
 
-    const place = await requestPosition({ source });
+    const place = placeOrFail(await locate({ source }));
 
-    expect(place?.accuracy).toBe(11);
-    // Лишний запрос разрешения там, где всё и так хорошо, — плата ни за что.
+    expect(place.accuracy).toBe(11);
+    expect(place.source).toBe('telegram');
     const watching = (source.navigator.geolocation as unknown as
       { watchPosition: ReturnType<typeof vi.fn> }).watchPosition;
     expect(watching).not.toHaveBeenCalled();
   });
 
-  it('без геолокации возвращается пусто, а не выдуманная точка', async () => {
+  it('без геолокации возвращается отказ, а не выдуманная точка', async () => {
     const source = { navigator: {} } as unknown as Window;
-    expect(await requestPosition({ source })).toBeNull();
+    expect(await locate({ source })).toEqual({ ok: false, problem: 'unavailable' });
+  });
+
+  // --- точность, которой нет ------------------------------------------------
+
+  it('horizontal_accuracy: null не превращается в «30 м»: спрашивается браузер', async () => {
+    const { source } = phone(
+      [{ latitude: 41.304151, longitude: 69.332442, accuracy: 14 }],
+      telegramGiving({ latitude: 41.305215, longitude: 69.335188, horizontal_accuracy: null }),
+    );
+
+    const place = placeOrFail(await locate({ source }));
+
+    // Взята браузерная точка с настоящей погрешностью, а не телеграмная
+    // с придуманной.
+    expect(place.source).toBe('browser');
+    expect(place.accuracy).toBe(14);
+  });
+
+  it('без достоверной точности — просьба повторить, а не отправка', async () => {
+    const source = {
+      Telegram: { WebApp: telegramGiving({ latitude: 41.3, longitude: 69.3, horizontal_accuracy: null }) },
+      navigator: {},
+    } as unknown as Window;
+
+    const fix = await locate({ source });
+
+    expect(fix).toEqual({ ok: false, problem: 'no_accuracy' });
+    expect(FIX_PROBLEMS.no_accuracy.message).toMatch(/ещё раз/);
+  });
+
+  it('браузер без погрешности тоже не годится', async () => {
+    const { source } = phone([{ latitude: 41.3, longitude: 69.3, accuracy: 0 }]);
+
+    // Хороших точек не будет: ждать спутников все девять секунд тесту незачем.
+    expect(await locate({ source, timeoutMs: 50 }))
+      .toEqual({ ok: false, problem: 'no_accuracy' });
+  });
+
+  // --- возраст точки ----------------------------------------------------------
+
+  it('старая точка браузера не выбирается, даже если она точнее', async () => {
+    const scannedAt = Date.now();
+    const { source } = phone([
+      // Запомненная вебвью точка с прошлого раза: точная и старая.
+      { latitude: 41.30519, longitude: 69.33505, accuracy: 4, timestamp: scannedAt - 60_000 },
+      { latitude: 41.304151, longitude: 69.332442, accuracy: 25, timestamp: scannedAt + 500 },
+    ]);
+
+    const place = placeOrFail(await locate({ source, notBefore: scannedAt }));
+
+    expect(place.accuracy).toBe(25);
+    expect(place.latitude).toBe(41.304151);
+  });
+
+  it('только старые точки — отказ «устарела», а не старое место', async () => {
+    const scannedAt = Date.now();
+    const { source } = phone([
+      { latitude: 41.30519, longitude: 69.33505, accuracy: 4, timestamp: scannedAt - 60_000 },
+    ]);
+
+    expect(await locate({ source, notBefore: scannedAt, timeoutMs: 50 }))
+      .toEqual({ ok: false, problem: 'stale' });
+  });
+
+  it('повтор прежней точки Telegram — кэш, место спрашивается у браузера', async () => {
+    // У `LocationManager` нет времени точки. Та же точка до сантиметра и
+    // до сотой метра через минуту — это не новое измерение.
+    const cached = { latitude: 41.305184, longitude: 69.335126, horizontal_accuracy: 15.63 };
+    const { source } = phone(
+      [{ latitude: 41.304151, longitude: 69.332442, accuracy: 20 }],
+      telegramGiving(cached),
+    );
+    const now = vi.spyOn(Date, 'now');
+
+    now.mockReturnValue(1_000_000);
+    const first = placeOrFail(await locate({ source }));
+    expect(first.source).toBe('telegram');
+
+    now.mockReturnValue(1_060_000);
+    const second = placeOrFail(await locate({ source }));
+    expect(second.source).toBe('browser');
+    expect(second.latitude).toBe(41.304151);
+  });
+
+  it('точка, полученная во время скана и ещё свежая, отправляется как есть', async () => {
+    const position: Position = {
+      latitude: 41.3, longitude: 69.3, accuracy: 10,
+      capturedAt: Date.now() - 3_000, source: 'telegram',
+    };
+    const fix = await fixAfterScan(
+      Promise.resolve({ ok: true, position }), Date.now(),
+      { source: { navigator: {} } as unknown as Window },
+    );
+
+    expect(fix).toEqual({ ok: true, position });
+  });
+
+  it('устаревшая к моменту отправки точка запрашивается заново после скана', async () => {
+    // Человек держал камеру дольше, чем точка остаётся свежей: место,
+    // полученное при открытии камеры, уже не «сейчас».
+    const scannedAt = Date.now();
+    const old: Position = {
+      latitude: 41.30519, longitude: 69.33505, accuracy: 5,
+      capturedAt: scannedAt - FIX_MAX_AGE_MS - 1_000, source: 'telegram',
+    };
+    const { source } = phone([
+      { latitude: 41.304151, longitude: 69.332442, accuracy: 12, timestamp: scannedAt + 100 },
+    ]);
+
+    const fix = await fixAfterScan(
+      Promise.resolve({ ok: true, position: old }), scannedAt, { source },
+    );
+
+    const place = placeOrFail(fix);
+    expect(place.latitude).toBe(41.304151);
+    expect(isFresh(place)).toBe(true);
+  });
+
+  it('ожидание места после скана ограничено сроком кода', async () => {
+    vi.useFakeTimers();
+    try {
+      const never = new Promise<Fix>(() => undefined);
+      const waiting = fixAfterScan(never, Date.now(), {
+        timeoutMs: 8_000, source: { navigator: {} } as unknown as Window,
+      });
+      await vi.advanceTimersByTimeAsync(8_001);
+      expect(await waiting).toEqual({ ok: false, problem: 'unavailable' });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -285,9 +448,7 @@ describe('определение места', () => {
 describe('координаты для сервера', () => {
   it('округляются до шести знаков', () => {
     // Поле на сервере объявлено с шестью знаками после запятой и лишние
-    // не отбрасывает, а отвергает запрос целиком. Телефон же выдаёт
-    // тринадцать знаков всегда — без округления отметка ломалась бы на
-    // каждом устройстве и выглядела бы так же, как отказ по месту.
+    // не отбрасывает, а отвергает запрос целиком.
     expect(placeOf({ latitude: 41.3111234567, longitude: 69.2405678912,
                      accuracy: 18.446 })).toEqual({
       latitude: 41.311123,
@@ -296,10 +457,22 @@ describe('координаты для сервера', () => {
     });
   });
 
-  it('нулевая погрешность не выдаётся за точность', () => {
-    // Ноль на сервере — признак подделки, а не идеального GPS.
-    expect(placeOf({ latitude: 41.3, longitude: 69.3, accuracy: 0 }).accuracy_m)
-      .toBe(30);
+  it('не сообщённая погрешность не подставляется ничем', () => {
+    // Раньше здесь появлялись «30 м», и грубая точка уходила уверенной.
+    expect(placeOf({ latitude: 41.3, longitude: 69.3, accuracy: 0 }))
+      .not.toHaveProperty('accuracy_m');
+    expect(placeOf({ latitude: 41.3, longitude: 69.3, accuracy: Number.NaN }))
+      .not.toHaveProperty('accuracy_m');
+  });
+
+  it('возраст и источник точки уходят вместе с ней', () => {
+    expect(placeOf(
+      { latitude: 41.3, longitude: 69.3, accuracy: 12, capturedAt: 10_000, source: 'browser' },
+      14_250,
+    )).toEqual({
+      latitude: 41.3, longitude: 69.3, accuracy_m: 12,
+      location_age_s: 4.25, location_source: 'browser',
+    });
   });
 
   it('без места полей просто нет', () => {

@@ -235,7 +235,13 @@ class ScanResultSerializer(serializers.Serializer):
         allow_null=True, help_text="Расстояние до офиса, если сравнивали",
     )
     radius_m = serializers.IntegerField(
-        allow_null=True, help_text="Допустимый радиус геозоны офиса",
+        allow_null=True,
+        help_text="Допустимый радиус геозоны офиса — только у круга",
+    )
+    geofence_kind = serializers.CharField(
+        allow_null=True,
+        help_text="Чем проверяли место: CIRCLE, POLYGON или null — не проверяли. "
+        "У контура distance_m — расстояние до его границы",
     )
     session = ScanSessionSerializer(allow_null=True)
 

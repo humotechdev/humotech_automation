@@ -23,6 +23,9 @@ import { profile as profileStub, session, status as statusStub } from './fixture
 afterEach(() => {
   cleanup();
   forgetToken();
+  // Отпечаток прошлой точки живёт в хранилище вебвью: без очистки
+  // следующий тест принял бы ту же точку за кэш с прошлого раза.
+  window.localStorage.clear();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   delete (window as unknown as Record<string, unknown>).Telegram;
@@ -73,7 +76,7 @@ describe('на сервер отсюда не ходят', () => {
 
     render(<App />);
 
-    await screen.findByText('Получаем геопозицию…');
+    await screen.findByText('Наведите камеру на QR-код');
     expect(screen.queryByText('Откройте кнопкой в чате')).toBeNull();
   });
 });
@@ -81,29 +84,56 @@ describe('на сервер отсюда не ходят', () => {
 // --- порядок действий -------------------------------------------------------
 
 describe('порядок', () => {
-  it('сначала геопозиция, потом сканер', async () => {
+  it('место берётся во время скана, а не до него', async () => {
+    // Раньше точку получали до камеры и отправляли после: между ними
+    // человек успевал дойти от парковки до двери, и сервер проверял
+    // место, где его уже не было.
     const tg = openTelegram({ slowLocation: true });
     vi.stubGlobal('fetch', vi.fn());
     atKeyboardRoute();
 
     render(<App />);
 
+    // Камера открывается сразу, не дожидаясь места.
+    await waitFor(() => expect(tg.show).toHaveBeenCalled());
+    tg.emit('HT1.код-с-экрана');
+
+    // Код есть, места ещё нет — ничего не отправлено.
     await screen.findByText('Получаем геопозицию…');
-    expect(tg.show).not.toHaveBeenCalled();
+    expect(tg.sendData).not.toHaveBeenCalled();
 
     tg.resolveLocation();
-    await waitFor(() => expect(tg.show).toHaveBeenCalled());
+    await waitFor(() => expect(tg.sendData).toHaveBeenCalledTimes(1));
   });
 
-  it('без геопозиции сканер не открывается', async () => {
+  it('без геопозиции отметка не уходит', async () => {
     const tg = openTelegram({ location: null });
     vi.stubGlobal('fetch', vi.fn());
     atKeyboardRoute();
 
     render(<App />);
+    await waitFor(() => expect(tg.show).toHaveBeenCalled());
+    tg.emit('HT1.код-с-экрана');
 
     await screen.findByText('Не видно, где вы');
-    expect(tg.show).not.toHaveBeenCalled();
+    expect(tg.sendData).not.toHaveBeenCalled();
+  });
+
+  it('точка без погрешности не отправляется с придуманными «30 м»', async () => {
+    // Telegram вернул `horizontal_accuracy: null`, а браузерного места в
+    // этом вебвью нет. Честный ответ — попросить получить место ещё раз.
+    const tg = openTelegram({
+      location: { latitude: 38.5602, longitude: 68.7874, horizontal_accuracy: null },
+    });
+    vi.stubGlobal('fetch', vi.fn());
+    atKeyboardRoute();
+
+    render(<App />);
+    await waitFor(() => expect(tg.show).toHaveBeenCalled());
+    tg.emit('HT1.код-с-экрана');
+
+    await screen.findByText('Место определилось без точности');
+    expect(screen.getByText(/получите позицию ещё раз/)).toBeTruthy();
     expect(tg.sendData).not.toHaveBeenCalled();
   });
 
@@ -305,7 +335,7 @@ function openTelegram({
 }: {
   withScanner?: boolean;
   withSendData?: boolean;
-  location?: Record<string, number> | null;
+  location?: Record<string, number | null> | null;
   slowLocation?: boolean;
   /** Пустая строка — запуск нижней кнопкой: подписи там нет. */
   initData?: string;

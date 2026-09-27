@@ -249,6 +249,18 @@ export const SCAN_RESULTS: Record<string, { title: string; hint?: string }> = {
       'Такое бывает в помещении и при отключённом GPS. Выйдите к окну или '
       + 'к двери, подождите несколько секунд и попробуйте снова.',
   },
+  LOCATION_AMBIGUOUS: {
+    title: 'Не удалось точно определить, где вы',
+    hint:
+      'По данным телефона вы у самой границы территории офиса, и погрешность '
+      + 'не даёт сказать, с какой стороны. Подождите несколько секунд на '
+      + 'открытом месте и отсканируйте код ещё раз. Если не выходит — '
+      + 'сообщите в отдел кадров: попытка сохранена, её там видно.',
+  },
+  LOCATION_STALE: {
+    title: 'Геопозиция устарела',
+    hint: 'Телефон прислал место, где вы были раньше. Отсканируйте код ещё раз.',
+  },
   QR_REVOKED: {
     title: 'Наклейка больше не действует',
     hint: 'Её перевыпустили. Отдел кадров распечатает новую.',
@@ -276,11 +288,22 @@ export function scanView(result: {
   status: string;
   distance_m?: number | null;
   radius_m?: number | null;
+  geofence_kind?: string | null;
 }): { title: string; hint?: string } {
   const view = SCAN_RESULTS[result.status] ?? SCAN_UNKNOWN;
   if (result.status !== 'OUTSIDE_GEOFENCE') return view;
 
   const { distance_m: distance, radius_m: radius } = result;
+  if (result.geofence_kind === 'POLYGON' && typeof distance === 'number') {
+    // У контура расстояние — до его границы, а радиуса нет вовсе.
+    return {
+      title: 'Вы вне территории офиса',
+      hint:
+        `До границы территории ${Math.round(distance)} м. Отметиться можно `
+        + 'на месте. Если вы уже внутри — телефон определил место неточно: '
+        + 'подождите несколько секунд у окна или у входа и попробуйте снова.',
+    };
+  }
   if (typeof distance !== 'number' || typeof radius !== 'number') return view;
   return {
     title: view.title,

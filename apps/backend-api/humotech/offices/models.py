@@ -41,6 +41,19 @@ class Office(
         max_digits=9, decimal_places=6, null=True, blank=True
     )
     geofence_radius_m = models.IntegerField(null=True, blank=True)
+    #: Форма геозоны: круг (точка и радиус) или контур территории. Старые
+    #: офисы остаются кругом — о контуре они не знают, и менять им
+    #: правило молча нельзя.
+    geofence_kind = models.CharField(
+        max_length=10,
+        choices=[("CIRCLE", "Круг"), ("POLYGON", "Контур территории")],
+        default="CIRCLE",
+        db_default="CIRCLE",
+    )
+    #: Контур: `[[широта, долгота], …]`, незамкнутый, от 3 до 50 углов.
+    #: Проверяется сервисом (`offices.geo.clean_polygon`) — база только
+    #: не даёт выбрать контур, не сохранив его.
+    geofence_polygon = models.JSONField(null=True, blank=True)
     status = models.CharField(max_length=30, choices=choices(OFFICE_STATUSES))
     opened_at = models.DateField(null=True, blank=True)
     closed_at = models.DateField(null=True, blank=True)
@@ -58,6 +71,15 @@ class Office(
                 condition=Q(geofence_radius_m__isnull=True)
                 | Q(geofence_radius_m__gt=0),
                 name="ck_offices_geofence_positive",
+            ),
+            models.CheckConstraint(
+                condition=Q(geofence_kind__in=("CIRCLE", "POLYGON")),
+                name="ck_offices_geofence_kind",
+            ),
+            models.CheckConstraint(
+                condition=~Q(geofence_kind="POLYGON")
+                | Q(geofence_polygon__isnull=False),
+                name="ck_offices_polygon_present",
             ),
             models.CheckConstraint(
                 condition=Q(closed_at__isnull=True)

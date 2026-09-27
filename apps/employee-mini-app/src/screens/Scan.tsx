@@ -44,12 +44,15 @@ import {
   scanWithTelegram,
 } from '../scanner';
 import {
+  type Fix,
   type Position,
+  FIX_PROBLEMS,
   exitFullscreen,
+  fixAfterScan,
   fullscreenSupported,
   haptic,
+  locate,
   requestFullscreen,
-  requestPosition,
 } from '../telegram';
 import { Field } from '../ui/fields';
 import { AlertIcon, CameraIcon, CheckIcon, QrIcon } from '../ui/icons';
@@ -119,7 +122,7 @@ export function Scan({
    * сканирования значило бы добавить человеку у двери лишние секунды
    * там, где их можно было потратить, пока он наводит телефон.
    */
-  async function submit(code: string, locating?: Promise<Position | null>) {
+  async function submit(code: string, locating?: Promise<Fix>, scannedAt = Date.now()) {
     if (phase.kind === 'working' || phase.kind === 'locating') return;
     const text = code.trim();
 
@@ -130,18 +133,26 @@ export function Scan({
     let position: Position | null = null;
     if (isSticker(text)) {
       setPhase({ kind: 'locating' });
-      position = await (locating ?? requestPosition());
-      if (!position) {
+      // Точка — полученная во время скана или сразу после него. Если
+      // камера была открыта дольше, чем точка остаётся свежей, место
+      // спрашивается заново: отправить то, где человек стоял минуту
+      // назад, значит проверить не того человека, который у двери.
+      const fix = await fixAfterScan(locating ?? null, scannedAt);
+      if (!fix.ok) {
         haptic('error');
         setPhase({
           kind: 'idle',
-          error:
-            'Телефон не сообщил, где вы. Печатный код у двери принимается '
-            + 'только вместе с местоположением: включите геолокацию, '
-            + 'разрешите её Telegram и попробуйте снова.',
+          error: fix.problem === 'unavailable'
+            ? (
+              'Телефон не сообщил, где вы. Печатный код у двери принимается '
+              + 'только вместе с местоположением: включите геолокацию, '
+              + 'разрешите её Telegram и попробуйте снова.'
+            )
+            : FIX_PROBLEMS[fix.problem].message,
         });
         return;
       }
+      position = fix.position;
     }
 
     setPhase({ kind: 'working' });
@@ -177,11 +188,11 @@ export function Scan({
     // Геопозиция запрашивается ОДНОВРЕМЕННО с открытием камеры, а не
     // после неё. Пока человек наводит телефон на код, телефон успевает
     // определить место — и к моменту отправки ждать уже нечего.
-    const locating = requestPosition();
+    const locating = locate();
     const outcome = await scanWithTelegram(window, stop.signal);
 
     if (outcome.kind === 'code') {
-      await submit(outcome.value, locating);
+      await submit(outcome.value, locating, Date.now());
       return;
     }
     if (outcome.kind === 'cancelled') return;

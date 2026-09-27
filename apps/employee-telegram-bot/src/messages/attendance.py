@@ -86,6 +86,18 @@ OUTCOMES = {
         "Местоположение определилось слишком приблизительно. "
         "Выйдите на открытое место или подойдите к окну и попробуйте снова."
     ),
+    # Погрешность телефона пересекает границу территории офиса: сказать
+    # честно ни «вы на месте», ни «вы далеко» нельзя.
+    "LOCATION_AMBIGUOUS": (
+        "Телефон определил место неточно: по его данным вы у самой границы "
+        "территории офиса. Подождите несколько секунд на открытом месте и "
+        "отсканируйте код ещё раз. Если не выходит — сообщите в отдел кадров: "
+        "попытка сохранена, её там видно."
+    ),
+    "LOCATION_STALE": (
+        "Геопозиция устарела — телефон прислал место, где вы были раньше. "
+        "Отсканируйте код ещё раз."
+    ),
 }
 
 
@@ -121,7 +133,11 @@ def outcome(result: dict) -> str:
         if point:
             lines.append(f"QR-точка: {point}")
         metres = _metres(result.get("distance_m"))
-        if metres is not None:
+        if result.get("geofence_kind") == "POLYGON":
+            # У контура расстояние — до границы, и внутри оно ноль:
+            # «0 м до офиса» читалось бы как ошибка.
+            lines.append("Место: на территории офиса")
+        elif metres is not None:
             lines.append(f"Расстояние до офиса: {metres} м")
         at = result.get("occurred_at_local")
         if at:
@@ -143,6 +159,11 @@ def _head(status: str, result: dict) -> str | None:
     if status == "OUTSIDE_GEOFENCE":
         metres = _metres(result.get("distance_m"))
         radius = result.get("radius_m")
+        if metres is not None and result.get("geofence_kind") == "POLYGON":
+            return (
+                f"Вы вне территории офиса: {metres} м до её границы. "
+                "Отметиться можно на месте."
+            )
         if metres is not None and isinstance(radius, int) and radius > 0:
             return f"Вы слишком далеко от офиса: {metres} м. Допустимо: {radius} м"
     if status == "ALREADY_INSIDE" and mode == "ENTRY":

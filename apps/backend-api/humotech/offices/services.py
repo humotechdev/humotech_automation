@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date
+from decimal import Decimal
 
 from humotech.core.errors import Conflict, ValidationFailed
 from humotech.core.pagination import Page, paginate
@@ -24,6 +25,13 @@ from humotech.core.validation import (
     require_order,
     validate_timezone,
 )
+from humotech.offices.geo import (
+    GEOFENCE_KINDS,
+    POLYGON,
+    PolygonError,
+    clean_polygon,
+    polygon_centre,
+)
 from humotech.offices.models import Office
 
 AUDITED_FIELDS = (
@@ -32,7 +40,16 @@ AUDITED_FIELDS = (
     # Перенос точки на карте и смена радиуса меняют, кого пустит отметка:
     # в журнале это должно быть видно так же, как смена адреса.
     "latitude", "longitude", "geofence_radius_m",
+    # Контур меняет круг допуска так же, как радиус: кто его перерисовал
+    # и что было до, должно читаться из журнала целиком, по вершинам.
+    "geofence_kind", "geofence_polygon",
 )
+
+#: Поля, правка которых меняет, кого пустит отметка.
+GEOFENCE_FIELDS = {
+    "latitude", "longitude", "geofence_radius_m",
+    "geofence_kind", "geofence_polygon",
+}
 
 SIMPLE_FIELDS = ("latitude", "longitude", "geofence_radius_m", "opened_at",
                  "closed_at")
@@ -99,6 +116,50 @@ def check_location(office: Office) -> None:
                 f"Допустимо от {GEOFENCE_MIN_M} до {GEOFENCE_MAX_M} метров."
             ]},
         )
+
+
+def apply_geofence(office: Office, changes: dict) -> None:
+    """Форма геозоны из правки: круг или контур, и согласованность их.
+
+    Контур проверяется здесь, а не в браузере: HR может прислать что
+    угодно, и «восьмёрка» или контур на весь город, сохранённые молча,
+    выглядели бы настроенной геозоной, которая пускает не тех.
+
+    У офиса с контуром точка на карте — центр контура. Её ставит сервер:
+    по ней карта открывается, а списки рисуют метку, и разойтись с
+    контуром она не должна.
+    """
+    if "geofence_kind" in changes and changes["geofence_kind"] is not None:
+        kind = changes["geofence_kind"]
+        if kind not in GEOFENCE_KINDS:
+            raise ValidationFailed(
+                "Неизвестная форма геозоны",
+                details={"geofence_kind": ["Круг или контур территории."]},
+            )
+        office.geofence_kind = kind
+    if "geofence_polygon" in changes:
+        raw = changes["geofence_polygon"]
+        if raw is None:
+            office.geofence_polygon = None
+        else:
+            try:
+                office.geofence_polygon = clean_polygon(raw)
+            except PolygonError as error:
+                raise ValidationFailed(
+                    str(error), details={"geofence_polygon": [str(error)]}
+                ) from error
+
+    if office.geofence_kind == POLYGON:
+        if not office.geofence_polygon:
+            raise ValidationFailed(
+                "Контур территории не нарисован",
+                details={"geofence_polygon": [
+                    "Отметьте на карте углы участка — не меньше трёх."
+                ]},
+            )
+        lat, lon = polygon_centre(office.geofence_polygon)
+        office.latitude = Decimal(f"{lat:.6f}")
+        office.longitude = Decimal(f"{lon:.6f}")
 
 
 class OfficeService(BaseService):
@@ -209,8 +270,9 @@ class OfficeService(BaseService):
                 status="ACTIVE",
                 **{k: extra.get(k) for k in SIMPLE_FIELDS if k in extra},
             )
-            # Те же правила точки и радиуса, что при правке: иначе
+            # Те же правила точки, радиуса и контура, что при правке: иначе
             # полкоординаты или радиус в 0 м заводились при создании.
+            apply_geofence(office, extra)
             check_location(office)
             office.save(force_insert=True)
             self.audit.record(
@@ -248,7 +310,8 @@ class OfficeService(BaseService):
                 setattr(office, field, changes[field])
         # Проверяется только то, что меняли: у старых офисов радиус мог быть
         # задан до появления границ, и правка названия не должна на нём падать.
-        if {"latitude", "longitude", "geofence_radius_m"} & set(changes):
+        if GEOFENCE_FIELDS & set(changes):
+            apply_geofence(office, changes)
             check_location(office)
 
         require_order(

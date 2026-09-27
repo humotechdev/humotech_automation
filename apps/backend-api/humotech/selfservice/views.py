@@ -191,6 +191,8 @@ class ScanView(EmployeeSelfView):
             latitude=data.get("latitude"),
             longitude=data.get("longitude"),
             accuracy_m=data.get("accuracy_m"),
+            location_age_s=data.get("location_age_s"),
+            location_source=data.get("location_source"),
         )
         session = outcome.session
         return Response(
@@ -211,6 +213,7 @@ class ScanView(EmployeeSelfView):
                     else None
                 ),
                 "radius_m": outcome.radius_m,
+                "geofence_kind": outcome.geofence_kind,
                 "session": (
                     {
                         "id": str(session.id),

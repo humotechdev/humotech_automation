@@ -40,9 +40,11 @@ import {
 } from '../scanner';
 import {
   type Position,
+  FIX_PROBLEMS,
   closeApp,
+  fixAfterScan,
   haptic,
-  requestPosition,
+  locate,
 } from '../telegram';
 import { AlertIcon, CheckIcon, QrIcon } from '../ui/icons';
 import { PrimaryButton, SecondaryButton } from '../ui/primitives';
@@ -111,8 +113,9 @@ export function QuickScan({ onOpenCabinet }: { onOpenCabinet: () => void }) {
     // Место запрашивается ОДНОВРЕМЕННО с открытием камеры: печатному
     // коду оно обязательно, а пока человек наводит телефон, оно всё
     // равно определяется само — ждать потом будет нечего.
-    const locating = requestPosition();
+    const locating = locate();
     const outcome = await scanWithTelegram(window, stop.signal);
+    const scannedAt = Date.now();
     if (!alive.current) return;
 
     if (outcome.kind !== 'code') {
@@ -134,25 +137,31 @@ export function QuickScan({ onOpenCabinet }: { onOpenCabinet: () => void }) {
 
     // Печатный код у двери сервер принимает только с координатами:
     // сама по себе наклейка доказывает лишь то, что она существует.
+    // Точка — полученная во время скана или сразу после него, а не
+    // та, что телефон помнил с прошлого раза.
     let position: Position | null = null;
     if (isSticker(outcome.value)) {
       setPhase({ kind: 'locating' });
-      position = await locating;
+      const fix = await fixAfterScan(locating, scannedAt);
       if (!alive.current) return;
 
-      if (!position) {
+      if (!fix.ok) {
         closeScanner();
         busy.current = false;
         haptic('error');
         setPhase({
           kind: 'failed',
-          message:
-            'Телефон не сообщил, где вы. Печатный код у двери принимается '
-            + 'только вместе с местоположением: включите геолокацию, '
-            + 'разрешите её Telegram и попробуйте снова.',
+          message: fix.problem === 'unavailable'
+            ? (
+              'Телефон не сообщил, где вы. Печатный код у двери принимается '
+              + 'только вместе с местоположением: включите геолокацию, '
+              + 'разрешите её Telegram и попробуйте снова.'
+            )
+            : FIX_PROBLEMS[fix.problem].message,
         });
         return;
       }
+      position = fix.position;
     }
 
     setPhase({ kind: 'sending' });

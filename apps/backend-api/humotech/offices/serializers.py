@@ -24,6 +24,7 @@ class OfficeSerializer(serializers.ModelSerializer):
             "id", "organization_id", "region_id", "region_code", "region_name",
             "code", "name", "address", "timezone",
             "latitude", "longitude", "geofence_radius_m",
+            "geofence_kind", "geofence_polygon",
             "status", "opened_at", "closed_at", "created_at", "updated_at",
         )
         read_only_fields = fields
@@ -54,6 +55,18 @@ class OfficeCreateSerializer(serializers.Serializer):
         max_digits=9, decimal_places=6, required=False, allow_null=True
     )
     geofence_radius_m = serializers.IntegerField(required=False, allow_null=True)
+    geofence_kind = serializers.ChoiceField(
+        choices=("CIRCLE", "POLYGON"), required=False
+    )
+    # Углы участка: `[[широта, долгота], …]`. Здесь проверяется только
+    # вид; самопересечения, размер и число углов — в сервисе, одним
+    # правилом для создания и правки.
+    geofence_polygon = serializers.ListField(
+        child=serializers.ListField(
+            child=serializers.FloatField(), min_length=2, max_length=2
+        ),
+        required=False, allow_null=True, max_length=200,
+    )
     opened_at = serializers.DateField(required=False, allow_null=True)
 
 
@@ -70,6 +83,18 @@ class OfficeUpdateSerializer(serializers.Serializer):
         max_digits=9, decimal_places=6, required=False, allow_null=True
     )
     geofence_radius_m = serializers.IntegerField(required=False, allow_null=True)
+    geofence_kind = serializers.ChoiceField(
+        choices=("CIRCLE", "POLYGON"), required=False
+    )
+    # Углы участка: `[[широта, долгота], …]`. Здесь проверяется только
+    # вид; самопересечения, размер и число углов — в сервисе, одним
+    # правилом для создания и правки.
+    geofence_polygon = serializers.ListField(
+        child=serializers.ListField(
+            child=serializers.FloatField(), min_length=2, max_length=2
+        ),
+        required=False, allow_null=True, max_length=200,
+    )
     opened_at = serializers.DateField(required=False, allow_null=True)
     closed_at = serializers.DateField(required=False, allow_null=True)
 
