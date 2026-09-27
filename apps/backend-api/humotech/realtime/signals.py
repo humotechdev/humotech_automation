@@ -47,6 +47,19 @@ def emit(payload: dict) -> None:
     здесь пишется в журнал и не откатывает ответ сотруднику.
     """
     body = dict(payload, at=round(time.time(), 3))
+    # Диагностика цепочки (временно): когда вызван NOTIFY и когда
+    # зафиксирована транзакция — именно тогда PostgreSQL его доставляет.
+    if payload.get("t") == "question":
+        called = time.time()
+        logger.info(
+            "diag notify called question=%s what=%s",
+            str(payload.get("id"))[:8], payload.get("what"),
+        )
+        transaction.on_commit(lambda: logger.info(
+            "diag commit question=%s what=%s after_notify_ms=%d",
+            str(payload.get("id"))[:8], payload.get("what"),
+            (time.time() - called) * 1000,
+        ))
     try:
         # Внутри чужой транзакции `atomic` — точка сохранения: упавший
         # NOTIFY откатывается до неё и не помечает всю транзакцию

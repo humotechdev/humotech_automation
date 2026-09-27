@@ -52,6 +52,21 @@ let detach: (() => void) | null = null;
 /** Последние сигналы с задержкой доставки — для проверки на стенде. */
 export const recent: { id: string; what: string; lagMs: number | null; at: number }[] = [];
 
+/**
+ * Диагностика цепочки (временно): этапы с отметкой времени — сигнал
+ * получен, перечитывание начато и закончено, сообщение нарисовано.
+ * Только в разработке; читается из консоли как `window.__humotechTrace`.
+ */
+export const trace: { stage: string; t: number; [key: string]: unknown }[] = [];
+export function diag(stage: string, extra: Record<string, unknown> = {}): void {
+  if (!import.meta.env.DEV) return;
+  const entry = { stage, t: Date.now(), ...extra };
+  trace.push(entry);
+  if (trace.length > 200) trace.shift();
+  (window as unknown as { __humotechTrace?: typeof trace }).__humotechTrace = trace;
+  console.info(`[humotech:trace] ${stage}`, extra);
+}
+
 function setState(next: LiveState): void {
   if (state === next) return;
   state = next;
@@ -162,6 +177,7 @@ function connect(): void {
       sent: typeof data['sent'] === 'number' ? data['sent'] : null,
     };
     note(signal);
+    diag('signal received', { id: signal.id.slice(0, 8), what: signal.what, lagMs: signal.at !== null ? Date.now() - signal.at * 1000 : null });
     emit(signal);
   });
   next.addEventListener('bye', () => {

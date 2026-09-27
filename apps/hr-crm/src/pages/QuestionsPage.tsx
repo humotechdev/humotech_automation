@@ -23,7 +23,7 @@
  */
 
 import {
-  useCallback, useEffect, useMemo, useRef, useState,
+  useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,
   type KeyboardEvent, type ReactNode,
 } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -35,7 +35,7 @@ import { AppIcon, type AppIconName } from '../components/AppIcon';
 import { AppPopover, AppSelectField } from '../components/AppSelect';
 import { useSession } from '../features/auth/session';
 import { useBlock, type Block } from '../features/dashboard/data';
-import { liveState, onLive, onLiveState } from '../features/realtime/events';
+import { diag, liveState, onLive, onLiveState } from '../features/realtime/events';
 import { useStickyState } from '../features/shell/sticky';
 import '../styles/questions.css';
 
@@ -46,8 +46,12 @@ const FALLBACK_MS = 30_000;
  * просроченным само, по времени, и никакого события об этом нет.
  */
 const SLOW_MS = 3 * 60_000;
-/** Серия сигналов — одно перечитывание. */
-const COALESCE_MS = 200;
+/**
+ * Окно склейки сигналов. Первый сигнал перечитывает СРАЗУ; сигналы,
+ * пришедшие в течение окна после него, дают одно перечитывание в конце
+ * окна, а не по одному на каждый.
+ */
+const COALESCE_MS = 150;
 const PAGE = 30;
 const MAX_LIMIT = 200;
 /** Столько же принимает сервер; проверка здесь — чтобы не ждать отказа. */
@@ -189,8 +193,12 @@ function lastEmployeeMessage(question: api.Question): string | null {
   return null;
 }
 
-/** До нижнего края ближе этого — «читает последнее», и прокрутка следует за лентой. */
-const BOTTOM_SLACK_PX = 48;
+/**
+ * До нижнего края ближе этого — «читает последнее», и лента следует за
+ * новыми сообщениями. Не строгое равенство: дробные пиксели масштаба и
+ * выросшая строка статуса не должны считаться «ушёл читать историю».
+ */
+const BOTTOM_SLACK_PX = 80;
 
 // --- страница ----------------------------------------------------------------
 
@@ -281,8 +289,17 @@ export function QuestionsPage() {
 
   const items = list.state === 'ready' ? list.data.items : [];
   // Без выбора в адресе открыто первое обращение очереди: на широком
-  // экране пустая середина при полной очереди — лишний клик.
-  const currentId = picked || items[0]?.id || '';
+  // экране пустая середина при полной очереди — лишний клик. Выбранное так
+  // обращение закрепляется: иначе сообщение в другом чате, поднявшее его
+  // строку наверх, молча переключило бы HR в чужой разговор. Новая
+  // вкладка или фильтр — выбор заново.
+  const firstId = items[0]?.id ?? '';
+  const [pinned, setPinned] = useState('');
+  useEffect(() => setPinned(''), [listKey]);
+  useEffect(() => {
+    if (!picked && !pinned && firstId) setPinned(firstId);
+  }, [picked, pinned, firstId]);
+  const currentId = picked || pinned || firstId;
 
   const [detailBlock, reloadDetail] = useBlock(
     (signal) => api.question(currentId, signal),
@@ -307,28 +324,53 @@ export function QuestionsPage() {
   reloadsRef.current = { reloadList, reloadCounts, reloadDetail, reloadContext };
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
-    let detail = false;
-    let everything = false;
-    const flush = () => {
-      timer = null;
-      const run = reloadsRef.current;
-      run.reloadList();
-      run.reloadCounts();
-      if (detail || everything) run.reloadDetail();
-      if (everything) run.reloadContext();
-      detail = false;
-      everything = false;
+    let queued = false;
+    let queuedDetail = false;
+    let queuedAll = false;
+    const run = (detail: boolean, everything: boolean) => {
+      const reload = reloadsRef.current;
+      diag('refetch started', { detail: detail || everything, everything });
+      reload.reloadList();
+      reload.reloadCounts();
+      if (detail || everything) reload.reloadDetail();
+      if (everything) reload.reloadContext();
+    };
+    const open = () => {
+      timer = setTimeout(() => {
+        timer = null;
+        if (!queued) return;
+        const detail = queuedDetail;
+        const everything = queuedAll;
+        queued = false;
+        queuedDetail = false;
+        queuedAll = false;
+        run(detail, everything);
+        open();
+      }, COALESCE_MS);
     };
     const stop = onLive((signal) => {
-      if (signal.type === 'resync') everything = true;
-      else if (signal.id === openRef.current) detail = true;
-      if (timer === null) timer = setTimeout(flush, COALESCE_MS);
+      const everything = signal.type === 'resync';
+      const detail = !everything && signal.id === openRef.current;
+      if (timer === null) {
+        // Первый сигнал — перечитать сразу, без ожидания.
+        run(detail, everything);
+        open();
+        return;
+      }
+      queued = true;
+      queuedDetail ||= detail;
+      queuedAll ||= everything;
     });
     return () => {
       stop();
       if (timer !== null) clearTimeout(timer);
     };
   }, []);
+  useEffect(() => {
+    if (detailBlock.state === 'ready') {
+      diag('detail refetched', { messages: detailBlock.data.messages.length });
+    }
+  }, [detailBlock]);
 
   // Ответ действия показывается сразу, не дожидаясь следующего опроса.
   const [override, setOverride] = useState<api.Question | null>(null);
@@ -769,37 +811,70 @@ function Conversation({
 
   // --- прокрутка ---
   //
-  // Лента следует за новыми сообщениями, только если HR и так внизу.
-  // Если он читает старое — ленту не дёргаем, а показываем кнопку
-  // «Новые сообщения». Свой ответ прокручивает вниз всегда.
+  // Где был HR ДО нового сообщения, известно по последней прокрутке:
+  // `atBottom` обновляется на каждом событии scroll, то есть до того, как
+  // React вставит новую реплику и вырастет высота ленты. Решение:
+  //
+  //   * первое открытие — вниз;
+  //   * новая реплика в конце ленты, а HR был у нижнего края — вниз;
+  //   * новая реплика, а HR читает историю — scrollTop не трогается
+  //     вовсе, появляется «Новые сообщения»;
+  //   * свой только что отправленный ответ — вниз всегда. Ответ коллеги
+  //     из другого окна — как любая чужая реплика;
+  //   * перечитывание без новых реплик, смена статуса доставки, время —
+  //     не прокручивают ничего.
   const atBottom = useRef(true);
   const [unseen, setUnseen] = useState(0);
-  const shown = question.messages.length + waiting.length;
-  const shownBefore = useRef<number | null>(null);
-  const toBottom = useCallback(() => {
+  const sentKeys = useRef(new Set<string>());
+  for (const one of pending) sentKeys.current.add(one.key);
+  const lastMessage = question.messages[question.messages.length - 1];
+  const tail = waiting.length > 0
+    ? `pending:${waiting[waiting.length - 1]!.key}`
+    : lastMessage?.id ?? '';
+  const count = question.messages.length + waiting.length;
+  const previous = useRef<{ tail: string; count: number } | null>(null);
+  useLayoutEffect(() => {
     const box = thread.current;
-    if (box) box.scrollTop = box.scrollHeight;
-    atBottom.current = true;
-    setUnseen(0);
-  }, []);
-  useEffect(() => {
-    const before = shownBefore.current;
-    shownBefore.current = shown;
+    const before = previous.current;
+    previous.current = { tail, count };
+    if (!box) return;
     if (before === null) {
-      toBottom();
+      box.scrollTop = box.scrollHeight;
+      atBottom.current = true;
       return;
     }
-    if (shown <= before) return;
-    const last = waiting.length > 0 ? null : question.messages[question.messages.length - 1];
-    const mine = waiting.length > 0 || last?.kind === 'HR';
-    if (mine || atBottom.current) toBottom();
-    else setUnseen((n) => n + (shown - before));
-  }, [shown, question.messages, waiting.length, toBottom]);
+    // Новое — только то, что встало в конец ленты. Замена «отправляется»
+    // на сохранённую реплику и любые правки внутри ленты новым не считаются.
+    if (tail === before.tail || count <= before.count) return;
+    const own = waiting.length > 0
+      || (lastMessage?.client_request_id != null
+        && sentKeys.current.has(lastMessage.client_request_id));
+    diag('message rendered', { id: tail.slice(0, 16), own, atBottom: atBottom.current });
+    if (own || atBottom.current) {
+      box.scrollTop = box.scrollHeight;
+      atBottom.current = true;
+      setUnseen(0);
+      return;
+    }
+    setUnseen((n) => n + (count - before.count));
+  }, [tail, count, waiting.length, lastMessage]);
   const onScroll = () => {
     const box = thread.current;
     if (!box) return;
     atBottom.current = box.scrollHeight - box.scrollTop - box.clientHeight <= BOTTOM_SLACK_PX;
     if (atBottom.current) setUnseen(0);
+  };
+  const toNewest = () => {
+    const box = thread.current;
+    if (!box) return;
+    atBottom.current = true;
+    setUnseen(0);
+    // Плавно: человек видит, откуда и куда его перенесло.
+    if (typeof box.scrollTo === 'function') {
+      box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
+    } else {
+      box.scrollTop = box.scrollHeight;
+    }
   };
 
   const where = [question.office?.name ?? context?.employee.office?.name, context?.employee.department]
@@ -876,7 +951,7 @@ function Conversation({
         )}
       </div>
       {unseen > 0 && (
-        <button type="button" className="tk-newer" onClick={toBottom}>
+        <button type="button" className="tk-newer" onClick={toNewest}>
           <AppIcon name="next" size={16} />
           Новые сообщения
         </button>

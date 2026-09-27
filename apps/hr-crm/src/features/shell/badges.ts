@@ -79,21 +79,18 @@ function refresh(force = false): void {
 /** Обращение, из-за которого число выросло: по нажатию меню открывается оно. */
 let latestQuestion: string | null = null;
 let liveBound = false;
-let soon: ReturnType<typeof setTimeout> | null = null;
 let again = false;
 
-/** Серия сигналов — один пересчёт: десять сообщений подряд не дают десяти запросов. */
+/**
+ * Пересчёт по сигналу — сразу. Если запрос уже идёт, он начат до сигнала:
+ * после него — ещё один, и только один, сколько бы сигналов ни пришло.
+ */
 function refreshSoon(): void {
-  if (soon !== null) return;
-  soon = setTimeout(() => {
-    soon = null;
-    if (loading) {
-      // Запрос уже идёт — но начат до сигнала. Перечитать ещё раз после.
-      again = true;
-      return;
-    }
-    refresh(true);
-  }, 250);
+  if (loading) {
+    again = true;
+    return;
+  }
+  refresh(true);
 }
 
 function bindLive(): void {
@@ -140,7 +137,5 @@ export function forgetBadges(): void {
   loadedAt = 0;
   latestQuestion = null;
   again = false;
-  if (soon !== null) clearTimeout(soon);
-  soon = null;
   publish({});
 }

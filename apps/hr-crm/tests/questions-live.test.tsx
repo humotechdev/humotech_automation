@@ -237,9 +237,192 @@ describe('сообщение в открытом чате', () => {
       expect(seen).toEqual(['m-1', 'm-2', 'm-3']);
     });
   });
+});
 
-  test('HR читает старое — лента не прыгает, появляется «Новые сообщения»', async () => {
+// --- прокрутка ленты ---------------------------------------------------------
+
+/**
+ * jsdom не раскладывает страницу: высоту ленты задаёт тест. `grow` — сколько
+ * пикселей добавляет каждая новая реплика.
+ */
+function geometry(thread: HTMLElement, { height = 2000, client = 400, grow = 100 } = {}) {
+  const box = { height };
+  Object.defineProperty(thread, 'scrollHeight', { configurable: true, get: () => box.height });
+  Object.defineProperty(thread, 'clientHeight', { configurable: true, value: client });
+  const scrollTo = vi.fn();
+  Object.defineProperty(thread, 'scrollTo', { configurable: true, value: scrollTo });
+  return {
+    grow: () => { box.height += grow; },
+    at: (top: number) => { thread.scrollTop = top; fireEvent.scroll(thread); },
+    scrollTo,
+    box,
+  };
+}
+
+async function openThread(messages: object[]) {
+  const made = server({ rows: [row('q-1', 'Облокулов Шахноза', 10)], detail: question(messages), unanswered: 1 });
+  renderApp('/questions?id=q-1');
+  await screen.findByText('Первое');
+  await openLive();
+  const thread = document.querySelector('.tk-thread') as HTMLElement;
+  return { ...made, thread };
+}
+
+describe('прокрутка при новых сообщениях', () => {
+  test('HR у нижнего края — лента следует за новым сообщением', async () => {
+    const { state, thread } = await openThread([employeeSays('m-1', 'Первое', 10)]);
+    const g = geometry(thread);
+    g.at(1600); // 2000 − 1600 − 400 = 0: у самого низа
+
+    g.grow();
+    state.detail = question([employeeSays('m-1', 'Первое', 10), employeeSays('m-2', 'Новое внизу', 0)]);
+    signal('q-1');
+    await screen.findByText('Новое внизу');
+
+    expect(thread.scrollTop).toBe(2100);
+    expect(screen.queryByRole('button', { name: /Новые сообщения/ })).toBeNull();
+  });
+
+  test('HR в 500 px выше низа — позиция чтения не меняется вовсе', async () => {
+    const { state, thread } = await openThread([employeeSays('m-1', 'Первое', 10)]);
+    const g = geometry(thread);
+    g.at(1100); // 2000 − 1100 − 400 = 500
+
+    g.grow();
+    state.detail = question([employeeSays('m-1', 'Первое', 10), employeeSays('m-2', 'Пока читал историю', 0)]);
+    signal('q-1');
+    await screen.findByText('Пока читал историю');
+
+    expect(await screen.findByRole('button', { name: /Новые сообщения/ })).toBeTruthy();
+    expect(thread.scrollTop).toBe(1100);
+  });
+
+  test('второе сообщение подряд, пока HR читает историю, — тоже без прыжка', async () => {
+    const { state, thread } = await openThread([employeeSays('m-1', 'Первое', 10)]);
+    const g = geometry(thread);
+    g.at(1100);
+
+    g.grow();
+    state.detail = question([employeeSays('m-1', 'Первое', 10), employeeSays('m-2', 'Второе', 1)]);
+    signal('q-1');
+    await screen.findByText('Второе');
+    g.grow();
+    state.detail = question([
+      employeeSays('m-1', 'Первое', 10), employeeSays('m-2', 'Второе', 1), employeeSays('m-3', 'Третье', 0),
+    ]);
+    signal('q-1');
+    await screen.findByText('Третье');
+
+    await screen.findByRole('button', { name: /Новые сообщения/ });
+    expect(thread.scrollTop).toBe(1100);
+    expect(g.scrollTo).not.toHaveBeenCalled();
+  });
+
+  test('«Новые сообщения» плавно ведёт вниз и исчезает', async () => {
+    const { state, thread } = await openThread([employeeSays('m-1', 'Первое', 10)]);
+    const g = geometry(thread);
+    g.at(1100);
+    g.grow();
+    state.detail = question([employeeSays('m-1', 'Первое', 10), employeeSays('m-2', 'Новое', 0)]);
+    signal('q-1');
+
+    fireEvent.click(await screen.findByRole('button', { name: /Новые сообщения/ }));
+
+    expect(g.scrollTo).toHaveBeenCalledWith({ top: 2100, behavior: 'smooth' });
+    expect(screen.queryByRole('button', { name: /Новые сообщения/ })).toBeNull();
+  });
+
+  test('смена статуса доставки своего ответа не прокручивает ленту', async () => {
+    const hrMessage = hrSays('m-2', 'Ответ HR', {});
+    const { state, calls, thread } = await openThread([employeeSays('m-1', 'Первое', 10), hrMessage]);
+    const g = geometry(thread);
+    g.at(1100);
+    const before = gets(calls, DETAIL);
+
+    state.detail = question([
+      employeeSays('m-1', 'Первое', 10),
+      { ...hrMessage, delivery: { ...hrMessage.delivery, status: 'DELIVERED', sent_at: new Date().toISOString() } },
+    ]);
+    signal('q-1', 'delivery');
+    await waitFor(() => expect(gets(calls, DETAIL)).toBeGreaterThan(before));
+    await screen.findByText('Отправлено');
+
+    expect(thread.scrollTop).toBe(1100);
+    expect(screen.queryByRole('button', { name: /Новые сообщения/ })).toBeNull();
+  });
+
+  test('перечитывание без новых реплик не прокручивает ленту', async () => {
+    const { calls, thread } = await openThread([employeeSays('m-1', 'Первое', 10)]);
+    const g = geometry(thread);
+    g.at(1100);
+    const before = gets(calls, DETAIL);
+
+    signal('q-1', 'updated');
+    await waitFor(() => expect(gets(calls, DETAIL)).toBeGreaterThan(before));
+    act(() => latest().emit('resync', {}));
+    await waitFor(() => expect(gets(calls, DETAIL)).toBeGreaterThan(before + 1));
+
+    expect(thread.scrollTop).toBe(1100);
+    expect(screen.queryByRole('button', { name: /Новые сообщения/ })).toBeNull();
+  });
+
+  test('ответ коллеги из другого окна не сбрасывает читающего вниз', async () => {
+    const { state, thread } = await openThread([employeeSays('m-1', 'Первое', 10)]);
+    const g = geometry(thread);
+    g.at(1100);
+
+    g.grow();
+    state.detail = question([
+      employeeSays('m-1', 'Первое', 10),
+      { ...hrSays('m-9', 'Ответила коллега', {}, 'чужой-ключ'), author: { type: 'user', id: 'u-2', name: 'Азизова Мадина' } },
+    ]);
+    signal('q-1', 'reply');
+    await screen.findByText('Ответила коллега');
+
+    await screen.findByRole('button', { name: /Новые сообщения/ });
+    expect(thread.scrollTop).toBe(1100);
+  });
+
+  test('свой ответ опускает ленту вниз, даже если HR читал историю', async () => {
+    const { thread } = await openThread([employeeSays('m-1', 'Первое', 10)]);
+    const g = geometry(thread);
+    g.at(1100);
+
+    g.grow();
+    fireEvent.change(screen.getByLabelText('Ответ сотруднику'), { target: { value: 'Мой ответ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Отправить' }));
+    await screen.findByText('Мой ответ');
+
+    expect(thread.scrollTop).toBe(2100);
+  });
+});
+
+// --- выбор обращения ------------------------------------------------------------
+
+describe('открытое обращение', () => {
+  test('без id в адресе новое сообщение в другом чате не переключает разговор', async () => {
     const { state } = server({
+      rows: [row('q-1', 'Облокулов Шахноза', 10), row('q-2', 'Назаров Фаррух', 30)],
+      detail: question([employeeSays('m-1', 'Первое', 10)]),
+      unanswered: 2,
+    });
+    renderApp('/questions');
+    await screen.findByText('Первое');
+    await openLive();
+
+    // Назаров написал — его строка встала первой.
+    state.rows = [row('q-2', 'Назаров Фаррух', 0, { snippet: 'Свежий вопрос' }), row('q-1', 'Облокулов Шахноза', 10)];
+    signal('q-2');
+    await screen.findByText('Свежий вопрос');
+
+    // Открыт всё тот же разговор.
+    expect(screen.getByText('Первое')).toBeTruthy();
+    const talk = screen.getByRole('region', { name: 'Переписка' });
+    expect(within(talk).getByText('Облокулов Шахноза')).toBeTruthy();
+  });
+
+  test('сигнал об открытом чате перечитывает его сразу, без ожидания окна', async () => {
+    const { calls } = server({
       rows: [row('q-1', 'Облокулов Шахноза', 10)],
       detail: question([employeeSays('m-1', 'Первое', 10)]),
       unanswered: 1,
@@ -247,24 +430,13 @@ describe('сообщение в открытом чате', () => {
     renderApp('/questions?id=q-1');
     await screen.findByText('Первое');
     await openLive();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const before = gets(calls, DETAIL);
 
-    // Прокрутили вверх: до нижнего края далеко.
-    const thread = document.querySelector('.tk-thread') as HTMLElement;
-    Object.defineProperty(thread, 'scrollHeight', { configurable: true, value: 2000 });
-    Object.defineProperty(thread, 'clientHeight', { configurable: true, value: 400 });
-    thread.scrollTop = 100;
-    fireEvent.scroll(thread);
-
-    state.detail = question([employeeSays('m-1', 'Первое', 10), employeeSays('m-2', 'Сообщение внизу ленты', 0)]);
     signal('q-1');
-    await screen.findByText('Сообщение внизу ленты');
 
-    // Кнопка появляется следующим рендером после самого сообщения.
-    const newer = await screen.findByRole('button', { name: /Новые сообщения/ });
-    expect(thread.scrollTop).toBe(100);
-    fireEvent.click(newer);
-    expect(thread.scrollTop).toBe(2000);
-    expect(screen.queryByRole('button', { name: /Новые сообщения/ })).toBeNull();
+    // Запрос ушёл в том же такте, что и сигнал, — не через 150–200 мс.
+    expect(gets(calls, DETAIL)).toBe(before + 1);
   });
 });
 
@@ -329,7 +501,7 @@ describe('сообщение в другом чате', () => {
     expect(calls.slice(before).some((one) => DETAIL.test(one.url))).toBe(false);
   });
 
-  test('серия сигналов — одно перечитывание, а не десять', async () => {
+  test('серия сигналов — сразу одно перечитывание и одно в конце, а не десять', async () => {
     const { calls } = server({
       rows: [row('q-1', 'Облокулов Шахноза', 10)],
       detail: question([employeeSays('m-1', 'Первое', 10)]),
@@ -344,7 +516,8 @@ describe('сообщение в другом чате', () => {
     for (let n = 0; n < 10; n += 1) signal(`q-${50 + n}`);
     await new Promise((resolve) => setTimeout(resolve, 500));
 
-    expect(gets(calls, LIST) - before).toBe(1);
+    // Первый сигнал — сразу; девять следом — одним перечитыванием в конце окна.
+    expect(gets(calls, LIST) - before).toBe(2);
   });
 });
 
