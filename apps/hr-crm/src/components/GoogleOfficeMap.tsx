@@ -17,7 +17,9 @@
 
 import { useEffect, useRef, useState } from 'react';
 
-import { DEFAULT_CENTER, type Found, type Place } from './OfficeMap';
+import {
+  DEFAULT_CENTER, NO_CORNERS, ZONE_COLOR, type Found, type Place, type Shape,
+} from './OfficeMap';
 
 export const GOOGLE_KEY: string = import.meta.env['VITE_GOOGLE_MAPS_KEY'] ?? '';
 
@@ -28,6 +30,9 @@ type Props = {
   editable: boolean;
   onPlace: (place: Place) => void;
   focus?: Place | null;
+  shape?: Shape;
+  polygon?: Place[];
+  onPolygon?: (next: Place[]) => void;
 };
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -71,19 +76,33 @@ function loadMaps(): Promise<Maps> {
   return loading;
 }
 
-export function GoogleOfficeMap({ place, radius, picking, editable, onPlace, focus = null }: Props) {
+export function GoogleOfficeMap({
+  place, radius, picking, editable, onPlace, focus = null,
+  shape = 'CIRCLE', polygon = NO_CORNERS, onPolygon,
+}: Props) {
   const box = useRef<HTMLDivElement>(null);
   const map = useRef<Maps>(null);
   const marker = useRef<Maps>(null);
   const circle = useRef<Maps>(null);
+  const area = useRef<Maps>(null);
+  const vertices = useRef<Maps[]>([]);
   const handler = useRef(onPlace);
   const pickingRef = useRef(picking);
   const editableRef = useRef(editable);
+  const shapeRef = useRef(shape);
+  const polygonRef = useRef(polygon);
+  const polygonHandler = useRef(onPolygon);
   const [failed, setFailed] = useState(false);
+  // Карта грузится асинхронно: эффекты контура должны сработать и после
+  // того, как она появилась, а не только при смене данных.
+  const [ready, setReady] = useState(false);
 
   handler.current = onPlace;
   pickingRef.current = picking;
   editableRef.current = editable;
+  shapeRef.current = shape;
+  polygonRef.current = polygon;
+  polygonHandler.current = onPolygon;
 
   // Карта создаётся один раз: пересоздавать её на каждое изменение
   // точки значит терять масштаб и положение, которые человек выбрал.
@@ -113,9 +132,16 @@ export function GoogleOfficeMap({ place, radius, picking, editable, onPlace, foc
         // Нажатие по карте ставит точку сразу, без отдельного режима.
         created.addListener('click', (event: Maps) => {
           if (!editableRef.current || !event.latLng) return;
-          handler.current({ lat: event.latLng.lat(), lon: event.latLng.lng() });
+          const at = { lat: event.latLng.lat(), lon: event.latLng.lng() };
+          // В режиме контура нажатие добавляет следующий угол участка.
+          if (shapeRef.current === 'POLYGON') {
+            polygonHandler.current?.([...polygonRef.current, at]);
+            return;
+          }
+          handler.current(at);
         });
         map.current = created;
+        setReady(true);
       })
       .catch(() => { if (alive) setFailed(true); });
     return () => { alive = false; };
@@ -127,7 +153,8 @@ export function GoogleOfficeMap({ place, radius, picking, editable, onPlace, foc
     const maps = window.google?.maps;
     if (!maps || !map.current) return;
 
-    if (!place) {
+    // У контура своей точки и круга нет: точка офиса — его центр.
+    if (!place || shape === 'POLYGON') {
       marker.current?.setMap(null);
       circle.current?.setMap(null);
       marker.current = null;
@@ -167,7 +194,59 @@ export function GoogleOfficeMap({ place, radius, picking, editable, onPlace, foc
       circle.current.setCenter(at);
       circle.current.setRadius(radius);
     }
-  }, [place, radius, editable]);
+  }, [place, radius, editable, shape, ready]);
+
+  // Контур: заливка и углы — те же, что на карте OSM.
+  useEffect(() => {
+    const maps = window.google?.maps;
+    if (!maps || !map.current) return;
+    area.current?.setMap(null);
+    area.current = null;
+    vertices.current.forEach((one) => one.setMap(null));
+    vertices.current = [];
+    if (shape !== 'POLYGON' || polygon.length === 0) return;
+
+    const path = polygon.map((one) => ({ lat: one.lat, lng: one.lon }));
+    area.current = polygon.length >= 3
+      ? new maps.Polygon({
+          map: map.current, paths: path, clickable: false,
+          strokeColor: ZONE_COLOR, strokeOpacity: 0.9, strokeWeight: 2,
+          fillColor: ZONE_COLOR, fillOpacity: 0.22,
+        })
+      : new maps.Polyline({
+          map: map.current, path, clickable: false,
+          strokeColor: ZONE_COLOR, strokeOpacity: 0.9, strokeWeight: 2,
+        });
+
+    vertices.current = polygon.map((one, index) => {
+      const vertex = new maps.Marker({
+        map: map.current,
+        position: { lat: one.lat, lng: one.lon },
+        draggable: editable,
+        title: `Угол ${index + 1}`,
+        icon: {
+          path: maps.SymbolPath.CIRCLE, scale: 7,
+          fillColor: '#ffffff', fillOpacity: 1,
+          strokeColor: ZONE_COLOR, strokeWeight: 3,
+        },
+      });
+      // Пока угол тащат, заливка идёт за ним; наверх — только отпущенное.
+      vertex.addListener('drag', (event: Maps) => {
+        if (!event.latLng) return;
+        const next = path.slice();
+        next[index] = { lat: event.latLng.lat(), lng: event.latLng.lng() };
+        if (polygon.length >= 3) area.current?.setPaths(next);
+        else area.current?.setPath(next);
+      });
+      vertex.addListener('dragend', (event: Maps) => {
+        if (!event.latLng) return;
+        const next = polygonRef.current.slice();
+        next[index] = { lat: event.latLng.lat(), lon: event.latLng.lng() };
+        polygonHandler.current?.(next);
+      });
+      return vertex;
+    });
+  }, [shape, polygon, editable, ready]);
 
   // Перелёт к найденному адресу. Масштаб поднимается только если карта
   // стоит далеко: приближать уже приближенную — значит отнимать у

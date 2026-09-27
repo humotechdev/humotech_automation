@@ -276,6 +276,8 @@ def test_exit_reports_the_hours_from_the_server():
         ("OFFICE_NOT_ALLOWED", "не назначен"),
         ("OUTSIDE_GEOFENCE", "далеко"),
         ("LOCATION_TOO_VAGUE", "приблизительно"),
+        ("LOCATION_AMBIGUOUS", "границы территории"),
+        ("LOCATION_STALE", "устарела"),
         ("ALREADY_INSIDE", "уже отмечены"),
         ("NOT_INSIDE", "Открытой сессии нет"),
     ],
@@ -336,3 +338,32 @@ def test_neither_the_code_nor_the_coordinates_reach_the_chat():
     assert "HT1" not in body
     assert "38.56" not in body
     assert "68.78" not in body
+
+
+def test_a_contour_refusal_names_the_distance_to_its_edge_not_a_radius():
+    """У контура радиуса нет: «допустимо: None м» было бы бессмыслицей."""
+    message = FakeMessage(payload())
+    run(message, FakeClient(result={
+        "status": "OUTSIDE_GEOFENCE", "accepted": False,
+        "office_name": None, "point_name": None, "occurred_at": None,
+        "session": None, "distance_m": 147.7, "radius_m": None,
+        "geofence_kind": "POLYGON",
+    }))
+
+    answer = message.answers[-1][0]
+    assert "148 м до её границы" in answer
+    assert "None" not in answer
+
+
+def test_an_accepted_mark_inside_a_contour_does_not_say_zero_metres():
+    message = FakeMessage(payload())
+    run(message, FakeClient(result={
+        "status": "ENTERED", "accepted": True,
+        "office_name": "Ташкентский офис", "point_name": None,
+        "occurred_at_local": "09:03", "distance_m": 0, "radius_m": None,
+        "geofence_kind": "POLYGON", "session": None,
+    }))
+
+    answer = message.answers[-1][0]
+    assert "на территории офиса" in answer
+    assert "0 м" not in answer

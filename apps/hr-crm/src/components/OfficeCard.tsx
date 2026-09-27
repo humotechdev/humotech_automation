@@ -151,7 +151,7 @@ function Overview({ row, canManage, updated }: {
           </div>
           <div>
             <dt>Геозона</dt>
-            <dd>{office.geofence_radius_m ? `${office.geofence_radius_m} м` : 'не задана'}</dd>
+            <dd>{api.geofenceLabel(office)}</dd>
           </div>
           <div>
             <dt>Координаты</dt>
@@ -381,7 +381,7 @@ function Points({ row, canManage }: { row: OfficeStats; canManage: boolean }) {
       <dl className="ofc-facts ofc-facts--three">
         <div>
           <dt>Геозона</dt>
-          <dd>{office.geofence_radius_m ? `${office.geofence_radius_m} м` : 'не задана'}</dd>
+          <dd>{api.geofenceLabel(office)}</dd>
         </div>
         <div>
           <dt>Координаты</dt>

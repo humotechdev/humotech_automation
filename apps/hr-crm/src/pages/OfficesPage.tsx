@@ -54,11 +54,7 @@ export type OfficeStats = {
 export function needsSetup(row: OfficeStats): boolean {
   if (row.pointsKnown === false) return false;
   const wants = row.points.some((point) => point.require_geolocation);
-  const ready =
-    row.office.latitude !== null &&
-    row.office.longitude !== null &&
-    (row.office.geofence_radius_m ?? 0) > 0;
-  return wants && !ready;
+  return wants && !api.geofenceReady(row.office);
 }
 
 export function OfficesPage() {
@@ -769,7 +765,7 @@ function OfficeStrip({
             {rows.map((row) => {
               const staff = staffOf(row);
               const located = coordinates(row.office) !== null
-                && (row.office.geofence_radius_m ?? 0) > 0;
+                && api.geofenceReady(row.office);
               return (
                 <button key={row.office.id} type="button" data-office-id={row.office.id}
                         className={`of-card${row.office.id === picked ? ' of-card--on' : ''}`}

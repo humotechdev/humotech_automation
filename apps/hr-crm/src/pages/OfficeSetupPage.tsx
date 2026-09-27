@@ -20,7 +20,9 @@ import { AppShell } from '../components/AppShell';
 import { AppIcon } from '../components/AppIcon';
 import { OfficeForm } from '../components/OfficeCard';
 import { OfficeStaff } from '../components/OfficeStaff';
-import { OfficeMap, addressOf, searchAddress, type Found, type Place } from '../components/OfficeMap';
+import {
+  OfficeMap, addressOf, searchAddress, type Found, type Place, type Shape,
+} from '../components/OfficeMap';
 import {
   GOOGLE_KEY, GoogleOfficeMap, googleAddress, googleSearch,
 } from '../components/GoogleOfficeMap';
@@ -216,8 +218,8 @@ function Summary({ office, points, onTab }: {
         <div><dt>Регион</dt><dd>{office.region_name ?? '—'}</dd></div>
         <div><dt>Адрес</dt><dd title={office.address ?? undefined}>{office.address || 'Не указан'}</dd></div>
         <div>
-          <dt>Радиус</dt>
-          <dd>{located ? `${office.geofence_radius_m} м` : 'не задан'}</dd>
+          <dt>Геозона</dt>
+          <dd>{api.geofenceLabel(office)}</dd>
         </div>
         <div>
           <dt>QR-точки</dt>
@@ -227,7 +229,7 @@ function Summary({ office, points, onTab }: {
 
       <h3 className="ofs-summary__title">Готовность к отметке</h3>
       <ul className="ofs-steps">
-        <Step done={located} title="Точка на карте и радиус" onClick={() => onTab('geo')} />
+        <Step done={located} title="Геозона на карте" onClick={() => onTab('geo')} />
         <Step done={entry} title="QR-код для входа" onClick={() => onTab('qr')} />
         <Step done={leave} title="QR-код для выхода" onClick={() => onTab('qr')} />
       </ul>
@@ -254,7 +256,52 @@ function Step({ done, title, onClick }: { done: boolean; title: string; onClick:
 
 // --- геолокация ------------------------------------------------------------------
 
-type Draft = { place: Place | null; radius: number; address: string };
+type Draft = {
+  place: Place | null;
+  radius: number;
+  address: string;
+  /** Круг вокруг точки или контур участка. */
+  shape: Shape;
+  /** Углы контура по порядку обхода. Хранятся и в режиме круга: вернуться
+      к контуру можно, не рисуя его заново. */
+  polygon: Place[];
+};
+
+/** Контур строкой — чтобы сравнить черновик с сохранённым. */
+function cornersKey(corners: Place[]): string {
+  return corners.map((one) => `${one.lat.toFixed(6)},${one.lon.toFixed(6)}`).join(';');
+}
+
+/**
+ * Площадь контура в квадратных метрах — для подписи, не для решения.
+ * Плоская проекция вокруг первого угла: на участке меньше километра она
+ * ошибается на доли процента.
+ */
+function areaOf(corners: Place[]): number {
+  if (corners.length < 3) return 0;
+  const [first] = corners;
+  const metres = 6_371_000 * Math.PI / 180;
+  const k = Math.cos((first!.lat * Math.PI) / 180);
+  const xy = corners.map((one) => [
+    (one.lon - first!.lon) * metres * k,
+    (one.lat - first!.lat) * metres,
+  ] as const);
+  let twice = 0;
+  xy.forEach(([x1, y1], index) => {
+    const [x2, y2] = xy[(index + 1) % xy.length]!;
+    twice += x1 * y2 - x2 * y1;
+  });
+  return Math.abs(twice) / 2;
+}
+
+function cornersWord(count: number): string {
+  const tens = count % 100;
+  const ones = count % 10;
+  if (tens >= 11 && tens <= 14) return 'углов';
+  if (ones === 1) return 'угол';
+  if (ones >= 2 && ones <= 4) return 'угла';
+  return 'углов';
+}
 
 /**
  * Пара полей с координатами.
@@ -309,6 +356,8 @@ function draftOf(office: api.OfficeFull): Draft {
     place: Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon } : null,
     radius: office.geofence_radius_m ?? RADIUS_DEFAULT,
     address: office.address ?? '',
+    shape: office.geofence_kind === 'POLYGON' ? 'POLYGON' : 'CIRCLE',
+    polygon: (office.geofence_polygon ?? []).map(([lat, lon]) => ({ lat, lon })),
   };
 }
 
@@ -338,7 +387,17 @@ function GeoEditor({ office, canManage, onSaved }: {
     (draft.place?.lat ?? null) !== (initial.place?.lat ?? null)
     || (draft.place?.lon ?? null) !== (initial.place?.lon ?? null)
     || draft.radius !== initial.radius
-    || draft.address.trim() !== initial.address.trim();
+    || draft.address.trim() !== initial.address.trim()
+    || draft.shape !== initial.shape
+    || cornersKey(draft.polygon) !== cornersKey(initial.polygon);
+  const fenced = draft.shape === 'POLYGON';
+  const ready = fenced ? draft.polygon.length >= 3 : draft.place !== null;
+  const hasZone = initial.place !== null || initial.polygon.length > 0;
+
+  const corners = useCallback((next: Place[]) => {
+    setDraft((was) => ({ ...was, polygon: next }));
+    setDone(null);
+  }, []);
 
   const place = useCallback((next: Place) => {
     setDraft((was) => ({ ...was, place: next }));
@@ -408,16 +467,34 @@ function GeoEditor({ office, canManage, onSaved }: {
     setFields({});
     setDone(null);
     try {
-      const body: Record<string, unknown> = next?.place
+      const address = next?.address.trim() ? { address: next.address.trim() } : {};
+      // Контур уходит углами; точку офиса — его центр — ставит сервер.
+      // Круг уходит прежним видом. Сброс снимает и то и другое.
+      const body: Record<string, unknown> = next?.shape === 'POLYGON'
         ? {
-            latitude: next.place.lat.toFixed(6),
-            longitude: next.place.lon.toFixed(6),
-            geofence_radius_m: next.radius,
-            ...(next.address.trim() ? { address: next.address.trim() } : {}),
+            geofence_kind: 'POLYGON',
+            geofence_polygon: next.polygon.map((one) => [
+              Number(one.lat.toFixed(6)), Number(one.lon.toFixed(6)),
+            ]),
+            ...address,
           }
-        : { latitude: null, longitude: null, geofence_radius_m: null };
+        : next?.place
+          ? {
+              geofence_kind: 'CIRCLE',
+              latitude: next.place.lat.toFixed(6),
+              longitude: next.place.lon.toFixed(6),
+              geofence_radius_m: next.radius,
+              ...address,
+            }
+          : {
+              geofence_kind: 'CIRCLE', geofence_polygon: null,
+              latitude: null, longitude: null, geofence_radius_m: null,
+            };
       const savedOffice = await api.updateOffice(office.id, body);
-      setDone(next?.place ? 'Расположение сохранено' : 'Геолокация очищена');
+      setDone(
+        next?.shape === 'POLYGON' ? 'Контур территории сохранён'
+          : next?.place ? 'Расположение сохранено' : 'Геолокация очищена',
+      );
       setConfirmClear(false);
       onSaved(savedOffice);
     } catch (error) {
@@ -433,7 +510,8 @@ function GeoEditor({ office, canManage, onSaved }: {
     <div className="ofs-geo">
       <div className="ofs-map">
         <MapView place={draft.place} radius={draft.radius} picking={picking}
-                   editable={canManage} onPlace={place} focus={focus} />
+                   editable={canManage} onPlace={place} focus={focus}
+                   shape={draft.shape} polygon={draft.polygon} onPolygon={corners} />
 
         {canManage && (
           <div className="ofs-map__tools">
@@ -472,7 +550,15 @@ function GeoEditor({ office, canManage, onSaved }: {
           </div>
         )}
 
-        {picking && (
+        {canManage && fenced && draft.polygon.length < 3 && (
+          <div className="ofs-map__hint" role="status">
+            {draft.polygon.length === 0
+              ? 'Нажмите на карту в углу участка — и дальше по порядку обхода'
+              : `Отмечено углов: ${draft.polygon.length}. Нужно не меньше трёх`}
+          </div>
+        )}
+
+        {picking && !fenced && (
           <div className="ofs-map__hint" role="status">
             Нажмите на карту там, где вход в офис
             <button type="button" className="ofs-link" onClick={() => setPicking(false)}>Отмена</button>
@@ -483,6 +569,21 @@ function GeoEditor({ office, canManage, onSaved }: {
       <div className="ofs-geo__panel">
         <h2 className="ofs-title">Точка и зона</h2>
 
+        <div className="ofs-shape" role="radiogroup" aria-label="Форма зоны">
+          {(['CIRCLE', 'POLYGON'] as const).map((kind) => (
+            <button key={kind} type="button" role="radio" aria-checked={draft.shape === kind}
+                    className={draft.shape === kind ? 'ofs-shape__opt ofs-shape__opt--on' : 'ofs-shape__opt'}
+                    disabled={!canManage}
+                    onClick={() => {
+                      setDraft((was) => ({ ...was, shape: kind }));
+                      setPicking(false);
+                      setDone(null);
+                    }}>
+              {kind === 'CIRCLE' ? 'Круг' : 'Контур территории'}
+            </button>
+          ))}
+        </div>
+
         <div className="ofs-geo__fact">
           <span className="ofs-geo__label">Адрес</span>
           <p className="ofs-geo__value">
@@ -490,6 +591,35 @@ function GeoEditor({ office, canManage, onSaved }: {
           </p>
         </div>
 
+        {fenced ? (
+          <div className="ofs-geo__fact">
+            <span className="ofs-geo__value--row ofs-geo__label">
+              Контур территории
+              {canManage && (
+                <button type="button" className="ofs-link" disabled={draft.polygon.length === 0}
+                        onClick={() => corners(draft.polygon.slice(0, -1))}>
+                  Отменить точку
+                </button>
+              )}
+            </span>
+            <p className="ofs-geo__value">
+              {draft.polygon.length === 0
+                ? <span className="ofs-geo__none">Углы не отмечены</span>
+                : `${draft.polygon.length} ${cornersWord(draft.polygon.length)}`
+                  + (draft.polygon.length >= 3
+                    ? ` · около ${Math.round(areaOf(draft.polygon)).toLocaleString('ru-RU')} м²`
+                    : '')}
+            </p>
+            {fields['geofence_polygon'] && (
+              <span className="ofs-field__error">{fields['geofence_polygon'].join(' ')}</span>
+            )}
+            {canManage && draft.polygon.length > 0 && (
+              <button type="button" className="ofs-link ofs-link--start" onClick={() => corners([])}>
+                Очистить контур
+              </button>
+            )}
+          </div>
+        ) : (<>
         <div className="ofs-geo__fact">
           <span className="ofs-geo__value--row ofs-geo__label">
             Координаты
@@ -532,9 +662,15 @@ function GeoEditor({ office, canManage, onSaved }: {
             <span className="ofs-field__error">{fields['geofence_radius_m'].join(' ')}</span>
           )}
         </div>
+        </>)}
 
         <p className="ofs-hint">
-          Сотрудник может отметить вход или выход только внутри этой зоны.
+          {fenced
+            ? 'Обведите по углам само здание или огороженную территорию, без дороги '
+              + 'и соседних домов. Угол можно перетащить. Погрешность телефона сервер '
+              + 'учитывает сам: у самой границы он попросит сотрудника повторить, а не '
+              + 'пропустит и не откажет наугад.'
+            : 'Сотрудник может отметить вход или выход только внутри этой зоны.'}
         </p>
 
         {failed && <p className="ofs-alert" role="alert">{failed}</p>}
@@ -556,11 +692,11 @@ function GeoEditor({ office, canManage, onSaved }: {
           ) : (
             <div className="ofs-geo__actions">
               <button type="button" className="ofs-btn"
-                      disabled={sending || initial.place === null} onClick={() => setConfirmClear(true)}>
+                      disabled={sending || !hasZone} onClick={() => setConfirmClear(true)}>
                 Очистить
               </button>
               <button type="button" className="ofs-btn ofs-btn--blue"
-                      disabled={sending || !draft.place || !dirty} onClick={() => void save(draft)}>
+                      disabled={sending || !ready || !dirty} onClick={() => void save(draft)}>
                 {sending ? 'Сохраняем…' : 'Сохранить'}
               </button>
             </div>
@@ -572,7 +708,7 @@ function GeoEditor({ office, canManage, onSaved }: {
 }
 
 function isLocated(office: api.OfficeFull): boolean {
-  return office.latitude !== null && office.longitude !== null && (office.geofence_radius_m ?? 0) > 0;
+  return api.geofenceReady(office);
 }
 
 /** Первые части длинного названия из поиска: «Амира Темура, 107, Ташкент». */

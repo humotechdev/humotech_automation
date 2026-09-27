@@ -1103,10 +1103,49 @@ export type OfficeFull = Office & {
   latitude: string | number | null;
   longitude: string | number | null;
   geofence_radius_m: number | null;
+  /** Форма геозоны. У старых ответов поля нет — это круг. */
+  geofence_kind?: 'CIRCLE' | 'POLYGON';
+  /** Углы участка `[широта, долгота]`, незамкнутый контур. */
+  geofence_polygon?: [number, number][] | null;
   opened_at: string | null;
   closed_at: string | null;
   updated_at?: string;
 };
+
+type Fenced = Pick<OfficeFull, 'latitude' | 'longitude' | 'geofence_radius_m'
+  | 'geofence_kind' | 'geofence_polygon'>;
+
+/**
+ * Настроена ли у офиса геозона — кругом или контуром.
+ *
+ * Одно правило на все экраны, то же, что у сервера: контур действует,
+ * если выбран и нарисован; круг — если есть точка и радиус. Раньше
+ * «настроен» определялось по одному радиусу, и офис с контуром выглядел
+ * бы ненастроенным.
+ */
+export function geofenceReady(office: Fenced): boolean {
+  if (office.geofence_kind === 'POLYGON') return (office.geofence_polygon?.length ?? 0) >= 3;
+  return office.latitude !== null && office.longitude !== null
+    && (office.geofence_radius_m ?? 0) > 0;
+}
+
+/** Геозона словами: «70 м», «контур, 6 углов» или «не задана». */
+export function geofenceLabel(office: Fenced): string {
+  if (!geofenceReady(office)) return 'не задана';
+  if (office.geofence_kind === 'POLYGON') {
+    return `контур, ${office.geofence_polygon!.length} ${corners(office.geofence_polygon!.length)}`;
+  }
+  return `${office.geofence_radius_m} м`;
+}
+
+function corners(count: number): string {
+  const tens = count % 100;
+  const ones = count % 10;
+  if (tens >= 11 && tens <= 14) return 'углов';
+  if (ones === 1) return 'угол';
+  if (ones >= 2 && ones <= 4) return 'угла';
+  return 'углов';
+}
 
 export const officesPage = (
   params: { search?: string; status?: string; region_id?: string; limit?: string; cursor?: string },

@@ -1847,3 +1847,57 @@
      Условие то же, по которому сетка схлопывается выше. */
   .ofs-qr__main { padding-right: 0; }
 }
+
+/* Форма зоны: круг или контур территории. Два положения одного
+   выбора — сегменты, а не вкладки: переключение не уводит со страницы. */
+.ofs-shape {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--ofs-field);
+  border-radius: 8px;
+  background: #f4f7fb;
+}
+
+.ofs-shape__opt {
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ofs-muted);
+  cursor: pointer;
+}
+
+.ofs-shape__opt--on {
+  background: #ffffff;
+  color: var(--ofs-blue);
+  box-shadow: 0 1px 3px rgba(19, 41, 90, 0.14);
+}
+
+.ofs-shape__opt:disabled {
+  cursor: default;
+}
+
+.ofs-link:disabled {
+  color: var(--ofs-muted);
+  cursor: default;
+}
+
+.ofs-link--start {
+  display: block;
+  margin: 6px 0 0;
+}
+
+/* Угол контура: за него тащат. */
+.ofs-vertex {
+  border: 3px solid var(--ofs-blue, #1f6fe0);
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 4px rgba(19, 41, 90, 0.35);
+  cursor: grab;
+}
