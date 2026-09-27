@@ -20,7 +20,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import time
 from collections.abc import Awaitable, Callable
 
 from humotech.realtime.signals import CHANNEL
@@ -95,17 +94,6 @@ class Broker:
                     async for notice in connection.notifies():
                         event = _parse(notice.payload)
                         if event is not None:
-                            # Диагностика (временно): сигнал дошёл до
-                            # слушателя; задержка — от вызова NOTIFY.
-                            if event.get("t") == "question" and isinstance(
-                                event.get("at"), (int, float)
-                            ):
-                                logger.info(
-                                    "diag listener got question=%s lag_ms=%d subscribers=%d",
-                                    str(event.get("id"))[:8],
-                                    (time.time() - event["at"]) * 1000,
-                                    len(self._subscribers),
-                                )
                             self.publish(event)
             except asyncio.CancelledError:
                 raise

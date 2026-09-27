@@ -97,10 +97,8 @@ async def wait_for_work(
         logger.debug("outbox wait unavailable: %s", error)
         await asyncio.sleep(fallback)
         return
-    if isinstance(answer, dict) and answer.get("ready"):
-        logger.info("outbox woke: %s", answer.get("reason") or "ready")
-        if idle > 2:
-            await asyncio.sleep(1)
+    if isinstance(answer, dict) and answer.get("ready") and idle > 2:
+        await asyncio.sleep(1)
 
 
 async def tick(sender: Sender, client: SelfServiceClient) -> int:
@@ -137,12 +135,6 @@ async def _deliver(sender: Sender, item: dict) -> dict:
         # каждое обращение.
         attachment=item.get("attachment"),
         telegram_user_id=item.get("telegram_user_id"),
-    )
-    # Отметка времени приёма Telegram — единственное доказательство
-    # доставки. Только идентификатор строки очереди, без текста.
-    logger.info(
-        "telegram %s notification=%s",
-        "accepted" if outcome.sent else "refused", item["id"],
     )
     if outcome.sent:
         return {"id": item["id"], "sent": True}

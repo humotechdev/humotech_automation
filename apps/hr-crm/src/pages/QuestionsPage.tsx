@@ -35,7 +35,7 @@ import { AppIcon, type AppIconName } from '../components/AppIcon';
 import { AppPopover, AppSelectField } from '../components/AppSelect';
 import { useSession } from '../features/auth/session';
 import { useBlock, type Block } from '../features/dashboard/data';
-import { diag, liveState, onLive, onLiveState } from '../features/realtime/events';
+import { liveState, onLive, onLiveState } from '../features/realtime/events';
 import { useStickyState } from '../features/shell/sticky';
 import '../styles/questions.css';
 
@@ -329,7 +329,6 @@ export function QuestionsPage() {
     let queuedAll = false;
     const run = (detail: boolean, everything: boolean) => {
       const reload = reloadsRef.current;
-      diag('refetch started', { detail: detail || everything, everything });
       reload.reloadList();
       reload.reloadCounts();
       if (detail || everything) reload.reloadDetail();
@@ -366,11 +365,6 @@ export function QuestionsPage() {
       if (timer !== null) clearTimeout(timer);
     };
   }, []);
-  useEffect(() => {
-    if (detailBlock.state === 'ready') {
-      diag('detail refetched', { messages: detailBlock.data.messages.length });
-    }
-  }, [detailBlock]);
 
   // Ответ действия показывается сразу, не дожидаясь следующего опроса.
   const [override, setOverride] = useState<api.Question | null>(null);
@@ -849,7 +843,6 @@ function Conversation({
     const own = waiting.length > 0
       || (lastMessage?.client_request_id != null
         && sentKeys.current.has(lastMessage.client_request_id));
-    diag('message rendered', { id: tail.slice(0, 16), own, atBottom: atBottom.current });
     if (own || atBottom.current) {
       box.scrollTop = box.scrollHeight;
       atBottom.current = true;

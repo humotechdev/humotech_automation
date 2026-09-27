@@ -49,24 +49,6 @@ let watchdog: ReturnType<typeof setInterval> | null = null;
 let probe: Probe = async () => 'unknown';
 let detach: (() => void) | null = null;
 
-/** Последние сигналы с задержкой доставки — для проверки на стенде. */
-export const recent: { id: string; what: string; lagMs: number | null; at: number }[] = [];
-
-/**
- * Диагностика цепочки (временно): этапы с отметкой времени — сигнал
- * получен, перечитывание начато и закончено, сообщение нарисовано.
- * Только в разработке; читается из консоли как `window.__humotechTrace`.
- */
-export const trace: { stage: string; t: number; [key: string]: unknown }[] = [];
-export function diag(stage: string, extra: Record<string, unknown> = {}): void {
-  if (!import.meta.env.DEV) return;
-  const entry = { stage, t: Date.now(), ...extra };
-  trace.push(entry);
-  if (trace.length > 200) trace.shift();
-  (window as unknown as { __humotechTrace?: typeof trace }).__humotechTrace = trace;
-  console.info(`[humotech:trace] ${stage}`, extra);
-}
-
 function setState(next: LiveState): void {
   if (state === next) return;
   state = next;
@@ -176,8 +158,6 @@ function connect(): void {
       at,
       sent: typeof data['sent'] === 'number' ? data['sent'] : null,
     };
-    note(signal);
-    diag('signal received', { id: signal.id.slice(0, 8), what: signal.what, lagMs: signal.at !== null ? Date.now() - signal.at * 1000 : null });
     emit(signal);
   });
   next.addEventListener('bye', () => {
@@ -266,26 +246,10 @@ function parse(raw: unknown): Record<string, unknown> | null {
   }
 }
 
-function note(signal: Extract<LiveSignal, { type: 'question' }>): void {
-  const now = Date.now();
-  const lagMs = signal.at !== null ? Math.round(now - signal.at * 1000) : null;
-  recent.push({ id: signal.id, what: signal.what, lagMs, at: now });
-  if (recent.length > 50) recent.shift();
-  // Задержка «изменение зафиксировано → сигнал в браузере». Часы сервера
-  // и браузера на одной машине стенда общие, поэтому число осмысленно.
-  // Только в разработке: `window.__humotechLive` читается из консоли без
-  // включения подробного уровня журнала.
-  if (import.meta.env.DEV) {
-    (window as unknown as { __humotechLive?: typeof recent }).__humotechLive = recent;
-    console.info(`[humotech:live] ${signal.what} ${signal.id.slice(0, 8)} +${lagMs ?? '?'} мс`);
-  }
-}
-
 /** Для тестов: сбросить всё состояние модуля. */
 export function resetLiveForTests(): void {
   // Подписчики не стираются: страницы отписываются сами при размонтировании,
   // а общий счётчик меню подписан один раз на всё время жизни модуля.
   stopLive();
-  recent.length = 0;
   probe = async () => 'unknown';
 }
