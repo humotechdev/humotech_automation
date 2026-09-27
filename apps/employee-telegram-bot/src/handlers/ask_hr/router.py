@@ -162,8 +162,9 @@ async def reply_to_hr_forward(
         return
     # Отметка для замера «сотрудник отправил в Telegram → обращение
     # записано». Время Telegram — с точностью до секунды; без текста.
-    if message.date is not None:
-        lag = (datetime.now(timezone.utc) - message.date).total_seconds()
+    sent = getattr(message, "date", None)
+    if sent is not None:
+        lag = (datetime.now(timezone.utc) - sent).total_seconds()
         logger.info("hr message stored: telegram_to_backend_s=%.1f", lag)
     await message.answer(
         text.ask_hr_sent(result), reply_markup=build_menu(employee, message)
