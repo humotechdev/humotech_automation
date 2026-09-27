@@ -120,6 +120,19 @@ class TestSignals:
 
         assert listener.drain(0.5) == []
 
+    def test_read_in_one_window_is_signalled_to_the_others(
+        self, listener, make_actor, organization, employee
+    ):
+        """Прочитал в одном окне — у второго окна пропадает отметка."""
+        actor = make_actor(organization, permissions=READ)
+        question = ask(employee, unread=True)
+        listener.drain(0.3)
+
+        InboxService().read(actor, question.id)
+
+        kinds = [(one["t"], one.get("what")) for one in listener.drain()]
+        assert ("question", signals.READ) in kinds
+
     def test_reply_wakes_the_sender_and_delivery_is_signalled(
         self, listener, make_actor, organization, employee, linked_account
     ):
@@ -311,6 +324,47 @@ class TestStream:
         frames = read_stream(response, frames=3, events=[])
 
         assert names(frames) == ["ready", "ping", "ping"]
+
+
+    def test_two_hr_windows_both_get_the_same_signal(
+        self, fake_broker, make_user, organization, employee
+    ):
+        """Два окна CRM — два потока; один сигнал доходит до обоих."""
+        first_user = make_user(organization, permissions=READ)
+        second_user = make_user(organization, permissions=READ)
+        question = ask(employee)
+        one = async_to_sync(views.question_events)(stream_request(first_user))
+        two = async_to_sync(views.question_events)(stream_request(second_user))
+
+        async def run():
+            streams = [one.streaming_content.__aiter__(), two.streaming_content.__aiter__()]
+
+            async def frame(iterator):
+                while True:
+                    chunk = await asyncio.wait_for(iterator.__anext__(), 5)
+                    text = chunk.decode() if isinstance(chunk, bytes) else chunk
+                    if not text.startswith("retry:"):
+                        return text
+
+            try:
+                ready = [await frame(it) for it in streams]
+                assert fake_broker.subscribers == 2
+                fake_broker.publish({
+                    "t": "question", "org": str(organization.id),
+                    "id": str(question.id), "what": "read", "at": time.time(),
+                })
+                got = [await frame(it) for it in streams]
+            finally:
+                for it in streams:
+                    await it.aclose()
+            return ready, got
+
+        ready, got = async_to_sync(run)()
+
+        assert names(ready) == ["ready", "ready"]
+        assert names(got) == ["question", "question"]
+        assert {data(frame)["what"] for frame in got} == {"read"}
+        assert fake_broker.subscribers == 0
 
 
 # --- брокер ------------------------------------------------------------------

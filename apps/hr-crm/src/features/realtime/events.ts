@@ -257,8 +257,11 @@ function note(signal: Extract<LiveSignal, { type: 'question' }>): void {
   if (recent.length > 50) recent.shift();
   // Задержка «изменение зафиксировано → сигнал в браузере». Часы сервера
   // и браузера на одной машине стенда общие, поэтому число осмысленно.
+  // Только в разработке: `window.__humotechLive` читается из консоли без
+  // включения подробного уровня журнала.
   if (import.meta.env.DEV) {
-    console.debug(`[humotech:live] ${signal.what} ${signal.id} +${lagMs ?? '?'} мс`);
+    (window as unknown as { __humotechLive?: typeof recent }).__humotechLive = recent;
+    console.info(`[humotech:live] ${signal.what} ${signal.id.slice(0, 8)} +${lagMs ?? '?'} мс`);
   }
 }
 

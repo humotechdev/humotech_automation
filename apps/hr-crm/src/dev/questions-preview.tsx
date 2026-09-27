@@ -26,7 +26,7 @@ const HR = {
   roles: ['HR'],
   permissions: [
     'questions.read', 'questions.answer', 'knowledge.read', 'employees.read',
-    'absences.read', 'attendance.read',
+    'absences.read', 'attendance.read', 'notifications.manage',
   ],
 };
 
@@ -76,6 +76,21 @@ const HR_AUTHOR = { type: 'user', id: 'u-2', name: 'Aisha Karimova' };
 const EMP_AUTHOR = { type: 'employee', id: 'e-1', name: 'Muradov Azizbek' };
 const read = (iso: string) => ({ status: 'READ', sent_at: iso, read_at: iso, error: null });
 
+/**
+ * `?delivery=mixed` — все состояния доставки ответа HR разом: первый ответ
+ * не доставлен (с повтором), последний ещё отправляется, остальные
+ * отправлены. Для снимка вёрстки строки состояния под текстом.
+ */
+const MIXED = new URLSearchParams(window.location.search).get('delivery') === 'mixed';
+function delivery(iso: string, index: number, last: number) {
+  if (!MIXED) return read(iso);
+  if (index === 0) {
+    return { status: 'FAILED', sent_at: null, read_at: null, error: 'blocked_by_user', notification_id: 'n-0', can_retry: true };
+  }
+  if (index === last) return { status: 'QUEUED', sent_at: null, read_at: null, error: null, notification_id: 'n-9', can_retry: false };
+  return { status: 'DELIVERED', sent_at: iso, read_at: null, error: null, notification_id: `n-${index}`, can_retry: false };
+}
+
 const THREAD: [string, string, string][] = [
   ['E', '10:12', 'Здравствуйте! Нужно уточнить по командировке в Ташкент.\nС 22 по 25 апреля. Нужно ли какое-то дополнительное согласование со стороны HR?'],
   ['H', '10:14', 'Здравствуйте, Azizbek!\nДа, для командировки необходимо согласование с вашим руководителем и оформление заявки в системе.\nЯ подскажу детали.'],
@@ -112,7 +127,11 @@ const QUESTION = {
       details: null,
       author: who === 'E' ? EMP_AUTHOR : HR_AUTHOR,
       created_at: iso,
-      delivery: who === 'E' ? null : read(iso),
+      delivery: who === 'E' ? null : delivery(
+        iso,
+        THREAD.slice(0, index).filter(([one]) => one !== 'E').length,
+        THREAD.filter(([one]) => one !== 'E').length - 1,
+      ),
       attachment: null,
     };
   }),

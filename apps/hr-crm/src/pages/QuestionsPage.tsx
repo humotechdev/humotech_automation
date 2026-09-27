@@ -125,7 +125,25 @@ const TELEGRAM_REASON: Record<string, string> = {
   no_assignment: 'у сотрудника нет назначения',
   organization_inactive: 'организация неактивна',
   attachment_unavailable: 'файл не удалось получить',
+  // Причины, которые пишет очередь отправки, — тоже словами: код на
+  // экране HR ни о чём не говорит.
+  attachment_rejected: 'файл не прошёл проверку',
+  attachment_not_found: 'файл не найден',
+  cancelled_by_operator: 'отправку отменили вручную',
+  demo_account: 'это демонстрационный сотрудник',
+  stale_lock: 'бот не подтвердил отправку',
+  stub_forced_failure: 'проверочная ошибка стенда',
 };
+
+/**
+ * Причина недоставки словами. Неизвестный код — общей фразой, а не как
+ * есть: имя класса ошибки Telegram («TelegramBadRequest») HR не поможет.
+ */
+function deliveryReason(code: string): string {
+  if (TELEGRAM_REASON[code]) return TELEGRAM_REASON[code]!;
+  if (code.startsWith('Telegram')) return 'Telegram отклонил сообщение';
+  return 'ошибка отправки';
+}
 
 /** Состояние дня словами посещаемости — теми же, что на её странице. */
 const TODAY_TITLE: Record<string, [string, 'ok' | 'wait' | 'off' | 'bad']> = {
@@ -1022,7 +1040,7 @@ function Delivery({ delivery, canResend = false, onResend }: {
     const can = Boolean(id && onResend && canResend && delivery.can_retry);
     return (
       <span className="tk-delivery tk-delivery--bad" role="status">
-        {title}{delivery.error ? `: ${TELEGRAM_REASON[delivery.error] ?? delivery.error}` : ''}
+        {title}{delivery.error ? `: ${deliveryReason(delivery.error)}` : ''}
         {can && (
           <button type="button" className="tk-delivery__retry" disabled={retrying}
                   onClick={() => {

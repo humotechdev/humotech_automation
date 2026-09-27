@@ -1099,6 +1099,7 @@ a.tk-person__name:hover { color: var(--tk-blue); }
 .tk-msg--mine .tk-msg__pad { display: none; }
 .tk-msg--mine .tk-msg__time {
   position: static;
+  display: flex;
   justify-content: flex-end;
   flex-wrap: wrap;
   margin-top: 6px;
@@ -1165,3 +1166,6 @@ a.tk-person__name:hover { color: var(--tk-blue); }
 @media (prefers-reduced-motion: reduce) {
   .tk-row--fresh, .tk-newer { animation: none; }
 }
+/* Недоставленный ответ — красным и внутри строки времени, где синий
+   задан для остальных состояний. */
+.tk-msg__time .tk-delivery--bad { color: var(--tk-red); }
