@@ -211,6 +211,22 @@ describe('вкладка «Геолокация»', () => {
   });
 });
 
+describe('старый сервер', () => {
+  test('контур, отброшенный сервером, не объявляется сохранённым', async () => {
+    // Сервер без поддержки контура отвечает офисом-кругом, как было.
+    openGeo(FENCED, () => json(200, OFFICE));
+
+    await screen.findByText(/13 углов/);
+    fireEvent.click(screen.getByRole('button', { name: 'Отменить точку' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }));
+
+    expect(await screen.findByText(/Сервер не сохранил контур/)).toBeTruthy();
+    expect(screen.queryByText('Контур территории сохранён')).toBeNull();
+    // Нарисованное не пропало.
+    expect(screen.getByText(/12 углов/)).toBeTruthy();
+  });
+});
+
 // --- журнал --------------------------------------------------------------------
 
 describe('отказ по месту в журнале', () => {

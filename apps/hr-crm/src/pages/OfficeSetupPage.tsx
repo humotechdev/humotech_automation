@@ -491,6 +491,15 @@ function GeoEditor({ office, canManage, onSaved }: {
               latitude: null, longitude: null, geofence_radius_m: null,
             };
       const savedOffice = await api.updateOffice(office.id, body);
+      // Сервер, который о контуре не знает, молча отбрасывает его поля и
+      // возвращает офис кругом. Писать «сохранён» в этом случае — неправда:
+      // человек уходит, уверенный, что зона настроена.
+      if (next?.shape === 'POLYGON'
+          && (savedOffice.geofence_kind !== 'POLYGON' || !savedOffice.geofence_polygon?.length)) {
+        setFailed('Сервер не сохранил контур: эта версия сервера его ещё не поддерживает. '
+          + 'Контур на экране остался — сохраните его после обновления сервера.');
+        return;
+      }
       setDone(
         next?.shape === 'POLYGON' ? 'Контур территории сохранён'
           : next?.place ? 'Расположение сохранено' : 'Геолокация очищена',
