@@ -488,6 +488,33 @@ const LOG_CAP = 3000;
 
 const SOURCE_TITLE: Record<string, string> = { QR: 'QR-код', MANUAL: 'Вручную HR', IMPORT: 'Импорт' };
 
+/**
+ * Почему отказано — коротко, для строки журнала.
+ *
+ * Отказы по месту разные по смыслу: «вне геозоны» — человек не там, а
+ * «у границы» — телефон не смог сказать, с какой стороны границы он
+ * стоит, и сотрудника попросили повторить. HR, к которому он придёт,
+ * должен видеть именно это, а не одно слово «Отклонено».
+ */
+export const REJECTION_TITLE: Record<string, string> = {
+  OUTSIDE_GEOFENCE: 'вне геозоны',
+  LOCATION_AMBIGUOUS: 'у границы, место не установлено',
+  LOCATION_STALE: 'устаревшая геопозиция',
+  LOCATION_TOO_VAGUE: 'грубая геопозиция',
+  GEOLOCATION_REQUIRED: 'без геопозиции',
+  GEOFENCE_NOT_CONFIGURED: 'у офиса нет геозоны',
+  NETWORK_REQUIRED: 'не из сети офиса',
+  QR_EXPIRED: 'код устарел',
+  TOO_SOON: 'повтор',
+  ALREADY_INSIDE: 'уже внутри',
+  NOT_INSIDE: 'не было входа',
+};
+
+export function rejectionTitle(reason: string | null | undefined): string {
+  const why = reason ? REJECTION_TITLE[reason] : undefined;
+  return why ? `Отклонено · ${why}` : 'Отклонено';
+}
+
 function useLogMode(active: boolean, ctx: Ctx): View {
   const { params, patch, attempt } = ctx;
   const day = params.get('date') ?? today();
@@ -656,7 +683,7 @@ function useLogMode(active: boolean, ctx: Ctx): View {
                         </span>
                         <span role="cell" className={`at-state at-state--${bad ? 'bad' : late > 0 ? 'warn' : 'ok'}`}>
                           <i className={`at-dot at-dot--${bad ? 'bad' : late > 0 ? 'warn' : 'ok'}`} />
-                          {bad ? (one.verification_status !== 'ACCEPTED' ? 'Отклонено' : 'Вне геозоны')
+                          {bad ? (one.verification_status !== 'ACCEPTED' ? rejectionTitle(one.rejection_reason) : 'Вне геозоны')
                             : late > 0 ? `Опоздание на ${late} мин` : manual ? 'Исправлено' : 'Принято'}
                         </span>
                         <span role="cell" className="at-right">

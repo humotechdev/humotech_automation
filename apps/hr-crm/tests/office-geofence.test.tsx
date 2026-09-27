@@ -11,6 +11,7 @@ import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
 
 import { geofenceLabel, geofenceReady } from '../src/api/crm';
+import { rejectionTitle } from '../src/pages/AttendancePage';
 import { needsSetup } from '../src/pages/OfficesPage';
 import { USER, type Call, crm, fakeNetwork, json, renderApp } from './helpers';
 
@@ -207,5 +208,18 @@ describe('вкладка «Геолокация»', () => {
       geofence_kind: 'CIRCLE', geofence_polygon: null,
       latitude: null, longitude: null, geofence_radius_m: null,
     });
+  });
+});
+
+// --- журнал --------------------------------------------------------------------
+
+describe('отказ по месту в журнале', () => {
+  test('HR видит, что место не установлено, а не одно «Отклонено»', () => {
+    // Сотруднику сказали: «сообщите в отдел кадров, попытка там видна».
+    expect(rejectionTitle('LOCATION_AMBIGUOUS')).toBe('Отклонено · у границы, место не установлено');
+    expect(rejectionTitle('LOCATION_STALE')).toBe('Отклонено · устаревшая геопозиция');
+    expect(rejectionTitle('OUTSIDE_GEOFENCE')).toBe('Отклонено · вне геозоны');
+    expect(rejectionTitle('ЧТО-ТО_НОВОЕ')).toBe('Отклонено');
+    expect(rejectionTitle(null)).toBe('Отклонено');
   });
 });

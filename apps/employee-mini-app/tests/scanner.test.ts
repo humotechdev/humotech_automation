@@ -317,7 +317,7 @@ describe('определение места', () => {
   it('horizontal_accuracy: null не превращается в «30 м»: спрашивается браузер', async () => {
     const { source } = phone(
       [{ latitude: 41.304151, longitude: 69.332442, accuracy: 14 }],
-      telegramGiving({ latitude: 41.305215, longitude: 69.335188, horizontal_accuracy: null }),
+      telegramGiving({ latitude: 41.2990, longitude: 69.2490, horizontal_accuracy: null }),
     );
 
     const place = placeOrFail(await locate({ source }));
@@ -354,7 +354,7 @@ describe('определение места', () => {
     const scannedAt = Date.now();
     const { source } = phone([
       // Запомненная вебвью точка с прошлого раза: точная и старая.
-      { latitude: 41.30519, longitude: 69.33505, accuracy: 4, timestamp: scannedAt - 60_000 },
+      { latitude: 41.2980, longitude: 69.2500, accuracy: 4, timestamp: scannedAt - 60_000 },
       { latitude: 41.304151, longitude: 69.332442, accuracy: 25, timestamp: scannedAt + 500 },
     ]);
 
@@ -367,7 +367,7 @@ describe('определение места', () => {
   it('только старые точки — отказ «устарела», а не старое место', async () => {
     const scannedAt = Date.now();
     const { source } = phone([
-      { latitude: 41.30519, longitude: 69.33505, accuracy: 4, timestamp: scannedAt - 60_000 },
+      { latitude: 41.2980, longitude: 69.2500, accuracy: 4, timestamp: scannedAt - 60_000 },
     ]);
 
     expect(await locate({ source, notBefore: scannedAt, timeoutMs: 50 }))
@@ -377,7 +377,7 @@ describe('определение места', () => {
   it('повтор прежней точки Telegram — кэш, место спрашивается у браузера', async () => {
     // У `LocationManager` нет времени точки. Та же точка до сантиметра и
     // до сотой метра через минуту — это не новое измерение.
-    const cached = { latitude: 41.305184, longitude: 69.335126, horizontal_accuracy: 15.63 };
+    const cached = { latitude: 41.2975, longitude: 69.2511, horizontal_accuracy: 17.25 };
     const { source } = phone(
       [{ latitude: 41.304151, longitude: 69.332442, accuracy: 20 }],
       telegramGiving(cached),
@@ -412,7 +412,7 @@ describe('определение места', () => {
     // полученное при открытии камеры, уже не «сейчас».
     const scannedAt = Date.now();
     const old: Position = {
-      latitude: 41.30519, longitude: 69.33505, accuracy: 5,
+      latitude: 41.2980, longitude: 69.2500, accuracy: 5,
       capturedAt: scannedAt - FIX_MAX_AGE_MS - 1_000, source: 'telegram',
     };
     const { source } = phone([
