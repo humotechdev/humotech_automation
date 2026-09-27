@@ -73,7 +73,9 @@ from humotech.core.validation import clean_text
 from humotech.employees.models import EmployeeAssignment
 from humotech.employees.selectors import require_visible_employee
 from humotech.notifications import outbox
+from humotech.notifications.service import RETRYABLE
 from humotech.questions.models import EmployeeQuestion, QuestionMessage
+from humotech.realtime import signals
 
 logger = logging.getLogger("humotech.questions")
 
@@ -287,6 +289,9 @@ class InboxService(BaseService):
             ).order_by("created_at", "id")
         )
         can_answer = self.access.has(actor, "questions.answer")
+        # Повторить отправку — существующее действие очереди уведомлений,
+        # со своим правом. Кнопка в переписке — только у того, кому оно дано.
+        can_resend = self.access.has(actor, "notifications.manage")
         status = question.status
         item.update(
             {
@@ -301,7 +306,9 @@ class InboxService(BaseService):
                 ),
                 "close_reason": question.close_reason,
                 "telegram": _telegram(question.employee_id),
-                "messages": [_message(one) for one in messages],
+                "messages": [
+                    _message(one, can_resend=can_resend) for one in messages
+                ],
                 "draft": _draft(question),
                 "actions": {
                     "take": can_answer and status in OPEN and not (
@@ -322,18 +329,49 @@ class InboxService(BaseService):
         )
         return item
 
-    def read(self, actor: Actor, question_id: uuid.UUID) -> dict:
-        """Кадровик открыл обращение — последнее сообщение прочитано.
+    def read(
+        self,
+        actor: Actor,
+        question_id: uuid.UUID,
+        *,
+        seen_message_id: uuid.UUID | None = None,
+    ) -> dict:
+        """Кадровик увидел обращение — прочитано то, что он видел.
+
+        `seen_message_id` — последнее сообщение, которое было на экране.
+        Если после него сотрудник успел написать ещё, отметка не
+        снимается: иначе сообщение, пришедшее между загрузкой переписки и
+        этим запросом, оказалось бы «прочитанным», хотя его никто не видел.
+        Без параметра — прежнее правило: прочитано всё.
 
         В журнал не пишется: это не решение, а просмотр, и строка на
         каждое открытие утопила бы в журнале настоящие действия.
         """
         self.access.require(actor, "questions.read")
         question = self._require(actor, question_id)
-        if question.unread:
-            EmployeeQuestion.objects.filter(id=question.id).update(unread=False)
-            question.unread = False
-        return {"id": question.id, "unread": False}
+        if not question.unread:
+            return {"id": question.id, "unread": False}
+
+        rows = EmployeeQuestion.objects.filter(id=question.id, unread=True)
+        if seen_message_id is not None:
+            seen = (
+                question.messages.filter(id=seen_message_id)
+                .values_list("created_at", flat=True)
+                .first()
+            )
+            if seen is None:
+                raise ValidationFailed(
+                    "Сообщение не из этого обращения",
+                    details={"seen_message_id": ["Не найдено в обращении."]},
+                )
+            newer = QuestionMessage.objects.filter(
+                question_id=question.id, kind="EMPLOYEE", created_at__gt=seen,
+            )
+            rows = rows.exclude(Exists(newer))
+        changed = rows.update(unread=False)
+        if changed:
+            signals.question_changed(question, signals.READ)
+        return {"id": question.id, "unread": not changed}
 
     def context(self, actor: Actor, question_id: uuid.UUID) -> dict:
         """Правая колонка: кто спрашивает и что с ним связано."""
@@ -798,6 +836,7 @@ class InboxService(BaseService):
                 before=before,
                 after=snapshot(question, QUESTION_FIELDS),
             )
+            signals.question_changed(question, signals.MESSAGE)
 
         if created:
             # Черновик — после фиксации: сотрудник ждёт подтверждения от
@@ -911,6 +950,13 @@ class InboxService(BaseService):
         self.audit.record(
             actor, action=action, entity_type=ENTITY, entity_id=question.id,
             before=before, after=after,
+        )
+        # В той же транзакции: сигнал уйдёт, только если изменение
+        # зафиксировалось. Каждое действие HR проходит через журнал —
+        # значит, и через этот сигнал.
+        signals.question_changed(
+            question,
+            signals.REPLY if action == "question.reply" else signals.UPDATED,
         )
 
     def _filtered(self, actor: Actor, filters: InboxFilters, moment, *, with_status: bool):
@@ -1088,6 +1134,7 @@ def prepare_draft(question: EmployeeQuestion, *, strict: bool) -> None:
         answer_source_id=sources[0] if sources else None,
         ai_generated_at=timezone.now(),
     )
+    signals.question_changed(question, signals.DRAFT)
 
 
 # --- общие для списка и карточки -------------------------------------------
@@ -1236,7 +1283,7 @@ DELIVERY = {
 }
 
 
-def _message(row: QuestionMessage) -> dict:
+def _message(row: QuestionMessage, *, can_resend: bool = False) -> dict:
     if row.author_user_id and row.author_user is not None:
         author = {"type": "user", **_person(row.author_user)}
     elif row.author_employee_id and row.author_employee is not None:
@@ -1259,9 +1306,14 @@ def _message(row: QuestionMessage) -> dict:
             # Код причины, а не текст: текст ошибки Telegram может
             # содержать эхо сообщения.
             "error": notification.error_message if state == "FAILED" else None,
+            "notification_id": notification.id,
+            "can_retry": can_resend and notification.status in RETRYABLE,
         }
     elif row.kind == "HR":
-        delivery = {"status": "UNKNOWN", "sent_at": None, "read_at": None, "error": None}
+        delivery = {
+            "status": "UNKNOWN", "sent_at": None, "read_at": None, "error": None,
+            "notification_id": None, "can_retry": False,
+        }
 
     return {
         "id": row.id,
@@ -1273,6 +1325,10 @@ def _message(row: QuestionMessage) -> dict:
         "author": author,
         "created_at": row.created_at,
         "delivery": delivery,
+        # Ключ повтора своего ответа: по нему CRM узнаёт в ленте реплику,
+        # которую только что показала как «Отправляется», и не рисует её
+        # второй раз. Сообщениям сотрудника он не нужен.
+        "client_request_id": row.client_request_id if row.kind == "HR" else None,
         "attachment": (
             {
                 "name": row.attachment.original_filename,

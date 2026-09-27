@@ -59,6 +59,19 @@
 
 {$CRM_DOMAIN} {
 	import common
+	# Поток событий CRM (SSE): сразу отдавать клиенту, не копить. Чтение
+	# без предела — сервер шлёт пульс каждые 15 секунд. Общий предел
+	# записи сервера (timeouts.write выше) всё равно закрывает поток раз в
+	# ~150 секунд; CRM переподключается сама и перечитывает данные.
+	# На тестовом сервере не проверено.
+	handle /api/v1/events/* {
+		reverse_proxy gateway:80 {
+			flush_interval -1
+			transport http {
+				read_timeout 0
+			}
+		}
+	}
 	handle /api/* {
 		reverse_proxy gateway:80 {
 			transport http {

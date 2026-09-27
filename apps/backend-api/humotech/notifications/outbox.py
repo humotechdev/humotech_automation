@@ -48,6 +48,7 @@ from django.utils import timezone
 from humotech.audit.redaction import redact_text
 from humotech.notifications.isolation import is_demo_chat_id
 from humotech.notifications.models import Notification, NotificationAttempt
+from humotech.realtime import signals
 from humotech.telegram.identity import AccessDenied, resolve_account
 from humotech.telegram.models import TelegramAccount
 
@@ -154,7 +155,7 @@ def enqueue(
         if existing is not None:
             return existing
 
-    return Notification.objects.create(
+    row = Notification.objects.create(
         organization_id=organization_id,
         employee_id=employee_id,
         channel="TELEGRAM",
@@ -168,6 +169,12 @@ def enqueue(
         related_entity_type=related_entity_type,
         related_entity_id=related_entity_id,
     )
+    # Будит отправщика. В транзакции вызывающего: откатилась заявка —
+    # отправщик не проснётся ради того, чего нет. Отложенное уведомление
+    # (`scheduled_at`) будить незачем: отправщик и так дождётся его срока.
+    if scheduled_at is None or scheduled_at <= timezone.now():
+        signals.outbox_ready()
+    return row
 
 
 def claim(*, limit: int = 20, now: datetime | None = None) -> list[Outgoing]:
@@ -181,6 +188,7 @@ def claim(*, limit: int = 20, now: datetime | None = None) -> list[Outgoing]:
     moment = now or timezone.now()
     limit = max(1, min(limit, 100))
     ready: list[Outgoing] = []
+    cancelled: list = []
 
     with transaction.atomic():
         rows = list(
@@ -231,6 +239,7 @@ def claim(*, limit: int = 20, now: datetime | None = None) -> list[Outgoing]:
                     reason=row.error_message,
                     moment=moment,
                 )
+                cancelled.append(row.id)
                 continue
 
             row.status = "RUNNING"
@@ -256,6 +265,8 @@ def claim(*, limit: int = 20, now: datetime | None = None) -> list[Outgoing]:
                     telegram_user_id=account.telegram_user_id,
                 )
             )
+        # «Не доставлено: адресата нет» — CRM-чату нужно знать сразу.
+        signals.deliveries_changed(cancelled)
     return ready
 
 
@@ -290,6 +301,7 @@ def mark_sent(notification_id, *, now: datetime | None = None) -> bool:
         row = Notification.objects.filter(id=notification_id).first()
         if row is not None:
             _log_attempt(row, outcome="SENT", reason=None, moment=moment)
+        signals.deliveries_changed([notification_id])
         return True
 
 
@@ -355,6 +367,7 @@ def _fail(notification_id, *, error: str, moment: datetime) -> bool:
         ]
     )
     _log_attempt(row, outcome="FAILED", reason=row.error_message, moment=moment)
+    signals.deliveries_changed([row.id])
     return True
 
 

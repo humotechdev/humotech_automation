@@ -40,6 +40,7 @@ from humotech.core.service import BaseService
 from humotech.core.timeframes import organization_zone, range_bounds
 from humotech.employees.models import EmployeeAssignment
 from humotech.employees.selectors import require_visible_employee
+from humotech.realtime import signals
 from humotech.notifications.models import Notification, NotificationAttempt
 
 NOTIFICATION_FIELDS = (
@@ -240,6 +241,7 @@ class NotificationService(BaseService):
                     "error_message", "updated_at",
                 ]
             )
+            signals.deliveries_changed([row.id])
             self.audit.record(
                 actor,
                 action="notification.cancel",
@@ -473,6 +475,10 @@ class NotificationService(BaseService):
                 "error_message", "updated_at",
             ]
         )
+        # Снова «Отправляется» в чате CRM — и отправщик просыпается сразу,
+        # а не к следующему опросу.
+        signals.deliveries_changed([row.id])
+        signals.outbox_ready()
 
     def _limit_to_scope(self, actor: Actor, queryset):
         """Уведомления видны по офисам сотрудника-адресата.

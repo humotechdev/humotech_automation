@@ -161,6 +161,56 @@ services:
     stop_grace_period: 40s
     logging: *logging
 
+  # Поток событий CRM (SSE) и ожидание очереди ботом: отдельный ASGI-
+  # процесс на образе backend. Причины и флаги — в
+  # infrastructure/docker/docker-compose.local.yml. Шлюз от него не
+  # зависит: без него CRM опрашивает редко, а бот ждёт по интервалу.
+  events:
+    <<: *backend_image
+    command:
+      - uvicorn
+      - config.asgi:application
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8001"
+      - --workers
+      - "1"
+      - --lifespan
+      - "off"
+      - --no-proxy-headers
+      - --timeout-graceful-shutdown
+      - "5"
+    environment: *backend_env
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - -fsS
+        - -o
+        - /dev/null
+        - -H
+        - "Host: gateway"
+        - -H
+        - "X-Forwarded-Proto: https"
+        - http://127.0.0.1:8001/healthz
+      interval: 15s
+      timeout: 10s
+      start_period: 30s
+      retries: 5
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - app
+      - db
+    restart: unless-stopped
+    stop_signal: SIGTERM
+    stop_grace_period: 15s
+    logging: *logging
+
   export-worker:
     <<: *backend_image
     command: ["python", "manage.py", "run_export_worker", "--loop=5"]

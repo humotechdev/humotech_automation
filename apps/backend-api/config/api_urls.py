@@ -93,6 +93,7 @@ from humotech.questions.views import (
     EscalationViewSet,
     UnansweredQuestionViewSet,
 )
+from humotech.realtime.views import outbox_wait, question_events
 from humotech.regions.views import RegionViewSet
 from humotech.reports.builder_views import (
     ReportCatalogView,
@@ -276,6 +277,12 @@ urlpatterns = [
     # Очередь уведомлений. Бот забирает её отсюда, а не из базы: подключения
     # к PostgreSQL у него нет и заводить его ради двух запросов не нужно.
     path("telegram/bot/outbox", BotOutboxView.as_view(), name="telegram-bot-outbox"),
+    # Ожидание очереди: отвечает «пора», как только появилось что
+    # отправить. Обслуживает ASGI-процесс событий, не gunicorn.
+    path("telegram/bot/outbox/wait", outbox_wait, name="telegram-bot-outbox-wait"),
+    # Поток событий CRM (SSE): что изменилось, без содержимого. Тоже
+    # только ASGI-процесс событий.
+    path("events/stream", question_events, name="events-stream"),
     # Mini App. Путь начинается с /api/v1/telegram/mini-app/ — ровно на этом
     # префиксе работает CORS (см. humotech/telegram/middleware.py).
     path(

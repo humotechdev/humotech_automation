@@ -442,6 +442,20 @@ class SelfServiceClient:
             "POST", "/telegram/bot/outbox", headers={}, json={"results": results}
         )
 
+    async def wait_outbox(self, seconds: int) -> dict:
+        """Ждать, пока в очереди появится что отправить.
+
+        Backend отвечает `{"ready": true}`, как только HR ответил, или
+        `{"ready": false}` по истечении ожидания. Сам ничего не захватывает:
+        забирает очередь прежний `claim_notifications`. Время ожидания
+        запроса — с запасом сверх ожидания на сервере.
+        """
+        return await self._request(
+            "GET", "/telegram/bot/outbox/wait", headers={},
+            params={"timeout": str(seconds)},
+            timeout=aiohttp.ClientTimeout(total=seconds + 15),
+        )
+
     # --- внутри ----------------------------------------------------------
 
     async def _get(
@@ -459,15 +473,18 @@ class SelfServiceClient:
         headers: dict,
         params: dict | None = None,
         json: dict | None = None,
+        timeout: aiohttp.ClientTimeout | None = None,
     ) -> Any:
         session = await self._get_session()
         all_headers = {BOT_SECRET_HEADER: settings.backend_bot_secret, **headers}
+        extra = {"timeout": timeout} if timeout is not None else {}
         async with session.request(
             method,
             f"{self._base_url}{path}",
             headers=all_headers,
             params=params,
             json=json,
+            **extra,
         ) as response:
             body = await self._body(response)
             if response.status >= 400:
