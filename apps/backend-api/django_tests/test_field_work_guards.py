@@ -254,3 +254,64 @@ def test_bot_http_decision_by_foreign_telegram_id_is_not_found(
     )
     assert again.status_code == 409
     assert FieldWorkRequest.objects.get(id=row.id).status == "DECLINED"
+
+
+# --- одни и те же часы на всех экранах --------------------------------------------------
+
+
+def test_confirmed_day_reads_the_same_everywhere(
+    field_setup, organization, employee, office, make_actor  # noqa: F811
+):
+    """Один подтверждённый выезд — одно число во всех местах, где его видно.
+
+    Каждый экран считает по-своему (карточка дня, личная статистика,
+    главная CRM, присутствие, аналитика, обзор, конструктор отчётов,
+    лист Excel), и расхождение между ними — ровно то, о чём спросят
+    первым. Норма берётся из самого запроса: её предъявили сотруднику.
+    """
+    actor, day = field_setup
+    row = _confirmed(actor, employee, day)
+    norm = row.norm_seconds
+    assert norm > 0
+    reader = make_actor(organization, permissions=(
+        "attendance.read", "analytics.read", "reports.export"))
+
+    from humotech.analytics.dashboard import DashboardService
+    from humotech.analytics.metrics import AnalyticsService
+    from humotech.analytics.overview import OverviewService
+    from humotech.attendance.statistics import for_period
+    from humotech.reports.builder import ReportBuilderService, ReportSpec
+    from humotech.reports.sheets import build_sheet
+    from humotech.telegram.identity import resolve_by_telegram_user_id
+
+    card = AttendanceHrService().daily(reader, employee.id, first=day, last=day)["days"][0]
+    assert (card["state"], card["seconds"], card["sessions"]) == ("FIELD_WORK", norm, 0)
+
+    personal = for_period(resolve_by_telegram_user_id(TELEGRAM_ID), day, day)
+    assert personal.seconds == norm
+
+    [presence] = AttendanceHrService().presence(reader, day=day).rows
+    assert presence.state == "FIELD_WORK"
+    assert presence.open_session_id is None and presence.first_entry_at is None
+
+    cards = {c.key: c.value for c in DashboardService().summary(reader, day=day).cards}
+    assert (cards["field_work"], cards["came"], cards["late"], cards["open_sessions"]) == (1, 0, 0, 0)
+
+    totals = AnalyticsService().office(reader, office.id, first=day, last=day).totals
+    assert totals["worked_seconds"] == totals["field_work_seconds"] == norm
+    assert (totals["office_seconds"], totals["late_arrivals"], totals["missed_days"]) == (0, 0, 0)
+
+    summary = OverviewService().overview(reader, first=day, last=day, now=timezone.now())["summary"]
+    assert summary["field_work_seconds"] == norm
+
+    spec = ReportSpec.build(kind="worktime", date_from=day, date_to=day,
+                            fields=("employee", "date", "actual", "office_time", "work_source"))
+    [line] = list(ReportBuilderService().open(reader, spec, author="HR").rows())
+    assert (line["actual"], line["office_time"]) == (norm, 0)
+
+    sheet = build_sheet("summary", reader, filters={"date_from": day, "date_to": day}, author="HR")
+    [office_row] = list(sheet.rows)
+    values = dict(zip(sheet.columns, office_row))
+    assert values["Отработано часов"] == round(norm / 3600, 2)
+    assert values["Часов в офисе"] == 0
+    assert values["Опозданий"] == 0
