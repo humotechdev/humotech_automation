@@ -20,6 +20,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import * as api from '../../api/crm';
 import { AppIcon, type AppIconName } from '../../components/AppIcon';
 import { AppDateRangePicker } from '../../components/DateRangePicker';
+import { FieldWorkControls } from '../../components/FieldWorkControls';
 import { useBlock } from '../dashboard/data';
 import { clock } from '../time/zone';
 import {
@@ -109,7 +110,7 @@ export function AttendanceTools({ id, canExport }: { id: string; canExport: bool
   );
 }
 
-export function Attendance({ id, rights, zone }: { id: string; rights: Rights; zone: string }) {
+export function Attendance({ id, name, rights, zone }: { id: string; name: string; rights: Rights; zone: string }) {
   const { params, patch, preset, range } = usePeriod();
 
   const [journal, reloadJournal, journalState] = useBlock(
@@ -143,7 +144,7 @@ export function Attendance({ id, rights, zone }: { id: string; rights: Rights; z
   const days = report ? points(report.days, planByWeekday(schedule), todayIso()) : [];
   const sums = stats(days);
   // Без выбора в адресе показывается последний прошедший день с отметками.
-  const latest = [...days].reverse().find((one) => !one.future && one.entry !== null);
+  const latest = [...days].reverse().find((one) => !one.future && (one.entry !== null || one.row.state === 'FIELD_WORK'));
   const picked = params.get('day') ?? latest?.day ?? null;
   const chosen = days.find((one) => one.day === picked) ?? null;
   const pick = (day: string) => patch({ day });
@@ -179,7 +180,7 @@ export function Attendance({ id, rights, zone }: { id: string; rights: Rights; z
         </div>
         <div className="ea-col">
           <Usual days={days} sums={sums} preset={preset} />
-          <DayPanel id={id} point={chosen} zone={zone} />
+          <DayPanel id={id} name={name} point={chosen} zone={zone} canCorrect={rights.correct} onChanged={reloadJournal} />
         </div>
       </div>
 
@@ -388,7 +389,7 @@ function Hours({ days, picked, onPick }: {
 
   return (
     <>
-      <svg className="ea-svg" viewBox={`0 0 ${HB.w} ${HB.h}`} role="img" aria-label="Часы в офисе по дням">
+      <svg className="ea-svg" viewBox={`0 0 ${HB.w} ${HB.h}`} role="img" aria-label="Засчитанные часы по дням">
         {[0, 4, 8, 12].map((hours) => (
           <text key={hours} className="ea-svg__axis" x={HB.left - 10} y={y(hours * 3600) + 4} textAnchor="end">
             {hours ? `${hours} ч` : '0'}
@@ -553,7 +554,9 @@ function Count({ icon, tone, title, value }: {
 
 // --- выбранный день ----------------------------------------------------------------------
 
-function DayPanel({ id, point, zone }: { id: string; point: DayPoint | null; zone: string }) {
+function DayPanel({ id, name, point, zone, canCorrect, onChanged }: {
+  id: string; name: string; point: DayPoint | null; zone: string; canCorrect: boolean; onChanged: () => void;
+}) {
   const day = point?.day ?? '';
   const [detail] = useBlock(
     (signal) => api.events(
@@ -588,13 +591,20 @@ function DayPanel({ id, point, zone }: { id: string; point: DayPoint | null; zon
       <h3 className="ea-title">{dayLong(point.day)}</h3>
       <p className="ea-day__sum">
         <strong>{point.working ? duration(point.row.seconds) : dayState(point.row)}</strong>
+        {point.row.state === 'FIELD_WORK' && <span> · Выездная работа по графику</span>}
         {late > 0 && <><i>·</i><span className="ea-bad">Опоздание {late} мин</span></>}
         {early > 0 && <><i>·</i><span className="ea-bad">Ранний уход {early} мин</span></>}
       </p>
 
+      <FieldWorkControls employeeId={id} employeeName={name} day={point.day}
+                         scheduledStart={point.row.scheduled_start} scheduledEnd={point.row.scheduled_end}
+                         firstEntryAt={point.row.first_entry_at}
+                         state={point.row.state} summary={point.row.field_work} canCorrect={canCorrect}
+                         onChanged={onChanged} />
+
       {detail.state === 'loading' && <p className="ea-empty" role="status">Читаем отметки…</p>}
       {detail.state === 'error' && <p className="ea-empty ea-empty--bad">Не удалось получить отметки дня.</p>}
-      {detail.state === 'ready' && marks.length === 0 && <p className="ea-empty">Отметок за день нет.</p>}
+      {detail.state === 'ready' && marks.length === 0 && <p className="ea-empty">Отметок входа и выхода за день нет.</p>}
 
       {marks.length > 0 && (
         <>
@@ -660,7 +670,7 @@ function Journal({ days, picked, onPick, loading }: {
             <th scope="col">Дата</th>
             <th scope="col">Первый вход</th>
             <th scope="col">Последний выход</th>
-            <th scope="col">В офисе</th>
+            <th scope="col">Засчитано</th>
             <th scope="col">Отклонение</th>
             <th scope="col">Статус</th>
             <th scope="col" aria-label="Действия" />
@@ -709,6 +719,8 @@ function statusOf(point: DayPoint): { title: string; tone: string } {
   if (state === 'DAY_OFF') return { title: 'Выходной', tone: 'off' };
   if (state === 'NO_SCHEDULE') return { title: 'Без графика', tone: 'off' };
   if (state === 'NOT_COME') return { title: 'Нет отметки', tone: 'bad' };
+  if (state === 'FIELD_WORK_PENDING') return { title: 'Ожидает подтверждения', tone: 'early' };
+  if (state === 'FIELD_WORK') return { title: 'Выездная работа', tone: 'ok' };
   if ((point.late ?? 0) > 0) return { title: 'Опоздание', tone: 'late' };
   if ((point.early ?? 0) > 0) return { title: 'Ранний уход', tone: 'early' };
   return { title: 'Вовремя', tone: 'ok' };

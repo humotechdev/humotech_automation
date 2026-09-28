@@ -113,7 +113,11 @@ class DashboardService(BaseService):
         )
 
         came = counts.get("IN_OFFICE", 0) + counts.get("LEFT", 0)
-        should_work = came + counts.get("NOT_COME", 0)
+        field_work = counts.get("FIELD_WORK", 0)
+        should_work = (
+            came + field_work + counts.get("FIELD_WORK_PENDING", 0)
+            + counts.get("NOT_COME", 0) + counts.get("LATE", 0)
+        )
         late = sum(
             1 for row in report.rows if row.late_minutes and row.late_minutes > 0
         )
@@ -150,6 +154,9 @@ class DashboardService(BaseService):
                 endpoint="/api/v1/attendance/presence",
                 params=common,
             ),
+            presence_card("field_work", "Выездная работа", "FIELD_WORK"),
+            presence_card("field_work_pending", "Ждут подтверждения выезда",
+                          "FIELD_WORK_PENDING", attention=True),
             presence_card("in_office", "Сейчас в офисе", "IN_OFFICE"),
             presence_card("left", "Уже ушли", "LEFT"),
             Card(

@@ -34,7 +34,8 @@ from humotech.employees.models import (
     EmployeeAssignment,
     EmployeeOfficeAccess,
 )
-from humotech.attendance.models import AttendanceEvent, AttendanceSession
+from humotech.attendance.models import AttendanceEvent, AttendanceSession, FieldWorkRequest
+from humotech.core.timeframes import office_zone
 from humotech.offices.geo import distance_m, looks_like_coordinates, within_office
 from humotech.qr_codes.models import OfficeQrPoint
 
@@ -212,6 +213,16 @@ def _register_locked(
     occurred_at = occurred_at or now
     office_id = qr_point.office_id  # офис берём ТОЛЬКО отсюда
 
+    # Same employee lock as HR request and Telegram decision. Do not count
+    # physical QR time on top of an already credited full field-work shift.
+    active_field_work = list(FieldWorkRequest.objects.select_related("office", "office__organization")
+        .filter(employee_id=employee_id, status__in=("PENDING", "CONFIRMED"),
+                date__gte=occurred_at.date() - timedelta(days=1),
+                date__lte=occurred_at.date() + timedelta(days=1)))
+    matching_field_work = [row for row in active_field_work
+        if occurred_at.astimezone(office_zone(row.office)).date() == row.date]
+    field_work = any(row.status == "CONFIRMED" for row in matching_field_work)
+
     current_session = open_session_for(employee_id=employee_id)
 
     # направление: у точки ENTRY/EXIT оно фиксировано, у BOTH — по факту
@@ -243,7 +254,24 @@ def _register_locked(
         current_session=current_session,
         strict_location=strict_location,
     )
+    if field_work and reason is None:
+        reason = "FIELD_WORK_CONFIRMED"
     accepted = reason is None
+
+    if accepted:
+        pending = [row for row in matching_field_work if row.status == "PENDING"]
+        for request in pending:
+            request.status = "CANCELLED"
+            request.cancelled_at = now
+            request.save(update_fields=["status", "cancelled_at", "updated_at"])
+            from humotech.notifications.models import Notification
+            Notification.objects.filter(related_entity_type="attendance_field_work_request",
+                related_entity_id=request.id, status="PENDING").update(status="CANCELLED")
+            from humotech.audit.models import AuditLog
+            AuditLog.objects.create(organization_id=request.organization_id,
+                actor_employee_id=employee_id, action="field_work.cancelled_by_qr",
+                entity_type="attendance_field_work_requests", entity_id=request.id,
+                new_values={"date": request.date.isoformat(), "status": "CANCELLED"})
 
     event = AttendanceEvent.objects.create(
         organization_id=qr_point.organization_id,

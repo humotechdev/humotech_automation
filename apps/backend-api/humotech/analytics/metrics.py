@@ -36,7 +36,7 @@ from zoneinfo import ZoneInfo
 from django.db.models import Q
 
 from humotech.absences.models import EmployeeAbsence
-from humotech.attendance.models import AttendanceEvent, AttendanceSession
+from humotech.attendance.models import AttendanceEvent, AttendanceSession, FieldWorkRequest
 from humotech.attendance.statistics import (
     COUNTED_ABSENCE_STATUSES,
     SICK_CODES,
@@ -381,6 +381,7 @@ class AnalyticsService(BaseService):
         # столько же, сколько дневной. Наивный расчёт «день за днём» дал бы
         # тридцать раз по пять.
         sessions = self._sessions(employee_ids, start, end, tz)
+        field_work = self._field_work(employee_ids, first, last)
         absences = self._absences(employee_ids, first, last, tz)
         schedules = self._schedules(employee_ids, first, last)
         exceptions = self._exceptions(actor, office_ids, first, last)
@@ -396,6 +397,7 @@ class AnalyticsService(BaseService):
             generated_at=django_timezone.now(),
             employee_ids=employee_ids,
             sessions=sessions,
+            field_work=field_work,
             absences=absences,
             schedules=schedules,
             exceptions=exceptions,
@@ -435,6 +437,17 @@ class AnalyticsService(BaseService):
             day = local_date(row.started_at, tz)
             grouped.setdefault((row.employee_id, day), []).append(row)
         return grouped
+
+    @staticmethod
+    def _field_work(employee_ids, first, last) -> dict:
+        """Confirmed off-site work is credited independently of physical visits."""
+        return {
+            (row.employee_id, row.date): row.norm_seconds
+            for row in FieldWorkRequest.objects.filter(
+                employee_id__in=employee_ids,
+                date__gte=first, date__lte=last, status="CONFIRMED",
+            ).only("employee_id", "date", "norm_seconds")
+        }
 
     @staticmethod
     def _absences(employee_ids, first, last, tz) -> dict:
@@ -509,6 +522,7 @@ class AnalyticsService(BaseService):
         generated_at,
         employee_ids,
         sessions,
+        field_work,
         absences,
         schedules,
         exceptions,
@@ -524,6 +538,9 @@ class AnalyticsService(BaseService):
         vacation_days = 0
         other_absence_days = 0
         worked_seconds = 0
+        office_seconds = 0
+        field_work_seconds = 0
+        field_work_days = 0
         arrivals = 0
         on_time = 0
         late_count = 0
@@ -545,6 +562,7 @@ class AnalyticsService(BaseService):
                 if day_sessions:
                     seconds = sum(s.duration_seconds or 0 for s in day_sessions)
                     worked_seconds += seconds
+                    office_seconds += seconds
                     day_worked += seconds
                     open_sessions += sum(
                         1 for s in day_sessions if s.ended_at is None
@@ -593,6 +611,16 @@ class AnalyticsService(BaseService):
                         day_late += 1
                     else:
                         on_time += 1
+                elif key in field_work:
+                    # One confirmed request credits exactly its approved daily
+                    # norm; it is never an office arrival or QR session.
+                    credited = field_work[key]
+                    field_work_days += 1
+                    field_work_seconds += credited
+                    worked_seconds += credited
+                    day_worked += credited
+                    attended_days += 1
+                    day_attended += 1
                 else:
                     missed_days += 1
 
@@ -611,6 +639,9 @@ class AnalyticsService(BaseService):
             "expected_working_days": expected_days,
             "expected_seconds": expected_seconds,
             "worked_seconds": worked_seconds,
+            "office_seconds": office_seconds,
+            "field_work_seconds": field_work_seconds,
+            "field_work_days": field_work_days,
             "attended_days": attended_days,
             "missed_days": missed_days,
             "sick_leave_days": sick_days,
@@ -636,7 +667,7 @@ class AnalyticsService(BaseService):
                 numerator=attended_days,
                 denominator=expected_days,
                 formula=(
-                    "дни с отметками / рабочие дни по графику. Дни "
+                    "дни с отметками или подтверждённой выездной работой / рабочие дни по графику. Дни "
                     "оформленного отсутствия исключены из обеих частей; "
                     "сотрудники без графика не участвуют."
                 ),
@@ -659,9 +690,9 @@ class AnalyticsService(BaseService):
                 numerator=round(worked_seconds / 3600, 2),
                 denominator=round(expected_seconds / 3600, 2),
                 formula=(
-                    "часы в офисе / норма часов по графику. Перерывы "
-                    "не вычитаются: считается присутствие, а не "
-                    "оплачиваемое время."
+                    "часы закрытых посещений и подтверждённой выездной работы / "
+                    "норма часов по графику. Время в офисе и выездная работа "
+                    "также представлены отдельно."
                 ),
                 unit="hours",
             ),
@@ -831,6 +862,9 @@ def _empty_report(
             "expected_working_days": 0,
             "expected_seconds": 0,
             "worked_seconds": 0,
+            "office_seconds": 0,
+            "field_work_seconds": 0,
+            "field_work_days": 0,
             "attended_days": 0,
             "missed_days": 0,
             "sick_leave_days": 0,
@@ -850,7 +884,7 @@ def _empty_report(
                 title="Посещаемость",
                 numerator=0,
                 denominator=0,
-                formula="дни с отметками / рабочие дни по графику",
+                formula="дни с отметками или подтверждённой выездной работой / рабочие дни по графику",
                 unit="days",
             ),
             Ratio(
@@ -866,7 +900,7 @@ def _empty_report(
                 title="Отработано от нормы",
                 numerator=0,
                 denominator=0,
-                formula="часы в офисе / норма часов по графику",
+                formula="часы в офисе и на подтверждённой выездной работе / норма часов по графику",
                 unit="hours",
             ),
         ],

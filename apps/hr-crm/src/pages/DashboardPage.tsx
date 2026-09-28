@@ -197,7 +197,7 @@ export function DashboardPage() {
                       note="в штате по выбранным офисам" to={cardLink(cardOf('active_employees'))} />
                 <Stat icon="calendar" value={counts['should_work_today']}
                       title={isToday ? 'по графику сегодня' : 'было по графику'}
-                      note={isToday ? 'должны отметиться сегодня' : 'должны были отметиться'}
+                      note={isToday ? 'должны работать сегодня' : 'должны были работать'}
                       to={cardLink(cardOf('should_work_today'))} />
                 <Stat icon="building" value={counts['in_office']}
                       title={isToday ? 'сейчас в офисе' : 'в офисе'}
@@ -254,8 +254,8 @@ export function DashboardPage() {
                   <AppIcon name="info" size={16} />
                   {(counts['should_work_today'] ?? 0) === 0
                     ? (isToday ? 'Сегодня по выбранным условиям нет сотрудников по графику.' : 'В этот день по выбранным условиям никто не работал по графику.')
-                    : <>{isToday ? 'Сегодня отметил' : 'В этот день отметил'}{people(counts['should_work_today'] ?? 0) === 'сотрудник' ? 'ся' : 'ись'}{' '}
-                        <b>{counts['came'] ?? 0} из {counts['should_work_today']}</b> {genitive(counts['should_work_today'] ?? 0)}.</>}
+                    : <>По графику <b>{counts['should_work_today']}</b> {people(counts['should_work_today'] ?? 0)}:
+                        в офис пришли <b>{counts['came'] ?? 0}</b>, выездную работу подтвердили <b>{counts['field_work'] ?? 0}</b>.</>}
                 </p>
               )}
             </section>
@@ -272,6 +272,7 @@ export function DashboardPage() {
                   const review = sick.filter((row) => row.stage === 'HR_REVIEW').length;
                   const leave = data.absences.filter((row) => row.absence_type.code !== 'SICK_LEAVE' && row.kind !== 'CANCEL').length;
                   const missing = isToday ? counts['not_come'] ?? 0 : 0;
+                  const fieldPending = counts['field_work_pending'] ?? 0;
                   const all: FocusRow[] = [
                     { icon: 'doc', tone: 'bad', count: waitPaper, title: `${count(waitPaper, ['больничный ждёт', 'больничных ждут', 'больничных ждут'])} справку`,
                       note: 'До подтверждения не попадут в табель', to: '/requests?tab=sick&status=open' },
@@ -283,6 +284,10 @@ export function DashboardPage() {
                       note: 'Сотрудники просят поправить время', to: '/requests?tab=fixes&status=open' },
                     { icon: 'alert', tone: 'warn', count: missing, title: `${count(missing, ['сотрудник', 'сотрудника', 'сотрудников'])} без отметки`,
                       note: 'Смена уже началась', to: cardLink(cardOf('not_come')) ?? '/attendance' },
+                    { icon: 'calendar', tone: 'warn', count: fieldPending,
+                      title: `${count(fieldPending, ['подтверждение выезда', 'подтверждения выезда', 'подтверждений выезда'])} ожидается`,
+                      note: 'Сотрудник ещё не ответил в Telegram',
+                      to: cardLink(cardOf('field_work_pending')) ?? '/attendance' },
                   ];
                   const rows = all.filter((row) => row.count > 0);
                   return rows.length === 0 ? (
@@ -600,8 +605,10 @@ function byKey(cards: api.Card[]): Record<string, number> {
   return Object.fromEntries(cards.map((card) => [card.key, card.value]));
 }
 
-/** По графику: пришли, ушли и не пришли. Выходной и отсутствие сюда не входят. */
-const expected = (c: Record<string, number>) => (c['IN_OFFICE'] ?? 0) + (c['LEFT'] ?? 0) + (c['NOT_COME'] ?? 0);
+/** По графику: в офисе, на выезде и ещё без подтверждённой отметки. */
+const expected = (c: Record<string, number>) =>
+  (c['IN_OFFICE'] ?? 0) + (c['LEFT'] ?? 0) + (c['FIELD_WORK'] ?? 0)
+  + (c['FIELD_WORK_PENDING'] ?? 0) + (c['NOT_COME'] ?? 0) + (c['LATE'] ?? 0);
 
 /** Отсутствуют: только оформленное и подтверждённое — отпуск, больничный, иное. */
 const absent = (c: Record<string, number>) => (c['VACATION'] ?? 0) + (c['SICK_LEAVE'] ?? 0) + (c['OTHER_ABSENCE'] ?? 0);
@@ -617,8 +624,6 @@ function plural(n: number, forms: [string, string, string]): string {
 
 const count = (n: number, forms: [string, string, string]) => `${n} ${plural(n, forms)}`;
 const people = (n: number) => plural(n, ['сотрудник', 'сотрудника', 'сотрудников']);
-/** «из 1 сотрудника», «из 5 сотрудников» — после «из» родительный падеж. */
-const genitive = (n: number) => plural(n, ['сотрудника', 'сотрудников', 'сотрудников']);
 
 function dayLabel(iso: string): string {
   const [, m, d] = iso.split('-');

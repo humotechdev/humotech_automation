@@ -19,6 +19,7 @@ from src.handlers.attendance import router as attendance_router
 from src.handlers.attendance.sticker import router as sticker_router
 from src.handlers.day_start import router as day_start_router
 from src.handlers.fallback import router as fallback_router
+from src.handlers.field_work import router as field_work_router
 from src.handlers.menu import router as menu_router
 from src.handlers.onboarding import router as onboarding_router
 from src.handlers.start import router as start_router
@@ -39,6 +40,7 @@ def build_root_router() -> Router:
     # меню и `fallback`: иначе написанная причина уходила бы в HR
     # вопросом или получала бы «не понял».
     root.include_router(day_start_router)
+    root.include_router(field_work_router)
     # Загрузка справки ждёт файл в своём состоянии. Раньше меню и
     # `fallback`: присланный документ иначе получил бы «не понял».
     root.include_router(absence_document_router)

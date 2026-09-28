@@ -995,7 +995,40 @@ export type PresenceRow = {
   /** Хотя бы одна отметка дня пришла из-за границы геозоны офиса.
    *  Не нарушение само по себе — повод посмотреть. */
   outside_geofence: boolean;
+  /** Выездная работа учитывается отдельно от событий входа и выхода. */
+  field_work?: { id: string; status: FieldWorkStatus } | null;
 };
+
+export type FieldWorkStatus = 'PENDING' | 'CONFIRMED' | 'DECLINED' | 'CANCELLED' | 'EXPIRED';
+export type FieldWorkRequest = {
+  id: string;
+  employee_id: string;
+  date: string;
+  status: FieldWorkStatus;
+  requested_at: string;
+  confirmed_at?: string | null;
+  declined_at?: string | null;
+  work_location?: string | null;
+  work_description?: string | null;
+  delivery_status?: 'PENDING' | 'SENT' | 'FAILED' | 'DELIVERED' | string | null;
+};
+
+export const fieldWorkRequests = (employee_id: string, date: string, signal?: AbortSignal) =>
+  request<{ items: FieldWorkRequest[] }>(
+    `/attendance/field-work${query({ employee_id, date })}`,
+    signal ? { signal } : {},
+  );
+
+export const requestFieldWork = (body: {
+  employee_id: string; date: string; manager_confirmed: true;
+  work_location?: string; work_description?: string;
+}) => request<FieldWorkRequest>('/attendance/field-work', { method: 'POST', body });
+
+export const cancelFieldWork = (id: string) =>
+  request<FieldWorkRequest>(`/attendance/field-work/${encodeURIComponent(id)}/cancel`, { method: 'POST', body: {} });
+
+export const retryFieldWork = (id: string) =>
+  request<FieldWorkRequest>(`/attendance/field-work/${encodeURIComponent(id)}/retry`, { method: 'POST', body: {} });
 
 export type PresencePage = {
   date: string;
@@ -2659,9 +2692,11 @@ export type DailyRow = {
   /** Минуты СВЕРХ допуска. `null` — сравнивать не с чем. */
   late_minutes: number | null;
   scheduled_start: string | null;
+  scheduled_end?: string | null;
   absence_code: string | null;
   absence_name: string | null;
   conflicting_marks: boolean;
+  field_work?: { id: string; status: FieldWorkStatus } | null;
 };
 
 /** Итоги за ВЕСЬ период, а не за показанные строки. */

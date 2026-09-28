@@ -184,12 +184,12 @@ describe('строка «Сегодня»', () => {
     expect(screen.getByText('было по графику')).toBeTruthy();
   });
 
-  test('подпись под графиком — словами и в родительном падеже', async () => {
+  test('подпись под графиком разделяет вход в офис и подтверждённый выезд', async () => {
     network((path) => (path.includes('/dashboard') ? json(200, dashboard({ came: 0, should_work_today: 1 })) : null));
     renderApp('/');
 
-    const note = await screen.findByText(/Сегодня отметился/);
-    expect(note.textContent).toBe('Сегодня отметился 0 из 1 сотрудника.');
+    const note = await screen.findByText(/По графику/);
+    expect(note.textContent).toBe('По графику 1 сотрудник: в офис пришли 0, выездную работу подтвердили 0.');
   });
 
   test('без людей по графику — объяснение, а не голые нули', async () => {

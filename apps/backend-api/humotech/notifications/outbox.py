@@ -194,6 +194,16 @@ def claim(*, limit: int = 20, now: datetime | None = None) -> list[Outgoing]:
         )
 
         for row in rows:
+            if row.notification_type == "attendance.field_work_request":
+                from humotech.attendance.models import FieldWorkRequest
+
+                request = FieldWorkRequest.objects.filter(id=row.related_entity_id).first()
+                if request is None or request.status != "PENDING" or request.expires_at <= moment:
+                    row.status = "CANCELLED"
+                    row.error_message = "field_work_closed"
+                    row.save(update_fields=["status", "error_message", "updated_at"])
+                    _log_attempt(row, outcome="CANCELLED", reason="field_work_closed", moment=moment)
+                    continue
             account = (
                 TelegramAccount.objects.select_related("employee", "organization")
                 .filter(employee_id=row.employee_id)
@@ -317,7 +327,7 @@ def mark_failed(
 #: Для остальных причин повторы и так конечны (`MAX_ATTEMPTS`), но тут
 #: и пяти попыток с растущей паузой незачем. Человек, устранив причину,
 #: повторяет вручную из CRM.
-PERMANENT_ERRORS = frozenset({"attachment_rejected", "attachment_not_found"})
+PERMANENT_ERRORS = frozenset({"attachment_rejected", "attachment_not_found", "invalid_entity_id"})
 
 
 def _fail(notification_id, *, error: str, moment: datetime) -> bool:

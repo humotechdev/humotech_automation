@@ -86,6 +86,7 @@ FIELDS: dict[str, tuple[Field, ...]] = {
         _one("last_exit", "Последний выход", "time", column="Выход"),
         _one("marks", "Все входы и выходы", default=False),
         _one("office_time", "Время в офисе", "hours", column="Часы"),
+        _one("work_source", "Формат работы", default=False),
         _one("day_status", "Статус дня", "status", column="Статус"),
     ),
     "worktime": (
@@ -95,6 +96,8 @@ FIELDS: dict[str, tuple[Field, ...]] = {
         _DATE,
         _one("planned", "Плановое время", "hours", column="План"),
         _one("actual", "Фактическое время", "hours", column="Факт"),
+        _one("office_time", "Время в офисе", "hours", default=False),
+        _one("work_source", "Формат работы", default=False),
         _one("shortfall", "Недостающие часы", "hours", column="Недостача"),
         _one("overtime", "Переработка", "hours"),
         Field(
@@ -156,6 +159,8 @@ FIELDS: dict[str, tuple[Field, ...]] = {
 #: Статус дня: код → (подпись, тон). Тон нужен только экрану.
 DAY_STATUSES = {
     "WORKED": ("Рабочий день", "good"),
+    "FIELD_WORK": ("Выездная работа", "good"),
+    "FIELD_WORK_PENDING": ("Выездная работа: ожидает подтверждения", "warn"),
     "LATE": ("Опоздание", "warn"),
     "OPEN": ("Сессия не закрыта", "info"),
     "NOT_COME": ("Не пришёл", "bad"),
