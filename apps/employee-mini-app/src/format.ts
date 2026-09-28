@@ -21,6 +21,7 @@ const MONTHS = [
 
 export const PRESENCE: Record<string, string> = {
   IN_OFFICE: 'В офисе',
+  FIELD_WORK: 'Выездная работа',
   OUTSIDE: 'Вне офиса',
   SICK_LEAVE: 'Больничный',
   VACATION: 'Отпуск',

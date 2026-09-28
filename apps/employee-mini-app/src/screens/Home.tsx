@@ -206,6 +206,7 @@ function StatusBlock({
   const tz = status.timezone;
   const open = status.open_session;
   const inside = status.state === 'IN_OFFICE';
+  const fieldWork = status.state === 'FIELD_WORK';
   const shift = shiftProgress(status);
   const first = firstEntry(sessions);
 
@@ -221,18 +222,20 @@ function StatusBlock({
     <section className="card status" aria-busy={section.refreshing}>
       <div className="status-head">
         <span
-          className={`dot dot-${inside ? 'success' : status.state === 'WORKDAY_MISSED' ? 'warning' : 'idle'}`}
+          className={`dot dot-${inside || fieldWork ? 'success' : status.state === 'WORKDAY_MISSED' ? 'warning' : 'idle'}`}
           aria-hidden="true"
         />
-        <h2 className="status-title">{inside ? 'В офисе' : 'Не в офисе'}</h2>
+        <h2 className="status-title">{fieldWork ? 'Выездная работа' : inside ? 'В офисе' : 'Не в офисе'}</h2>
         {section.refreshing && <Spinner />}
         {/* Единственный путь к отметке с этого экрана. Ручного входа
             и выхода здесь нет и не будет: отметку делает сканирование,
             а не нажатие на кнопку «я пришёл». */}
-        <button type="button" className="status-scan" onClick={onScan}>
-          <QrIcon size={18} />
-          <span>Отметиться</span>
-        </button>
+        {!fieldWork && (
+          <button type="button" className="status-scan" onClick={onScan}>
+            <QrIcon size={18} />
+            <span>Отметиться</span>
+          </button>
+        )}
       </div>
 
       <p className="status-sub">
@@ -247,7 +250,7 @@ function StatusBlock({
           <dd>{first ? time(first, tz) : '—'}</dd>
         </div>
         <div>
-          <dt>В офисе сегодня</dt>
+          <dt>{fieldWork ? 'Засчитано по графику' : 'В офисе сегодня'}</dt>
           <dd>{duration(status.seconds_today)}</dd>
         </div>
       </dl>

@@ -119,6 +119,7 @@ class PresenceRowSerializer(serializers.Serializer):
     notice_kind = serializers.CharField(allow_null=True)
     notice_comment = serializers.CharField(allow_null=True)
     conflicting_marks = serializers.BooleanField()
+    field_work = serializers.DictField(allow_null=True)
     # Отрезки присутствия за день. Шкале рабочего дня их не собрать из
     # первого входа и последнего выхода: обед между ними пропал бы.
     intervals = PresenceIntervalSerializer(many=True)

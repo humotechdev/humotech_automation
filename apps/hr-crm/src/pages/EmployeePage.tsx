@@ -169,6 +169,7 @@ export function EmployeePage() {
           {tab === 'attendance' && (
             <Attendance
               id={id}
+              name={name}
               rights={{
                 attendance: rights.attendance,
                 export: rights.export,

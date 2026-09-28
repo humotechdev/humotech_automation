@@ -47,6 +47,7 @@ BACKEND_DOWN = (
 
 PRESENCE = {
     "IN_OFFICE": "Вы в офисе",
+    "FIELD_WORK": "Сегодня подтверждена выездная работа",
     "OUTSIDE": "Вы вне офиса",
     "SICK_LEAVE": "У вас больничный",
     "VACATION": "У вас отпуск",
@@ -222,7 +223,9 @@ def presence(status: dict) -> str:
     ):
         lines.append(escape(status["absence_name"]))
 
-    lines.append(f"Сегодня в офисе: {duration(status.get('seconds_today', 0))}")
+    time_label = ("Засчитано по графику" if status["state"] == "FIELD_WORK"
+                  else "Сегодня в офисе")
+    lines.append(f"{time_label}: {duration(status.get('seconds_today', 0))}")
 
     if status.get("scheduled_start") and status.get("scheduled_end"):
         lines.append(
@@ -243,14 +246,14 @@ def summary(body: dict, title: str) -> str:
         f"<b>{title}</b>",
         f"{_period(data)}",
         "",
-        f"В офисе: {duration(data['seconds'])}",
+        f"Засчитано времени: {duration(data['seconds'])}",
         f"Завершённых сессий: {data['completed_sessions']}",
     ]
     if data["open_sessions"]:
         lines.append(
             f"Открытых сессий: {data['open_sessions']} — время предварительное"
         )
-    lines.append(f"Дней с отметками: {data['attended_days']}")
+    lines.append(f"Дней с отметками или подтверждённым выездом: {data['attended_days']}")
 
     if data["has_schedule"]:
         lines.append(f"Рабочих дней: {data['working_days']}")

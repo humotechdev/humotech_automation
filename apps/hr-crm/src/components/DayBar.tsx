@@ -75,6 +75,17 @@ export function DayBar({
   const planStart = fromTime(row.scheduled_start);
   const planEnd = fromTime(row.scheduled_end);
 
+  if (row.state === 'FIELD_WORK') {
+    return (
+      <span className={`day-bar day-bar--field${big ? ' day-bar--big' : ''}`}>
+        <span className="day-bar__track"><span className="day-bar__run" style={{ left: '0%', width: '100%' }} /></span>
+        <span className="day-bar__times">Выездная работа · {planStart !== null && planEnd !== null
+          ? `${atClock(planStart)}–${atClock(planEnd)} по графику` : 'полный рабочий день по графику'}
+          {' '}· QR-отметок нет</span>
+      </span>
+    );
+  }
+
   // Тело без отрезков не должно ронять таблицу: шкала — одна колонка,
   // а не вся страница.
   const parts = (row.intervals ?? [])

@@ -209,12 +209,32 @@ describe('один экран', () => {
 });
 
 describe('за день', () => {
+  test('для HR строка без отметки открывает подтверждение выездной работы', async () => {
+    network(() => null, ['attendance.read', 'attendance.correct']);
+    renderApp(`/attendance?date=${DAY}`);
+    await screen.findByText('Саидова Дилноза');
+    fireEvent.click(within(tableRow('Саидова Дилноза')).getByRole('button', { name: 'Выездная работа' }));
+    expect(await screen.findByRole('dialog', { name: 'Отправить подтверждение выездной работы?' })).toBeTruthy();
+    expect(screen.getByText(/До его ответа день не засчитывается/)).toBeTruthy();
+  });
+
+  test('предупредившему об опоздании тоже можно запросить выездную работу; предупреждение остаётся видимым', async () => {
+    network(() => null, ['attendance.read', 'attendance.correct']);
+    renderApp(`/attendance?date=${DAY}`);
+    await screen.findByText('Юсупова Камила');
+    const line = tableRow('Юсупова Камила');
+    expect(within(line).getByText('Пробки')).toBeTruthy();
+    fireEvent.click(within(line).getByRole('button', { name: 'Выездная работа' }));
+    expect(await screen.findByRole('dialog', { name: 'Отправить подтверждение выездной работы?' })).toBeTruthy();
+    expect(screen.getAllByText('Пробки').length).toBeGreaterThanOrEqual(2);
+  });
+
   test('числа полосы приходят с сервера, а не считаются по строкам', async () => {
     network();
     renderApp(`/attendance?date=${DAY}`);
 
     // 205 из 214 — это карточки дашборда, строк в таблице всего пять.
-    expect(await screen.findByText('205 из 214 по графику')).toBeTruthy();
+    expect(await screen.findByText('205 из 214 по графику (205 в офисе, 0 на выезде)')).toBeTruthy();
     expect(screen.getByText('96%')).toBeTruthy();
     expect(screen.getByText('+5 п.п. к вчера')).toBeTruthy();
   });

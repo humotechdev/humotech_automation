@@ -40,7 +40,7 @@ from humotech.analytics.metrics import (
     _plan_for,
     _validate_period,
 )
-from humotech.attendance.models import AttendanceSession
+from humotech.attendance.models import AttendanceSession, FieldWorkRequest
 from humotech.attendance.statistics import (
     COUNTED_ABSENCE_STATUSES,
     SICK_CODES,
@@ -147,6 +147,8 @@ class OverviewService(AnalyticsService):
                     if current["closed_days"] else None
                 ),
                 "open_sessions": current["open_sessions"],
+                "field_work_days": current["field_work_days"],
+                "field_work_seconds": current["field_work_seconds"],
                 "missed_days": current["missed"],
                 "vacation_days": current["vacation"],
                 "sick_leave_days": current["sick"],
@@ -223,6 +225,7 @@ class OverviewService(AnalyticsService):
         end = max(one[1] for one in bounds)
 
         sessions: dict[tuple, list[AttendanceSession]] = {}
+        field_work: dict[tuple, int] = {}
         absences: dict[tuple, str] = {}
         schedules: dict = {}
         if employee_ids:
@@ -256,6 +259,7 @@ class OverviewService(AnalyticsService):
                     absences.setdefault((row.employee_id, day), code)
 
             schedules = self._schedules(employee_ids, first, last)
+            field_work = self._field_work(employee_ids, first, last)
 
         exceptions = _exceptions(actor, list(zones), first, last)
         today = {office_id: local_date(moment, tz) for office_id, tz in zones.items()}
@@ -300,6 +304,19 @@ class OverviewService(AnalyticsService):
                 week["expected"] += 1
 
                 if not day_sessions:
+                    if key in field_work:
+                        counts["attended"] += 1
+                        counts["field_work_days"] += 1
+                        counts["field_work_seconds"] += field_work[key]
+                        state["attended"] += 1
+                        state["field_work_days"] += 1
+                        state["field_work_seconds"] += field_work[key]
+                        state["office_attended"][office_id] += 1
+                        state["person_attended"][employee_id] += 1
+                        state["person_field_work_days"][employee_id] += 1
+                        state["person_field_work_seconds"][employee_id] += field_work[key]
+                        week["attended"] += 1
+                        continue
                     counts["missed"] += 1
                     state["missed"] += 1
                     state["person_missed_dates"].setdefault(employee_id, []).append(day)
@@ -511,6 +528,8 @@ class OverviewService(AnalyticsService):
                 "late_minutes": state["person_late_minutes"][employee_id],
                 "missed_days": expected - attended,
                 "seconds": state["person_seconds"][employee_id],
+                "field_work_days": state["person_field_work_days"][employee_id],
+                "field_work_seconds": state["person_field_work_seconds"][employee_id],
                 "vacation_days": state["person_absence"].get(employee_id, Counter())["vacation"],
                 "sick_days": state["person_absence"].get(employee_id, Counter())["sick"],
                 "other_days": state["person_absence"].get(employee_id, Counter())["other"],
@@ -635,6 +654,7 @@ def _empty_state(offices: list[Office]) -> dict:
         "expected": 0, "attended": 0, "missed": 0, "on_time": 0, "late": 0,
         "arrivals": 0, "after_start": 0, "vacation": 0, "sick": 0, "other": 0, "trip": 0,
         "closed_seconds": 0, "closed_days": 0, "open_sessions": 0,
+        "field_work_days": 0, "field_work_seconds": 0,
         "office_expected": dict.fromkeys(ids, 0),
         "office_attended": dict.fromkeys(ids, 0),
         # По людям — для рейтинга сотрудников. Словари, а не заранее
@@ -648,6 +668,8 @@ def _empty_state(offices: list[Office]) -> dict:
         "person_department": {},
         "person_position": {},
         "person_seconds": Counter(),
+        "person_field_work_days": Counter(),
+        "person_field_work_seconds": Counter(),
         "person_absence": {},
         "person_missed_dates": {},
         "person_late_dates": {},
@@ -666,6 +688,7 @@ def _day_counts() -> dict:
     return {
         "expected": 0, "attended": 0, "missed": 0, "on_time": 0, "late": 0,
         "vacation": 0, "sick": 0, "other": 0, "trip": 0, "closed_seconds": 0, "closed_days": 0,
+        "field_work_days": 0, "field_work_seconds": 0,
     }
 
 
@@ -696,6 +719,8 @@ def _day_row(day: date, counts: dict, weekday: int | None, *, future: bool) -> d
         "sick_leave": counts["sick"],
         "other_absence": counts["other"],
         "trip": counts["trip"],
+        "field_work_days": counts["field_work_days"],
+        "field_work_seconds": counts["field_work_seconds"],
         "average_seconds": (
             round(counts["closed_seconds"] / counts["closed_days"]) if counts["closed_days"] else None
         ),

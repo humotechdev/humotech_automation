@@ -35,6 +35,7 @@ DAY_START = "attendance.day_start"
 
 #: Справку не приняли. Тот же код стоит на стороне backend.
 DOCUMENT_REJECTED = "absence.document_rejected"
+FIELD_WORK_REQUEST = "attendance.field_work_request"
 
 #: Коды нажатий. Короткие: Telegram ограничивает `callback_data`
 #: шестьюдесятью четырьмя байтами, и длинное имя однажды не влезет.
@@ -44,6 +45,8 @@ MARK_NOW = "day:mark"
 UPLOAD_DOCUMENT = "doc:"
 SAY_LATE = "day:late"
 SAY_ABSENT = "day:absent"
+FIELD_WORK_CONFIRM = "fw:y:"
+FIELD_WORK_DECLINE = "fw:n:"
 
 
 def markup_for(
@@ -54,6 +57,8 @@ def markup_for(
         return day_start_markup()
     if notification_type == DOCUMENT_REJECTED:
         return document_markup(entity_id)
+    if notification_type == FIELD_WORK_REQUEST:
+        return field_work_markup(entity_id)
     if notification_type != SURVEY_INVITE:
         return None
     if not entity_id:
@@ -129,6 +134,23 @@ def document_markup(request_id: str | None) -> InlineKeyboardMarkup | None:
     )
 
 
+def field_work_markup(request_id: str | None) -> InlineKeyboardMarkup | None:
+    """Ответ по конкретному запросу. UUID не удостоверяет владельца: это решает backend."""
+    if not is_uuid(request_id):
+        logger.warning("field work request without valid UUID: buttons skipped")
+        return None
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="✅ Подтверждаю работу вне офиса",
+            callback_data=f"{FIELD_WORK_CONFIRM}{request_id}",
+        )],
+        [InlineKeyboardButton(
+            text="❌ Не подтверждаю",
+            callback_data=f"{FIELD_WORK_DECLINE}{request_id}",
+        )],
+    ])
+
+
 def scan_url() -> str | None:
     """Экран отметки в Mini App."""
     base = (settings.mini_app_url or "").strip()
@@ -155,6 +177,10 @@ def survey_url(recipient_id: str) -> str | None:
 __all__ = [
     "DAY_START",
     "DOCUMENT_REJECTED",
+    "FIELD_WORK_REQUEST",
+    "FIELD_WORK_CONFIRM",
+    "FIELD_WORK_DECLINE",
+    "field_work_markup",
     "UPLOAD_DOCUMENT",
     "document_markup",
     "MARK_NOW",

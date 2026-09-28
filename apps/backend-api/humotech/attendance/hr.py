@@ -40,6 +40,7 @@ from humotech.attendance.models import (
     AttendanceCorrectionRequest,
     AttendanceEvent,
     AttendanceSession,
+    FieldWorkRequest,
 )
 from humotech.attendance.statistics import (
     COUNTED_ABSENCE_STATUSES,
@@ -125,6 +126,8 @@ PRESENCE_STATES = (
     "OTHER_ABSENCE",
     "IN_OFFICE",
     "LEFT",
+    "FIELD_WORK",
+    "FIELD_WORK_PENDING",
     # Человек сам сказал, что задерживается. Отдельно от «не пришёл»:
     # предупредивший и пропавший — разные люди с точки зрения кадровика,
     # и одна плашка на двоих стирает единственную разницу между ними.
@@ -182,6 +185,7 @@ class PresenceRow:
     # Отметка есть, хотя человек числится отсутствующим. Не ошибка сама
     # по себе — повод посмотреть.
     conflicting_marks: bool
+    field_work: dict | None = None
 
     # Что человек сам сказал про этот день: `LATE`, `ABSENT` или ничего.
     # Это не отметка и не заявка — объяснение пустой строки, и держать
@@ -306,6 +310,7 @@ class AttendanceHrService(BaseService):
         )
 
         notices = notices_of_day(employee_ids, day)
+        field_work = self._field_work_of_day(employee_ids, day)
 
         result = [
             self._presence_row(
@@ -317,6 +322,7 @@ class AttendanceHrService(BaseService):
                 schedule=scheduled.get(employee_id),
                 calendar=calendar,
                 notice=notices.get(employee_id),
+                field_work=field_work.get(employee_id),
             )
             for employee_id, assignment in rows.items()
         ]
@@ -448,6 +454,7 @@ class AttendanceHrService(BaseService):
                 schedule=scheduled.get(employee_id),
                 calendar=calendar,
                 notice=notices_of_day([employee_id], day).get(employee_id),
+                field_work=self._field_work_of_day([employee_id], day).get(employee_id),
             )
             open_session = row.open_session_id is not None
             rows.append(
@@ -470,6 +477,7 @@ class AttendanceHrService(BaseService):
                     # Отметки в день подтверждённого отсутствия — не норма,
                     # и молчать об этом нельзя: расхождение разбирает человек.
                     "conflicting_marks": row.conflicting_marks,
+                    "field_work": row.field_work,
                 }
             )
 
@@ -787,6 +795,13 @@ class AttendanceHrService(BaseService):
         ensure_day_in_range(occurred_at.date(), "occurred_at")
 
         with self.atomic():
+            from humotech.attendance.field_work import require_no_field_work
+            from humotech.absences.services import lock_employee
+            lock_employee(employee_id)
+            Employee.objects.select_for_update().get(id=employee_id)
+            manual_day = occurred_at.astimezone(office_zone(
+                Office.objects.select_related("organization").get(id=office_id))).date()
+            require_no_field_work(employee_id, manual_day, manual_day)
             event = AttendanceEvent.objects.create(
                 organization_id=actor.organization_id,
                 employee_id=employee_id,
@@ -1007,6 +1022,15 @@ class AttendanceHrService(BaseService):
         return {row.employee_id: row for row in assignments}
 
     @staticmethod
+    def _field_work_of_day(employee_ids, day):
+        result = {}
+        for row in FieldWorkRequest.objects.filter(employee_id__in=employee_ids,
+                                                    date=day, status__in=("PENDING", "CONFIRMED")):
+            if row.employee_id not in result or row.status == "CONFIRMED":
+                result[row.employee_id] = row
+        return result
+
+    @staticmethod
     def _sessions_of_day(
         employee_ids: list[uuid.UUID], start: datetime, end: datetime
     ) -> dict[uuid.UUID, list[AttendanceSession]]:
@@ -1125,6 +1149,7 @@ class AttendanceHrService(BaseService):
         schedule: tuple[time | None, time | None, bool, int] | None,
         calendar: dict,
         notice=None,
+        field_work=None,
     ) -> PresenceRow:
         employee = assignment.employee
         first_entry = sessions[0].started_at if sessions else None
@@ -1159,6 +1184,14 @@ class AttendanceHrService(BaseService):
             is_working=is_working,
             notice_kind=notice.kind if notice else None,
         )
+        # Facts of absence or physical scanning always remain visible if
+        # legacy/imported data unexpectedly conflicts with the field request.
+        if field_work and absence is None and not sessions:
+            if field_work.status == "CONFIRMED":
+                state = "FIELD_WORK"
+                seconds = field_work.norm_seconds
+            elif field_work.status == "PENDING" and field_work.expires_at > _now():
+                state = "FIELD_WORK_PENDING"
 
         late_minutes = None
         if first_entry and scheduled_start:
@@ -1194,6 +1227,9 @@ class AttendanceHrService(BaseService):
             notice_kind=notice.kind if notice else None,
             notice_comment=notice.comment if notice else None,
             conflicting_marks=bool(absence and sessions),
+            field_work=({"id": str(field_work.id), "status": field_work.status,
+                         "norm_seconds": field_work.norm_seconds}
+                        if field_work else None),
             intervals=tuple(
                 Interval(
                     started_at=one.started_at,

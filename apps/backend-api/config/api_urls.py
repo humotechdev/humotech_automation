@@ -31,6 +31,9 @@ from humotech.analytics.views import (
 )
 from humotech.attendance.views import (
     AttendanceViewSet,
+    FieldWorkListView,
+    FieldWorkActionView,
+    BotFieldWorkDecisionView,
     EmployeeDailyView,
     CorrectionDecisionView,
     CorrectionListView,
@@ -276,6 +279,8 @@ urlpatterns = [
     # Очередь уведомлений. Бот забирает её отсюда, а не из базы: подключения
     # к PostgreSQL у него нет и заводить его ради двух запросов не нужно.
     path("telegram/bot/outbox", BotOutboxView.as_view(), name="telegram-bot-outbox"),
+    path("telegram/bot/field-work/<uuid:request_id>/decision",
+         BotFieldWorkDecisionView.as_view(), name="telegram-bot-field-work-decision"),
     # Mini App. Путь начинается с /api/v1/telegram/mini-app/ — ровно на этом
     # префиксе работает CORS (см. humotech/telegram/middleware.py).
     path(
@@ -399,6 +404,9 @@ urlpatterns = [
     path("attendance/sessions", AttendanceViewSet.as_view({"get": "sessions"}),
          name="attendance-sessions"),
     path("attendance/presence", PresenceView.as_view(), name="attendance-presence"),
+    path("attendance/field-work", FieldWorkListView.as_view(), name="attendance-field-work"),
+    path("attendance/field-work/<uuid:request_id>/<str:action>",
+         FieldWorkActionView.as_view(), name="attendance-field-work-action"),
     # Журнал по дням для одного человека. Строку дня собирает тот же
     # код, что и присутствие: у ночной смены и открытой сессии
     # должен быть один ответ, а не два похожих.

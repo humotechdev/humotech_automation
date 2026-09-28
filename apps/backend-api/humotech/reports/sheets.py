@@ -157,7 +157,8 @@ def _attendance(actor: Actor, filters: dict, author: str) -> Sheet:
     single = first == last
 
     columns = ["Табельный номер", "ФИО", "Офис", "Состояние", "Вход",
-               "Выход", "Часов", "Опоздание, мин", "Отсутствие"]
+               "Выход", "Часов в офисе", "Засчитано выездной работой, ч",
+               "Опоздание, мин", "Отсутствие"]
     if not single:
         columns.insert(0, "Дата")
 
@@ -179,10 +180,13 @@ def _attendance(actor: Actor, filters: dict, author: str) -> Sheet:
                     row.employee_number,
                     row.full_name,
                     row.office_name,
-                    row.state,
+                    ("Выездная работа" if row.state == "FIELD_WORK"
+                     else "Выездная работа: ожидает подтверждения"
+                     if row.state == "FIELD_WORK_PENDING" else row.state),
                     row.first_entry_at,
                     row.last_exit_at,
-                    round(row.seconds / 3600, 2),
+                    round((0 if row.state == "FIELD_WORK" else row.seconds) / 3600, 2),
+                    round((row.seconds if row.state == "FIELD_WORK" else 0) / 3600, 2),
                     row.late_minutes,
                     row.absence_name,
                 ]
@@ -207,6 +211,11 @@ def _attendance(actor: Actor, filters: dict, author: str) -> Sheet:
                 "Пустое «Опоздание»",
                 "означает «сравнивать не с чем»: у сотрудника нет графика "
                 "или он не приходил. Это не ноль минут.",
+            ),
+            (
+                "Выездная работа",
+                "Подтверждённая выездная работа засчитывается по графику, "
+                "но не является входом или временем физического присутствия в офисе.",
             ),
         ],
     )
@@ -299,12 +308,14 @@ def _summary(actor: Actor, filters: dict, author: str) -> Sheet:
                 report.headcount,
                 report.totals["expected_working_days"],
                 report.totals["attended_days"],
+                report.totals["field_work_days"],
                 report.totals["missed_days"],
                 attendance.percent,
                 f"{attendance.numerator} / {attendance.denominator}",
                 punctuality.percent,
                 f"{punctuality.numerator} / {punctuality.denominator}",
                 round(report.totals["worked_seconds"] / 3600, 2),
+                round(report.totals["office_seconds"] / 3600, 2),
                 report.totals["late_arrivals"],
                 report.coverage.ratio,
             ]
@@ -329,9 +340,9 @@ def _summary(actor: Actor, filters: dict, author: str) -> Sheet:
 
     return Sheet(
         title="Сводка по офисам",
-        columns=["Офис", "Штат", "Рабочих дней", "С отметками", "Пропущено",
+        columns=["Офис", "Штат", "Рабочих дней", "Засчитано дней", "Из них выездных", "Пропущено",
                  "Посещаемость, %", "Посещаемость: дробь",
-                 "Приход вовремя, %", "Вовремя: дробь", "Часов в офисе",
+                 "Приход вовремя, %", "Вовремя: дробь", "Отработано часов", "Часов в офисе",
                  "Опозданий", "Покрытие графиками, %"],
         rows=rows,
         meta=meta,
