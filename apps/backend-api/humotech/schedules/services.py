@@ -172,6 +172,28 @@ class WorkScheduleService(BaseService):
             self._validate_days(days)
 
         with self.atomic():
+            if days is not None or changes.get("weekly_minutes") is not None or changes.get("timezone") is not None:
+                from humotech.attendance.models import FieldWorkRequest
+                from humotech.attendance.field_work import require_no_field_work
+                from humotech.absences.services import lock_employee
+                # Lock all assigned employees before the shared schedule row.
+                # Field-work creation takes the locks in the same order.
+                ids = EmployeeScheduleAssignment.objects.filter(
+                    schedule_id=schedule_id).values_list("employee_id", flat=True).distinct().order_by("employee_id")
+                for employee_id in ids:
+                    lock_employee(employee_id)
+                    Employee.objects.select_for_update().get(id=employee_id)
+                WorkSchedule.objects.select_for_update().get(id=schedule_id)
+                protected = FieldWorkRequest.objects.filter(
+                    employee_id__in=ids, status__in=("PENDING", "CONFIRMED"))
+                for protected_day in protected:
+                    active_assignment = EmployeeScheduleAssignment.objects.filter(
+                        employee_id=protected_day.employee_id, schedule_id=schedule_id,
+                        valid_from__lte=protected_day.date,
+                    ).filter(Q(valid_to__isnull=True) | Q(valid_to__gte=protected_day.date)).exists()
+                    if active_assignment:
+                        require_no_field_work(protected_day.employee_id,
+                                              protected_day.date, protected_day.date)
             schedule.save()
             if days is not None:
                 self._replace_days(schedule, days)
@@ -300,6 +322,15 @@ class WorkScheduleService(BaseService):
                 current = None
 
         with self.atomic():
+            from humotech.attendance.field_work import require_no_field_work
+            from humotech.attendance.models import FieldWorkRequest
+            from humotech.absences.services import lock_employee
+            lock_employee(employee_id)
+            Employee.objects.select_for_update().get(id=employee_id)
+            if FieldWorkRequest.objects.filter(employee_id=employee_id,
+                                               date__gte=valid_from,
+                                               status__in=("PENDING", "CONFIRMED")).exists():
+                raise Conflict("Сначала отмените запрос выездной работы")
             if current is not None:
                 current.valid_to = valid_from - timedelta(days=1)
                 # закрытие обязано дойти до базы ДО вставки нового периода:

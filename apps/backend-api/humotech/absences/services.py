@@ -1755,6 +1755,10 @@ class AbsenceService(BaseService):
         # У продления исключается и родитель: `_approve` раздвигает
         # ЕГО отсутствие, и новый конец неизбежно перекрывает старый.
         lock_employee(request.employee_id)
+        from humotech.employees.models import Employee
+        Employee.objects.select_for_update().get(id=request.employee_id)
+        from humotech.attendance.field_work import require_no_field_work
+        require_no_field_work(request.employee_id, first_day, last_day)
         raise_on_overlap(
             request.employee_id, first_day, last_day, tz,
             ignore_request_ids=(request.id, request.parent_request_id),

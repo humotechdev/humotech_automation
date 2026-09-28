@@ -278,6 +278,7 @@ def test_exit_reports_the_hours_from_the_server():
         ("LOCATION_TOO_VAGUE", "приблизительно"),
         ("LOCATION_AMBIGUOUS", "границы территории"),
         ("LOCATION_STALE", "устарела"),
+        ("FIELD_WORK_CONFIRMED", "работа вне офиса"),
         ("ALREADY_INSIDE", "уже отмечены"),
         ("NOT_INSIDE", "Открытой сессии нет"),
     ],

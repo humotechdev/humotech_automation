@@ -28,6 +28,7 @@ import aiohttp
 
 from src.api.errors import error_for
 from src.config.settings import settings
+from src.utils.safe import is_uuid
 
 BOT_SECRET_HEADER = "X-Bot-Token"
 EMPLOYEE_HEADER = "X-Telegram-User-Id"
@@ -432,6 +433,24 @@ class SelfServiceClient:
         )
 
     # --- очередь уведомлений ---------------------------------------------
+
+    async def field_work_decision(
+        self, *, telegram_user_id: int, request_id: str, decision: str
+    ) -> dict:
+        """Передать нажатие серверу: привязку и владельца решает он.
+
+        `telegram_user_id` берётся только из Telegram callback.from_user.id.
+        UUID проверяется до вставки в URL с общим секретом бота.
+        """
+        if not is_uuid(request_id):
+            raise ValueError("field work request id must be UUID")
+        if decision not in ("CONFIRM", "DECLINE"):
+            raise ValueError("invalid field work decision")
+        return await self._request(
+            "POST", f"/telegram/bot/field-work/{request_id}/decision",
+            headers={},
+            json={"telegram_user_id": telegram_user_id, "decision": decision},
+        )
 
     async def claim_notifications(self) -> dict:
         """Забрать пачку сообщений. Только общий секрет, без сотрудника."""

@@ -36,6 +36,8 @@ export const DAY_STATE: Record<string, string> = {
   IN_OFFICE: 'В офисе',
   LEFT: 'Ушёл',
   NOT_COME: 'Нет отметки',
+  FIELD_WORK_PENDING: 'Ожидает подтверждения выездной работы',
+  FIELD_WORK: 'Выездная работа',
   DAY_OFF: 'Выходной',
   NO_SCHEDULE: 'Без графика',
   VACATION: 'Отпуск',

@@ -28,7 +28,7 @@ from aiogram.types import BufferedInputFile
 
 from src.api.errors import ApiError, NotFound
 from src.config.settings import settings
-from src.notifications.buttons import markup_for
+from src.notifications.buttons import FIELD_WORK_REQUEST, markup_for
 from src.utils.safe import is_uuid
 
 logger = logging.getLogger("humotech.notifications")
@@ -90,6 +90,10 @@ class TelegramSender:
     ) -> Outcome:
         # Тип теперь важен: по нему под сообщением появляется кнопка.
         # Какая именно — решает `buttons.py`, а не это место.
+        if notification_type == FIELD_WORK_REQUEST and not is_uuid(entity_id):
+            # Без кнопки сотрудник не может ответить. Очередь должна
+            # сохранить ошибку, а не пометить уведомление отправленным.
+            return Outcome(sent=False, error="invalid_entity_id")
         markup = markup_for(notification_type, entity_id)
         try:
             document = await self._fetch(attachment, entity_id, telegram_user_id)

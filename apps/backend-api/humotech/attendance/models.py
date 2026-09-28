@@ -271,6 +271,41 @@ class AttendanceSession(
         return f"{self.employee_id} {self.started_at:%Y-%m-%d}"
 
 
+class FieldWorkRequest(UUIDPrimaryKeyModel, OrganizationScopedModel, TimestampedModel):
+    """Отдельное основание зачёта смены вне офиса, без фиктивных QR-событий."""
+
+    employee = models.ForeignKey("employees.Employee", on_delete=models.PROTECT,
+                                 db_column="employee_id", related_name="field_work_requests")
+    office = models.ForeignKey("offices.Office", on_delete=models.PROTECT,
+                               db_column="office_id", related_name="field_work_requests")
+    date = models.DateField()
+    status = models.CharField(max_length=20, choices=choices(
+        ("PENDING", "CONFIRMED", "DECLINED", "CANCELLED", "EXPIRED")))
+    scheduled_start = models.TimeField()
+    scheduled_end = models.TimeField()
+    norm_seconds = models.PositiveIntegerField()
+    requested_by_user = models.ForeignKey("accounts.User", on_delete=models.PROTECT,
+                                          db_column="requested_by_user_id", related_name="+")
+    requested_at = models.DateTimeField()
+    responded_at = models.DateTimeField(null=True, blank=True)
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    expires_at = models.DateTimeField()
+    work_location = models.CharField(max_length=255, blank=True, default="")
+    work_description = models.CharField(max_length=1000, blank=True, default="")
+
+    class Meta:
+        db_table = "attendance_field_work_requests"
+        constraints = [
+            status_check("status", ("PENDING", "CONFIRMED", "DECLINED", "CANCELLED", "EXPIRED"),
+                         "ck_field_work_status"),
+            models.UniqueConstraint(fields=["employee", "date"],
+                condition=Q(status__in=("PENDING", "CONFIRMED")),
+                name="uq_field_work_active_day"),
+        ]
+        indexes = [models.Index(fields=["organization", "date"],
+                                name="ix_field_work_org_date")]
+
+
 class AttendanceCorrectionRequest(
     UUIDPrimaryKeyModel, OrganizationScopedModel, TimestampedModel
 ):

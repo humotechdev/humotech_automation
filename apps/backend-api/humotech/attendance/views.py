@@ -25,6 +25,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from humotech.attendance.hr import PRESENCE_STATES, AttendanceHrService
+from humotech.attendance.field_work import FieldWorkService, summary as field_work_summary
 from humotech.attendance.serializers import (
     AttendanceEventSerializer,
     AttendanceSessionSerializer,
@@ -36,6 +37,135 @@ from humotech.attendance.serializers import (
 from humotech.core.api import ServiceViewSet, validated
 from humotech.core.errors import ValidationFailed
 from humotech.core.rbac import Actor
+from humotech.telegram.auth import IsTelegramBot
+
+
+class FieldWorkCreateSerializer(drf_serializers.Serializer):
+    employee_id = drf_serializers.UUIDField()
+    date = drf_serializers.DateField()
+    manager_confirmed = drf_serializers.BooleanField()
+    work_location = drf_serializers.CharField(required=False, allow_blank=True, max_length=255, trim_whitespace=True)
+    work_description = drf_serializers.CharField(required=False, allow_blank=True, max_length=1000, trim_whitespace=True)
+
+
+class FieldWorkDecisionSerializer(drf_serializers.Serializer):
+    telegram_user_id = drf_serializers.IntegerField(min_value=1)
+    decision = drf_serializers.ChoiceField(choices=["CONFIRM", "DECLINE"])
+
+
+class FieldWorkSerializer(drf_serializers.Serializer):
+    """Запрос выездной работы так, как его видит CRM."""
+
+    id = drf_serializers.UUIDField()
+    status = drf_serializers.ChoiceField(
+        choices=["PENDING", "CONFIRMED", "DECLINED", "CANCELLED", "EXPIRED"])
+    date = drf_serializers.DateField()
+    employee_id = drf_serializers.UUIDField()
+    office_id = drf_serializers.UUIDField()
+    scheduled_start = drf_serializers.TimeField()
+    scheduled_end = drf_serializers.TimeField()
+    norm_seconds = drf_serializers.IntegerField()
+    work_location = drf_serializers.CharField(allow_blank=True)
+    work_description = drf_serializers.CharField(allow_blank=True)
+    requested_at = drf_serializers.DateTimeField()
+    responded_at = drf_serializers.DateTimeField(allow_null=True)
+    expires_at = drf_serializers.DateTimeField()
+    delivery_status = drf_serializers.CharField(
+        allow_null=True,
+        help_text="Состояние отправки в Telegram — отдельно от состояния запроса",
+    )
+
+
+class FieldWorkListSerializer(drf_serializers.Serializer):
+    items = FieldWorkSerializer(many=True)
+
+
+class FieldWorkDecisionResultSerializer(drf_serializers.Serializer):
+    id = drf_serializers.UUIDField()
+    status = drf_serializers.CharField()
+    date = drf_serializers.DateField()
+
+
+class FieldWorkListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        operation_id="attendance_field_work_create",
+        summary="Запросить подтверждение выездной работы",
+        request=FieldWorkCreateSerializer,
+        responses={201: FieldWorkSerializer},
+        tags=["Посещаемость"],
+    )
+    def post(self, request):
+        data = validated(FieldWorkCreateSerializer, request.data)
+        row = FieldWorkService().create(Actor.from_user(request.user),
+            employee_id=data["employee_id"], day=data["date"],
+            manager_confirmed=data["manager_confirmed"],
+            work_location=data.get("work_location", ""),
+            work_description=data.get("work_description", ""))
+        return Response(field_work_summary(row), status=http_status.HTTP_201_CREATED)
+
+    @extend_schema(
+        operation_id="attendance_field_work_list",
+        summary="Запросы выездной работы",
+        parameters=[
+            OpenApiParameter("employee_id", OpenApiTypes.UUID),
+            OpenApiParameter("date", OpenApiTypes.DATE),
+        ],
+        responses={200: FieldWorkListSerializer},
+        tags=["Посещаемость"],
+    )
+    def get(self, request):
+        rows = FieldWorkService().list(Actor.from_user(request.user),
+            employee_id=_uuid_param(request, "employee_id"), day=_date_param(request, "date"))
+        from humotech.notifications.models import Notification
+        statuses = dict(Notification.objects.filter(
+            related_entity_type="attendance_field_work_request",
+            related_entity_id__in=[row.id for row in rows],
+            notification_type="attendance.field_work_request",
+        ).values_list("related_entity_id", "status"))
+        return Response({"items": [field_work_summary(row,
+            delivery_status=statuses.get(row.id) or "UNKNOWN") for row in rows]})
+
+
+class FieldWorkActionView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        operation_id="attendance_field_work_action",
+        summary="Отменить запрос или повторить отправку (cancel | retry)",
+        request=None,
+        responses={200: FieldWorkSerializer},
+        tags=["Посещаемость"],
+    )
+    def post(self, request, request_id, action):
+        service = FieldWorkService()
+        actor = Actor.from_user(request.user)
+        if action == "cancel":
+            row = service.cancel(actor, request_id)
+        elif action == "retry":
+            row = service.retry(actor, request_id)
+        else:
+            raise ValidationFailed("Неизвестное действие")
+        return Response(field_work_summary(row))
+
+
+class BotFieldWorkDecisionView(APIView):
+    authentication_classes = []
+    permission_classes = [IsTelegramBot]
+
+    @extend_schema(
+        operation_id="telegram_bot_field_work_decision",
+        summary="Ответ сотрудника на запрос выездной работы",
+        request=FieldWorkDecisionSerializer,
+        responses={200: FieldWorkDecisionResultSerializer},
+        tags=["Telegram"],
+    )
+    def post(self, request, request_id):
+        data = validated(FieldWorkDecisionSerializer, request.data)
+        row = FieldWorkService().decide(request_id, **data)
+        return Response({"id": str(row.id), "status": row.status,
+                         "date": row.date.isoformat()})
 
 
 # Потолок числа строк в одном ответе присутствия.
@@ -438,11 +568,13 @@ class DailyRowSerializer(drf_serializers.Serializer):
         ),
     )
     scheduled_start = drf_serializers.TimeField(allow_null=True)
+    scheduled_end = drf_serializers.TimeField(allow_null=True)
     absence_code = drf_serializers.CharField(allow_null=True)
     absence_name = drf_serializers.CharField(allow_null=True)
     conflicting_marks = drf_serializers.BooleanField(
         help_text="Отметки в день подтверждённого отсутствия — расхождение",
     )
+    field_work = drf_serializers.DictField(allow_null=True)
 
 
 class DailyTotalsSerializer(drf_serializers.Serializer):

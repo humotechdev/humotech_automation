@@ -49,7 +49,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from humotech.absences.models import EmployeeAbsence
-from humotech.attendance.models import AttendanceSession
+from humotech.attendance.models import AttendanceSession, FieldWorkRequest
 from humotech.core.timeframes import (
     days_in,
     local_date,
@@ -110,10 +110,11 @@ class DayRecord:
     # графика, ровно как это уже делает `_daily_norm_minutes`
     # в ассистенте. Одно правило на весь проект, а не два похожих.
     norm_seconds: int | None
+    field_work: bool = False
 
     @property
     def attended(self) -> bool:
-        return bool(self.sessions)
+        return bool(self.sessions) or self.field_work
 
     @property
     def missed(self) -> bool:
@@ -210,17 +211,24 @@ def for_period(
     sessions_by_day = _sessions_by_day(employee_id, first, last, tz, moment)
     plans = _day_plans(context, first, last)
     absences = _absence_days(context, first, last, tz)
+    field_work = {r.date: r for r in FieldWorkRequest.objects.filter(
+        employee_id=employee_id, date__gte=first, date__lte=last,
+        status="CONFIRMED")}
 
     days = tuple(
         DayRecord(
             day=day,
             sessions=tuple(sessions_by_day.get(day, ())),
-            seconds=sum(s.seconds for s in sessions_by_day.get(day, ())),
+            seconds=(sum(s.seconds for s in sessions_by_day.get(day, ()))
+                     + (field_work[day].norm_seconds if day in field_work
+                        and not sessions_by_day.get(day) and day not in absences else 0)),
             has_open_session=any(s.is_open for s in sessions_by_day.get(day, ())),
             is_working_day=plans[day].is_working if day in plans else None,
             absence_code=absences.get(day, (None, None))[0],
             absence_name=absences.get(day, (None, None))[1],
             norm_seconds=plans[day].norm_seconds if day in plans else None,
+            field_work=(day in field_work and not sessions_by_day.get(day)
+                        and day not in absences),
         )
         for day in days_in(first, last)
     )
@@ -238,6 +246,7 @@ def for_period(
 class Presence:
     IN_OFFICE = "IN_OFFICE"
     OUTSIDE = "OUTSIDE"
+    FIELD_WORK = "FIELD_WORK"
     SICK_LEAVE = "SICK_LEAVE"
     VACATION = "VACATION"
     OTHER_ABSENCE = "OTHER_ABSENCE"
@@ -290,6 +299,7 @@ def current_status(context, *, now: datetime | None = None) -> CurrentStatus:
             absence_code=absence_code,
             is_working_day=record.is_working_day,
             attended=record.attended,
+            field_work=record.field_work,
             scheduled_end=scheduled_end,
             day=day,
             tz=tz,
@@ -308,7 +318,7 @@ def current_status(context, *, now: datetime | None = None) -> CurrentStatus:
 
 
 def _presence(
-    *, open_session, absence_code, is_working_day, attended, scheduled_end,
+    *, open_session, absence_code, is_working_day, attended, field_work, scheduled_end,
     day, tz, now,
 ) -> str:
     # Порядок разбора — это и есть правило. Человек в офисе считается
@@ -322,6 +332,8 @@ def _presence(
         return Presence.VACATION
     if absence_code is not None:
         return Presence.OTHER_ABSENCE
+    if field_work:
+        return Presence.FIELD_WORK
     if is_working_day is False:
         return Presence.DAY_OFF
     if is_working_day and not attended:

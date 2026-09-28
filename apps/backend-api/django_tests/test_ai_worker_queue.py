@@ -69,7 +69,16 @@ def _queued_job(org, source, **overrides) -> KnowledgeIndexJob:
 
 
 def _ingestion() -> KnowledgeIngestionService:
-    return KnowledgeIngestionService(FakeEmbeddingProvider(dimensions=1536))
+    # Имя модели — явное, а не из локального .env: без него тест зависел
+    # от машины и падал в чистом окружении (CI, новый worktree).
+    from humotech.ai_assistant.config import ai_settings
+
+    settings = ai_settings.model_copy(
+        update={"openai_embedding_model": "test-embedding-model"}
+    )
+    return KnowledgeIngestionService(
+        FakeEmbeddingProvider(dimensions=1536), settings=settings
+    )
 
 
 # --- захват задачи ----------------------------------------------------------

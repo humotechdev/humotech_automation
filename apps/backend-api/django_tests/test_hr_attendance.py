@@ -723,14 +723,16 @@ class TestQueryCount:
             closed_session(organization, person, office)
             return person
 
+        # Тринадцатый запрос — запросы выездной работы дня: один на всю
+        # смену, а не на человека.
         hire(1)
-        with django_assert_max_num_queries(12):
+        with django_assert_max_num_queries(13):
             service.presence(attendance_actor, day=DAY, office_id=office.id)
 
         for number in range(2, 12):
             hire(number)
         # Тот же бюджет на вдесятеро большем составе.
-        with django_assert_max_num_queries(12):
+        with django_assert_max_num_queries(13):
             report = service.presence(attendance_actor, day=DAY, office_id=office.id)
         assert len(report.rows) == 11
 

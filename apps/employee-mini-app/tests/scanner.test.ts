@@ -99,6 +99,7 @@ describe('итог отметки', () => {
       'NETWORK_REQUIRED', 'GEOLOCATION_REQUIRED', 'QR_REVOKED',
       'GEOFENCE_NOT_CONFIGURED', 'TOO_SOON', 'LOCATION_AMBIGUOUS',
       'LOCATION_STALE',
+      'FIELD_WORK_CONFIRMED',
     ]) {
       expect(SCAN_RESULTS[status], status).toBeTruthy();
     }

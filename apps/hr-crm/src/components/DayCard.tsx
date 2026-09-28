@@ -19,6 +19,7 @@ import * as api from '../api/crm';
 import { AppIcon } from './AppIcon';
 import { AppSelectField } from './AppSelect';
 import { DayBar } from './DayBar';
+import { FieldWorkControls } from './FieldWorkControls';
 import { initials } from './AppShell';
 import { messageFor } from '../api/errors';
 import { longDate, useBlock, type Block } from '../features/dashboard/data';
@@ -29,6 +30,9 @@ const STATE_TITLE: Record<string, string> = {
   IN_OFFICE: 'В офисе',
   LEFT: 'Ушёл',
   NOT_COME: 'Нет отметки',
+  LATE: 'Предупредил об опоздании',
+  FIELD_WORK_PENDING: 'Ожидает подтверждения выездной работы',
+  FIELD_WORK: 'Выездная работа',
   VACATION: 'Отпуск',
   SICK_LEAVE: 'Больничный',
   OTHER_ABSENCE: 'Отсутствие',
@@ -41,11 +45,13 @@ type Props = {
   day: string;
   timezone: string;
   canAdd: boolean;
+  canFieldWork?: boolean;
+  startFieldWork?: boolean;
   onClose: () => void;
   onChanged: () => void;
 };
 
-export function DayCard({ row, day, timezone, canAdd, onClose, onChanged }: Props) {
+export function DayCard({ row, day, timezone, canAdd, canFieldWork = false, startFieldWork = false, onClose, onChanged }: Props) {
   const [adding, setAdding] = useState(false);
 
   const [detail] = useBlock(
@@ -99,7 +105,7 @@ export function DayCard({ row, day, timezone, canAdd, onClose, onChanged }: Prop
             </dd>
           </div>
           <div className="facts__row">
-            <dt>В офисе за день</dt>
+            <dt>{row.state === 'FIELD_WORK' ? 'Засчитано по графику' : 'В офисе за день'}</dt>
             <dd>{row.seconds ? span(row.seconds) : '—'}</dd>
           </div>
           {row.late_minutes !== null && row.late_minutes > 0 && (
@@ -114,6 +120,9 @@ export function DayCard({ row, day, timezone, canAdd, onClose, onChanged }: Prop
               <dd>{row.absence_name}</dd>
             </div>
           )}
+          {row.notice_comment && (
+            <div className="facts__row"><dt>Сообщение сотрудника</dt><dd>{row.notice_comment}</dd></div>
+          )}
         </dl>
 
         {/* Та же шкала, что в строке таблицы, но крупнее: здесь на неё
@@ -121,6 +130,13 @@ export function DayCard({ row, day, timezone, canAdd, onClose, onChanged }: Prop
         <div className="side-panel__bar">
           <DayBar row={row} zone={timezone} big />
         </div>
+
+        <FieldWorkControls employeeId={row.employee_id} employeeName={row.full_name} day={day}
+                           scheduledStart={row.scheduled_start} scheduledEnd={row.scheduled_end}
+                           firstEntryAt={row.first_entry_at}
+                           state={row.state} summary={row.field_work} canCorrect={canFieldWork}
+                           autoOpen={startFieldWork}
+                           onChanged={onChanged} />
 
         <p className="side-panel__label">События сегодня</p>
         <Body block={detail} name="отметки">

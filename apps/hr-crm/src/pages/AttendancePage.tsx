@@ -24,6 +24,7 @@ import { AppIcon, type AppIconName } from '../components/AppIcon';
 import { Dropdown } from '../components/AppSelect';
 import { DatePicker } from '../components/DatePicker';
 import { DayCard } from '../components/DayCard';
+import { useSession } from '../features/auth/session';
 import { SlideTabs } from '../components/SlideTabs';
 import { longDate, today, useBlock, type Block } from '../features/dashboard/data';
 import { clock, clockOnDay } from '../features/time/zone';
@@ -66,6 +67,10 @@ function stateOf(row: api.PresenceRow, past: boolean): { title: string; tone: To
       return { title: 'Предупредил об опоздании', tone: 'warn' };
     case 'NOT_COME':
       return row.notice_kind === 'ABSENT' ? { title: 'Предупредил: не придёт', tone: 'warn' } : { title: 'Нет отметки', tone: 'bad' };
+    case 'FIELD_WORK_PENDING':
+      return { title: 'Ожидает подтверждения выездной работы', tone: 'warn' };
+    case 'FIELD_WORK':
+      return { title: 'Выездная работа', tone: 'ok' };
     case 'VACATION':
       return { title: 'В отпуске', tone: 'violet' };
     case 'SICK_LEAVE':
@@ -87,7 +92,7 @@ function stateOf(row: api.PresenceRow, past: boolean): { title: string; tone: To
  * вне геозоны и незакрытая смена прошедшего дня.
  */
 function needsAttention(row: api.PresenceRow, past: boolean): boolean {
-  if (row.state === 'NOT_COME' || row.state === 'LATE') return true;
+  if (row.state === 'NOT_COME' || row.state === 'LATE' || row.state === 'FIELD_WORK_PENDING') return true;
   if ((row.late_minutes ?? 0) > 0) return true;
   if (row.conflicting_marks || row.outside_geofence) return true;
   return past && row.open_session_id !== null;
@@ -101,6 +106,9 @@ type Ctx = {
   departments: { id: string; name: string }[];
   order: (span: { from: string; to: string }) => void;
   openDay: (row: api.PresenceRow, day: string, zone: string) => void;
+  openFieldWork: (row: api.PresenceRow, day: string, zone: string) => void;
+  canFieldWork: boolean;
+  refresh: () => void;
 };
 
 type View = {
@@ -112,6 +120,8 @@ type View = {
 };
 
 export function AttendancePage() {
+  const session = useSession();
+  const permissions = session.status === 'authenticated' ? session.user.permissions : [];
   const [params, setParams] = useSearchParams();
   const mode = modeOf(params);
   const [attempt, setAttempt] = useState(0);
@@ -167,7 +177,7 @@ export function AttendancePage() {
   }, [office, region, department]);
 
   // Карточка дня сотрудника с ручной отметкой — выдвижной панелью.
-  const [opened, setOpened] = useState<{ row: api.PresenceRow; day: string; zone: string } | null>(null);
+  const [opened, setOpened] = useState<{ row: api.PresenceRow; day: string; zone: string; field: boolean } | null>(null);
 
   const ctx: Ctx = {
     params,
@@ -176,7 +186,10 @@ export function AttendancePage() {
     offices: directory.state === 'ready' ? directory.data.offices : [],
     departments: directory.state === 'ready' ? directory.data.departments : [],
     order,
-    openDay: (row, day, zone) => setOpened({ row, day, zone }),
+    openDay: (row, day, zone) => setOpened({ row, day, zone, field: false }),
+    openFieldWork: (row, day, zone) => setOpened({ row, day, zone, field: true }),
+    canFieldWork: permissions.includes('attendance.correct'),
+    refresh: () => setAttempt((n) => n + 1),
   };
 
   const views: Record<Mode, View> = {
@@ -231,9 +244,12 @@ export function AttendancePage() {
         <div className="at-drawer" role="presentation">
           <button type="button" className="at-drawer__scrim" aria-label="Закрыть" onClick={() => setOpened(null)} />
           <div className="at-drawer__panel">
-            <DayCard row={opened.row} day={opened.day} timezone={opened.zone} canAdd
+          <DayCard row={opened.row} day={opened.day} timezone={opened.zone}
+                   canAdd={permissions.includes('attendance.manual')}
+                   canFieldWork={permissions.includes('attendance.correct')}
+                   startFieldWork={opened.field}
                      onClose={() => setOpened(null)}
-                     onChanged={() => { setOpened(null); setAttempt((n) => n + 1); }} />
+                     onChanged={() => setAttempt((n) => n + 1)} />
           </div>
         </div>
       )}
@@ -279,6 +295,21 @@ function useDayMode(active: boolean, ctx: Ctx): View {
   );
   const [roster] = useBlock((signal) => api.presenceDay(scope, signal), key, active);
 
+  useEffect(() => {
+    if (!active) return;
+    const onFocus = () => { if (!document.hidden) ctx.refresh(); };
+    const timer = window.setInterval(onFocus, 30_000);
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
+    // Refresh is recreated with the parent render, but the timer must not reset on every poll.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active]);
+
   const [draft, setDraft] = useState(search);
   useEffect(() => setDraft(search), [search]);
   useEffect(() => {
@@ -312,12 +343,13 @@ function useDayMode(active: boolean, ctx: Ctx): View {
 
   const expected = card['should_work_today'] ?? 0;
   const came = card['came'] ?? 0;
-  const share = expected > 0 ? Math.round((came / expected) * 100) : null;
+  const fieldWork = card['field_work'] ?? 0;
+  const share = expected > 0 ? Math.round(((came + fieldWork) / expected) * 100) : null;
   const diff = shift.state === 'ready' ? shift.data : null;
 
   return {
     title: 'Посещаемость',
-    sub: <>{longDate(day)} · По данным отметок</>,
+    sub: <>{longDate(day)} · Отметки и подтверждённая выездная работа</>,
     tools: (
       <>
         <DatePicker label="Дата" value={day} now={today()} allowEmpty
@@ -338,7 +370,7 @@ function useDayMode(active: boolean, ctx: Ctx): View {
               <span className="at-fact__label">{past ? 'Явка за день' : 'Явка сегодня'}</span>
               <span className="at-fact__line">
                 <b className="at-fact__big">{share === null ? '—' : `${share}%`}</b>
-                <span>{expected > 0 ? `${came} из ${expected} по графику` : 'По графику никого не ждали'}</span>
+                <span>{expected > 0 ? `${came + fieldWork} из ${expected} по графику (${came} в офисе, ${fieldWork} на выезде)` : 'По графику никого не ждали'}</span>
               </span>
               <span className="at-meter"><i style={{ width: `${share ?? 0}%` }} /></span>
               {diff !== null && (
@@ -441,7 +473,9 @@ function useDayMode(active: boolean, ctx: Ctx): View {
                           {clockOnDay(row.first_entry_at, data.timezone, day)}
                         </span>
                         <span role="cell" className="at-num">{clockOnDay(row.last_exit_at, data.timezone, day)}</span>
-                        <span role="cell" className="at-num">{row.seconds > 0 ? duration(row.seconds) : '—'}</span>
+                        <span role="cell" className="at-num">{row.seconds > 0 ? duration(row.seconds) : '—'}
+                          {row.state === 'FIELD_WORK' && <small className="at-muted"> · по графику</small>}
+                        </span>
                         <span role="cell" className={`at-state at-state--${look.tone}`}>
                           <i className={`at-dot at-dot--${look.tone}`} />
                           <span className="at-state__text">
@@ -452,9 +486,16 @@ function useDayMode(active: boolean, ctx: Ctx): View {
                           </span>
                         </span>
                         <span role="cell" className="at-right">
-                          <button type="button" className="at-link" onClick={() => ctx.openDay(row, day, data.timezone)}>
-                            {hot ? 'Исправить' : 'Просмотр'}
-                          </button>
+                          {ctx.canFieldWork && (row.state === 'NOT_COME' && !row.notice_kind || row.state === 'LATE')
+                            && !row.first_entry_at && row.scheduled_start ? (
+                            <button type="button" className="at-link" onClick={() => ctx.openFieldWork(row, day, data.timezone)}>
+                              Выездная работа
+                            </button>
+                          ) : (
+                            <button type="button" className="at-link" onClick={() => ctx.openDay(row, day, data.timezone)}>
+                              {hot ? 'Исправить' : 'Просмотр'}
+                            </button>
+                          )}
                         </span>
                       </div>
                     );
@@ -476,6 +517,7 @@ function useDayMode(active: boolean, ctx: Ctx): View {
 
 const STATE_TITLE: Record<string, string> = {
   IN_OFFICE: 'В офисе', LEFT: 'Ушли', LATE: 'Предупредили об опоздании', NOT_COME: 'Нет отметки',
+  FIELD_WORK_PENDING: 'Ожидает подтверждения', FIELD_WORK: 'Выездная работа',
   VACATION: 'В отпуске', SICK_LEAVE: 'На больничном', OTHER_ABSENCE: 'Отсутствуют',
   DAY_OFF: 'Выходной', NO_SCHEDULE: 'Без графика',
 };
