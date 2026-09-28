@@ -65,6 +65,9 @@ class RejectionReason:
     # сразу после первого у точки «вход и выход» закрыл бы только что
     # открытую сессию.
     TOO_SOON = "TOO_SOON"
+    # День уже засчитан как подтверждённая выездная работа: физическая
+    # отметка поверх полной нормы дала бы двойной зачёт.
+    FIELD_WORK_CONFIRMED = "FIELD_WORK_CONFIRMED"
 
 
 @dataclass(frozen=True)
@@ -255,7 +258,7 @@ def _register_locked(
         strict_location=strict_location,
     )
     if field_work and reason is None:
-        reason = "FIELD_WORK_CONFIRMED"
+        reason = RejectionReason.FIELD_WORK_CONFIRMED
     accepted = reason is None
 
     if accepted:

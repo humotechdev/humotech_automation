@@ -68,6 +68,7 @@ class ScanStatus:
     QR_REVOKED = "QR_REVOKED"
     GEOFENCE_NOT_CONFIGURED = "GEOFENCE_NOT_CONFIGURED"
     TOO_SOON = "TOO_SOON"
+    FIELD_WORK_CONFIRMED = "FIELD_WORK_CONFIRMED"
 
 
 # Ограничение, по которому узнаётся повторно присланная попытка.
@@ -90,6 +91,7 @@ _REJECTION_TO_STATUS = {
     RejectionReason.CLOCK_DRIFT: ScanStatus.QR_EXPIRED,
     RejectionReason.GEOFENCE_NOT_CONFIGURED: ScanStatus.GEOFENCE_NOT_CONFIGURED,
     RejectionReason.TOO_SOON: ScanStatus.TOO_SOON,
+    RejectionReason.FIELD_WORK_CONFIRMED: ScanStatus.FIELD_WORK_CONFIRMED,
 }
 
 # Почему код не разобрался -> что показать. Истёкший срок отделён от всего

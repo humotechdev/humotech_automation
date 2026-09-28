@@ -276,6 +276,7 @@ def test_exit_reports_the_hours_from_the_server():
         ("OFFICE_NOT_ALLOWED", "не назначен"),
         ("OUTSIDE_GEOFENCE", "далеко"),
         ("LOCATION_TOO_VAGUE", "приблизительно"),
+        ("FIELD_WORK_CONFIRMED", "работа вне офиса"),
         ("ALREADY_INSIDE", "уже отмечены"),
         ("NOT_INSIDE", "Открытой сессии нет"),
     ],

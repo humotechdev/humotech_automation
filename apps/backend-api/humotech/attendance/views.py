@@ -53,10 +53,49 @@ class FieldWorkDecisionSerializer(drf_serializers.Serializer):
     decision = drf_serializers.ChoiceField(choices=["CONFIRM", "DECLINE"])
 
 
+class FieldWorkSerializer(drf_serializers.Serializer):
+    """Запрос выездной работы так, как его видит CRM."""
+
+    id = drf_serializers.UUIDField()
+    status = drf_serializers.ChoiceField(
+        choices=["PENDING", "CONFIRMED", "DECLINED", "CANCELLED", "EXPIRED"])
+    date = drf_serializers.DateField()
+    employee_id = drf_serializers.UUIDField()
+    office_id = drf_serializers.UUIDField()
+    scheduled_start = drf_serializers.TimeField()
+    scheduled_end = drf_serializers.TimeField()
+    norm_seconds = drf_serializers.IntegerField()
+    work_location = drf_serializers.CharField(allow_blank=True)
+    work_description = drf_serializers.CharField(allow_blank=True)
+    requested_at = drf_serializers.DateTimeField()
+    responded_at = drf_serializers.DateTimeField(allow_null=True)
+    expires_at = drf_serializers.DateTimeField()
+    delivery_status = drf_serializers.CharField(
+        allow_null=True,
+        help_text="Состояние отправки в Telegram — отдельно от состояния запроса",
+    )
+
+
+class FieldWorkListSerializer(drf_serializers.Serializer):
+    items = FieldWorkSerializer(many=True)
+
+
+class FieldWorkDecisionResultSerializer(drf_serializers.Serializer):
+    id = drf_serializers.UUIDField()
+    status = drf_serializers.CharField()
+    date = drf_serializers.DateField()
+
+
 class FieldWorkListView(APIView):
     permission_classes = [IsAuthenticated]
 
-    @extend_schema(request=FieldWorkCreateSerializer, tags=["Посещаемость"])
+    @extend_schema(
+        operation_id="attendance_field_work_create",
+        summary="Запросить подтверждение выездной работы",
+        request=FieldWorkCreateSerializer,
+        responses={201: FieldWorkSerializer},
+        tags=["Посещаемость"],
+    )
     def post(self, request):
         data = validated(FieldWorkCreateSerializer, request.data)
         row = FieldWorkService().create(Actor.from_user(request.user),
@@ -66,7 +105,16 @@ class FieldWorkListView(APIView):
             work_description=data.get("work_description", ""))
         return Response(field_work_summary(row), status=http_status.HTTP_201_CREATED)
 
-    @extend_schema(tags=["Посещаемость"])
+    @extend_schema(
+        operation_id="attendance_field_work_list",
+        summary="Запросы выездной работы",
+        parameters=[
+            OpenApiParameter("employee_id", OpenApiTypes.UUID),
+            OpenApiParameter("date", OpenApiTypes.DATE),
+        ],
+        responses={200: FieldWorkListSerializer},
+        tags=["Посещаемость"],
+    )
     def get(self, request):
         rows = FieldWorkService().list(Actor.from_user(request.user),
             employee_id=_uuid_param(request, "employee_id"), day=_date_param(request, "date"))
@@ -83,7 +131,13 @@ class FieldWorkListView(APIView):
 class FieldWorkActionView(APIView):
     permission_classes = [IsAuthenticated]
 
-    @extend_schema(tags=["Посещаемость"])
+    @extend_schema(
+        operation_id="attendance_field_work_action",
+        summary="Отменить запрос или повторить отправку (cancel | retry)",
+        request=None,
+        responses={200: FieldWorkSerializer},
+        tags=["Посещаемость"],
+    )
     def post(self, request, request_id, action):
         service = FieldWorkService()
         actor = Actor.from_user(request.user)
@@ -100,7 +154,13 @@ class BotFieldWorkDecisionView(APIView):
     authentication_classes = []
     permission_classes = [IsTelegramBot]
 
-    @extend_schema(request=FieldWorkDecisionSerializer, tags=["Telegram"])
+    @extend_schema(
+        operation_id="telegram_bot_field_work_decision",
+        summary="Ответ сотрудника на запрос выездной работы",
+        request=FieldWorkDecisionSerializer,
+        responses={200: FieldWorkDecisionResultSerializer},
+        tags=["Telegram"],
+    )
     def post(self, request, request_id):
         data = validated(FieldWorkDecisionSerializer, request.data)
         row = FieldWorkService().decide(request_id, **data)

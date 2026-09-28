@@ -181,6 +181,7 @@ class CalendarExceptionService(BaseService):
         reason = clean_text(reason, field="reason")
 
         with self.atomic():
+            _require_no_field_work(actor.organization_id, offices, days)
             try:
                 # По строке за раз, а не `bulk_create`: ключ генерирует
                 # база (`gen_random_uuid()`), и из пакетной вставки он не
@@ -265,6 +266,10 @@ class CalendarExceptionService(BaseService):
             row.is_working_day = WORKING_BY_TYPE[exception_type]
 
         with self.atomic():
+            # Любая смена типа меняет день для расчёта: выходной или
+            # рабочий, полная норма или сокращённая.
+            if row.exception_type != before.get("exception_type"):
+                _require_no_field_work(row.organization_id, [row.office_id], [row.date])
             row.save()
             self.audit.record(
                 actor,
@@ -345,6 +350,7 @@ class CalendarExceptionService(BaseService):
 
         before = snapshot(row, CALENDAR_FIELDS)
         with self.atomic():
+            _require_no_field_work(row.organization_id, [row.office_id], [row.date])
             row.is_active = active
             row.save(update_fields=["is_active", "updated_at"])
             self.audit.record(
@@ -476,3 +482,30 @@ class CalendarExceptionService(BaseService):
 
 
 __all__ = ["CalendarExceptionService", "MAX_RANGE_DAYS", "WORKING_BY_TYPE"]
+
+
+def _require_no_field_work(organization_id, office_ids, days) -> None:
+    """Исключение не должно менять день с активным запросом выездной работы.
+
+    Запрос фиксирует смену и норму, предъявленные сотруднику. Праздник или
+    перенос, заведённый после этого, превратил бы засчитанный день в
+    выходной с полной нормой — или отменил бы норму задним числом без
+    следа в запросе. Правило то же, что у графика: сначала отменить запрос.
+    `None` среди офисов — исключение на всю организацию.
+    """
+    from django.db.models import Q
+
+    from humotech.attendance.models import FieldWorkRequest
+
+    rows = FieldWorkRequest.objects.filter(
+        organization_id=organization_id, date__in=list(days),
+        status__in=("PENDING", "CONFIRMED"),
+    )
+    offices = [one for one in office_ids if one is not None]
+    if None not in list(office_ids):
+        rows = rows.filter(Q(office_id__in=offices))
+    if rows.exists():
+        raise Conflict(
+            "На эту дату есть запрос выездной работы; сначала отмените его",
+            details={"reason": "field_work_conflict"},
+        )

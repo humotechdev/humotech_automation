@@ -128,6 +128,10 @@ ROUTES = {
     "telegram-invitation-confirm": (_pk("invitation"), {"post": {}}),
     "telegram-invitation-reject": (_pk("invitation"), {"post": {}}),
     "telegram-invitation-revoke": (_pk("invitation"), {"post": {}}),
+    # Запрос выездной работы чужой организации: ни отменить, ни повторить
+    # отправку. Отмена у хозяина — положительный контроль.
+    "attendance-field-work-action": (
+        lambda w: {"request_id": w["field_work"].id, "action": "cancel"}, {"post": {}}),
 }
 
 _OTHER_ZONE = "объект чужой зоны без дешёвого построителя; межорганизационный доступ — в test_security_<зона>.py"
@@ -144,6 +148,10 @@ SKIPPED = {
         "контроль требует программы ознакомления (зона surveys/onboarding); "
         "сотрудник проверяется require_visible_employee в onboarding/services.py"),
     "qr-device-action": _OTHER_ZONE + " (attendance)",
+    "telegram-bot-field-work-decision": (
+        "маршрут бота: общий секрет и Telegram ID вместо сессии; владелец запроса "
+        "проверяется в FieldWorkService.decide, межорганизационный отказ по HTTP — "
+        "в test_field_work.py"),
     "attendance-correction-decision": _OTHER_ZONE + " (attendance)",
     "absence-request-application*": _OTHER_ZONE + " (absences)",
     "absence-request-period": _OTHER_ZONE + " (absences)",
@@ -159,6 +167,24 @@ SKIPPED = {
     "policy-document-*": _OTHER_ZONE + " (surveys/onboarding)",
     "policy-category-*": _OTHER_ZONE + " (surveys/onboarding)",
 }
+
+def _field_work(w):
+    """Ожидающий запрос выездной работы организации B со сроком в будущем."""
+    from datetime import time, timedelta
+
+    from django.utils import timezone
+
+    from humotech.attendance.models import FieldWorkRequest
+
+    now = timezone.now()
+    return FieldWorkRequest.objects.create(
+        organization=w["org"], employee=w["employee"], office=w["office"],
+        date=now.date(), status="PENDING",
+        scheduled_start=time(9), scheduled_end=time(18), norm_seconds=8 * 3600,
+        requested_by_user=w["owner"], requested_at=now,
+        expires_at=now + timedelta(days=1),
+    )
+
 
 CASES = [(name, method) for name, (_, methods) in ROUTES.items() for method in methods]
 
@@ -181,6 +207,7 @@ def world(settings, tmp_path, telegram_settings):
     add_invitation(w)
     add_absence_request(w)
     link_telegram(w["employee"], telegram_user_id=555_000_111)
+    w["field_work"] = _field_work(w)
     attacker_org = new_org("A")
     w["attacker"] = create_actor(attacker_org, permissions=ALL_PERMISSION_CODES)[0]
     return w

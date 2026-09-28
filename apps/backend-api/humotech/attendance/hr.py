@@ -738,6 +738,7 @@ class AttendanceHrService(BaseService):
 
             session_after = None
             if decision == "approve" and request.attendance_session_id:
+                self._require_no_field_work_for_correction(request)
                 session_after = self._apply_correction(request)
 
             self.audit.record(
@@ -1244,6 +1245,28 @@ class AttendanceHrService(BaseService):
                 for event in (one.entry_event, one.exit_event)
             ),
         )
+
+    @staticmethod
+    def _require_no_field_work_for_correction(request: AttendanceCorrectionRequest) -> None:
+        """Исправленная сессия не должна лечь на день подтверждённого выезда.
+
+        Исправление переносит время уже существующей сессии, и новое время
+        может попасть на день, который засчитан (или ждёт зачёта) как
+        выездная работа: тогда день был бы засчитан дважды — нормой выезда
+        и физической сессией. Та же блокировка сотрудника, что у запроса и
+        ответа сотрудника, — проверка и перенос не разъезжаются.
+        """
+        from humotech.absences.services import lock_employee
+        from humotech.attendance.field_work import require_no_field_work
+
+        lock_employee(request.employee_id)
+        Employee.objects.select_for_update().get(id=request.employee_id)
+        session = request.attendance_session
+        tz = office_zone(Office.objects.select_related("organization").get(id=session.office_id))
+        started = request.requested_entry_at or session.started_at
+        ended = request.requested_exit_at or session.ended_at or started
+        first, last = sorted((started.astimezone(tz).date(), ended.astimezone(tz).date()))
+        require_no_field_work(request.employee_id, first, last)
 
     def _apply_correction(self, request: AttendanceCorrectionRequest) -> dict:
         """Перенести одобренные значения в расчётную сессию.
