@@ -294,6 +294,42 @@ def test_plain_link_still_shows_the_old_consent():
     assert markup.inline_keyboard[0][0].callback_data == kb.LINK_ACCEPT
 
 
+def test_hiring_link_greets_when_server_says_onboarding_is_waiting():
+    """Ссылка при приёме — обычная `link_`; ознакомление включает ответ сервера."""
+    client = FakeClient(consume={
+        "status": "PENDING", "employee_known": True, "onboarding_required": True,
+    })
+    message = FakeMessage()
+
+    asyncio.run(start_with_link(
+        message,
+        SimpleNamespace(command="start", args="link_the-token", mention=None),
+        SimpleNamespace(clear=_noop),
+        client=client, employee=None, denial="not_linked",
+    ))
+
+    body, markup = message.answers[-1]
+    assert "Добро пожаловать в HUMOTECH, Иван!" in body
+    assert markup.inline_keyboard[0][0].callback_data == ob.START
+
+
+def test_reopened_plain_link_continues_onboarding():
+    """Повторный переход по той же `link_`-ссылке ведёт в ознакомление, не в согласие."""
+    client = FakeClient(consume=Conflict(
+        409, "conflict", "ждёт", {"reason": "pending", "onboarding_required": True}))
+    message = FakeMessage()
+
+    asyncio.run(start_with_link(
+        message,
+        SimpleNamespace(command="start", args="link_the-token", mention=None),
+        SimpleNamespace(clear=_noop),
+        client=client, employee=None, denial="not_linked",
+    ))
+
+    _, markup = message.answers[-1]
+    assert markup.inline_keyboard[0][0].callback_data == ob.START
+
+
 # --- начало -----------------------------------------------------------------
 
 def test_begin_accepts_the_terms_when_the_link_is_still_pending():

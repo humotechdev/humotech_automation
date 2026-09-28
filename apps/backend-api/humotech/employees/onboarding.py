@@ -315,6 +315,11 @@ class EmployeeOnboardingService(BaseService):
                     documents = self._create_documents(
                         actor, employee_id, attached=attached, files=files
                     )
+                    # Ознакомление — часть приёма: ссылка, которую HR
+                    # сейчас увидит, ведёт новичка и через него.
+                    from humotech.onboarding.services import OnboardingService
+
+                    OnboardingService().enrol_new_hire(actor, employee_id)
                     telegram = self._prepare_telegram(
                         actor,
                         employee_id=employee_id,

@@ -143,9 +143,9 @@ class TelegramLinkError(Conflict):
     существует ли такой сотрудник.
     """
 
-    def __init__(self, reason: str, message: str) -> None:
+    def __init__(self, reason: str, message: str, **extra) -> None:
         self.reason = reason
-        super().__init__(message, details={"reason": reason})
+        super().__init__(message, details={"reason": reason, **extra})
 
 
 class TelegramLinkService(BaseService):
@@ -613,8 +613,14 @@ class TelegramLinkService(BaseService):
                 raise TelegramLinkError("invalid", "Ссылка недействительна")
 
             if invitation.status == "PENDING_CONFIRMATION":
+                # Повторный переход продолжает тот же сценарий. Какой — бот
+                # узнаёт отсюда: ссылка у всех одного вида.
+                from humotech.onboarding import progress as onboarding_progress
+
+                state = onboarding_progress.of_employee(invitation.employee_id)
                 raise TelegramLinkError(
-                    "pending", "Ссылка уже использована, привязка ждёт подтверждения"
+                    "pending", "Ссылка уже использована, привязка ждёт подтверждения",
+                    onboarding_required=state is not None and not state.completed,
                 )
             if invitation.status in ("USED", "REJECTED"):
                 raise TelegramLinkError("used", "Ссылка уже использована")

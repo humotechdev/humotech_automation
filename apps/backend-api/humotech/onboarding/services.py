@@ -51,7 +51,6 @@ from humotech.onboarding.models import (
 from humotech.onboarding.progress import Progress
 from humotech.telegram.models import TelegramAccount, TelegramLinkInvitation
 from humotech.telegram.services import TelegramLinkService
-from humotech.telegram.tokens import ONBOARDING_PREFIX, build_invitation_link
 
 ENTITY_ONBOARDING = "employee_onboarding"
 ENTITY_PROGRAM = "onboarding_programs"
@@ -449,16 +448,42 @@ class OnboardingService(BaseService):
     def enrol(
         self, actor: Actor, employee_id: uuid.UUID, *, now: datetime | None = None
     ) -> EmployeeOnboarding:
-        """Включить сотрудника в программу.
+        """Включить в программу уже работающего сотрудника.
 
-        Отдельное действие, а не побочный эффект приёма. Программа
-        закрывает человеку рабочие функции бота до её завершения, и
-        включать в неё всех подряд миграцией нельзя: те, кто работает
-        давно, остались бы без бота в утро выката.
+        Для них это отдельное действие кадровика: программа закрывает
+        человеку рабочие функции бота до её завершения, и включать в неё
+        всех подряд миграцией нельзя — те, кто работает давно, остались бы
+        без бота в утро выката. Новичка включает сам приём
+        (`enrol_new_hire`).
         """
         self.access.require(actor, "onboarding.manage")
         employee = require_visible_employee(self.access, actor, employee_id)
-        program = self.program(actor.organization_id)
+        return self._enrol(actor, employee, self.program(actor.organization_id), now=now)
+
+    def enrol_new_hire(
+        self, actor: Actor, employee_id: uuid.UUID, *, now: datetime | None = None
+    ) -> EmployeeOnboarding | None:
+        """Включить в программу человека, которого прямо сейчас принимают.
+
+        Часть приёма, а не отдельное решение кадровика: новичок должен
+        пройти ознакомление по той же единственной ссылке, что HR видит
+        после сохранения формы. Право на приём уже проверено тем, кто
+        вызывает, — отдельного `onboarding.manage` для этого не нужно,
+        иначе кадровик без него принимал бы людей мимо ознакомления.
+
+        Программы нет (стенд не наполнен) — приём не срывается: `None`.
+        Давно работающих это не затрагивает: вызывается только при приёме.
+        """
+        program = OnboardingProgram.objects.filter(
+            organization_id=actor.organization_id, is_active=True, archived_at__isnull=True
+        ).first()
+        if program is None:
+            return None
+        employee = Employee.objects.get(id=employee_id, organization_id=actor.organization_id)
+        return self._enrol(actor, employee, program, now=now)
+
+    def _enrol(self, actor: Actor, employee, program, *, now=None) -> EmployeeOnboarding:
+        employee_id = employee.id
         moment = now or timezone.now()
 
         with self.atomic():
@@ -527,10 +552,10 @@ class OnboardingService(BaseService):
             actor, employee_id, replace=replace,
             ttl_seconds=settings.TELEGRAM["ONBOARDING_INVITATION_TTL_SECONDS"],
         )
-        link = build_invitation_link(
-            settings.TELEGRAM["BOT_USERNAME"], issued.token,
-            prefix=ONBOARDING_PREFIX,
-        )
+        # Ссылка того же вида, что и при приёме: вид ссылки ничего не
+        # решает. После перехода бот спрашивает сервер, ждёт ли человека
+        # ознакомление, и ведёт по ответу.
+        link = issued.link
         moment = now or timezone.now()
         EmployeeOnboarding.objects.filter(pk=row.pk).update(invited_at=moment)
         self.audit.record(

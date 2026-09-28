@@ -158,12 +158,18 @@ def test_seed_is_idempotent_and_keeps_edited_text(organization, content):
 # --- приглашение ------------------------------------------------------------
 
 
-def test_invitation_link_carries_the_onboarding_prefix(hr, employee, content):
+def test_invitation_link_is_the_same_single_kind(hr, employee, content):
+    """Ссылка на ознакомление — та же обычная ссылка `link_`.
+
+    Вида ссылки больше одного быть не должно: HR отдаёт человеку одну
+    ссылку, а что его ждёт после перехода, бот спрашивает у сервера.
+    """
     response = hr.post(f"{API}/employees/{employee.id}/onboarding/invite")
 
     assert response.status_code == 201, response.json()
     body = response.json()
-    assert "?start=onboarding_" in body["link"]
+    assert "?start=link_" in body["link"]
+    assert "onboarding_" not in body["link"]
     assert EmployeeOnboarding.objects.filter(employee_id=employee.id).exists()
 
 

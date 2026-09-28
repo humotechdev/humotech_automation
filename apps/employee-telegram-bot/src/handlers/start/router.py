@@ -121,9 +121,10 @@ async def start_with_link(
         # только тот Telegram ID, который погасил ссылку.
         if reason == "pending":
             # Ссылку уже открывали: привязка ждёт согласия. Продолжаем
-            # тот же сценарий — и именно тот, на который указывает
-            # префикс ссылки, а не какой-нибудь другой.
-            if onboarding_link:
+            # тот же сценарий. Какой — говорит сервер: ссылка у всех
+            # одного вида. Префикс `onboarding_` остался только у ссылок,
+            # выданных до этого изменения.
+            if (error.details or {}).get("onboarding_required") or onboarding_link:
                 await message.answer(
                     onboarding_text.greeting(user.first_name),
                     reply_markup=ob.welcome(),

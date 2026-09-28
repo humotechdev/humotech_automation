@@ -519,3 +519,66 @@ def test_employee_and_assignment_are_read_back_from_the_database(
     assert again.current_assignment.position_id == position.id
     assert again.current_schedule is not None
     assert again.current_schedule.schedule_id == work_schedule.id
+
+
+# --- одна ссылка ведёт и через ознакомление ------------------------------------
+
+
+def test_hiring_enrols_into_onboarding_and_gives_one_link(
+    organization, office, department, position, work_schedule, onboarding_actor,
+    telegram_settings,
+):
+    """HR принял человека — ссылка, которую он видит, ведёт через ознакомление.
+
+    Раньше приём выдавал ссылку привязки, а ознакомление требовало второй
+    кнопки и второй ссылки; новичок по первой сразу попадал в меню.
+    Права `onboarding.manage` у принимающего нет намеренно: запись на
+    ознакомление — часть приёма, а не отдельное решение.
+    """
+    from humotech.onboarding.models import EmployeeOnboarding
+    from humotech.onboarding.services import seed_organization
+
+    seed_organization(organization.id)
+    made = EmployeeOnboardingService().onboard(
+        onboarding_actor, **form(office, department, position, work_schedule)
+    )
+
+    assert "?start=link_" in made.telegram.link
+    row = EmployeeOnboarding.objects.get(employee=made.card.employee)
+    assert row.status == "NOT_STARTED"
+
+
+def test_hiring_without_onboarding_program_still_succeeds(
+    office, department, position, work_schedule, onboarding_actor, telegram_settings,
+):
+    from humotech.onboarding.models import EmployeeOnboarding
+
+    made = EmployeeOnboardingService().onboard(
+        onboarding_actor, **form(office, department, position, work_schedule)
+    )
+
+    assert made.telegram.state == "INVITED"
+    assert not EmployeeOnboarding.objects.filter(employee=made.card.employee).exists()
+
+
+def test_reopened_link_tells_the_bot_onboarding_is_waiting(
+    organization, office, department, position, work_schedule, onboarding_actor,
+    telegram_settings,
+):
+    """Повторный переход по той же ссылке продолжает ознакомление, а не меню."""
+    from humotech.onboarding.services import seed_organization
+    from humotech.telegram.services import TelegramLinkError, TelegramLinkService
+
+    seed_organization(organization.id)
+    made = EmployeeOnboardingService().onboard(
+        onboarding_actor, **form(office, department, position, work_schedule)
+    )
+    token = made.telegram.link.split("?start=link_", 1)[1]
+    TelegramLinkService().consume(token=token, telegram_user_id=777_000_555,
+                                  telegram_chat_id=777_000_555)
+
+    with pytest.raises(TelegramLinkError) as error:
+        TelegramLinkService().consume(token=token, telegram_user_id=777_000_555,
+                                      telegram_chat_id=777_000_555)
+
+    assert error.value.details == {"reason": "pending", "onboarding_required": True}
