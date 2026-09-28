@@ -1,0 +1,108 @@
+# Проверки на каждый push и pull request.
+#
+# Без секретов: база — одноразовый сервис с тестовым паролем, токен бота
+# и ключ Django — заглушки, которые никуда не ходят. Тесты бота сами
+# запрещают сеть (tests/conftest.py), тесты бэкенда — через фикстуру
+# no_real_network.
+#
+# База — тот же образ, что на стенде и сервере: PostgreSQL 18 с pgvector.
+# Расширения vector и btree_gist ставят миграции; на SQLite схема
+# (EXCLUDE USING gist, vector(1536), частичные индексы) не поднимается.
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: pgvector/pgvector:pg18
+        env:
+          POSTGRES_USER: humotech
+          POSTGRES_PASSWORD: ci_test_only
+          POSTGRES_DB: humotech_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U humotech -d humotech_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      DJANGO_SETTINGS_MODULE: config.settings.test
+      DJANGO_DATABASE_URL: postgresql://humotech:ci_test_only@localhost:5432/humotech_ci
+      DJANGO_SECRET_KEY: ci-test-only-not-a-secret
+    defaults:
+      run:
+        working-directory: apps/backend-api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: apps/backend-api/requirements*.txt
+      # Шрифт для печатных заявлений: без него падают тесты PDF (FontMissing).
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-dejavu-core
+      - run: pip install -r requirements-dev.txt
+      - name: Миграции согласованы с моделями
+        run: python manage.py makemigrations --check --dry-run
+      - name: Миграции применяются, откатываются и применяются снова
+        run: |
+          python manage.py migrate --noinput
+          python manage.py migrate attendance 0004 --noinput
+          python manage.py migrate --noinput
+      - run: python manage.py check
+      - name: Тесты на PostgreSQL
+        run: python -m pytest -q -p no:cacheprovider
+
+  bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/employee-telegram-bot
+    env:
+      BOT_TOKEN: "123456:ci-test-only-not-a-token"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: apps/employee-telegram-bot/requirements*.txt
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pytest -q -p no:cacheprovider
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [hr-crm, employee-mini-app]
+    defaults:
+      run:
+        working-directory: apps/${{ matrix.app }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/${{ matrix.app }}/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npx tsc --noEmit
+      - run: npx vitest run
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+      - run: npm run build
