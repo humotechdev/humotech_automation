@@ -268,7 +268,8 @@ def _register_locked(
     # то, что пишется в журнал, берутся из ОДНОГО решения. Готового
     # «внутри» вызывающий передать не может — такого параметра нет.
     location = assess_location(
-        qr_point, latitude, longitude, location_accuracy_m, location_age_s
+        qr_point, latitude, longitude, location_accuracy_m, location_age_s,
+        strict_location=strict_location,
     )
 
     reason = _reject_reason(
@@ -442,7 +443,7 @@ def _reject_reason(
 
 
 def assess_location(
-    qr_point, latitude, longitude, accuracy_m, age_s=None
+    qr_point, latitude, longitude, accuracy_m, age_s=None, *, strict_location=False
 ) -> LocationAssessment:
     """Решение по месту. ЕДИНСТВЕННОЕ место, где оно принимается.
 
@@ -487,11 +488,14 @@ def assess_location(
                 accuracy = None
                 reason = reason or RejectionReason.LOCATION_TOO_VAGUE
 
-    # Для круга неизвестная погрешность означала бы нулевой допуск
-    # (offices/geo.py): булавка, выбранная на карте в центре офиса,
-    # прошла бы как «внутри» из дома. Телефон, измеривший координату,
-    # погрешность присылает; её отсутствие — признак выбранной точки.
-    if reason is None and accuracy is None and geofence_kind(office) == "CIRCLE":
+    # Для печатного кода (strict_location) круг с неизвестной погрешностью
+    # означал бы нулевой допуск (offices/geo.py): булавка, выбранная на
+    # карте в центре офиса, прошла бы как «внутри» из дома. Телефон,
+    # измеривший координату, погрешность присылает; её отсутствие —
+    # признак выбранной точки. Для меняющегося кода (Mini App) поведение
+    # прежнее: сканер отдаёт настоящую погрешность прибора.
+    if (strict_location and reason is None and accuracy is None
+            and geofence_kind(office) == "CIRCLE"):
         reason = RejectionReason.LOCATION_TOO_VAGUE
     verdict = within_office(
         office, latitude, longitude, accuracy_m=accuracy,
