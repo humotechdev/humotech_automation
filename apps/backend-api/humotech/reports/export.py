@@ -25,6 +25,7 @@ from __future__ import annotations
 import csv
 import io
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Iterable, Iterator
@@ -172,6 +173,7 @@ def formula_meta(ratios) -> list[tuple[str, str]]:
 #: строку. `openpyxl` подхватывает это сам: строка с «=» становится
 #: формулой без всякого участия с нашей стороны.
 FORMULA_STARTERS = ("=", "+", "-", "@", "\t", "\r")
+WHITESPACE_LEAD = " \t\r\n 　"
 
 #: Управляющие символы, которых не бывает в XML. `openpyxl` на них
 #: бросает `IllegalCharacterError`, и один сотрудник с «\x0b» в фамилии
@@ -189,7 +191,21 @@ def safe_text(value: str) -> str:
     а в CSV смысла не несут.
     """
     value = _ILLEGAL_CONTROL.sub("", value)
-    return f"'{value}" if value.startswith(FORMULA_STARTERS) else value
+    return f"'{value}" if _looks_like_formula(value) else value
+
+
+def _looks_like_formula(value: str) -> bool:
+    """Опасно ли начало ячейки для табличного редактора.
+
+    Сравнивается НФКС-нормализованное начало: полноширинные и совместимые
+    гомоглифы редактор при вставке сводит к ASCII, и без нормализации они
+    прошли бы мимо проверки. Ведущие пробелы и неразрывные пробелы
+    снимаются: за ними может прятаться то же начало."""
+    stripped = value.lstrip(WHITESPACE_LEAD)
+    if not stripped:
+        return False
+    head = unicodedata.normalize("NFKC", stripped[0])
+    return head.startswith(FORMULA_STARTERS)
 
 
 def _cell(value):

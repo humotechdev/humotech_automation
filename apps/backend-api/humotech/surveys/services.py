@@ -73,10 +73,10 @@ logger = logging.getLogger("humotech.surveys")
 
 def safe_cell(value) -> str:
     """Ячейка CSV, которую табличный редактор не примет за формулу."""
+    from humotech.reports.export import _looks_like_formula
+
     text = "" if value is None else str(value)
-    if text.startswith(FORMULA_PREFIXES):
-        return "'" + text
-    return text
+    return "'" + text if _looks_like_formula(text) else text
 
 
 def visible_employee_ids(access: AccessControl, actor: Actor):
