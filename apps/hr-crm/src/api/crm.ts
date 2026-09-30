@@ -1010,7 +1010,12 @@ export type FieldWorkRequest = {
   declined_at?: string | null;
   work_location?: string | null;
   work_description?: string | null;
-  delivery_status?: 'PENDING' | 'SENT' | 'FAILED' | 'DELIVERED' | string | null;
+  /** Плановая норма дня из графика, секунды. Считает сервер. */
+  norm_seconds?: number;
+  responded_at?: string | null;
+  expires_at?: string;
+  /** Статус сообщения в очереди — не статус запроса. */
+  delivery_status?: 'PENDING' | 'RUNNING' | 'SENT' | 'READ' | 'FAILED' | 'CANCELLED' | string | null;
 };
 
 export const fieldWorkRequests = (employee_id: string, date: string, signal?: AbortSignal) =>

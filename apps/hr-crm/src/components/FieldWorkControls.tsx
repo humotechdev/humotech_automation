@@ -1,8 +1,12 @@
 /** HR creates a dated field-work request only after the manager confirmed it.
- * The server owns eligibility, scope, scheduled hours and final attendance. */
-import { useCallback, useEffect, useRef, useState } from 'react';
+ * The server owns eligibility, scope, scheduled hours and final attendance.
+ *
+ * Два вида одной формы. В правой панели «Отметка за день» (`inline`) форма
+ * встроена в саму панель: второго окна и второго затемнения поверх панели
+ * нет. На странице сотрудника панели нет, и там остаётся диалог. */
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import * as api from '../api/crm';
-import { messageFor } from '../api/errors';
+import { messageFor, reasonFor } from '../api/errors';
 import '../styles/field-work.css';
 
 const LABEL: Record<api.FieldWorkStatus, string> = {
@@ -16,28 +20,65 @@ const terminal = (status: api.FieldWorkStatus | undefined) =>
   status === 'DECLINED' || status === 'CANCELLED' || status === 'EXPIRED';
 const unmarked = (state: string) => state === 'NOT_COME' || state === 'LATE';
 
-export function FieldWorkControls({ employeeId, employeeName, day, scheduledStart, scheduledEnd, firstEntryAt, state, summary, canCorrect, autoOpen = false, onChanged }: {
+/** Доставка сообщения — отдельно от статуса запроса: POST ставит сообщение
+ * в очередь, а не вручает его. «Получил» здесь не говорится никогда: у бота
+ * есть только ответ Telegram «принято к отправке». */
+function delivery(status: string | null | undefined): { text: string; bad?: boolean } | null {
+  switch (status) {
+    case 'PENDING': return { text: 'Сообщение в очереди на отправку в Telegram' };
+    case 'RUNNING': return { text: 'Сообщение отправляется в Telegram' };
+    case 'SENT':
+    case 'READ': return { text: 'Сообщение отправлено в Telegram' };
+    case 'FAILED': return { text: 'Не удалось отправить сообщение в Telegram', bad: true };
+    default: return null;
+  }
+}
+
+/** Длительность из секунд сервера — только подпись, не расчёт. */
+function hoursText(seconds: number): string {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.round((seconds % 3600) / 60);
+  return minutes ? `${hours} ч ${minutes} мин` : `${hours} ч`;
+}
+
+/** Что с часами дня — словами сервера, без расчёта во frontend. */
+function credit(request: api.FieldWorkRequest | null, status: api.FieldWorkStatus | undefined): string | null {
+  if (status === 'PENDING') return 'Засчитано: 0 ч. До ответа сотрудника день не засчитывается.';
+  if (status === 'CONFIRMED') {
+    const norm = request?.norm_seconds ? ` (${hoursText(request.norm_seconds)})` : '';
+    return `День засчитан по плановой норме графика${norm}. Это не присутствие в офисе и не вход или выход по QR.`;
+  }
+  if (terminal(status)) return 'Часы не начислены.';
+  return null;
+}
+
+export function FieldWorkControls({ employeeId, employeeName, day, scheduledStart, scheduledEnd, firstEntryAt, state, summary, canCorrect, autoOpen = false, inline = false, onChanged }: {
   employeeId: string; employeeName: string; day: string;
   scheduledStart?: string | null | undefined; scheduledEnd?: string | null | undefined;
   firstEntryAt?: string | null | undefined;
   state: string; summary?: { id: string; status: api.FieldWorkStatus } | null | undefined;
-  canCorrect: boolean; autoOpen?: boolean; onChanged: () => void;
+  canCorrect: boolean; autoOpen?: boolean; inline?: boolean; onChanged: () => void;
 }) {
   const [request, setRequest] = useState<api.FieldWorkRequest | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [managerConfirmed, setManagerConfirmed] = useState(false);
   const [location, setLocation] = useState('');
   const [description, setDescription] = useState('');
   const [busy, setBusy] = useState(false);
   const closeRef = useRef<HTMLButtonElement>(null);
+  const firstFieldRef = useRef<HTMLInputElement>(null);
+  const formRef = useRef<HTMLDivElement>(null);
+  const startRef = useRef<HTMLButtonElement>(null);
   const previousStatus = useRef<string | null>(null);
   const didAutoOpen = useRef(false);
   const onChangedRef = useRef(onChanged);
   onChangedRef.current = onChanged;
   const busyRef = useRef(busy);
   busyRef.current = busy;
+  const ids = useId();
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -87,8 +128,9 @@ export function FieldWorkControls({ employeeId, employeeName, day, scheduledStar
     };
   }, [request?.status, summary?.status, refresh]);
 
+  // Диалог (страница сотрудника): фокус заперт внутри, Escape закрывает.
   useEffect(() => {
-    if (!open) return;
+    if (!open || inline) return;
     const before = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     closeRef.current?.focus();
     const onKey = (event: KeyboardEvent) => {
@@ -104,7 +146,14 @@ export function FieldWorkControls({ employeeId, employeeName, day, scheduledStar
     };
     window.addEventListener('keydown', onKey);
     return () => { window.removeEventListener('keydown', onKey); before?.focus(); };
-  }, [open]);
+  }, [open, inline]);
+
+  // Встроенная форма: фокус на первое поле, форма видна в прокрутке панели.
+  useEffect(() => {
+    if (!open || !inline) return;
+    firstFieldRef.current?.focus({ preventScroll: true });
+    formRef.current?.scrollIntoView?.({ block: 'nearest' });
+  }, [open, inline]);
 
   // Do not offer creation against a day with QR events, approved leave or no schedule.
   const eligible = (unmarked(state) && !firstEntryAt && Boolean(scheduledStart)) || state === 'FIELD_WORK_PENDING';
@@ -112,10 +161,22 @@ export function FieldWorkControls({ employeeId, employeeName, day, scheduledStar
   const show = eligible || state === 'FIELD_WORK' || Boolean(status);
   if (!show) return null;
 
+  // Пока состояние запроса не прочитано (ошибка чтения), новый не предлагается.
+  const canStart = canCorrect && !loading && !error && eligible && (!status || (unmarked(state) && terminal(status)));
+
+  function closeForm() {
+    if (busyRef.current) return;
+    setOpen(false);
+    setFormError(null);
+    if (inline) window.setTimeout(() => startRef.current?.focus(), 0);
+  }
+
   async function act(kind: 'create' | 'cancel' | 'retry') {
-    if (busy) return;
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     setError(null);
+    setFormError(null);
     try {
       const next = kind === 'create'
         ? await api.requestFieldWork({ employee_id: employeeId, date: day, manager_confirmed: true,
@@ -126,15 +187,132 @@ export function FieldWorkControls({ employeeId, employeeName, day, scheduledStar
           : await api.retryFieldWork(request!.id);
       setRequest(next);
       previousStatus.current = next.status;
-      setOpen(false);
+      if (kind === 'create') {
+        setOpen(false);
+        setLocation('');
+        setDescription('');
+        setManagerConfirmed(false);
+      }
       onChanged();
     } catch (failure) {
-      setError(messageFor(failure));
+      // Ошибка создания — рядом с формой, введённое остаётся на месте.
+      // Отказ — словами сервера: «в этот день уже есть отметка» нужнее
+      // кадровику, чем общее «действие недоступно».
+      if (kind === 'create' && open) setFormError(reasonFor(failure));
+      else setError(reasonFor(failure));
       // On a timeout, creation may have succeeded. Fetch before allowing another send.
       void refresh();
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
+  }
+
+  const schedule = scheduledStart && scheduledEnd
+    ? `${scheduledStart.slice(0, 5)}–${scheduledEnd.slice(0, 5)}` : 'по назначенному графику';
+  const sent = delivery(request?.delivery_status);
+  const hours = credit(request, status);
+
+  const fields = (
+    <>
+      <label className="fw__field">
+        <span className="fw__label">Объект или место <span className="fw__hint">необязательно</span></span>
+        <input ref={firstFieldRef} maxLength={200} value={location} disabled={busy}
+               placeholder="Например, офис партнёра"
+               onChange={(e) => setLocation(e.target.value)} />
+      </label>
+      <label className="fw__field">
+        <span className="fw__label">Рабочая задача <span className="fw__hint">необязательно</span></span>
+        <textarea maxLength={1000} value={description} disabled={busy}
+                  placeholder="Кратко опишите работу вне офиса"
+                  onChange={(e) => setDescription(e.target.value)} />
+      </label>
+      <label className="fw__check">
+        <input type="checkbox" checked={managerConfirmed} disabled={busy}
+               aria-describedby={`${ids}-attest`}
+               onChange={(e) => setManagerConfirmed(e.target.checked)} />
+        <span>
+          Руководитель подтвердил, что сотрудник работает вне офиса в этот день
+          <small id={`${ids}-attest`} className="fw__hint fw__hint--block">
+            Отметка HR о полученном подтверждении, а не подпись руководителя.
+          </small>
+        </span>
+      </label>
+    </>
+  );
+
+  if (inline) {
+    return (
+      <section className="fw fw--inline" aria-labelledby={`${ids}-title`}>
+        <h3 id={`${ids}-title`} className="fw__title">Выездная работа</h3>
+        <p className="fw__subtitle">Запрос на подтверждение сотруднику</p>
+
+        {loading && !status && <p role="status" className="fw__muted">Проверяем запрос…</p>}
+
+        {status && !open && (
+          <div className={`fw__state fw__state--${status.toLowerCase()}`}>
+            <p className="fw__status" role="status">{LABEL[status] ?? status}</p>
+            {hours && <p className="fw__line">{hours}</p>}
+            {status === 'PENDING' && sent && (
+              <p className={`fw__line fw__delivery${sent.bad ? ' fw__delivery--bad' : ''}`}>{sent.text}</p>
+            )}
+            {request?.work_location && <p className="fw__line">Объект: {request.work_location}</p>}
+            {request?.work_description && <p className="fw__line fw__wrap">Задача: {request.work_description}</p>}
+          </div>
+        )}
+        {!status && state === 'FIELD_WORK' && (
+          <p className="fw__line">Полный день засчитан по графику. Вход и выход по QR не создавались.</p>
+        )}
+
+        {error && (
+          <p className="fw__error" role="alert">
+            {error} <button type="button" className="btn" onClick={() => void refresh()}>Обновить</button>
+          </p>
+        )}
+
+        {canCorrect && request?.status === 'PENDING' && !open && (
+          <div className="fw__row">
+            {request.delivery_status === 'FAILED' && (
+              <button type="button" className="btn" disabled={busy} onClick={() => void act('retry')}>Повторить отправку</button>
+            )}
+            <button type="button" className="btn" disabled={busy} onClick={() => void act('cancel')}>Отменить запрос</button>
+          </div>
+        )}
+
+        {canStart && !open && (
+          <button ref={startRef} type="button" className="btn btn--dark fw__start" onClick={() => setOpen(true)}>
+            {status ? 'Отправить новый запрос' : 'Запросить подтверждение'}
+          </button>
+        )}
+
+        {open && (
+          <div ref={formRef} className="fw__form" role="group" aria-labelledby={`${ids}-title`}
+               onKeyDown={(event) => {
+                 if (event.key !== 'Escape') return;
+                 // Escape закрывает только форму: панель остаётся открытой.
+                 event.stopPropagation();
+                 closeForm();
+               }}>
+            <p className="fw__note">
+              После отправки сотрудник получит запрос в Telegram. До его ответа день не засчитывается.
+              {' '}График: {schedule}.
+            </p>
+            {fields}
+            {formError && <p className="fw__error" role="alert">{formError}</p>}
+            <div className="fw__footer">
+              <p className="fw__hint">Запрос можно отменить, пока сотрудник не ответил.</p>
+              <div className="fw__row">
+                <button type="button" className="btn" disabled={busy} onClick={closeForm}>Отмена</button>
+                <button type="button" className="btn btn--dark" disabled={!managerConfirmed || busy}
+                        aria-busy={busy} onClick={() => void act('create')}>
+                  {busy ? 'Отправляем…' : 'Отправить сотруднику'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </section>
+    );
   }
 
   return (
@@ -152,7 +330,7 @@ export function FieldWorkControls({ employeeId, employeeName, day, scheduledStar
       {request?.work_description && <p>Задача: {request.work_description}</p>}
       {state === 'FIELD_WORK' && <p>Полный день засчитан по графику. Вход и выход по QR не создавались.</p>}
       {error && <p className="fw__error" role="alert">{error} <button type="button" onClick={() => void refresh()}>Обновить</button></p>}
-      {canCorrect && !loading && eligible && (!status || (unmarked(state) && terminal(status))) && (
+      {canStart && (
         <button type="button" className="fw__button" onClick={() => setOpen(true)}>
           {status ? 'Отправить новый запрос на выездную работу' : 'Запросить подтверждение выездной работы'}
         </button>
@@ -171,19 +349,10 @@ export function FieldWorkControls({ employeeId, employeeName, day, scheduledStar
           <div className="fw__dialog" role="dialog" aria-modal="true" aria-labelledby="fw-dialog-title">
             <h3 id="fw-dialog-title">Отправить подтверждение выездной работы?</h3>
             <p>{employeeName} · {day}</p>
-            <p>График: {scheduledStart && scheduledEnd ? `${scheduledStart.slice(0, 5)}–${scheduledEnd.slice(0, 5)}` : 'по назначенному графику'}.
+            <p>График: {schedule}.
               Сотрудник должен подтвердить работу в Telegram. До его ответа день не засчитывается.</p>
-            <label className="fw__field">Объект или место (необязательно)
-              <input maxLength={200} value={location} onChange={(e) => setLocation(e.target.value)} />
-            </label>
-            <label className="fw__field">Рабочая задача (необязательно)
-              <textarea maxLength={1000} value={description} onChange={(e) => setDescription(e.target.value)} />
-            </label>
-            <label className="fw__check">
-              <input type="checkbox" checked={managerConfirmed} onChange={(e) => setManagerConfirmed(e.target.checked)} />
-              Я уточнил(а) у руководителя: сотрудник работает вне офиса в указанный день.
-            </label>
-            {error && <p className="fw__error" role="alert">{error}</p>}
+            {fields}
+            {formError && <p className="fw__error" role="alert">{formError}</p>}
             <div className="fw__actions">
               <button ref={closeRef} type="button" disabled={busy} onClick={() => setOpen(false)}>Отмена</button>
               <button type="button" className="fw__button" disabled={!managerConfirmed || busy}

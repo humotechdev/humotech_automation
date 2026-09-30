@@ -72,9 +72,9 @@ export function DayCard({ row, day, timezone, canAdd, canFieldWork = false, star
   );
 
   return (
-    <aside className="panel side-panel" aria-label="Отметки за день">
+    <aside className="panel side-panel day-card" aria-label="Отметка за день">
       <header className="side-panel__head">
-        <span className="side-panel__title">Отметки за день</span>
+        <span className="side-panel__title">Отметка за день</span>
         <button type="button" className="tool" aria-label="Закрыть" onClick={onClose}>
           <AppIcon name="close" size={16} />
         </button>
@@ -91,19 +91,28 @@ export function DayCard({ row, day, timezone, canAdd, canFieldWork = false, star
           </span>
         </div>
 
-        <dl className="facts">
-          <div className="facts__row">
-            <dt>{STATE_TITLE[row.state] ?? row.state}</dt>
-            <dd>{longDate(day)}</dd>
-          </div>
-          <div className="facts__row">
-            <dt>График</dt>
-            <dd>
+        {/* День — в поясе офиса: `day` приходит с сервера уже в нём,
+            и здесь он только подписывается, без пересчёта. */}
+        <div className="day-card__day">
+          <span className="day-card__date">{longDate(day)}</span>
+          <span className="day-card__state">
+            <strong>{STATE_TITLE[row.state] ?? row.state}</strong>
+            <span className="day-card__plan" aria-label="График">
               {row.scheduled_start && row.scheduled_end
-                ? `${row.scheduled_start.slice(0, 5)} – ${row.scheduled_end.slice(0, 5)}`
-                : 'Не задан'}
-            </dd>
-          </div>
+                ? `${row.scheduled_start.slice(0, 5)}–${row.scheduled_end.slice(0, 5)}`
+                : 'График не задан'}
+            </span>
+          </span>
+        </div>
+
+        <FieldWorkControls employeeId={row.employee_id} employeeName={row.full_name} day={day}
+                           scheduledStart={row.scheduled_start} scheduledEnd={row.scheduled_end}
+                           firstEntryAt={row.first_entry_at}
+                           state={row.state} summary={row.field_work} canCorrect={canFieldWork}
+                           autoOpen={startFieldWork} inline
+                           onChanged={onChanged} />
+
+        <dl className="facts">
           <div className="facts__row">
             <dt>{row.state === 'FIELD_WORK' ? 'Засчитано по графику' : 'В офисе за день'}</dt>
             <dd>{row.seconds ? span(row.seconds) : '—'}</dd>
@@ -130,13 +139,6 @@ export function DayCard({ row, day, timezone, canAdd, canFieldWork = false, star
         <div className="side-panel__bar">
           <DayBar row={row} zone={timezone} big />
         </div>
-
-        <FieldWorkControls employeeId={row.employee_id} employeeName={row.full_name} day={day}
-                           scheduledStart={row.scheduled_start} scheduledEnd={row.scheduled_end}
-                           firstEntryAt={row.first_entry_at}
-                           state={row.state} summary={row.field_work} canCorrect={canFieldWork}
-                           autoOpen={startFieldWork}
-                           onChanged={onChanged} />
 
         <p className="side-panel__label">События сегодня</p>
         <Body block={detail} name="отметки">

@@ -214,8 +214,11 @@ describe('за день', () => {
     renderApp(`/attendance?date=${DAY}`);
     await screen.findByText('Саидова Дилноза');
     fireEvent.click(within(tableRow('Саидова Дилноза')).getByRole('button', { name: 'Выездная работа' }));
-    expect(await screen.findByRole('dialog', { name: 'Отправить подтверждение выездной работы?' })).toBeTruthy();
-    expect(screen.getByText(/До его ответа день не засчитывается/)).toBeTruthy();
+    // Одна правая панель, форма встроена в неё — без второго окна.
+    const card = await screen.findByRole('complementary', { name: 'Отметка за день' });
+    expect(await within(card).findByLabelText(/Объект или место/)).toBeTruthy();
+    expect(within(card).getByText(/До его ответа день не засчитывается/)).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   test('предупредившему об опоздании тоже можно запросить выездную работу; предупреждение остаётся видимым', async () => {
@@ -225,7 +228,8 @@ describe('за день', () => {
     const line = tableRow('Юсупова Камила');
     expect(within(line).getByText('Пробки')).toBeTruthy();
     fireEvent.click(within(line).getByRole('button', { name: 'Выездная работа' }));
-    expect(await screen.findByRole('dialog', { name: 'Отправить подтверждение выездной работы?' })).toBeTruthy();
+    const card = await screen.findByRole('complementary', { name: 'Отметка за день' });
+    expect(await within(card).findByLabelText(/Объект или место/)).toBeTruthy();
     expect(screen.getAllByText('Пробки').length).toBeGreaterThanOrEqual(2);
   });
 
@@ -327,7 +331,7 @@ describe('карточка дня', () => {
     network();
     renderApp(`/attendance?date=${DAY}&employee=e-1`);
 
-    const card = await screen.findByRole('complementary', { name: 'Отметки за день' });
+    const card = await screen.findByRole('complementary', { name: 'Отметка за день' });
     expect(await within(card).findByText('Каримов Алишер')).toBeTruthy();
     expect((await within(card).findAllByText(/Главный вход|Служебный вход/)).length).toBe(2);
   });
