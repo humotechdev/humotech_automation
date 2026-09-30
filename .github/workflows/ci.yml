@@ -106,3 +106,13 @@ jobs:
         env:
           NODE_OPTIONS: --max-old-space-size=4096
       - run: npm run build
+
+  secrets-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Секреты не должны попадать в репозиторий
+        run: bash scripts/check_no_secrets.sh
