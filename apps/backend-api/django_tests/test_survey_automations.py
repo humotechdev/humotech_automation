@@ -639,12 +639,20 @@ class TestFiring:
         assert run_due(now=at(tz, start + timedelta(days=1), 10)) == 0
         assert run_due(now=at(tz, start + timedelta(days=30), 10)) == 0
 
-        # Календарный квартал, а не «девяносто дней».
+        # Календарный квартал, а не «девяносто дней». Годовщина —
+        # тот же день месяца, с поправкой на короткий месяц (как в
+        # производственном _shift_months), а не «28-е»: иначе при
+        # правиле, созданном 29–31-го, проверяемая дата оказывалась
+        # РАНЬШЕ годовщины и опрос ещё не был должен.
+        import calendar as _cal
         month = start.month + 3
         year = start.year + (month - 1) // 12
         month = (month - 1) % 12 + 1
-        day = min(start.day, 28)
-        assert run_due(now=at(tz, date(year, month, day), 10)) == 1
+        day = min(start.day, _cal.monthrange(year, month)[1])
+        anniversary = date(year, month, day)
+        assert run_due(now=at(tz, anniversary, 10)) == 1
+        # Днём раньше годовщины квартальный опрос ещё не должен.
+        assert run_due(now=at(tz, anniversary - timedelta(days=1), 10)) == 0
 
     def test_next_run_is_shown_only_where_it_is_known(
         self, rules, hr_actor, published,
