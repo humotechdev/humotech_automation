@@ -105,3 +105,54 @@ def test_manual_event_forbidden_for_self(organization, office):
         occurred_at=datetime(2026, 9, 15, 9, 0, tzinfo=dt_timezone.utc),
         reason="коллеге",
     )
+
+
+# --- аудит-журнал ограничен областью ответственности --------------------------
+
+
+def test_office_scoped_auditor_does_not_see_org_wide_audit(
+    api_client, make_user, make_actor, organization, office
+):
+    """Аудитор с одним офисом не видит журнал всей организации.
+
+    Раньше `audit.read` + организация отдавали ВСЕ записи, включая
+    `old/new_values` сотрудников чужих офисов."""
+    from humotech.regions.services import RegionService
+
+    org_wide = make_actor(organization, permissions=("regions.manage",))
+    region = RegionService().create(org_wide, code="AUD-ORG", name="Орг",
+                                    timezone="Asia/Dushanbe")
+
+    scoped = make_user(organization, permissions=("audit.read",), office=office)
+    api_client.force_authenticate(user=scoped)
+    rows = api_client.get("/api/v1/audit-logs", {"entity_type": "regions"}).json()["items"]
+    assert not any(r["entity_id"] == str(region.id) for r in rows), \
+        "office-scoped auditor must not see org-wide audit rows"
+
+    # Org-wide аудитор ту же запись видит.
+    wide = make_user(organization, permissions=("audit.read",))
+    api_client.force_authenticate(user=wide)
+    rows = api_client.get("/api/v1/audit-logs", {"entity_id": str(region.id)}).json()["items"]
+    assert any(r["entity_id"] == str(region.id) for r in rows)
+
+
+# --- Django Admin: только неограниченный SUPER_ADMIN --------------------------
+
+
+def test_scoped_super_admin_is_not_django_staff(
+    make_user, organization, other_organization, office
+):
+    """SUPER_ADMIN, назначенный на один офис, не входит в Django Admin.
+
+    Только выданный на всю организацию (без сужения) SUPER_ADMIN получает
+    признак Django-суперпользователя; иначе назначение на офис открыло бы
+    админку, которая данные по области не фильтрует."""
+    scoped = make_user(organization, role_code="SUPER_ADMIN", office=office)
+    assert scoped.is_staff is False
+    assert scoped.is_superuser is False
+
+    # Второй SUPER_ADMIN той же организации не завести (уникальный код
+    # роли), поэтому неограниченный берём в отдельной организации.
+    unscoped = make_user(other_organization, role_code="SUPER_ADMIN")
+    assert unscoped.is_staff is True
+    assert unscoped.is_superuser is True

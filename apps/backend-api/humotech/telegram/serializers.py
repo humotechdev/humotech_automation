@@ -135,23 +135,15 @@ class BotRecognizeSerializer(serializers.Serializer):
 
 
 class WelcomeSerializer(serializers.Serializer):
-    """Чем бот здоровается с узнанным сотрудником.
+    """Чем бот здоровается с узнанным по имени сотрудником.
 
-    Ровно то, что человек и так про себя знает: имя, где работает и по
-    какому графику. Ни зарплаты, ни документов, ни чужих данных — бот
-    здесь ничего не сообщает сверх того, что кадровик уже сказал вслух.
+    Только имя для приветствия: узнавание по `@username` слабее ссылки и
+    отвечает до подтверждения HR, поэтому персональных данных (офис,
+    график, руководитель) здесь нет.
     """
 
     status = serializers.CharField(help_text="Состояние привязки: PENDING")
-    full_name = serializers.CharField()
-    employment_status = serializers.CharField()
-    hire_date = serializers.DateField(allow_null=True)
-    office_name = serializers.CharField(allow_null=True)
-    department_name = serializers.CharField(allow_null=True)
-    position_name = serializers.CharField(allow_null=True)
-    schedule_name = serializers.CharField(allow_null=True)
-    manager_name = serializers.CharField(allow_null=True)
-
+    first_name = serializers.CharField(allow_null=True)
 
 class BotConsumeSerializer(serializers.Serializer):
     """Что бот сообщает backend о переходе по ссылке.

@@ -831,41 +831,15 @@ class TelegramLinkService(BaseService):
 def welcome_facts(employee) -> dict:
     """Чем бот здоровается с узнанным сотрудником.
 
-    Только то, что человек и так про себя знает: кто он, где работает и
-    по какому графику. Сообщать что-то сверх этого боту нечем и незачем.
+    ТОЛЬКО имя для приветствия. Узнавание по `@username` слабее ссылки:
+    имя в Telegram можно сменить и занять чужое, а этот ответ уходит
+    ЕЩЁ ДО подтверждения кадровиком. Поэтому здесь не должно быть ничего,
+    что человек про узнанного ещё не знает: офис, отдел, должность,
+    график и руководитель — это персональные данные сотрудника, и
+    показывать их тому, кто лишь предъявил совпавшее имя, нельзя.
+    Остальное человек увидит в Mini App, когда HR подтвердит привязку.
     """
-    from humotech.employees.models import EmployeeAssignment
-    from humotech.schedules.services import WorkScheduleService
-
-    parts = [employee.last_name, employee.first_name, employee.middle_name]
-    place = (
-        EmployeeAssignment.objects.filter(employee_id=employee.id, is_primary=True)
-        .select_related("office", "department", "position", "manager_employee")
-        .order_by("-valid_from")
-        .first()
-    )
-    assignment = WorkScheduleService().current_assignment(employee.id)
-    manager = place.manager_employee if place else None
-
-    return {
-        "full_name": " ".join(one for one in parts if one),
-        "employment_status": employee.employment_status,
-        "hire_date": employee.hire_date,
-        "office_name": place.office.name if place and place.office else None,
-        "department_name": (
-            place.department.name if place and place.department else None
-        ),
-        "position_name": place.position.name if place and place.position else None,
-        "schedule_name": (
-            assignment.schedule.name if assignment and assignment.schedule else None
-        ),
-        "manager_name": (
-            " ".join(
-                one for one in
-                [manager.last_name, manager.first_name] if one
-            ) if manager else None
-        ),
-    }
+    return {"first_name": employee.first_name}
 
 
 @dataclass(frozen=True)

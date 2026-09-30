@@ -584,7 +584,7 @@ class TestRecognize:
             f"{API}/telegram/bot/recognize", body, format="json", **bot_headers()
         )
 
-    def test_known_username_is_greeted_by_name(
+    def test_known_username_greeted_by_name_only_no_pii(
         self, hr_client, bot_client, employee, telegram_settings,
     ):
         hr_client.post(
@@ -602,8 +602,15 @@ class TestRecognize:
         # Привязка ещё не рабочая: узнавание доводит до того же окна
         # подтверждения, что и ссылка.
         assert body["status"] == "PENDING"
-        assert body["full_name"] == "Иванов Иван"
-        assert body["office_name"]
+        # Только имя для приветствия. Персональные данные карточки (офис,
+        # график, руководитель, должность) до подтверждения HR не
+        # раскрываются: имя в Telegram можно занять чужое.
+        assert body["first_name"] == "Иван"
+        assert "office_name" not in body
+        assert "schedule_name" not in body
+        assert "manager_name" not in body
+        assert "hire_date" not in body
+        assert "employment_status" not in body
 
     def test_unknown_username_is_sent_to_hr(self, bot_client, telegram_settings):
         answer = self.ask(bot_client, telegram_username="nobody")

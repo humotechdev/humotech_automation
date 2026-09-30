@@ -50,47 +50,21 @@ EMPLOYMENT_WORDS = {
 
 
 def welcome(facts: dict) -> str:
-    """Первое сообщение узнанному сотруднику.
+    """Первое сообщение узнанному по имени сотруднику.
 
-    Здоровается по имени и называет то, что человек и так про себя знает:
-    куда принят, в какой офис, по какому графику и к кому обращаться.
-    Незаполненные поля просто не упоминаются — строка «График: —» хуже
-    отсутствия строки.
+    Здоровается по имени и ведёт к согласию с правилами. Персональных
+    данных (офис, график, руководитель) здесь НЕТ: узнавание по имени
+    отвечает ещё до подтверждения HR, а имя в Telegram можно занять
+    чужое. Всё остальное человек увидит в Mini App после подтверждения.
     """
-    # Все значения — из карточки в CRM, то есть чужой текст: сообщение
-    # уходит с HTML-разметкой, и «<» в названии отдела сорвал бы его.
-    name = escape(facts.get("full_name")) or "коллега"
-    where = EMPLOYMENT_WORDS.get(facts.get("employment_status") or "", "на работу")
-    since = facts.get("hire_date")
-
-    head = f"Добро пожаловать в HUMOTECH, {name}."
-    head += f"\n\nВы приняты {where}"
-    if since:
-        head += f" с {escape(since)}"
-    head += "."
-
-    rows = []
-    if facts.get("office_name"):
-        rows.append(f"Офис: {escape(facts['office_name'])}")
-    if facts.get("department_name"):
-        rows.append(f"Отдел: {escape(facts['department_name'])}")
-    if facts.get("position_name"):
-        rows.append(f"Должность: {escape(facts['position_name'])}")
-    if facts.get("schedule_name"):
-        rows.append(f"График: {escape(facts['schedule_name'])}")
-    if facts.get("manager_name"):
-        rows.append(f"Руководитель: {escape(facts['manager_name'])}")
-
-    if rows:
-        head += "\n\n" + "\n".join(rows)
-
-    head += (
-        "\n\nПожалуйста, ознакомьтесь с правилами компании и подтвердите "
+    name = escape(facts.get("first_name")) or "коллега"
+    return (
+        f"Здравствуйте, {name}. Мы нашли вашу карточку в HUMOTECH.\n\n"
+        "Пожалуйста, ознакомьтесь с правилами компании и подтвердите "
         "согласие — кнопка ниже.\n\n"
         "Доступ к отметкам и заявкам появится, когда отдел кадров "
         "подтвердит привязку."
     )
-    return head
 
 
 #: Почему узнать не вышло. Коды те же, что у ссылки, плюс свои.

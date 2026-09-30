@@ -136,6 +136,14 @@ class AuditLogView(APIView):
             organization_id=actor.organization_id
         ).select_related("actor_user")
 
+        # Область ответственности. Кому видна вся организация (all_offices
+        # у SUPER_ADMIN, HR_ADMIN, TECH_ADMIN без сужения) — журнал целиком.
+        # Кому назначен один офис или регион, журнал всей организации не
+        # положен: он увидит либо историю КОНКРЕТНОГО сотрудника из своей
+        # области (ниже, с проверкой видимости), либо только свои действия.
+        # Отсутствие office_id у записи само по себе доступа не даёт.
+        scope_limited = not access.scope(actor).all_offices
+
         action = _text_param(request, "action")
         if action:
             # Префиксом тоже: `attendance.` находит все действия по
@@ -162,6 +170,11 @@ class AuditLogView(APIView):
             queryset = queryset.filter(
                 entity_id__in=_employee_trail(actor, employee_id)
             )
+        elif scope_limited:
+            # Ограниченной области журнал всей организации не отдаётся:
+            # только собственные действия актора. Остальные фильтры ниже
+            # лишь сужают этот набор (AND), расширить его они не могут.
+            queryset = queryset.filter(actor_user_id=actor.user_id)
 
         actor_user_id = _uuid_param(request, "actor_user_id")
         if actor_user_id:
