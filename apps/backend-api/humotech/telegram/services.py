@@ -842,6 +842,49 @@ def welcome_facts(employee) -> dict:
     return {"first_name": employee.first_name}
 
 
+def employment_facts(employee) -> dict:
+    """Полный набор о месте работы — для сообщений САМОМУ сотруднику.
+
+    В отличие от `welcome_facts`, это НЕ ответ на слабое узнавание по
+    `@username`: набор идёт в уведомления, которые приходят уже принятому
+    человеку в его собственный чат (приём, перевод, итог стажировки).
+    Это его собственные данные, которые он и так про себя знает, поэтому
+    здесь они уместны — а в ответе бота до подтверждения кадровиком нет.
+    """
+    from humotech.employees.models import EmployeeAssignment
+    from humotech.schedules.services import WorkScheduleService
+
+    parts = [employee.last_name, employee.first_name, employee.middle_name]
+    place = (
+        EmployeeAssignment.objects.filter(employee_id=employee.id, is_primary=True)
+        .select_related("office", "department", "position", "manager_employee")
+        .order_by("-valid_from")
+        .first()
+    )
+    assignment = WorkScheduleService().current_assignment(employee.id)
+    manager = place.manager_employee if place else None
+
+    return {
+        "full_name": " ".join(one for one in parts if one),
+        "employment_status": employee.employment_status,
+        "hire_date": employee.hire_date,
+        "office_name": place.office.name if place and place.office else None,
+        "department_name": (
+            place.department.name if place and place.department else None
+        ),
+        "position_name": place.position.name if place and place.position else None,
+        "schedule_name": (
+            assignment.schedule.name if assignment and assignment.schedule else None
+        ),
+        "manager_name": (
+            " ".join(
+                one for one in
+                [manager.last_name, manager.first_name] if one
+            ) if manager else None
+        ),
+    }
+
+
 @dataclass(frozen=True)
 class MiniAppSession:
     """Кто вошёл и чем ему теперь подтверждать, что это он."""

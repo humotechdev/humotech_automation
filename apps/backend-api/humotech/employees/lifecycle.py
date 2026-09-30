@@ -197,10 +197,15 @@ class EmployeeLifecycleService(BaseService):
 
     @staticmethod
     def _facts(employee: Employee) -> dict:
-        """Где человек работает — одним набором на все три сообщения."""
-        from humotech.telegram.services import welcome_facts
+        """Где человек работает — одним набором на все три сообщения.
 
-        return welcome_facts(employee)
+        Это уведомления самому принятому в его собственный чат, поэтому
+        берут ПОЛНЫЙ набор (`employment_facts`), а не урезанный ответ
+        бота на узнавание по `@username` (`welcome_facts`).
+        """
+        from humotech.telegram.services import employment_facts
+
+        return employment_facts(employee)
 
     @staticmethod
     def _tell(
