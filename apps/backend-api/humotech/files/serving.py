@@ -104,7 +104,17 @@ def viewable_for(record: File, audience: str) -> bool:
         return True
     if status in BLOCKED_STATUSES:
         return False
-    # PENDING и всё, чего мы не знаем: только кадровику.
+    # UNSCANNED — файл, не проходивший антивирус (сканер выключен). Это
+    # ЧЕСТНОЕ состояние вместо прежнего фиктивного CLEAN: доступ к файлу
+    # уже ограничен на уровне view (сотрудник видит только свой документ
+    # и свою заявку, HR — только свою область), поэтому чужую загрузку
+    # получить нельзя и так. Когда включат антивирус, новые файлы пойдут
+    # через PENDING (ниже, только кадровику) и станут CLEAN/INFECTED по
+    # результату проверки. INFECTED и FAILED не отдаются никому.
+    if status == "UNSCANNED":
+        return True
+    # PENDING (идёт настоящая проверка) и всё, чего мы не знаем: только
+    # кадровику и только вложением.
     return audience == STAFF and status == "PENDING"
 
 
@@ -144,9 +154,13 @@ def file_response(
 
     mime = (record.mime_type or "").split(";")[0].strip().lower()
     safe_type = mime in INLINE_TYPES
-    # Непроверенный файл кадровику — только вложением: браузер не откроет
-    # его сам, открыть его придётся осознанно.
-    as_attachment = (not inline) or (not safe_type) or record.scan_status != "CLEAN"
+    # Файл с идущей проверкой (PENDING) кадровику — только вложением:
+    # браузер не откроет его сам, открыть придётся осознанно. UNSCANNED
+    # (сканер выключен) ведёт себя как прежний CLEAN — превью допустимо.
+    as_attachment = (
+        (not inline) or (not safe_type)
+        or record.scan_status not in ("CLEAN", "UNSCANNED")
+    )
 
     name = display_name(filename if filename is not None else record.original_filename)
     response = FileResponse(

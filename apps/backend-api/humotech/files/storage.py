@@ -185,9 +185,11 @@ def store(
         mime_type=declared,
         size_bytes=size,
         checksum_sha256=digest.hexdigest(),
-        # См. пояснение в документации модуля: CLEAN здесь означает
-        # «проверка не проводилась», пока сканер не включён.
-        scan_status="PENDING" if settings.FILES["SCANNER_ENABLED"] else "CLEAN",
+        # Сканер включён — файл ждёт проверки (PENDING). Выключен —
+        # честный UNSCANNED («не проверялся»), а не фиктивный CLEAN:
+        # правило выдачи ниже относится к UNSCANNED так же осторожно,
+        # как к PENDING, а загрузку сотрудника наружу не отдаёт.
+        scan_status="PENDING" if settings.FILES["SCANNER_ENABLED"] else "UNSCANNED",
         uploaded_by_employee=employee,
         uploaded_by_user_id=user_id,
     )

@@ -340,6 +340,17 @@ class TestScanStatus:
         assert response["Content-Disposition"].startswith("attachment")
         assert bot_client.get(me_url(request), **bot_headers(TG_ID)).status_code == 404
 
+    def test_scanner_off_marks_unscanned_not_fake_clean(self, bot_client, sick):
+        """Без сканера файл получает честный UNSCANNED, а не фиктивный CLEAN.
+
+        Доступ к нему уже ограничен на уровне view (свой документ, своя
+        область), поэтому он отдаётся, но статус в базе теперь правдив —
+        и настоящий антивирус переведёт его в CLEAN или INFECTED."""
+        request, document = sick
+        assert File.objects.get(id=document.file_id).scan_status == "UNSCANNED"
+        # UNSCANNED по-прежнему отдаётся владельцу (как прежний CLEAN).
+        assert bot_client.get(me_url(request), **bot_headers(TG_ID)).status_code == 200
+
     def test_deleted_file_is_not_served(self, hr_client, bot_client, sick):
         request, document = sick
         File.objects.filter(id=document.file_id).update(deleted_at=timezone.now())
