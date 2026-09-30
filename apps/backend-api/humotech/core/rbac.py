@@ -69,6 +69,10 @@ class AccessControl:
         # сегодняшний вопрос.
         self._permissions: dict[tuple[uuid.UUID, datetime | None], set[str]] = {}
         self._scopes: dict[tuple[uuid.UUID, datetime | None], Scope] = {}
+        # Область в разрезе одного разрешения: только территории тех
+        # назначений, чья роль это разрешение несёт. Ключ включает код
+        # разрешения. См. `scope_for`.
+        self._scoped: dict[tuple[uuid.UUID, datetime | None, str], Scope] = {}
 
     # ----------------------------------------------------------- разрешения
 
@@ -116,20 +120,15 @@ class AccessControl:
             organization_id=actor.organization_id,
         ).filter(Q(valid_to__isnull=True) | Q(valid_to__gte=moment))
 
-    def scope(self, actor: Actor, at: datetime | None = None) -> Scope:
-        key = (actor.user_id, at)
-        if key in self._scopes:
-            return self._scopes[key]
-
+    def _build_scope(self, rows) -> Scope:
+        """Собрать `Scope` из строк `(region_id, office_id)` назначений."""
         from humotech.offices.models import Office
 
         offices: set[uuid.UUID] = set()
         regions: set[uuid.UUID] = set()
         all_offices = False
 
-        for region_id, office_id in self._active_scopes(actor, at).values_list(
-            "region_id", "office_id"
-        ):
+        for region_id, office_id in rows:
             if region_id is None and office_id is None:
                 all_offices = True
             if office_id is not None:
@@ -146,23 +145,82 @@ class AccessControl:
                 )
             )
 
-        scope = Scope(
+        return Scope(
             all_offices=all_offices,
             office_ids=frozenset(offices),
             region_ids=frozenset(regions),
         )
+
+    def scope(self, actor: Actor, at: datetime | None = None) -> Scope:
+        key = (actor.user_id, at)
+        if key in self._scopes:
+            return self._scopes[key]
+        rows = list(
+            self._active_scopes(actor, at).values_list("region_id", "office_id")
+        )
+        scope = self._build_scope(rows)
         self._scopes[key] = scope
         return scope
+
+    def scope_for(
+        self, actor: Actor, permission: str, at: datetime | None = None
+    ) -> Scope:
+        """Область, в которой у актора есть КОНКРЕТНОЕ разрешение.
+
+        В отличие от `scope`, берёт территории не всех назначений, а только
+        тех, чья роль несёт `permission`. Это закрывает повышение прав
+        комбинацией назначений: право «оформить отметку» из назначения на
+        офис A не должно действовать в офисе B, который выдан отдельным
+        назначением лишь на чтение. Для назначения с одной ролью, чья
+        область покрывает её же разрешения (директор на всю организацию,
+        региональный HR), ответ совпадает со `scope` — законные роли не
+        сужаются.
+        """
+        key = (actor.user_id, at, permission)
+        if key in self._scoped:
+            return self._scoped[key]
+
+        from humotech.rbac.models import RolePermission
+
+        role_ids = set(
+            RolePermission.objects.filter(permission__code=permission)
+            .values_list("role_id", flat=True)
+        )
+        rows = (
+            list(
+                self._active_scopes(actor, at)
+                .filter(role_id__in=role_ids)
+                .values_list("region_id", "office_id")
+            )
+            if role_ids
+            else []
+        )
+        scope = self._build_scope(rows)
+        self._scoped[key] = scope
+        return scope
+
+    def _scope_for_check(self, actor: Actor, permission: str | None) -> Scope:
+        """Область для проверки объекта: общая (`permission=None`, прежнее
+        поведение) или в разрезе одного разрешения."""
+        return self.scope(actor) if permission is None else self.scope_for(actor, permission)
 
     def invalidate(self) -> None:
         """Сбросить кэш после выдачи или отзыва роли в той же транзакции."""
         self._permissions.clear()
         self._scopes.clear()
+        self._scoped.clear()
 
     # ------------------------------------------------------- доступ к объекту
 
-    def require_office(self, actor: Actor, office_id: uuid.UUID):
-        """Офис существует, принадлежит организации актора и виден ему."""
+    def require_office(
+        self, actor: Actor, office_id: uuid.UUID, permission: str | None = None
+    ):
+        """Офис существует, принадлежит организации актора и виден ему.
+
+        `permission` задаёт разрез: офис должен попадать в область именно
+        того назначения, что несёт это разрешение (см. `scope_for`). Без
+        него — прежняя общая область (для чтения и уже проверенных мест).
+        """
         from humotech.offices.models import Office
 
         office = Office.objects.filter(
@@ -173,12 +231,14 @@ class AccessControl:
         if office is None:
             raise NotFound("Офис не найден")
 
-        scope = self.scope(actor)
+        scope = self._scope_for_check(actor, permission)
         if not scope.all_offices and office_id not in scope.office_ids:
             raise PermissionDenied("Офис вне вашей области видимости")
         return office
 
-    def require_region(self, actor: Actor, region_id: uuid.UUID):
+    def require_region(
+        self, actor: Actor, region_id: uuid.UUID, permission: str | None = None
+    ):
         from humotech.offices.models import Office
         from humotech.regions.models import Region
 
@@ -188,7 +248,7 @@ class AccessControl:
         if region is None:
             raise NotFound("Регион не найден")
 
-        scope = self.scope(actor)
+        scope = self._scope_for_check(actor, permission)
         if scope.all_offices or region_id in scope.region_ids:
             return region
         # регион виден и тогда, когда пользователю выдан офис внутри него
@@ -203,7 +263,9 @@ class AccessControl:
             raise PermissionDenied("Регион вне вашей области видимости")
         return region
 
-    def offices_in_region(self, actor: Actor, region_id: uuid.UUID) -> frozenset | None:
+    def offices_in_region(
+        self, actor: Actor, region_id: uuid.UUID, permission: str | None = None
+    ) -> frozenset | None:
         """Офисы региона, которые актор видит; `None` — весь регион.
 
         `require_region` пускает и того, кому виден хотя бы ОДИН офис
@@ -213,8 +275,8 @@ class AccessControl:
         """
         from humotech.offices.models import Office
 
-        self.require_region(actor, region_id)
-        scope = self.scope(actor)
+        self.require_region(actor, region_id, permission)
+        scope = self._scope_for_check(actor, permission)
         if scope.all_offices or region_id in scope.region_ids:
             return None
         return frozenset(
@@ -223,19 +285,24 @@ class AccessControl:
             ).values_list("id", flat=True)
         )
 
-    def require_whole_region(self, actor: Actor, region_id: uuid.UUID):
+    def require_whole_region(
+        self, actor: Actor, region_id: uuid.UUID, permission: str | None = None
+    ):
         """Регион виден целиком — для действий, задевающих все его офисы."""
-        region = self.require_region(actor, region_id)
-        if self.offices_in_region(actor, region_id) is not None:
+        region = self.require_region(actor, region_id, permission)
+        if self.offices_in_region(actor, region_id, permission) is not None:
             raise PermissionDenied("Регион вне вашей области видимости")
         return region
 
-    def region_condition(self, actor: Actor, region_id: uuid.UUID, field: str = "office"):
+    def region_condition(
+        self, actor: Actor, region_id: uuid.UUID, field: str = "office",
+        permission: str | None = None,
+    ):
         """Условие «в регионе» с учётом области: `Q(<field>__region_id=…)`
         для видимого целиком региона, иначе — только видимые офисы."""
         from django.db.models import Q
 
-        limited = self.offices_in_region(actor, region_id)
+        limited = self.offices_in_region(actor, region_id, permission)
         if limited is None:
             return Q(**{f"{field}__region_id": region_id})
         return Q(**{f"{field}_id__in": limited})
@@ -259,19 +326,21 @@ class AccessControl:
 
     # -------------------------------------------------- условия для списков
 
-    def visible_office_ids(self, actor: Actor) -> set[uuid.UUID] | None:
+    def visible_office_ids(
+        self, actor: Actor, permission: str | None = None
+    ) -> set[uuid.UUID] | None:
         """Множество доступных офисов; None — вся организация."""
-        scope = self.scope(actor)
+        scope = self._scope_for_check(actor, permission)
         return None if scope.all_offices else set(scope.office_ids)
 
-    def office_filter(self, actor: Actor) -> Q | None:
+    def office_filter(self, actor: Actor, permission: str | None = None) -> Q | None:
         """Условие для списка офисов.
 
         Возвращает None, если ограничивать не нужно (доступ ко всей
         организации). Пустая область даёт заведомо ложное условие — это
         не то же самое, что None.
         """
-        scope = self.scope(actor)
+        scope = self._scope_for_check(actor, permission)
         if scope.all_offices:
             return None
         return Q(id__in=scope.office_ids)  # пустое множество = ничего не видит

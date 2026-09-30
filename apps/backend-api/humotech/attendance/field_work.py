@@ -89,7 +89,8 @@ def require_no_field_work(employee_id, first: date, last: date):
 
 
 class FieldWorkService(BaseService):
-    def _employee(self, actor: Actor, employee_id: uuid.UUID, day: date):
+    def _employee(self, actor: Actor, employee_id: uuid.UUID, day: date,
+                  permission: str | None = None):
         from humotech.absences.services import lock_employee
         lock_employee(employee_id)
         employee = Employee.objects.select_for_update().filter(
@@ -104,7 +105,7 @@ class FieldWorkService(BaseService):
         ).filter(Q(valid_to__isnull=True) | Q(valid_to__gte=day)).order_by("-valid_from").first()
         if assignment is None or not assignment.office_id:
             raise NotFound("Сотрудник не найден")
-        self.access.require_office(actor, assignment.office_id)
+        self.access.require_office(actor, assignment.office_id, permission)
         return employee, assignment
 
     @staticmethod
@@ -165,7 +166,9 @@ class FieldWorkService(BaseService):
         if not date(2000, 1, 1) <= day <= date(2100, 12, 31):
             raise ValidationFailed("Дата вне допустимого диапазона")
         with self.atomic():
-            employee, assignment = self._employee(actor, employee_id, day)
+            employee, assignment = self._employee(
+                actor, employee_id, day, "attendance.correct"
+            )
             tz = office_zone(assignment.office)
             now = timezone.now()
             if now.astimezone(tz).date() != day:
@@ -212,19 +215,19 @@ class FieldWorkService(BaseService):
             rows = rows.filter(office_id__in=visible)
         return list(rows.order_by("-created_at")[:200])
 
-    def _for_actor(self, actor, request_id):
+    def _for_actor(self, actor, request_id, permission: str | None = None):
         row = FieldWorkRequest.objects.select_for_update().filter(
             id=request_id, organization_id=actor.organization_id).first()
         if row is None:
             raise NotFound("Запрос не найден")
-        self.access.require_office(actor, row.office_id)
+        self.access.require_office(actor, row.office_id, permission)
         return row
 
     def cancel(self, actor, request_id):
         self.access.require(actor, "attendance.correct")
         expire_stale(request_id=request_id, organization_id=actor.organization_id)
         with self.atomic():
-            row = self._for_actor(actor, request_id)
+            row = self._for_actor(actor, request_id, "attendance.correct")
             if row.status == "CANCELLED":
                 return row
             if row.status not in ("PENDING", "CONFIRMED"):
@@ -243,7 +246,7 @@ class FieldWorkService(BaseService):
         self.access.require(actor, "attendance.correct")
         expire_stale(request_id=request_id, organization_id=actor.organization_id)
         with self.atomic():
-            row = self._for_actor(actor, request_id)
+            row = self._for_actor(actor, request_id, "attendance.correct")
             if row.status != "PENDING" or timezone.now() >= row.expires_at:
                 raise Conflict("Запрос уже закрыт или срок подтверждения истёк")
             notification = Notification.objects.select_for_update().filter(

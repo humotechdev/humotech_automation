@@ -1022,7 +1022,7 @@ class AbsenceService(BaseService):
         self.access.require(actor, "absences.approve")
         moment = now or timezone.now()
 
-        request = self._hr_request(actor, request_id)
+        request = self._hr_request(actor, request_id, "absences.approve")
         if request.status not in OPEN_STATUSES:
             raise Conflict(
                 "Заявка уже рассмотрена", details={"status": request.status}
@@ -1132,7 +1132,7 @@ class AbsenceService(BaseService):
         """
         self.access.require(actor, "absences.approve")
         moment = now or timezone.now()
-        request = self._hr_request(actor, request_id)
+        request = self._hr_request(actor, request_id, "absences.approve")
         if request.status not in OPEN_STATUSES:
             raise Conflict(
                 "Период правится до решения по заявке",
@@ -1226,7 +1226,7 @@ class AbsenceService(BaseService):
         """
         self.access.require(actor, "absences.documents")
         moment = now or timezone.now()
-        request = self._hr_request(actor, request_id)
+        request = self._hr_request(actor, request_id, "absences.documents")
         self._forbid_self_approval(actor, request)
 
         with self.atomic():
@@ -1266,7 +1266,7 @@ class AbsenceService(BaseService):
         """Отмена уже подтверждённого отсутствия — только отделом кадров."""
         self.access.require(actor, "absences.approve")
         moment = now or timezone.now()
-        request = self._hr_request(actor, request_id)
+        request = self._hr_request(actor, request_id, "absences.approve")
         if request.status != "APPROVED":
             raise Conflict("Отменять нечего: заявка не подтверждена")
 
@@ -1379,12 +1379,18 @@ class AbsenceService(BaseService):
             queryset = queryset.filter(employee_id__in=visible)
         return queryset
 
-    def _scope_ids(self, actor: Actor, *, office_id=None, region_id=None):
+    def _scope_ids(self, actor: Actor, *, office_id=None, region_id=None,
+                   permission: str | None = None):
         """Сотрудники в области видимости. `None` — вся организация.
 
         Именно `None` для «всех» и ПУСТОЙ набор для «ничего не видно»:
         слить эти случаи проверкой `if ids:` значит молча показать всю
         организацию тому, у кого прав нет.
+
+        `permission` сужает область до назначений, несущих это право: для
+        РЕШЕНИЯ по заявке (подтвердить больничный) сотрудник должен быть
+        виден через то же назначение, что даёт право решать, а не через
+        соседнее «только чтение».
         """
         from datetime import date
 
@@ -1393,12 +1399,14 @@ class AbsenceService(BaseService):
 
         condition = None
         if office_id:
-            self.access.require_office(actor, office_id)
+            self.access.require_office(actor, office_id, permission)
             condition = Q(office_id=office_id)
         elif region_id:
-            condition = self.access.region_condition(actor, region_id)
+            condition = self.access.region_condition(
+                actor, region_id, permission=permission
+            )
         else:
-            visible = self.access.visible_office_ids(actor)
+            visible = self.access.visible_office_ids(actor, permission)
             if visible is not None:
                 condition = Q(office_id__in=visible)
 
@@ -1922,13 +1930,20 @@ class AbsenceService(BaseService):
             raise NotFound("Такой вид отсутствия недоступен")
         return absence_type
 
-    def _hr_request(self, actor: Actor, request_id) -> AbsenceRequest:
+    def _hr_request(
+        self, actor: Actor, request_id, permission: str | None = None
+    ) -> AbsenceRequest:
         """Заявка для действия кадровика: своя организация и своя область.
 
         Чужой офис отвечает так же, как несуществующая заявка, — иначе
         по ответу перебирают, какие заявки есть. Раньше решения и шаги
         проверки смотрели только на организацию: кадровик офиса Б
         подтверждал больничный сотрудника офиса А, которого даже не видит.
+
+        `permission` берёт область в разрезе права действия (решение по
+        заявке, работа со справкой): право из назначения на один офис не
+        должно действовать в офисе, выданном отдельным назначением лишь
+        на чтение.
         """
         request = (
             AbsenceRequest.objects.filter(
@@ -1939,7 +1954,7 @@ class AbsenceService(BaseService):
         )
         if request is None:
             raise NotFound("Заявка не найдена")
-        visible = self._scope_ids(actor)
+        visible = self._scope_ids(actor, permission=permission)
         if visible is not None and not visible.filter(
             employee_id=request.employee_id
         ).exists():

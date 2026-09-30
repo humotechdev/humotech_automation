@@ -713,7 +713,9 @@ class EmployeeService(BaseService):
         его нет.
         """
         self.access.require(actor, "employees.manage")
-        employee = self._require_visible_employee(actor, employee_id)
+        employee = self._require_visible_employee(
+            actor, employee_id, permission="employees.manage"
+        )
 
         unknown = set(changes) - set(CONTACT_FIELDS)
         if unknown:
@@ -807,7 +809,9 @@ class EmployeeService(BaseService):
         в другой офис не должен молча стирать должность.
         """
         self.access.require(actor, "employees.manage")
-        employee = self._require_visible_employee(actor, employee_id)
+        employee = self._require_visible_employee(
+            actor, employee_id, permission="employees.manage"
+        )
 
         if employee.employment_status in FINAL_STATUSES:
             raise Conflict(
@@ -913,7 +917,9 @@ class EmployeeService(BaseService):
         self, actor: Actor, employee_id: uuid.UUID, status: str, action: str
     ) -> EmployeeCard:
         self.access.require(actor, "employees.manage")
-        employee = self._require_visible_employee(actor, employee_id)
+        employee = self._require_visible_employee(
+            actor, employee_id, permission="employees.manage"
+        )
 
         if employee.employment_status == status:
             raise Conflict(f"Сотрудник уже в статусе {status}",
@@ -948,7 +954,9 @@ class EmployeeService(BaseService):
         строка остаётся, у неё появляется дата окончания.
         """
         self.access.require(actor, "employees.archive")
-        employee = self._require_visible_employee(actor, employee_id)
+        employee = self._require_visible_employee(
+            actor, employee_id, permission="employees.archive"
+        )
 
         if employee.employment_status in FINAL_STATUSES:
             raise Conflict(
@@ -1042,16 +1050,20 @@ class EmployeeService(BaseService):
         return condition
 
     def _require_visible_employee(
-        self, actor: Actor, employee_id: uuid.UUID, *, at: date | None = None
+        self, actor: Actor, employee_id: uuid.UUID, *, at: date | None = None,
+        permission: str | None = None,
     ) -> Employee:
         # Само правило лежит в selectors: тем же пользуется привязка Telegram,
         # и разойтись эти два ответа не имеют права.
-        return require_visible_employee(self.access, actor, employee_id)
+        return require_visible_employee(
+            self.access, actor, employee_id, permission
+        )
 
     def _require_assignable_office(
         self, actor: Actor, office_id: uuid.UUID
     ) -> Office:
-        office = self.access.require_office(actor, office_id)
+        # Назначение в офис — изменение: право и офис из одного назначения.
+        office = self.access.require_office(actor, office_id, "employees.manage")
         if office.status != "ACTIVE":
             raise Conflict(
                 "Офис не активен: назначать в него сотрудников нельзя",

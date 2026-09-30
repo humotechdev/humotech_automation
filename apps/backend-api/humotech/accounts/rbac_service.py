@@ -1068,7 +1068,11 @@ class RoleAdminService(BaseService):
         Назначение без региона и офиса означает «вся организация», и
         выдать его может только тот, чья область — вся организация.
         """
-        scope = self.access.scope(actor)
+        # Область берём в разрезе `roles.manage`: право выдавать роли и
+        # территория выдачи должны идти из ОДНОГО назначения. Иначе
+        # администратор офиса A, которому вдобавок выдали просмотр офиса B,
+        # раздавал бы роли в B — и через это что угодно себе и другим.
+        scope = self.access.scope_for(actor, "roles.manage")
         if region_id is None and office_id is None:
             if not scope.all_offices:
                 raise PermissionDenied(
@@ -1078,9 +1082,9 @@ class RoleAdminService(BaseService):
                 )
             return
         if office_id is not None:
-            self.access.require_office(actor, office_id)
+            self.access.require_office(actor, office_id, "roles.manage")
             return
-        self.access.require_region(actor, region_id)
+        self.access.require_region(actor, region_id, "roles.manage")
         # `require_region` считает регион видимым и тогда, когда у актора
         # лишь один офис внутри него — для чтения это верно, для выдачи
         # нет: администратор одного офиса выдал бы роль на весь регион.

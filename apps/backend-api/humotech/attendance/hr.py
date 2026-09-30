@@ -704,7 +704,9 @@ class AttendanceHrService(BaseService):
             except AttendanceCorrectionRequest.DoesNotExist as exc:
                 raise NotFound("Заявка на исправление не найдена") from exc
 
-            self._require_employee_visible(actor, request.employee_id)
+            self._require_employee_visible(
+                actor, request.employee_id, "attendance.correct"
+            )
 
             if request.status not in ("SUBMITTED", "IN_REVIEW"):
                 # Повторное решение по уже рассмотренной заявке — не ошибка
@@ -806,8 +808,11 @@ class AttendanceHrService(BaseService):
                 "Причина ручной отметки обязательна", details={"field": "reason"}
             )
         self.access.require(actor, "attendance.manual")
-        self.access.require_office(actor, office_id)
-        self._require_employee_visible(actor, employee_id)
+        # Право на отметку и офис/сотрудник — из ОДНОГО назначения: право
+        # из назначения на офис A не действует в офисе B, выданном отдельно
+        # лишь на чтение.
+        self.access.require_office(actor, office_id, "attendance.manual")
+        self._require_employee_visible(actor, employee_id, "attendance.manual")
         self._forbid_self_attendance(actor, employee_id)
 
         # Отметка — факт, а не план. Будущий момент или год 1 превратились
@@ -884,21 +889,29 @@ class AttendanceHrService(BaseService):
         office_id: uuid.UUID | None = None,
         region_id: uuid.UUID | None = None,
         at: date | None = None,
+        permission: str | None = None,
     ) -> QuerySet | None:
         """Идентификаторы сотрудников в области видимости. None — все.
 
         Возвращается именно `None` для «всей организации» и ПУСТОЙ набор
         для «ничего не видно». Слить эти случаи проверкой `if ids:` —
         значит молча показать всю организацию тому, у кого прав нет.
+
+        `permission` сужает область до назначений, несущих это разрешение:
+        для действия (ручная отметка) сотрудник должен быть виден через то
+        же назначение, что даёт право на действие, а не через соседнее
+        «только чтение».
         """
         condition = None
         if office_id:
-            self.access.require_office(actor, office_id)
+            self.access.require_office(actor, office_id, permission)
             condition = Q(office_id=office_id)
         elif region_id:
-            condition = self.access.region_condition(actor, region_id)
+            condition = self.access.region_condition(
+                actor, region_id, permission=permission
+            )
         else:
-            visible = self.access.visible_office_ids(actor)
+            visible = self.access.visible_office_ids(actor, permission)
             if visible is not None:
                 condition = Q(office_id__in=visible)
 
@@ -968,8 +981,10 @@ class AttendanceHrService(BaseService):
         )
         return office_zone(office)
 
-    def _require_employee_visible(self, actor: Actor, employee_id) -> None:
-        visible = self._employee_scope_ids(actor)
+    def _require_employee_visible(
+        self, actor: Actor, employee_id, permission: str | None = None
+    ) -> None:
+        visible = self._employee_scope_ids(actor, permission=permission)
         if visible is None:
             exists = Employee.objects.filter(
                 id=employee_id, organization_id=actor.organization_id

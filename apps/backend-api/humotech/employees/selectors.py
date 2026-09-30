@@ -18,13 +18,18 @@ from humotech.employees.models import Employee, EmployeeAssignment
 
 
 def require_visible_employee(
-    access: AccessControl, actor: Actor, employee_id: uuid.UUID
+    access: AccessControl, actor: Actor, employee_id: uuid.UUID,
+    permission: str | None = None,
 ) -> Employee:
     """Сотрудник существует, он из организации актора и попадает в его область.
 
     `access` передаётся снаружи, а не создаётся здесь: у вызывающего сервиса
     уже есть свой экземпляр с прогретым кэшем разрешений, и заводить второй
     значило бы перечитывать роли на каждую проверку.
+
+    `permission` задаёт разрез области: для ИЗМЕНЕНИЯ карточки сотрудник
+    должен быть виден через назначение, несущее это право, а не через
+    соседнее «только чтение». Без него — прежняя общая область (чтение).
     """
     employee = Employee.objects.filter(
         id=employee_id, organization_id=actor.organization_id
@@ -33,7 +38,7 @@ def require_visible_employee(
         # чужая организация отвечает так же, как отсутствие записи
         raise NotFound("Сотрудник не найден")
 
-    visible = access.visible_office_ids(actor)
+    visible = access.visible_office_ids(actor, permission)
     if visible is None:
         return employee
 

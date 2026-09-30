@@ -10,15 +10,18 @@ HTTP-запросами и исправленные:
    обязанностей, в отличие от модуля отсутствий).
 """
 
-from datetime import date, datetime, timezone as dt_timezone
+from datetime import date, datetime, timedelta, timezone as dt_timezone
 
 import pytest
 
 from django_tests.conftest import create_actor, make_office
+from humotech.accounts.models import UserRoleScope
 from humotech.attendance.hr import AttendanceHrService
 from humotech.attendance.models import AttendanceEvent
 from humotech.core.errors import PermissionDenied
+from humotech.core.rbac import AccessControl
 from humotech.employees.models import Employee, EmployeeAssignment
+from humotech.rbac.models import Permission, Role, RolePermission
 
 pytestmark = pytest.mark.django_db
 
@@ -156,3 +159,115 @@ def test_scoped_super_admin_is_not_django_staff(
     unscoped = make_user(other_organization, role_code="SUPER_ADMIN")
     assert unscoped.is_staff is True
     assert unscoped.is_superuser is True
+
+
+# --- §3: право из одного назначения не действует на территории другого --------
+#
+# Комбинация назначений давала повышение прав: право «оформить отметку» из
+# назначения на офис A действовало и в офисе B, выданном отдельным назначением
+# лишь на чтение (union разрешений × union территорий). `scope_for` берёт
+# территории только тех назначений, чья роль несёт нужное право. Законные
+# широкие роли (директор на всю организацию, региональный HR) при этом НЕ
+# сужаются — на это положительные проверки ниже.
+
+
+def _add_grant(organization, user, *, permissions, role_code,
+               office=None, region=None):
+    role = Role.objects.create(
+        organization=organization, code=role_code, name=role_code
+    )
+    for code in permissions:
+        perm, _ = Permission.objects.get_or_create(
+            code=code, defaults={"name": code, "description": code}
+        )
+        RolePermission.objects.create(role=role, permission=perm)
+    UserRoleScope.objects.create(
+        organization=organization, user=user, role=role,
+        office=office, region=region,
+        valid_from=datetime.now(tz=dt_timezone.utc) - timedelta(days=1),
+    )
+
+
+def _two_grant_actor(organization, region):
+    """A — право на запись; B — только чтение. Возвращает (actor, A, B)."""
+    office_a = make_office(organization, region, "U3-A")
+    office_b = make_office(organization, region, "U3-B")
+    user, actor = create_actor(
+        organization,
+        permissions=("attendance.manual", "attendance.read"),
+        office=office_a, role_code="U3_WRITE_A",
+    )
+    _add_grant(organization, user, permissions=("attendance.read",),
+               office=office_b, role_code="U3_READ_B")
+    return actor, office_a, office_b
+
+
+_AT = datetime(2026, 9, 15, 4, 0, tzinfo=dt_timezone.utc)
+
+
+def test_scope_for_confines_permission_to_its_own_grant(organization, region):
+    actor, office_a, office_b = _two_grant_actor(organization, region)
+    access = AccessControl()
+    # Общая область — оба офиса: просмотр B тоже расширяет область.
+    assert {office_a.id, office_b.id} <= access.scope(actor).office_ids
+    # Область права на запись — только офис A.
+    manual = access.scope_for(actor, "attendance.manual").office_ids
+    assert office_a.id in manual
+    assert office_b.id not in manual
+
+
+def test_manual_attendance_confined_to_write_grant_office(organization, region):
+    actor, office_a, office_b = _two_grant_actor(organization, region)
+    emp_a = _employee(organization, office_a, "U3-EA")
+    emp_b = _employee(organization, office_b, "U3-EB")
+    svc = AttendanceHrService()
+    # B — только чтение: ручная отметка запрещена.
+    with pytest.raises(PermissionDenied):
+        svc.manual_event(actor, employee_id=emp_b.id, office_id=office_b.id,
+                         event_type="ENTRY", occurred_at=_AT, reason="x")
+    # A — право есть: отметка проходит. Контроль, что чиним не «запретить всё».
+    event = svc.manual_event(actor, employee_id=emp_a.id, office_id=office_a.id,
+                             event_type="ENTRY", occurred_at=_AT, reason="x")
+    assert event.office_id == office_a.id
+
+
+def test_org_wide_grant_still_writes_in_any_office(organization, region):
+    """Директор на всю организацию пишет в любом офисе — роль не сужена."""
+    office = make_office(organization, region, "U3-ORG")
+    emp = _employee(organization, office, "U3-ORG1")
+    actor = create_actor(organization, permissions=("attendance.manual",))[1]
+    event = AttendanceHrService().manual_event(
+        actor, employee_id=emp.id, office_id=office.id,
+        event_type="ENTRY", occurred_at=_AT, reason="x")
+    assert event.office_id == office.id
+
+
+def test_regional_grant_still_writes_in_every_office_of_region(organization, region):
+    """Региональная роль пишет в любом офисе своего региона."""
+    office = make_office(organization, region, "U3-REG")
+    emp = _employee(organization, office, "U3-REG1")
+    actor = create_actor(organization, permissions=("attendance.manual",),
+                         region=region)[1]
+    event = AttendanceHrService().manual_event(
+        actor, employee_id=emp.id, office_id=office.id,
+        event_type="ENTRY", occurred_at=_AT, reason="x")
+    assert event.office_id == office.id
+
+
+def test_roles_manage_scope_confined_to_its_grant(organization, region):
+    """Право выдавать роли из назначения на офис A не действует в офисе B.
+
+    Это опаснейшая комбинация: раздача ролей в B открыла бы путь к любым
+    правам там. `_require_within_own_scope` теперь берёт область в разрезе
+    `roles.manage`, а не общую."""
+    office_a = make_office(organization, region, "U3-RA")
+    office_b = make_office(organization, region, "U3-RB")
+    user, actor = create_actor(organization, permissions=("roles.manage",),
+                               office=office_a, role_code="U3_ROLES_A")
+    _add_grant(organization, user, permissions=("employees.read",),
+               office=office_b, role_code="U3_VIEW_B")
+    access = AccessControl()
+    assert office_b.id in access.scope(actor).office_ids  # общая область
+    manage = access.scope_for(actor, "roles.manage").office_ids
+    assert office_a.id in manage
+    assert office_b.id not in manage

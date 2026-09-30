@@ -118,7 +118,9 @@ class EmployeeAttachmentService(BaseService):
         ссылаться журнал, а история кадровых бумаг важнее места на диске.
         """
         self.access.require(actor, "employees.manage")
-        employee = require_visible_employee(self.access, actor, employee_id)
+        employee = require_visible_employee(
+            self.access, actor, employee_id, "employees.manage"
+        )
         stored = self.take(actor, [file_id])[file_id]
         # Поле модели — `original_filename`; прежнее `original_name` роняло
         # каждое прикрепление без заголовка в 500.
@@ -170,7 +172,9 @@ class EmployeeAttachmentService(BaseService):
         её никто не требовал, и пустая строка была бы мусором.
         """
         self.access.require(actor, "employees.manage")
-        employee = require_visible_employee(self.access, actor, employee_id)
+        employee = require_visible_employee(
+            self.access, actor, employee_id, "employees.manage"
+        )
         row = EmployeeDocument.objects.filter(
             id=document_id,
             employee_id=employee.id,
@@ -205,7 +209,9 @@ class EmployeeAttachmentService(BaseService):
     def set_photo(self, actor: Actor, employee_id: uuid.UUID, file_id: uuid.UUID):
         """Заменить фотографию в карточке."""
         self.access.require(actor, "employees.manage")
-        employee = require_visible_employee(self.access, actor, employee_id)
+        employee = require_visible_employee(
+            self.access, actor, employee_id, "employees.manage"
+        )
         stored = self.take(actor, [file_id])[file_id]
         before = {"photo_id": str(employee.photo_id) if employee.photo_id else None}
         employee.photo = stored

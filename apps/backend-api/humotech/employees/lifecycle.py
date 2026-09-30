@@ -85,7 +85,9 @@ class EmployeeLifecycleService(BaseService):
         стажировался.
         """
         self.access.require(actor, "employees.manage")
-        employee = self.employees._require_visible_employee(actor, employee_id)
+        employee = self.employees._require_visible_employee(
+            actor, employee_id, permission="employees.manage"
+        )
 
         if employee.employment_status != "PROBATION":
             raise Conflict(
@@ -147,7 +149,9 @@ class EmployeeLifecycleService(BaseService):
         причина — она сохраняется в карточке и видна через год.
         """
         self.access.require(actor, "employees.manage")
-        employee = self.employees._require_visible_employee(actor, employee_id)
+        employee = self.employees._require_visible_employee(
+            actor, employee_id, permission="employees.manage"
+        )
 
         if employee.employment_status != "PROBATION":
             raise Conflict(
