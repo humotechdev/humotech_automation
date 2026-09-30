@@ -47,7 +47,11 @@ x-backend-env: &backend_env
   # Пароль подставляется из той же переменной, что и у PostgreSQL, —
   # разойтись им негде. Поэтому пароль — без символов, требующих
   # экранирования в URL (secrets.token_urlsafe подходит).
-  DJANGO_DATABASE_URL: postgresql://humotech:${POSTGRES_PASSWORD:?нужен POSTGRES_PASSWORD}@postgres:5432/humotech_django
+  # Рантайм backend и workers подключаются РОЛЬЮ humotech_app — только
+  # чтение и запись данных, без DDL и без прав суперпользователя (роли
+  # создаёт initdb/02_least_privilege.sh). Миграции идут ролью-владельцем
+  # humotech_owner (переопределено в сервисе migrate).
+  DJANGO_DATABASE_URL: postgresql://humotech_app:${POSTGRES_APP_PASSWORD:?нужен POSTGRES_APP_PASSWORD}@postgres:5432/humotech_django
   # `gateway` — имя, под которым к API ходит бот внутри сети.
   DJANGO_ALLOWED_HOSTS: ${API_DOMAIN:?нужен API_DOMAIN},${CRM_DOMAIN:?нужен CRM_DOMAIN},gateway
   DJANGO_CSRF_TRUSTED_ORIGINS: https://${CRM_DOMAIN:?нужен CRM_DOMAIN},https://${API_DOMAIN:?нужен API_DOMAIN}
@@ -89,6 +93,11 @@ services:
       POSTGRES_USER: humotech
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?нужен POSTGRES_PASSWORD}
       POSTGRES_DB: humotech
+      # Пароли ролей приложения (initdb/02_least_privilege.sh): рантайм
+      # humotech_app и владелец-миграции humotech_owner. Суперпользователь
+      # humotech приложением НЕ используется.
+      POSTGRES_OWNER_PASSWORD: ${POSTGRES_OWNER_PASSWORD:?нужен POSTGRES_OWNER_PASSWORD}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?нужен POSTGRES_APP_PASSWORD}
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
     # ports нет намеренно: база доступна только из сети db.
     volumes:
@@ -114,7 +123,11 @@ services:
         set -e
         python manage.py migrate --noinput
         python manage.py collectstatic --noinput
-    environment: *backend_env
+    environment:
+      # Миграции — ролью-ВЛАДЕЛЬЦЕМ схемы (создаёт и меняет объекты).
+      # Рантайм-роль humotech_app этого делать не может и не должна.
+      <<: *backend_env
+      DJANGO_DATABASE_URL: postgresql://humotech_owner:${POSTGRES_OWNER_PASSWORD:?нужен POSTGRES_OWNER_PASSWORD}@postgres:5432/humotech_django
     volumes:
       - static_files:/app/staticfiles
     depends_on:
