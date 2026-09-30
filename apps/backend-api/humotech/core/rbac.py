@@ -203,6 +203,43 @@ class AccessControl:
             raise PermissionDenied("Регион вне вашей области видимости")
         return region
 
+    def offices_in_region(self, actor: Actor, region_id: uuid.UUID) -> frozenset | None:
+        """Офисы региона, которые актор видит; `None` — весь регион.
+
+        `require_region` пускает и того, кому виден хотя бы ОДИН офис
+        региона: регион нужен ему как подпись и как фильтр. Но фильтр
+        «по региону» у такого актора обязан сужать его область, а не
+        заменять её: иначе `?region_id=` открывал бы соседние офисы.
+        """
+        from humotech.offices.models import Office
+
+        self.require_region(actor, region_id)
+        scope = self.scope(actor)
+        if scope.all_offices or region_id in scope.region_ids:
+            return None
+        return frozenset(
+            Office.objects.filter(
+                region_id=region_id, id__in=scope.office_ids
+            ).values_list("id", flat=True)
+        )
+
+    def require_whole_region(self, actor: Actor, region_id: uuid.UUID):
+        """Регион виден целиком — для действий, задевающих все его офисы."""
+        region = self.require_region(actor, region_id)
+        if self.offices_in_region(actor, region_id) is not None:
+            raise PermissionDenied("Регион вне вашей области видимости")
+        return region
+
+    def region_condition(self, actor: Actor, region_id: uuid.UUID, field: str = "office"):
+        """Условие «в регионе» с учётом области: `Q(<field>__region_id=…)`
+        для видимого целиком региона, иначе — только видимые офисы."""
+        from django.db.models import Q
+
+        limited = self.offices_in_region(actor, region_id)
+        if limited is None:
+            return Q(**{f"{field}__region_id": region_id})
+        return Q(**{f"{field}_id__in": limited})
+
     def require_schedule(self, actor: Actor, schedule_id: uuid.UUID):
         """График принадлежит организации актора.
 

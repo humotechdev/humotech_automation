@@ -1396,8 +1396,7 @@ class AbsenceService(BaseService):
             self.access.require_office(actor, office_id)
             condition = Q(office_id=office_id)
         elif region_id:
-            self.access.require_region(actor, region_id)
-            condition = Q(office__region_id=region_id)
+            condition = self.access.region_condition(actor, region_id)
         else:
             visible = self.access.visible_office_ids(actor)
             if visible is not None:

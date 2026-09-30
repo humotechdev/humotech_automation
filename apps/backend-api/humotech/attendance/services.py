@@ -487,6 +487,12 @@ def assess_location(
                 accuracy = None
                 reason = reason or RejectionReason.LOCATION_TOO_VAGUE
 
+    # Для круга неизвестная погрешность означала бы нулевой допуск
+    # (offices/geo.py): булавка, выбранная на карте в центре офиса,
+    # прошла бы как «внутри» из дома. Телефон, измеривший координату,
+    # погрешность присылает; её отсутствие — признак выбранной точки.
+    if reason is None and accuracy is None and geofence_kind(office) == "CIRCLE":
+        reason = RejectionReason.LOCATION_TOO_VAGUE
     verdict = within_office(
         office, latitude, longitude, accuracy_m=accuracy,
         unknown_accuracy_m=ceiling,

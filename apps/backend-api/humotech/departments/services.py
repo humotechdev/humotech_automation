@@ -133,9 +133,8 @@ class DepartmentService(BaseService):
                 Q(office_id=office_id) | Q(office__isnull=True)
             )
         elif region_id:
-            self.access.require_region(actor, region_id)
             queryset = queryset.filter(
-                Q(office__region_id=region_id) | Q(office__isnull=True)
+                self.access.region_condition(actor, region_id) | Q(office__isnull=True)
             )
         else:
             visible = self.access.visible_office_ids(actor)

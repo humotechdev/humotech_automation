@@ -85,6 +85,20 @@ def _hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def _require_rotating(point: OfficeQrPoint) -> None:
+    """Экран показывает только меняющийся код.
+
+    Подписанный код точки-наклейки проверялся бы как экранный — без
+    обязательных координат и без паузы между отметками, то есть мимо
+    той строгой проверки места, ради которой у наклейки она есть.
+    """
+    if point.qr_mode != "ROTATING":
+        raise Conflict(
+            "Экран можно подключить только к точке с меняющимся кодом",
+            details={"reason": "qr_point_not_rotating"},
+        )
+
+
 class QrDisplayService(BaseService):
     """Управление экранами. HR-часть требует прав, экранная — credential."""
 
@@ -121,6 +135,7 @@ class QrDisplayService(BaseService):
     def create_device_for_point(
         self, point: OfficeQrPoint, *, name: str, actor: Actor | None = None
     ) -> IssuedDevice:
+        _require_rotating(point)
         code = secrets.token_urlsafe(24)
         now = timezone.now()
         with self.atomic():
@@ -307,6 +322,7 @@ class QrDisplayService(BaseService):
         point = device.qr_point
         if not point.is_active or point.archived_at is not None:
             raise Conflict("Точка отметки выключена")
+        _require_rotating(point)
 
         ttl = settings.QR["TOKEN_TTL_SECONDS"]
         token, payload = issue_token(

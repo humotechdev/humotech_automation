@@ -154,8 +154,7 @@ class QrPointService(BaseService):
             self.access.require_office(actor, office_id)
             queryset = queryset.filter(office_id=office_id)
         elif region_id:
-            self.access.require_region(actor, region_id)
-            queryset = queryset.filter(office__region_id=region_id)
+            queryset = queryset.filter(self.access.region_condition(actor, region_id))
         else:
             visible = self.access.visible_office_ids(actor)
             if visible is not None:

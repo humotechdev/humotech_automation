@@ -125,7 +125,9 @@ class KnowledgeAdminUseCases:
         if office_id is not None:
             self.access.require_office(actor, office_id)
         if region_id is not None:
-            self.access.require_region(actor, region_id)
+            # Правило на регион действует во всех его офисах: одного
+            # своего офиса в регионе для этого мало.
+            self.access.require_whole_region(actor, region_id)
         if department_id is not None:
             from humotech.departments.models import Department
 

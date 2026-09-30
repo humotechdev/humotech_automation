@@ -111,9 +111,8 @@ class CalendarExceptionService(BaseService):
                 Q(office_id=office_id) | Q(office__isnull=True)
             )
         elif region_id:
-            self.access.require_region(actor, region_id)
             queryset = queryset.filter(
-                Q(office__region_id=region_id) | Q(office__isnull=True)
+                self.access.region_condition(actor, region_id) | Q(office__isnull=True)
             )
         elif scope == "organization":
             queryset = queryset.filter(office__isnull=True)
@@ -453,7 +452,7 @@ class CalendarExceptionService(BaseService):
             self.access.require_office(actor, office_id)
             return [office_id]
         if region_id:
-            self.access.require_region(actor, region_id)
+            self.access.require_whole_region(actor, region_id)
             offices = list(
                 Office.objects.filter(
                     organization_id=actor.organization_id,

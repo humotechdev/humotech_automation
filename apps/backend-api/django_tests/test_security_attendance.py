@@ -308,6 +308,19 @@ class TestSticker:
         response = scan(employee_client, f"qr_{secret}", **NEAR)
         assert response.json()["status"] == "ENTERED"
 
+    def test_sticker_coords_without_accuracy_is_refused(
+        self, employee_client, sticker_point
+    ):
+        """Координаты без погрешности — точка с карты, а не замер телефона.
+
+        Для круга неизвестная погрешность раньше означала нулевой допуск,
+        и булавка в центре офиса проходила из дома."""
+        _, secret = sticker_point
+        near_no_acc = {k: v for k, v in NEAR.items() if k != "accuracy_m"}
+        response = scan(employee_client, f"qr_{secret}", **near_no_acc)
+        assert response.json()["status"] == "LOCATION_TOO_VAGUE"
+        assert AttendanceSession.objects.count() == 0
+
     def test_sticker_on_foreign_host_is_not_ours(
         self, employee_client, sticker_point
     ):

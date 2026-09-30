@@ -192,7 +192,9 @@ def scan(
         .filter(id=payload.qr_point_id)
         .first()
     )
-    if point is None:
+    if point is None or point.qr_mode != "ROTATING":
+        # Подписанный код бывает только у экрана. Для точки-наклейки он
+        # обошёл бы строгую проверку места (см. qr_codes.services).
         return ScanOutcome(status=ScanStatus.QR_INVALID)
 
     # Подпись подтверждает, что код выпустили мы, но не что он до сих пор

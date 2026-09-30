@@ -47,7 +47,7 @@ from humotech.attendance.statistics import (
     SICK_CODES,
     VACATION_CODES,
 )
-from humotech.core.errors import Conflict, NotFound, ValidationFailed
+from humotech.core.errors import Conflict, NotFound, PermissionDenied, ValidationFailed
 from humotech.core.pagination import Page, paginate
 from humotech.core.rbac import Actor
 from humotech.core.service import BaseService
@@ -736,6 +736,8 @@ class AttendanceHrService(BaseService):
                 ]
             )
 
+            if decision == "approve":
+                self._forbid_self_attendance(actor, request.employee_id)
             session_after = None
             if decision == "approve" and request.attendance_session_id:
                 self._require_no_field_work_for_correction(request)
@@ -754,6 +756,27 @@ class AttendanceHrService(BaseService):
                 },
             )
         return request
+
+    def _forbid_self_attendance(self, actor: Actor, employee_id) -> None:
+        """Своё присутствие не оформляет сам себе.
+
+        Кадровик, у которого есть и учётная запись, и карточка сотрудника,
+        не должен ставить себе отметку, править свою сессию или подтверждать
+        себе выезд: это то же разделение обязанностей, что уже требует
+        модуль отсутствий (`_forbid_self_approval`).
+        """
+        from humotech.accounts.models import User
+
+        own = (
+            User.objects.filter(id=actor.user_id)
+            .values_list("employee_id", flat=True)
+            .first()
+        )
+        if own is not None and own == employee_id:
+            raise PermissionDenied(
+                "Своё присутствие оформляет кто-то другой",
+                details={"reason": "self_attendance"},
+            )
 
     def manual_event(
         self,
@@ -785,6 +808,7 @@ class AttendanceHrService(BaseService):
         self.access.require(actor, "attendance.manual")
         self.access.require_office(actor, office_id)
         self._require_employee_visible(actor, employee_id)
+        self._forbid_self_attendance(actor, employee_id)
 
         # Отметка — факт, а не план. Будущий момент или год 1 превратились
         # бы в рабочее время, которого не было, либо в 500 при расчёте суток.
@@ -872,8 +896,7 @@ class AttendanceHrService(BaseService):
             self.access.require_office(actor, office_id)
             condition = Q(office_id=office_id)
         elif region_id:
-            self.access.require_region(actor, region_id)
-            condition = Q(office__region_id=region_id)
+            condition = self.access.region_condition(actor, region_id)
         else:
             visible = self.access.visible_office_ids(actor)
             if visible is not None:
@@ -904,8 +927,7 @@ class AttendanceHrService(BaseService):
             self.access.require_office(actor, office_id)
             return queryset.filter(office_id=office_id)
         if region_id:
-            self.access.require_region(actor, region_id)
-            return queryset.filter(office__region_id=region_id)
+            return queryset.filter(self.access.region_condition(actor, region_id))
         visible = self.access.visible_office_ids(actor)
         if visible is None:
             return queryset

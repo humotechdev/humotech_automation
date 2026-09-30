@@ -39,6 +39,13 @@ from humotech.realtime import broker as broker_module
 #: доходит до JavaScript, и полуживое соединение после сна ноутбука
 #: CRM не распознала бы никогда.
 HEARTBEAT_SECONDS = 15
+
+# Сколько потоков CRM один пользователь держит одновременно. Вкладок у
+# кадровика бывает несколько, но каждый поток — это подписка и проверки
+# в базе на каждый сигнал; без предела один клиент с curl открыл бы их
+# тысячи и занял единственный процесс событий (в нём же ждёт очередь бот).
+MAX_STREAMS_PER_USER = 5
+_open_streams: dict[str, int] = {}
 #: Через сколько клиенту переподключаться после обрыва, мс.
 RETRY_MS = 3000
 #: Пределы ожидания отправщика, секунд.
@@ -154,17 +161,33 @@ async def question_events(request):
         return _error(403, "permission_denied", "Нужно разрешение questions.read")
     session_key = request.session.session_key
 
+    owner = str(user_id)
+    if _open_streams.get(owner, 0) >= MAX_STREAMS_PER_USER:
+        return _error(429, "too_many_streams", "Слишком много открытых окон CRM")
+    _open_streams[owner] = _open_streams.get(owner, 0) + 1
+
     broker = broker_module.broker
     queue = broker.subscribe()
+    loop = asyncio.get_running_loop()
 
     async def stream():
         try:
             yield f"retry: {RETRY_MS}\n\n"
             yield _frame("ready", {"at": round(time.time(), 3)})
+            # Проверка «сессия жива» идёт по часам, а не по тишине в
+            # очереди: сигналы других организаций тоже будят поток, и при
+            # живом трафике тайм-аут не наступал бы никогда — вышедший
+            # пользователь продолжал бы получать сигналы.
+            due = loop.time() + HEARTBEAT_SECONDS
             while True:
+                event = None
                 try:
-                    event = await asyncio.wait_for(queue.get(), HEARTBEAT_SECONDS)
+                    event = await asyncio.wait_for(
+                        queue.get(), max(due - loop.time(), 0)
+                    )
                 except TimeoutError:
+                    pass
+                if loop.time() >= due:
                     alive = await _db(_still_signed_in)(
                         user_id, organization_id, session_key
                     )
@@ -174,6 +197,8 @@ async def question_events(request):
                         yield _frame("bye", {"reason": "session"})
                         return
                     yield _frame("ping", {"at": round(time.time(), 3)})
+                    due = loop.time() + HEARTBEAT_SECONDS
+                if event is None:
                     continue
 
                 kind = event.get("t")
@@ -198,6 +223,11 @@ async def question_events(request):
             # Клиент ушёл — Django отменяет генератор, и подписка должна
             # исчезнуть вместе с ним, а не копить сигналы в пустоту.
             broker.unsubscribe(queue)
+            left = _open_streams.get(owner, 1) - 1
+            if left > 0:
+                _open_streams[owner] = left
+            else:
+                _open_streams.pop(owner, None)
 
     response = StreamingHttpResponse(stream(), content_type="text/event-stream")
     response["Cache-Control"] = "no-cache, no-store"

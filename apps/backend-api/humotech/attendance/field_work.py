@@ -66,6 +66,19 @@ def expire_stale(*, request_id=None, organization_id=None):
                 related_entity_id=row.id, status="PENDING").update(status="CANCELLED")
 
 
+def _forbid_self_field_work(actor, employee_id) -> None:
+    """Себе выездной день не заводят: подтверждение руководителя тогда
+    подтверждает сам себе тот же человек."""
+    from humotech.accounts.models import User
+    from humotech.core.errors import PermissionDenied
+
+    own = (User.objects.filter(id=actor.user_id)
+           .values_list("employee_id", flat=True).first())
+    if own is not None and own == employee_id:
+        raise PermissionDenied("Свой выездной день оформляет кто-то другой",
+                               details={"reason": "self_attendance"})
+
+
 def require_no_field_work(employee_id, first: date, last: date):
     """Call inside a transaction while holding the employee row lock."""
     if FieldWorkRequest.objects.filter(employee_id=employee_id,
@@ -146,6 +159,7 @@ class FieldWorkService(BaseService):
     def create(self, actor, *, employee_id, day, manager_confirmed,
                work_location="", work_description=""):
         self.access.require(actor, "attendance.correct")
+        _forbid_self_field_work(actor, employee_id)
         if manager_confirmed is not True:
             raise ValidationFailed("Требуется подтверждение руководителя")
         if not date(2000, 1, 1) <= day <= date(2100, 12, 31):
