@@ -21,6 +21,7 @@ from datetime import date, timedelta
 from django.db.models import Case, Count, IntegerField, Q, Value, When
 from django.db.models.functions import Lower, Replace
 
+from humotech.core.enums import OFFERED_EMPLOYMENT_TYPES
 from humotech.core.errors import Conflict, NotFound, ValidationFailed
 from humotech.core.pagination import Cursor, Page, normalize_limit, paginate
 from humotech.core.rbac import Actor, snapshot
@@ -654,6 +655,7 @@ class EmployeeService(BaseService):
                 "Нового сотрудника нельзя завести сразу уволенным",
                 details={"employment_status": employment_status},
             )
+        self._validate_employment_type(employment_type)
 
         with self.atomic():
             employee = Employee.objects.create(
@@ -825,6 +827,9 @@ class EmployeeService(BaseService):
         office = self._require_assignable_office(
             actor, changes.get("office_id") or current.office_id
         )
+
+        if "employment_type" in changes:
+            self._validate_employment_type(changes["employment_type"])
 
         if "department_id" in changes:
             department_id = self._validate_department(
@@ -1044,6 +1049,18 @@ class EmployeeService(BaseService):
                 details={"office_id": str(office_id), "status": office.status},
             )
         return office
+
+    @staticmethod
+    def _validate_employment_type(employment_type: str) -> None:
+        """Тип занятости из разрешённых. INTERN («стажёр») больше не
+        назначается — он часть удалённой стажировки; существующие записи с
+        ним остаются, но завести или сменить тип на него нельзя."""
+        if employment_type not in OFFERED_EMPLOYMENT_TYPES:
+            raise ValidationFailed(
+                "Недопустимый тип занятости",
+                details={"employment_type": employment_type,
+                         "allowed": list(OFFERED_EMPLOYMENT_TYPES)},
+            )
 
     def _validate_department(
         self, actor: Actor, department_id: uuid.UUID | None, *, office_id: uuid.UUID

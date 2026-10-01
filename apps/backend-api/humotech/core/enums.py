@@ -25,7 +25,15 @@ POSITION_STATUSES = ("ACTIVE", "INACTIVE", "ARCHIVED")
 
 # --- сотрудники ---
 EMPLOYMENT_STATUSES = ("ACTIVE", "SUSPENDED", "TERMINATED", "ARCHIVED")
+# INTERN («стажёр») — часть удаляемой стажировки. В наборе остаётся только
+# для СУЩЕСТВУЮЩИХ записей (их CHECK базы по-прежнему допускает), но завести
+# или сменить тип занятости на INTERN больше нельзя: см. OFFERED_EMPLOYMENT_TYPES
+# и _validate_employment_type. Снять INTERN из CHECK можно лишь после решения
+# по существующим INTERN-назначениям (перечень — в отчёте), поэтому значение
+# пока оставлено, чтобы не уронить миграцию на живых данных.
 EMPLOYMENT_TYPES = ("FULL_TIME", "PART_TIME", "CONTRACT", "INTERN")
+#: Типы занятости, которые можно НАЗНАЧИТЬ (без INTERN/«стажёр»).
+OFFERED_EMPLOYMENT_TYPES = ("FULL_TIME", "PART_TIME", "CONTRACT")
 WORK_MODES = ("ONSITE", "HYBRID", "REMOTE")
 OFFICE_ACCESS_TYPES = ("PRIMARY", "TEMPORARY", "PERMANENT", "VISITOR")
 # Документы при приёме. «Будет сформирован» — это не файл, а обещание
