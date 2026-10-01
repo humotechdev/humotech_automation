@@ -419,7 +419,10 @@ class KnowledgeAdminUseCases:
         # Та же сверка области, что и у документа: иначе черновик FAQ
         # привязывался к офису другой организации, и ответ API возвращал
         # его название.
-        self._require_area(actor, office_id=office_id, region_id=region_id, permission="knowledge.write")
+        # Создание FAQ из обращения идёт по праву questions.answer (им же
+        # оно и защищено выше), а не knowledge.write: область берём в разрезе
+        # того права, которым действует актор на этом пути.
+        self._require_area(actor, office_id=office_id, region_id=region_id, permission="questions.answer")
         if source_id is not None:
             self._require_source(actor, source_id)
         faq = FaqEntry.objects.create(
