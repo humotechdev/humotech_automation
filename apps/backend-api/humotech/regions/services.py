@@ -116,7 +116,7 @@ class RegionService(BaseService):
         организации», поэтому отсутствие ключа и явный `None` — разные вещи.
         """
         self.access.require(actor, "regions.manage")
-        region = self.access.require_region(actor, region_id)
+        region = self.access.require_region(actor, region_id, "regions.manage")
 
         before = snapshot(region, AUDITED_FIELDS)
         if "code" in changes and changes["code"] is not None:
@@ -146,7 +146,7 @@ class RegionService(BaseService):
         self, actor: Actor, region_id: uuid.UUID, status: str, action: str
     ) -> Region:
         self.access.require(actor, "regions.manage")
-        region = self.access.require_region(actor, region_id)
+        region = self.access.require_region(actor, region_id, "regions.manage")
         if region.status == status:
             raise Conflict(
                 f"Регион уже в статусе {status}", details={"status": status}

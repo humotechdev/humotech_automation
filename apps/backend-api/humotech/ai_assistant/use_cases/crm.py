@@ -102,6 +102,7 @@ class KnowledgeAdminUseCases:
         office_id: uuid.UUID | None,
         region_id: uuid.UUID | None,
         department_id: uuid.UUID | None = None,
+        permission: str | None = None,
     ) -> None:
         """Область действия правила — своя организация и своя видимость.
 
@@ -123,11 +124,11 @@ class KnowledgeAdminUseCases:
                 details={"field": "office_id"},
             )
         if office_id is not None:
-            self.access.require_office(actor, office_id)
+            self.access.require_office(actor, office_id, permission)
         if region_id is not None:
             # Правило на регион действует во всех его офисах: одного
             # своего офиса в регионе для этого мало.
-            self.access.require_whole_region(actor, region_id)
+            self.access.require_whole_region(actor, region_id, permission)
         if department_id is not None:
             from humotech.departments.models import Department
 
@@ -136,19 +137,26 @@ class KnowledgeAdminUseCases:
             ).exists():
                 raise NotFound("Отдел не найден")
         if office_id is None and region_id is None:
-            if not self.access.scope(actor).all_offices:
+            # Правило на всю организацию — только с правом на эту операцию по
+            # всей организации (а не через чужое назначение VIEWER).
+            org_scope = (
+                self.access.scope(actor) if permission is None
+                else self.access.scope_for(actor, permission)
+            )
+            if not org_scope.all_offices:
                 raise PermissionDenied(
                     "Правило для всей организации может менять только "
                     "пользователь с доступом ко всей организации"
                 )
 
     def _require_source_in_scope(
-        self, actor: Actor, source_id: uuid.UUID
+        self, actor: Actor, source_id: uuid.UUID, permission: str | None = None
     ) -> KnowledgeSource:
         """Источник своей организации И в области видимости актора."""
         source = self._require_source(actor, source_id)
         self._require_area(
-            actor, office_id=source.office_id, region_id=source.region_id
+            actor, office_id=source.office_id, region_id=source.region_id,
+            permission=permission,
         )
         return source
 
@@ -187,12 +195,13 @@ class KnowledgeAdminUseCases:
             office_id=payload.get("office_id"),
             region_id=payload.get("region_id"),
             department_id=payload.get("department_id"),
+            permission="knowledge.write",
         )
         parent_id = payload.get("parent_source_id")
         if parent_id is not None:
             # Новая версия чужого документа — тот же обход, только через
             # родителя: содержимое соседней организации попало бы в нашу.
-            self._require_source_in_scope(actor, parent_id)
+            self._require_source_in_scope(actor, parent_id, "knowledge.write")
         source = self.publishing.create_draft(
             organization_id=actor.organization_id,
             created_by_user_id=actor.user_id,
@@ -210,7 +219,7 @@ class KnowledgeAdminUseCases:
     ) -> KnowledgeSource:
         self._require(actor, "knowledge.write")
         _require_priority(fields.get("priority"))
-        before = self._require_source_in_scope(actor, source_id)
+        before = self._require_source_in_scope(actor, source_id, "knowledge.write")
         old = {"title": before.title, "status": before.status}
         source = self.publishing.update_draft(source_id, **fields)
         self._audit(
@@ -224,7 +233,7 @@ class KnowledgeAdminUseCases:
 
     def start_indexing(self, actor: Actor, source_id: uuid.UUID) -> KnowledgeIndexJob:
         self._require(actor, "knowledge.index")
-        self._require_source_in_scope(actor, source_id)
+        self._require_source_in_scope(actor, source_id, "knowledge.index")
         job = self.publishing.enqueue_indexing(source_id)
         self._audit(
             actor, action="knowledge.index.start",
@@ -258,7 +267,7 @@ class KnowledgeAdminUseCases:
 
     def publish(self, actor: Actor, source_id: uuid.UUID):
         self._require(actor, "knowledge.publish")
-        self._require_source_in_scope(actor, source_id)
+        self._require_source_in_scope(actor, source_id, "knowledge.publish")
         result = self.publishing.publish(source_id, approved_by_user_id=actor.user_id)
         self._audit(
             actor, action="knowledge.publish",
@@ -275,7 +284,7 @@ class KnowledgeAdminUseCases:
 
     def archive(self, actor: Actor, source_id: uuid.UUID) -> int:
         self._require(actor, "knowledge.publish")
-        self._require_source_in_scope(actor, source_id)
+        self._require_source_in_scope(actor, source_id, "knowledge.publish")
         revision = self.publishing.archive(source_id)
         self._audit(
             actor, action="knowledge.archive",
@@ -410,7 +419,7 @@ class KnowledgeAdminUseCases:
         # Та же сверка области, что и у документа: иначе черновик FAQ
         # привязывался к офису другой организации, и ответ API возвращал
         # его название.
-        self._require_area(actor, office_id=office_id, region_id=region_id)
+        self._require_area(actor, office_id=office_id, region_id=region_id, permission="knowledge.write")
         if source_id is not None:
             self._require_source(actor, source_id)
         faq = FaqEntry.objects.create(

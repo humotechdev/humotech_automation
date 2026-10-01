@@ -193,13 +193,13 @@ class DepartmentService(BaseService):
         """
         self.access.require(actor, "departments.manage")
         office = (
-            self.access.require_office(actor, office_id)
+            self.access.require_office(actor, office_id, "departments.manage")
             if office_id is not None else None
         )
 
         parent = None
         if parent_department_id:
-            parent = self._require(actor, parent_department_id)
+            parent = self._require(actor, parent_department_id, "departments.manage")
             if office is not None and parent.office_id != office.id:
                 # Иерархия внутри офиса. Отдел, вложенный в отдел другого
                 # офиса, означал бы, что человек числится сразу в двух
@@ -265,7 +265,7 @@ class DepartmentService(BaseService):
         бы одинаково.
         """
         self.access.require(actor, "departments.manage")
-        department = self._require(actor, department_id)
+        department = self._require(actor, department_id, "departments.manage")
         before = snapshot(department, DEPARTMENT_FIELDS)
 
         if name is not None:
@@ -300,7 +300,7 @@ class DepartmentService(BaseService):
                 details={"status": status, "allowed": list(DEPARTMENT_STATUSES)},
             )
         self.access.require(actor, "departments.manage")
-        department = self._require(actor, department_id)
+        department = self._require(actor, department_id, "departments.manage")
         if department.status == status:
             return department
 
@@ -345,7 +345,7 @@ class DepartmentService(BaseService):
         в отчётах.
         """
         self.access.require(actor, "departments.manage")
-        department = self._require(actor, department_id)
+        department = self._require(actor, department_id, "departments.manage")
 
         used = EmployeeAssignment.objects.filter(
             department_id=department.id
@@ -385,7 +385,8 @@ class DepartmentService(BaseService):
             )
         return employee
 
-    def _require(self, actor: Actor, department_id: uuid.UUID) -> Department:
+    def _require(self, actor: Actor, department_id: uuid.UUID,
+                 permission: str | None = None) -> Department:
         department = (
             Department.objects.select_related("office", "head_employee")
             .filter(id=department_id, organization_id=actor.organization_id)
@@ -395,7 +396,7 @@ class DepartmentService(BaseService):
             raise NotFound("Отдел не найден")
         # У общего отдела офиса нет, и проверять доступ к месту не к чему.
         if department.office_id is not None:
-            self.access.require_office(actor, department.office_id)
+            self.access.require_office(actor, department.office_id, permission)
         return department
 
 

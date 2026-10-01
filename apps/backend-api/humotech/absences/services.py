@@ -1530,7 +1530,10 @@ class AbsenceService(BaseService):
         if document is None:
             raise NotFound("Документ не найден")
 
-        visible = self._scope_ids(actor)
+        # Решение по справке — запись: область в разрезе absences.documents
+        # (как и второй путь через _hr_request). Иначе право из назначения на
+        # один регион действовало бы на справку сотрудника другого.
+        visible = self._scope_ids(actor, permission="absences.documents")
         if visible is not None and not visible.filter(
             employee_id=document.absence_request.employee_id
         ).exists():

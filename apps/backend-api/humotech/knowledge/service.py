@@ -448,7 +448,8 @@ class KnowledgeService(BaseService):
         # Своя организация, своя видимость; FAQ на всю организацию — только
         # тому, кому видна вся организация.
         self.use_cases._require_area(
-            actor, office_id=office_id, region_id=region_id
+            actor, office_id=office_id, region_id=region_id,
+            permission="knowledge.write",
         )
         if source_id is not None:
             self.use_cases._require_source(actor, source_id)
@@ -491,7 +492,7 @@ class KnowledgeService(BaseService):
         сотрудник спросил бы одно, а получил ответ на другое.
         """
         self.access.require(actor, "knowledge.write")
-        faq = self._require_faq_in_scope(actor, faq_id)
+        faq = self._require_faq_in_scope(actor, faq_id, "knowledge.write")
         before = snapshot(faq, FAQ_FIELDS)
         fields: list[str] = []
 
@@ -541,7 +542,7 @@ class KnowledgeService(BaseService):
         """Включить FAQ в поиск или убрать из него."""
         self.access.require(actor, "knowledge.publish")
         target = _known(status, "status", FAQ_ENTRY_STATUSES)
-        faq = self._require_faq_in_scope(actor, faq_id)
+        faq = self._require_faq_in_scope(actor, faq_id, "knowledge.publish")
 
         if target == "ACTIVE" and faq.question_embedding is None:
             # Без эмбеддинга запись действующей быть не может: поиск
@@ -569,7 +570,8 @@ class KnowledgeService(BaseService):
             )
         return faq
 
-    def _require_faq_in_scope(self, actor: Actor, faq_id: uuid.UUID) -> FaqEntry:
+    def _require_faq_in_scope(self, actor: Actor, faq_id: uuid.UUID,
+                              permission: str | None = None) -> FaqEntry:
         """FAQ своей организации, и его офис или регион виден актору.
 
         Для правки и включения в поиск: иначе пользователь с правами на
@@ -577,7 +579,8 @@ class KnowledgeService(BaseService):
         """
         faq = self._require_faq(actor, faq_id)
         self.use_cases._require_area(
-            actor, office_id=faq.office_id, region_id=faq.region_id
+            actor, office_id=faq.office_id, region_id=faq.region_id,
+            permission=permission,
         )
         return faq
 

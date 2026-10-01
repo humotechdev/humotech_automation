@@ -240,7 +240,7 @@ class CalendarExceptionService(BaseService):
         выглядит в журнале.
         """
         self.access.require(actor, "calendar.manage")
-        row = self._require(actor, exception_id)
+        row = self._require(actor, exception_id, "calendar.manage")
         before = snapshot(row, CALENDAR_FIELDS)
 
         if name is not None:
@@ -311,7 +311,7 @@ class CalendarExceptionService(BaseService):
         ограничения целостности, то есть сообщением про индекс вместо
         сообщения про календарь.
         """
-        row = self._require(actor, exception_id)
+        row = self._require(actor, exception_id, "calendar.manage")
         if not row.is_active:
             taken = CalendarException.objects.filter(
                 organization_id=actor.organization_id,
@@ -343,7 +343,7 @@ class CalendarExceptionService(BaseService):
         already: str,
     ) -> CalendarException:
         self.access.require(actor, "calendar.manage")
-        row = self._require(actor, exception_id)
+        row = self._require(actor, exception_id, "calendar.manage")
         if row.is_active == active:
             raise Conflict(already, details={"is_active": row.is_active})
 
@@ -374,7 +374,7 @@ class CalendarExceptionService(BaseService):
         так что восстановить, что именно снесли, можно.
         """
         self.access.require(actor, "calendar.manage")
-        row = self._require(actor, exception_id)
+        row = self._require(actor, exception_id, "calendar.manage")
         before = snapshot(row, CALENDAR_FIELDS)
         row_id = row.id
 
@@ -391,7 +391,8 @@ class CalendarExceptionService(BaseService):
 
     # ----------------------------------------------------------------- частное
 
-    def _require(self, actor: Actor, exception_id: uuid.UUID) -> CalendarException:
+    def _require(self, actor: Actor, exception_id: uuid.UUID,
+                 permission: str | None = None) -> CalendarException:
         row = (
             CalendarException.objects.select_related("office")
             .filter(id=exception_id, organization_id=actor.organization_id)
@@ -401,8 +402,8 @@ class CalendarExceptionService(BaseService):
             # Чужая организация отвечает как отсутствие записи.
             raise NotFound("Исключение календаря не найдено")
         if row.office_id is not None:
-            self.access.require_office(actor, row.office_id)
-        elif self.access.visible_office_ids(actor) is not None:
+            self.access.require_office(actor, row.office_id, permission)
+        elif self.access.visible_office_ids(actor, permission) is not None:
             # Общеорганизационное исключение правит только тот, чья область
             # — вся организация. Администратор одного офиса такой день в
             # календаре видит, но отменить Навруз всей компании не может.
@@ -449,10 +450,10 @@ class CalendarExceptionService(BaseService):
                 },
             )
         if office_id:
-            self.access.require_office(actor, office_id)
+            self.access.require_office(actor, office_id, "calendar.manage")
             return [office_id]
         if region_id:
-            self.access.require_whole_region(actor, region_id)
+            self.access.require_whole_region(actor, region_id, "calendar.manage")
             offices = list(
                 Office.objects.filter(
                     organization_id=actor.organization_id,
@@ -471,7 +472,7 @@ class CalendarExceptionService(BaseService):
         # Область не указана — исключение на всю организацию. Заводит его
         # только тот, кто видит организацию целиком: иначе администратор
         # одного офиса объявил бы выходной всей компании.
-        if self.access.visible_office_ids(actor) is not None:
+        if self.access.visible_office_ids(actor, "calendar.manage") is not None:
             raise ValidationFailed(
                 "Исключение на всю организацию заводит только тот, чья "
                 "область — вся организация. Укажите офис или регион.",

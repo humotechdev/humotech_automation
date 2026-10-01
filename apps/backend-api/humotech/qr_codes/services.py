@@ -408,7 +408,7 @@ class QrDisplayService(BaseService):
         # Область офиса — как у самих точек (`QrPointService._require_point`).
         # Без неё администратор одного офиса заводил экран у двери чужого
         # и получал поток действующих кодов этой двери.
-        self.access.require_office(actor, point.office_id)
+        self.access.require_office(actor, point.office_id, "qr_points.manage")
         return point
 
     def _require_device(self, actor: Actor, device_id: uuid.UUID) -> QrDisplayDevice:
@@ -420,7 +420,7 @@ class QrDisplayService(BaseService):
         if device is None:
             raise NotFound("Экран не найден")
         # Перевыпуск кода сопряжения чужого экрана — это захват его двери.
-        self.access.require_office(actor, device.qr_point.office_id)
+        self.access.require_office(actor, device.qr_point.office_id, "qr_points.manage")
         return device
 
 

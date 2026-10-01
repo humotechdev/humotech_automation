@@ -504,29 +504,28 @@ class UserAdminService(BaseService):
         if not grants:
             return
 
+        # Управлять учёткой = уметь войти под ней (сменить пароль). Поэтому
+        # ВСЯ власть цели (каждое право на каждой её территории) должна быть
+        # покрыта властью актора на ТОЙ ЖЕ территории — не объединённой
+        # областью всех его назначений. Иначе TECH_ADMIN региона R1 (плюс
+        # VIEWER на всю организацию) поставил бы пароль org-wide-админу, а
+        # TECH_ADMIN+HR_ADMIN(R2) — HR-админу R1, получив права, которых в
+        # этой территории у него не было. Смотрятся и будущие назначения:
+        # иначе пароль ставился бы накануне дня вступления роли в силу.
         by_role = _permissions_by_role(list({role_id for role_id, _, _ in grants}))
-        theirs = set().union(*by_role.values()) if by_role else set()
-        missing = sorted(theirs - self.access.permissions(actor))
-        if missing:
-            raise PermissionDenied(
-                "Нельзя управлять учётной записью с правами шире ваших",
-                details={"missing_permissions": missing},
-            )
-
-        mine = self.access.scope(actor)
-        if mine.all_offices:
-            return
-        for _, region_id, office_id in grants:
-            within = (
-                (office_id is not None and office_id in mine.office_ids)
-                or (region_id is not None and region_id in mine.region_ids)
-            )
-            if not within:
-                raise PermissionDenied(
-                    "Нельзя управлять учётной записью с областью шире вашей",
-                    details={"region_id": region_id and str(region_id),
-                             "office_id": office_id and str(office_id)},
-                )
+        for role_id, region_id, office_id in grants:
+            for permission in sorted(by_role.get(role_id, set())):
+                if not _scope_covers(
+                    self.access.scope_for(actor, permission),
+                    region_id=region_id, office_id=office_id,
+                ):
+                    raise PermissionDenied(
+                        "Нельзя управлять учётной записью с правами или "
+                        "областью шире ваших",
+                        details={"permission": permission,
+                                 "region_id": region_id and str(region_id),
+                                 "office_id": office_id and str(office_id)},
+                    )
 
 
 def _end_of_day(organization_id, day: date) -> datetime:
@@ -882,8 +881,11 @@ class RoleAdminService(BaseService):
                 "Область — это либо регион, либо офис, но не оба",
                 details={"region_id": str(region_id), "office_id": str(office_id)},
             )
-        self._require_grantable(actor, role)
+        # Сначала право действовать в территории (roles.manage по этой
+        # области) — у него понятное сообщение про «всю организацию»;
+        # затем — что каждое право роли у актора есть именно здесь.
         self._require_within_own_scope(actor, region_id=region_id, office_id=office_id)
+        self._require_grantable(actor, role, region_id=region_id, office_id=office_id)
         self._require_period(valid_from, valid_to)
         self._refuse_duplicate(
             user_id=user.id, role_id=role.id,
@@ -917,9 +919,11 @@ class RoleAdminService(BaseService):
         grant = self._require_grant(actor, grant_id)
         # Отозвать можно только то, что мог бы выдать: иначе администратор
         # офиса снимал бы роли на всю организацию и роли шире своей.
-        self._require_grantable(actor, grant.role)
         self._require_within_own_scope(
-            actor, region_id=grant.region_id, office_id=grant.office_id
+            actor, region_id=grant.region_id, office_id=grant.office_id,
+        )
+        self._require_grantable(
+            actor, grant.role, region_id=grant.region_id, office_id=grant.office_id
         )
         if grant.valid_to and grant.valid_to <= timezone.now():
             raise Conflict(
@@ -982,9 +986,11 @@ class RoleAdminService(BaseService):
             valid_to = _end_of_day(actor.organization_id, valid_to_date)
         grant = self._require_grant(actor, grant_id)
         # Продлить — всё равно что выдать заново: те же две проверки.
-        self._require_grantable(actor, grant.role)
         self._require_within_own_scope(
-            actor, region_id=grant.region_id, office_id=grant.office_id
+            actor, region_id=grant.region_id, office_id=grant.office_id,
+        )
+        self._require_grantable(
+            actor, grant.role, region_id=grant.region_id, office_id=grant.office_id
         )
         _refuse_stale(
             grant.valid_to, expected_valid_to, enabled=check_expected
@@ -1041,18 +1047,33 @@ class RoleAdminService(BaseService):
             raise NotFound("Назначение не найдено")
         return grant
 
-    def _require_grantable(self, actor: Actor, role: Role) -> None:
-        """Выдать можно только то, что имеешь сам.
 
-        Первая из двух проверок. Одной её мало: набор прав в
-        `permissions()` собран по всем областям сразу, и территорию
-        не ограничивает — этим занимается вторая.
+    def _require_grantable(
+        self, actor: Actor, role: Role, *,
+        region_id: uuid.UUID | None = None, office_id: uuid.UUID | None = None,
+    ) -> None:
+        """Выдать право на территорию можно, только имея это право на
+        территории, её покрывающей.
+
+        Раньше проверялось лишь наличие права в объединённой области
+        (`permissions()`), без привязки к территории выдачи. Тогда актор с
+        `roles.manage` на регион R2 и HR-правами на регион R1 выдавал роль
+        HR на R2 — права, которых в R2 у него не было. Теперь для КАЖДОГО
+        права роли область выдачи обязана попадать в `scope_for` этого
+        права у актора. (Право действовать в территории как таковой —
+        отдельная проверка `_require_within_own_scope` по `roles.manage`.)
         """
         granted = _permissions_by_role([role.id]).get(role.id, set())
-        missing = sorted(granted - self.access.permissions(actor))
+        missing = sorted(
+            permission for permission in granted
+            if not _scope_covers(
+                self.access.scope_for(actor, permission),
+                region_id=region_id, office_id=office_id,
+            )
+        )
         if missing:
             raise PermissionDenied(
-                "Нельзя выдать роль с правами, которых нет у вас самих",
+                "Нельзя выдать роль с правами шире вашей области",
                 details={"role": role.code, "missing_permissions": missing},
             )
 
@@ -1141,6 +1162,23 @@ class RoleAdminService(BaseService):
 
 
 # --- общие вспомогательные ---------------------------------------------------
+
+
+def _scope_covers(scope, *, region_id, office_id) -> bool:
+    """Покрывает ли область назначение (регион/офис/вся организация).
+
+    Пустые регион и офис — «вся организация»: покрыть такое может только
+    область `all_offices`. Регион покрыт, если выдан целиком (в
+    `region_ids`); офис — если он в `office_ids` (туда уже раскрыты офисы
+    выданных целиком регионов). Модульная функция, а не метод: ею
+    пользуются и `UserAdminService`, и `RoleAdminService`."""
+    if scope.all_offices:
+        return True
+    if office_id is not None:
+        return office_id in scope.office_ids
+    if region_id is not None:
+        return region_id in scope.region_ids
+    return False
 
 
 def _permissions_by_role(role_ids: list[uuid.UUID]) -> dict[uuid.UUID, set[str]]:

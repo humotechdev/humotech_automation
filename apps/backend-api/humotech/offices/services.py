@@ -243,7 +243,7 @@ class OfficeService(BaseService):
         на организацию при каждом расчёте.
         """
         self.access.require(actor, "offices.manage")
-        region = self.access.require_region(actor, region_id)
+        region = self.access.require_region(actor, region_id, "offices.manage")
         if region.status != "ACTIVE":
             raise Conflict(
                 "Регион не активен: новый офис в него добавить нельзя",
@@ -283,12 +283,12 @@ class OfficeService(BaseService):
 
     def update(self, actor: Actor, office_id: uuid.UUID, **changes) -> Office:
         self.access.require(actor, "offices.manage")
-        office = self.access.require_office(actor, office_id)
+        office = self.access.require_office(actor, office_id, "offices.manage")
 
         before = snapshot(office, AUDITED_FIELDS)
 
         if changes.get("region_id") is not None:
-            region = self.access.require_region(actor, changes["region_id"])
+            region = self.access.require_region(actor, changes["region_id"], "offices.manage")
             if region.status != "ACTIVE" and region.id != office.region_id:
                 raise Conflict(
                     "Регион не активен: переносить в него офис нельзя",
@@ -350,7 +350,7 @@ class OfficeService(BaseService):
         *, closed_at: date | None = None,
     ) -> Office:
         self.access.require(actor, "offices.manage")
-        office = self.access.require_office(actor, office_id)
+        office = self.access.require_office(actor, office_id, "offices.manage")
 
         if office.status == status:
             raise Conflict(f"Офис уже в статусе {status}",

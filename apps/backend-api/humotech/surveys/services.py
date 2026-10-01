@@ -101,8 +101,13 @@ def require_whole_organization(access: AccessControl, actor: Actor) -> None:
     Круг рассылки («все», «должность», «отдел», правило автоматизации)
     не привязан к офису, и кадровик одного офиса через него спрашивал бы
     людей, которых сам не видит.
+
+    Область берётся в разрезе `surveys.manage` (все вызывающие — операции
+    рассылки/правил): иначе доступ ко всей организации из отдельного
+    назначения VIEWER открывал бы рассылку тому, у кого права на опросы
+    есть лишь в одном офисе/регионе.
     """
-    if not access.scope(actor).all_offices:
+    if not access.scope_for(actor, "surveys.manage").all_offices:
         raise PermissionDenied(
             "Рассылки опросов доступны только с доступом ко всей организации",
             details={"reason": "scope_limited"},
