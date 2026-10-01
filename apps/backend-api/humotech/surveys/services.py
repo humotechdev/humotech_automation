@@ -1074,7 +1074,7 @@ def audience_employees(campaign: SurveyCampaign) -> list[Employee]:
     """
     people = Employee.objects.filter(
         organization_id=campaign.organization_id,
-        employment_status__in=("ACTIVE", "PROBATION"),
+        employment_status__in=("ACTIVE",),
     )
     if campaign.audience_snapshot is not None:
         frozen = [str(one) for one in campaign.audience_snapshot]

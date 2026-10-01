@@ -37,7 +37,7 @@ const EMPLOYMENT: Record<string, string> = {
   FULL_TIME: 'полная занятость',
   PART_TIME: 'частичная занятость',
   CONTRACT: 'договор',
-  INTERN: 'стажировка',
+  INTERN: 'стажёр',
 };
 
 const WORK_MODE: Record<string, string> = {

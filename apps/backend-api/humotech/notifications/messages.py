@@ -152,14 +152,9 @@ def _where(facts: dict) -> list[str]:
 def hired(facts: dict) -> str:
     """Человека приняли. Первое, что он узнаёт о своём месте работы."""
     name = facts.get("full_name") or "коллега"
-    probation = facts.get("employment_status") == "PROBATION"
 
     head = f"Здравствуйте, {name}!\n\n"
-    head += (
-        "Вы приняты на стажировку в HUMOTECH."
-        if probation
-        else "Вы приняты в штат HUMOTECH."
-    )
+    head += "Вы приняты в штат HUMOTECH."
     if facts.get("hire_date"):
         head += f" Дата выхода: {human_date(facts['hire_date'])}."
 
@@ -168,36 +163,6 @@ def hired(facts: dict) -> str:
         head += "\n\n" + "\n".join(rows)
 
     head += "\n\nОтмечаться и подавать заявки можно здесь же, в этом чате."
-    return head
-
-
-def probation_passed(facts: dict) -> str:
-    """Стажировка пройдена. Повод сказать это ровно и по делу."""
-    name = facts.get("full_name") or "коллега"
-    head = f"{name}, поздравляем: вы приняты в штат HUMOTECH."
-
-    rows = _where(facts)
-    if rows:
-        head += "\n\n" + "\n".join(rows)
-
-    head += "\n\nСпасибо за работу на стажировке. Рады, что вы с нами."
-    return head
-
-
-def probation_ended(last_day: date | None = None) -> str:
-    """Расставание после стажировки.
-
-    Без оценок, объяснений и сожалений: решение уже принято, а разговор
-    о нём — это разговор с человеком, а не сообщение от бота. Задача
-    текста — сообщить факт и сказать, куда обращаться.
-    """
-    head = "По итогам стажировки мы не продолжаем сотрудничество."
-    if last_day:
-        head += f"\n\nПоследний рабочий день: {human_date(last_day)}."
-    head += (
-        "\n\nБлагодарим за время и работу. По вопросам документов и "
-        "расчёта обратитесь в отдел кадров."
-    )
     return head
 
 
@@ -216,6 +181,4 @@ __all__ = [
     "for_request",
     "hired",
     "human_date",
-    "probation_ended",
-    "probation_passed",
 ]

@@ -91,7 +91,7 @@ const RULE = {
   title: 'Итоги стажировки',
   template_id: 't-1',
   template_title: 'Пульс-опрос',
-  trigger_kind: 'PROBATION_END',
+  trigger_kind: 'FIRST_DAY',
   offset_days: 1,
   send_hour: 10,
   send_minute: 0,
@@ -796,7 +796,7 @@ describe('автоматизации', () => {
     renderApp('/surveys/automations');
 
     expect(await screen.findByText('Итоги стажировки')).toBeTruthy();
-    expect(screen.getByText('Окончание стажировки')).toBeTruthy();
+    expect(screen.getByText('Первый рабочий день')).toBeTruthy();
     expect(screen.getByText('На следующий день, 10:00')).toBeTruthy();
   });
 
@@ -858,12 +858,12 @@ describe('автоматизации', () => {
     items: [
       {
         id: 'h-1', campaign_id: 'c-9', employee_id: 'e-1', full_name: 'Рахимов Далер',
-        event_kind: 'PROBATION_END', event_day: '2026-09-20', fired_at: '2026-09-21T05:00:00Z',
+        event_kind: 'FIRST_DAY', event_day: '2026-09-20', fired_at: '2026-09-21T05:00:00Z',
         status: 'COMPLETED', skip_reason: null, completed_at: '2026-09-21T07:00:00Z',
       },
       {
         id: 'h-2', campaign_id: 'c-9', employee_id: 'e-2', full_name: 'Каримова Нигора',
-        event_kind: 'PROBATION_END', event_day: '2026-09-20', fired_at: '2026-09-21T05:00:00Z',
+        event_kind: 'FIRST_DAY', event_day: '2026-09-20', fired_at: '2026-09-21T05:00:00Z',
         status: 'SKIPPED', skip_reason: 'Нет привязки Telegram', completed_at: null,
       },
     ],
@@ -905,7 +905,7 @@ describe('автоматизации', () => {
     ruleNetwork();
     renderApp('/surveys/automations/a-1?tab=settings');
 
-    expect(await screen.findByLabelText(/^Событие: Окончание стажировки/)).toBeTruthy();
+    expect(await screen.findByLabelText(/^Событие: Первый рабочий день/)).toBeTruthy();
     expect(screen.getByRole('button', { name: 'На следующий день', pressed: true })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Сохранить автоматизацию' })).toBeTruthy();
   });
@@ -936,9 +936,9 @@ describe('вспомогательное', () => {
 
   test('время отправки читается словами, а не числами', () => {
     const base = { send_hour: 10, send_minute: 0, repeat_months: null };
-    expect(whenLine({ ...base, trigger_kind: 'PROBATION_END', offset_days: 0 }))
+    expect(whenLine({ ...base, trigger_kind: 'FIRST_DAY', offset_days: 0 }))
       .toBe('В день события, 10:00');
-    expect(whenLine({ ...base, trigger_kind: 'PROBATION_END', offset_days: 1 }))
+    expect(whenLine({ ...base, trigger_kind: 'FIRST_DAY', offset_days: 1 }))
       .toBe('На следующий день, 10:00');
     expect(whenLine({ ...base, trigger_kind: 'DAYS_AFTER_HIRE', offset_days: 30 }))
       .toBe('Через 30 дней, 10:00');

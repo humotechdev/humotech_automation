@@ -1,30 +1,24 @@
-"""Аналитика людей: команда, стажировки и разрезы «сравнить по».
+"""Аналитика людей: команда и разрезы «сравнить по».
 
 Проверяется то, из-за чего цифра перестаёт быть правдой:
 
 — уволенный сегодня пропадает из численности прошлого месяца;
-— перевод в штат выдуман по косвенным признакам, а не взят из журнала;
 — смена должности посчитана переводом;
-— стажёр, у которого решение через три дня, стоит в конце списка;
 — командировка лежит в «прочих» отсутствиях;
 — разрез по отделам посчитан по другому правилу, чем офисы.
 """
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
-from datetime import timezone as dt_timezone
+from datetime import date
 
 import pytest
-from django.utils import timezone as django_timezone
 
 from django_tests.test_analytics_filters import DAY, came, schedule, utc, worker  # noqa: F401
 from humotech.analytics.overview import OverviewService
 from humotech.analytics.people import PeopleService
-from humotech.audit.models import AuditLog
 from humotech.core.errors import PermissionDenied
 from humotech.departments.models import Department
-from humotech.employees.lifecycle import PROBATION_FAILED
 from humotech.employees.models import EmployeeAssignment
 
 pytestmark = pytest.mark.django_db
@@ -82,21 +76,6 @@ class TestTeam:
         assert by_day["2026-03-10"] == 3
         assert by_day["2026-03-20"] == 2
 
-    def test_promotion_comes_from_the_journal(
-        self, people, analyst, organization, office, schedule
-    ):
-        trainee = hired_on(organization, office, schedule, number="TR", day=date(2026, 1, 10))
-        AuditLog.objects.create(
-            organization=organization, action="employee.promote",
-            entity_type="employees", entity_id=trainee.id,
-            occurred_at=datetime(2026, 3, 12, 8, 0, tzinfo=dt_timezone.utc),
-        )
-
-        body = people.team(analyst, first=MARCH[0], last=MARCH[1])
-
-        assert body["summary"]["promoted"] == 1
-        assert body["summary"]["previous_promoted"] == 0
-
     def test_department_change_is_a_transfer_position_change_is_not(
         self, people, analyst, organization, office, schedule
     ):
@@ -123,55 +102,6 @@ class TestTeam:
     def test_reading_requires_analytics_read(self, people, nobody_actor):
         with pytest.raises(PermissionDenied):
             people.team(nobody_actor, first=MARCH[0], last=MARCH[1])
-
-
-class TestProbation:
-    def test_nearest_decision_goes_first_and_is_due(
-        self, people, analyst, organization, office, schedule
-    ):
-        today = django_timezone.localdate()
-        late = hired_on(organization, office, schedule, number="LATE", day=today - timedelta(days=20), status="PROBATION")
-        soon = hired_on(organization, office, schedule, number="SOON", day=today - timedelta(days=60), status="PROBATION")
-        late.probation_to = today + timedelta(days=40)
-        soon.probation_to = today + timedelta(days=3)
-        for one in (late, soon):
-            one.probation_from = one.hire_date
-            one.save(update_fields=["probation_to", "probation_from"])
-
-        body = people.probation(analyst, first=today - timedelta(days=29), last=today)
-
-        assert [row["employee_number"] for row in body["trainees"]] == ["SOON", "LATE"]
-        assert body["trainees"][0]["days_left"] == 3
-        assert body["summary"]["active"] == 2
-        assert body["summary"]["due"] == 1
-        assert body["summary"]["started"] == 1  # LATE вышел внутри периода
-
-    def test_start_without_its_own_date_is_the_hire_date(
-        self, people, analyst, organization, office, schedule
-    ):
-        """Стажёр без даты начала стажировки начал её в день выхода."""
-        today = django_timezone.localdate()
-        hired_on(organization, office, schedule, number="NODATE", day=today - timedelta(days=5), status="PROBATION")
-        hired_on(organization, office, schedule, number="STAFF", day=today - timedelta(days=5))
-
-        body = people.probation(analyst, first=today - timedelta(days=29), last=today)
-
-        assert body["summary"]["started"] == 1
-        assert body["trainees"][0]["days_left"] is None
-
-    def test_failed_probation_is_the_termination_reason(
-        self, people, analyst, organization, office, schedule
-    ):
-        failed = worker(organization, office, schedule, number="FAIL")
-        failed.termination_date = date(2026, 3, 5)
-        failed.termination_reason = PROBATION_FAILED
-        failed.employment_status = "TERMINATED"
-        failed.save(update_fields=["termination_date", "termination_reason", "employment_status"])
-
-        body = people.probation(analyst, first=MARCH[0], last=MARCH[1])
-
-        assert body["summary"]["failed"] == 1
-        assert body["summary"]["conversion_percent"] == 0
 
 
 class TestBreakdowns:
@@ -206,7 +136,7 @@ class TestBreakdowns:
 
 
 class TestHttp:
-    @pytest.mark.parametrize("path", ["analytics/team", "analytics/probation"])
+    @pytest.mark.parametrize("path", ["analytics/team"])
     def test_answers_for_the_period(self, api_client, make_user, organization, path):
         api_client.force_authenticate(user=make_user(organization, permissions=("analytics.read",)))
         answer = api_client.get(f"{API}/{path}?date_from=2026-03-01&date_to=2026-03-31")
@@ -216,22 +146,3 @@ class TestHttp:
     def test_without_permission_it_is_403(self, api_client, make_user, organization):
         api_client.force_authenticate(user=make_user(organization, permissions=("employees.read",)))
         assert api_client.get(f"{API}/analytics/team").status_code == 403
-
-
-class TestMentor:
-    def test_mentor_is_set_in_the_card_and_shown_in_probation(
-        self, people, analyst, api_client, make_user, organization, office, schedule
-    ):
-        today = django_timezone.localdate()
-        trainee = hired_on(organization, office, schedule, number="TRAINEE", day=today - timedelta(days=10), status="PROBATION")
-        mentor = worker(organization, office, schedule, number="MENTOR")
-        api_client.force_authenticate(user=make_user(organization, permissions=("employees.read", "employees.manage")))
-
-        made = api_client.patch(f"{API}/employees/{trainee.id}/", {"mentor_employee_id": str(mentor.id)}, format="json")
-        refused = api_client.patch(f"{API}/employees/{trainee.id}/", {"mentor_employee_id": str(trainee.id)}, format="json")
-
-        assert made.status_code == 200, made.json()
-        assert made.json()["mentor"] == {"id": str(mentor.id), "full_name": f"{mentor.last_name} {mentor.first_name}"}
-        assert refused.status_code == 400
-        row = people.probation(analyst, first=today - timedelta(days=29), last=today)["trainees"][0]
-        assert row["mentor"]["id"] == str(mentor.id)

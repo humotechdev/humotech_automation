@@ -40,7 +40,6 @@ def build(org, structure: Structure, people: list[Person], today: date, now: dat
             ))
 
     active = [p for p in people if p.active]
-    trainees = [p for p in people if p.status == "PROBATION"]
     sales_like = [p for p in active if p.department in ("SALES", "SUPPORT", "OPS")]
 
     def at(day: date, hour: int) -> datetime:
@@ -53,9 +52,6 @@ def build(org, structure: Structure, people: list[Person], today: date, now: dat
         ("manager", "MANAGER", "Оценка руководителя — продажи, поддержка, операции", "ACTIVE",
          at(today - timedelta(days=4), 10), at(today + timedelta(days=3), 18), "DEPARTMENT",
          [str(structure.departments[c].id) for c in ("SALES", "SUPPORT", "OPS")], sales_like, 0.60, False),
-        ("probation", "PROBATION", "Итоги стажировки — сентябрь", "SCHEDULED",
-         at(today + timedelta(days=3), 10), at(today + timedelta(days=10), 18), "EMPLOYEES",
-         [str(p.employee.id) for p in trainees], [], 0, False),
         ("adapt-aug", "ADAPT", "Оценка адаптации — август", "CANCELLED",
          None, None, "ALL", None, [], 0, False),
     ]
@@ -64,7 +60,7 @@ def build(org, structure: Structure, people: list[Person], today: date, now: dat
         campaign = SurveyCampaign.objects.create(
             id=did("campaign", key), organization=org, template=templates[template], title=title,
             template_version=1, status=status, audience_kind=kind, audience_ids=ids,
-            audience_snapshot=[str(p.employee.id) for p in trainees] if status == "SCHEDULED" else None,
+            audience_snapshot=None,
             scheduled_at=sent if status == "SCHEDULED" else None, next_send_at=sent if status == "SCHEDULED" else None,
             sent_at=sent if status in ("FINISHED", "ACTIVE") else None, due_at=due,
             remind_at=(sent + timedelta(days=5)) if status == "ACTIVE" else None,
@@ -77,11 +73,6 @@ def build(org, structure: Structure, people: list[Person], today: date, now: dat
     SurveyAutomation.objects.create(
         id=did("automation", "adapt"), organization=org, title="Оценка адаптации через 30 дней после выхода",
         template=templates["ADAPT"], trigger_kind="DAYS_AFTER_HIRE", offset_days=30, send_hour=10, send_minute=0,
-        is_active=True, created_by_user=reviewer,
-    )
-    SurveyAutomation.objects.create(
-        id=did("automation", "probation"), organization=org, title="Итоги стажировки в день завершения",
-        template=templates["PROBATION"], trigger_kind="PROBATION_END", offset_days=0, send_hour=10, send_minute=0,
         is_active=True, created_by_user=reviewer,
     )
     return stats

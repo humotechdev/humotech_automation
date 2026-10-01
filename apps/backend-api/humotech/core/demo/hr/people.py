@@ -14,7 +14,6 @@ from datetime import date, datetime, time, timedelta
 from humotech.audit.models import AuditLog
 from humotech.core.demo.hr import catalog as cat
 from humotech.departments.models import Department
-from humotech.employees.lifecycle import PROBATION_FAILED
 from humotech.employees.models import Employee, EmployeeAssignment
 from humotech.notifications.isolation import DEMO_CHAT_ID_FLOOR
 from humotech.offices.models import Office
@@ -45,13 +44,14 @@ class Person:
     office: str
     department: str
     schedule: str
-    status: str  # ACTIVE / PROBATION / TERMINATED
+    status: str  # ACTIVE / TERMINATED
     telegram: str  # ACTIVE / REVOKED / NONE
     head: bool = False
     hire: date | None = None
     termination: date | None = None
     #: Особая роль в сценарии: vacation, sick, trip, no_mark, late, late_notice,
-    #: geofence, stale, waiting_cert, hr_review, needs_fix, trainee_*, promoted, failed.
+    #: geofence, stale, waiting_cert, hr_review, needs_fix, new_hire, left_recent,
+    #: trainee_* (недавно принятые — обычный штат со свежей датой приёма).
     roles: set[str] = field(default_factory=set)
     #: Прежний отдел, если человека перевели в последний месяц.
     moved_from: str | None = None
@@ -59,7 +59,7 @@ class Person:
 
     @property
     def active(self) -> bool:
-        return self.status in ("ACTIVE", "PROBATION")
+        return self.status == "ACTIVE"
 
     @property
     def name(self) -> str:
@@ -168,14 +168,16 @@ def plan_people() -> list[dict]:
     for at, code in enumerate(departments):
         rows.append({"department": code, "office": office_for[at], "head": at in head_slots, "status": "ACTIVE"})
 
-    # Двенадцать стажёров — не руководители, в разных отделах.
+    # Двенадцать недавно принятых — не руководители, в разных отделах. Раньше это
+    # были стажёры; теперь это обычный штат со статусом ACTIVE, просто с недавней
+    # датой приёма. Помечаем их флагом, чтобы раздать свежие даты и роли ниже.
     trainee_plan = ["SALES", "SALES", "SALES", "SUPPORT", "SUPPORT", "OPS", "OPS", "IT", "IT", "MKT", "FIN", "PRODUCT"]
     taken = set()
     for code in trainee_plan:
         slot = next(at for at, row in enumerate(rows)
                     if row["department"] == code and not row["head"] and at not in taken and at % 3 == 1)
         taken.add(slot)
-        rows[slot]["status"] = "PROBATION"
+        rows[slot]["trainee"] = True
 
     # Бывшие сотрудники: десять, в разных отделах и офисах.
     for at in range(10):
@@ -189,11 +191,11 @@ def build_people(org, structure: Structure, today: date, reviewer, tz) -> list[P
     rows = plan_people()
     names = _names(len(rows))
     people: list[Person] = []
-    trainees = [at for at, row in enumerate(rows) if row["status"] == "PROBATION"]
+    trainees = [at for at, row in enumerate(rows) if row.get("trainee")]
     active = [at for at, row in enumerate(rows) if row["status"] != "TERMINATED"]
 
-    # Telegram: у 8 из 12 стажёров и у 157 из 178 штатных — живая
-    # привязка. Двенадцать непривязанных штатных когда-то были привязаны
+    # Telegram: у 8 из 12 недавно принятых и у 157 из 178 остальных штатных —
+    # живая привязка. Двенадцать непривязанных штатных когда-то были привязаны
     # (привязка отозвана), девять — никогда.
     unlinked_trainees = set(trainees[-4:])
     staff = [at for at in active if at not in trainees]
@@ -228,7 +230,7 @@ def build_people(org, structure: Structure, today: date, reviewer, tz) -> list[P
             order=at, number=number, employee=employee, office=row["office"], department=row["department"],
             schedule=schedule, status=row["status"], telegram=telegram, head=row["head"], hire=hire,
         ))
-    _roles(people, today)
+    _roles(people, today, trainees)
     _dates(people, today)
     _assign(org, structure, people, today)
     _telegram(org, people, today, tz)
@@ -254,15 +256,16 @@ def _names(count: int) -> list[tuple[bool, str, str, str]]:
     return result
 
 
-def _roles(people: list[Person], today: date) -> None:
-    """Роли сценария. Руководители и стажёры в отсутствия не попадают."""
-    staff = [p for p in people if p.status == "ACTIVE" and not p.head]
+def _roles(people: list[Person], today: date, trainees: list[int]) -> None:
+    """Роли сценария. Руководители и недавно принятые в отсутствия не попадают."""
+    trainee_set = set(trainees)
+    staff = [p for p in people if p.status == "ACTIVE" and not p.head and p.order not in trainee_set]
     linked = [p for p in staff if p.telegram == "ACTIVE"]
     plan = [
         ("vacation", 5), ("sick", 3), ("trip", 2), ("no_mark", 3), ("waiting_cert", 1), ("hr_review", 1),
         ("late", 5), ("late_notice", 2), ("geofence", 2), ("stale", 2), ("needs_fix", 1),
         ("vacation_pending", 2), ("vacation_clarify", 1), ("vacation_cancelled", 1), ("trip_pending", 1),
-        ("promoted", 3), ("correction", 4), ("moved", 3), ("new_hire", 2),
+        ("correction", 4), ("moved", 3), ("new_hire", 2),
     ]
     pick = rng("roles")
     pool = list(linked)
@@ -271,40 +274,27 @@ def _roles(people: list[Person], today: date) -> None:
         for _ in range(count):
             person = pool.pop()
             person.roles.add(role)
-    trainees = [p for p in people if p.status == "PROBATION"]
-    for at, person in enumerate(trainees):
+    # Недавно принятые: часть только вышла, часть работает пару месяцев.
+    recent = [p for p in people if p.order in trainee_set]
+    for at, person in enumerate(recent):
         person.roles.add("trainee_ending" if at in (2, 5) else "trainee_new" if at in (8, 11) else "trainee")
     terminated = [p for p in people if p.status == "TERMINATED"]
-    terminated[0].roles.add("failed")
     terminated[1].roles.add("left_recent")
 
 
 def _dates(people: list[Person], today: date) -> None:
-    """Даты приёма, стажировки и увольнения по ролям."""
+    """Даты приёма и увольнения по ролям. Недавно принятые получают свежую дату приёма."""
     for person in people:
         e = person.employee
         r = rng("dates", person.number)
         if "trainee" in person.roles:
-            start = today - timedelta(days=r.randint(12, 55))
-            e.hire_date, e.probation_from, e.probation_to = start, start, start + timedelta(days=90)
+            e.hire_date = today - timedelta(days=r.randint(12, 55))
         elif "trainee_ending" in person.roles:
-            end = today + timedelta(days=3 if person.order % 2 else 6)
-            e.probation_to, e.probation_from = end, end - timedelta(days=60)
-            e.hire_date = e.probation_from
+            e.hire_date = today - timedelta(days=57 if person.order % 2 else 54)
         elif "trainee_new" in person.roles:
-            start = today - timedelta(days=3 if person.order % 2 else 8)
-            e.hire_date, e.probation_from, e.probation_to = start, start, start + timedelta(days=60)
-        elif "promoted" in person.roles:
-            end = today - timedelta(days=5 + 5 * (person.order % 3))
-            e.probation_to, e.probation_from = end, end - timedelta(days=60)
-            e.hire_date = e.probation_from
+            e.hire_date = today - timedelta(days=3 if person.order % 2 else 8)
         elif "new_hire" in person.roles:
             e.hire_date = today - timedelta(days=15 if person.order % 2 else 21)
-        elif "failed" in person.roles:
-            end = today - timedelta(days=4)
-            e.probation_to, e.probation_from = end, end - timedelta(days=60)
-            e.hire_date = e.probation_from
-            e.termination_date, e.termination_reason = end, PROBATION_FAILED
         elif "left_recent" in person.roles:
             e.termination_date, e.termination_reason = today - timedelta(days=12), "По собственному желанию"
         elif person.status == "TERMINATED":
@@ -317,7 +307,7 @@ def _dates(people: list[Person], today: date) -> None:
 
 
 def _assign(org, structure: Structure, people: list[Person], today: date) -> None:
-    """Назначения с руководителем, графики и наставники."""
+    """Назначения с руководителем и графики."""
     heads = {p.department: p for p in people if p.head}
     departments = [d.code for d in cat.DEPARTMENTS]
     assignments, schedules = [], []
@@ -326,8 +316,6 @@ def _assign(org, structure: Structure, people: list[Person], today: date) -> Non
         r = rng("assign", person.number)
         if person.head:
             title = spec.head
-        elif person.status == "PROBATION":
-            title = spec.trainee
         else:
             title = spec.positions[r.randrange(len(spec.positions))]
         manager = None if person.head else heads[person.department].employee
@@ -345,7 +333,7 @@ def _assign(org, structure: Structure, people: list[Person], today: date) -> Non
                 position=structure.positions[(spec.code, title)] if department == person.department
                 else structure.positions[(department, next(d for d in cat.DEPARTMENTS if d.code == department).positions[0])],
                 manager_employee=manager if department == person.department else heads[department].employee,
-                employment_type="INTERN" if person.status == "PROBATION" else ("PART_TIME" if person.schedule == "SHORT" else "FULL_TIME"),
+                employment_type="PART_TIME" if person.schedule == "SHORT" else "FULL_TIME",
                 work_mode="HYBRID" if spec.code in ("IT", "PRODUCT") and person.order % 4 == 0 else "ONSITE",
                 is_primary=True, valid_from=since, valid_to=until if until else ends,
             ))
@@ -358,17 +346,6 @@ def _assign(org, structure: Structure, people: list[Person], today: date) -> Non
 
     for code, head in heads.items():
         Department.objects.filter(id=structure.departments[code].id).update(head_employee=head.employee)
-
-    # Наставник — опытный коллега того же отдела, не руководитель.
-    for person in people:
-        if not ({"trainee", "trainee_ending", "trainee_new", "promoted", "failed"} & person.roles):
-            continue
-        mentor = next(
-            p for p in people
-            if p.department == person.department and p.status == "ACTIVE" and not p.head
-            and not p.roles and p.hire < today - timedelta(days=365)
-        )
-        Employee.objects.filter(id=person.employee.id).update(mentor_employee=mentor.employee)
 
 
 def _telegram(org, people: list[Person], today: date, tz) -> None:
@@ -388,7 +365,7 @@ def _telegram(org, people: list[Person], today: date, tz) -> None:
 
 
 def _history(org, people: list[Person], reviewer, today: date, tz) -> None:
-    """Журнал карточки: приём, переводы, перевод в штат, увольнение."""
+    """Журнал карточки: приём, переводы, увольнение."""
     rows = []
 
     def at(day: date, hour: int = 10) -> datetime:
@@ -400,7 +377,7 @@ def _history(org, people: list[Person], reviewer, today: date, tz) -> None:
             id=did("audit", person.number, "create"), organization=org, actor_user=reviewer,
             action="employee.create", entity_type="employees", entity_id=e.id,
             new_values={"employee_number": e.employee_number, "hire_date": str(e.hire_date),
-                        "employment_status": "PROBATION" if e.probation_from else "ACTIVE"},
+                        "employment_status": "ACTIVE"},
             occurred_at=at(person.hire - timedelta(days=3)),
         ))
         if person.moved_on:
@@ -410,13 +387,6 @@ def _history(org, people: list[Person], reviewer, today: date, tz) -> None:
                 old_values={"department": person.moved_from}, new_values={"department": person.department,
                                                                           "valid_from": str(person.moved_on)},
                 occurred_at=at(person.moved_on - timedelta(days=2)),
-            ))
-        if "promoted" in person.roles:
-            rows.append(AuditLog(
-                id=did("audit", person.number, "promote"), organization=org, actor_user=reviewer,
-                action="employee.promote", entity_type="employees", entity_id=e.id,
-                old_values={"employment_status": "PROBATION"}, new_values={"employment_status": "ACTIVE"},
-                occurred_at=at(e.probation_to, 15),
             ))
         if person.termination:
             rows.append(AuditLog(

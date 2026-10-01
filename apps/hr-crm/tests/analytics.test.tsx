@@ -1,5 +1,5 @@
 /**
- * Аналитика: один лист, семь вкладок.
+ * Аналитика: один лист, шесть вкладок.
  *
  * Проверяется то, что легко сломать незаметно: лист не пересоздаётся при
  * смене вкладки, фильтры уходят в запросы, отсутствием считается только
@@ -61,28 +61,16 @@ const TEAM = {
   period: { first: '2026-08-03', last: '2026-08-09', days: 7 },
   previous_period: { first: '2026-07-27', last: '2026-08-02' },
   summary: { headcount: 48, headcount_start: 46, previous_headcount_start: 45, hired: 2, previous_hired: 1,
-    promoted: 1, previous_promoted: 0, left: 1, previous_left: 2, probation_failed: 0 },
+    left: 1, previous_left: 2 },
   series: [{ day: '2026-08-03', headcount: 46 }, { day: '2026-08-09', headcount: 48 }],
   by_department: [],
   departments: [{ id: 'd-1', name: 'Продажи', headcount: 8, previous_headcount: 7 }],
   offices: [{ id: 'o-1', name: 'Бухара', headcount: 48, previous_headcount: 46 }],
-  hires: [{ id: 'e-5', name: 'Иванов Алексей', employee_number: null, status: 'PROBATION', hire_date: '2026-08-05',
+  hires: [{ id: 'e-5', name: 'Иванов Алексей', employee_number: null, status: 'ACTIVE', hire_date: '2026-08-05',
     office: 'Бухара', department: 'Продажи', position: 'Менеджер' }],
   departures: [],
   transfers: [{ id: 'e-7', name: 'Собиров Умид', date: '2026-08-06', from_office: 'Бухара', to_office: 'Бухара',
     from_department: 'Продажи', to_department: 'Поддержка' }],
-};
-
-const PROBATION = {
-  period: TEAM.period, previous_period: TEAM.previous_period,
-  summary: { active: 2, due: 1, overdue: 0, started: 1, promoted: 3, failed: 1, previous_started: 0,
-    previous_promoted: 2, previous_failed: 1, conversion_percent: 75, previous_conversion_percent: 66.7 },
-  due_days: 7,
-  trainees: [
-    { id: 'e-5', name: 'Иванов Алексей', employee_number: null, status: 'PROBATION', hire_date: '2026-07-10',
-      office: 'Бухара', department: 'Продажи', position: null, probation_from: '2026-07-10',
-      probation_to: '2026-08-12', days_left: 3, days_total: 34 },
-  ],
 };
 
 const OPEN = {
@@ -131,7 +119,6 @@ function network(handler: (path: string, method: string) => Response | null = ()
     if (path.includes('/auth/')) return json(200, USER);
     if (path.includes('/analytics/overview')) return json(200, overview());
     if (path.includes('/analytics/team')) return json(200, TEAM);
-    if (path.includes('/analytics/probation')) return json(200, PROBATION);
     if (path.includes('/regions/')) return json(200, { items: [{ id: 'r-1', code: 'C', name: 'Центр', status: 'ACTIVE' }] });
     if (path.includes('/offices/')) return json(200, { items: [{ id: 'o-1', code: 'B', name: 'Бухара', status: 'ACTIVE', region_id: 'r-1', region_name: 'Центр' }] });
     if (path.includes('/departments/')) return json(200, { items: [{ id: 'd-1', name: 'Продажи' }], next_cursor: null, has_more: false });
@@ -285,7 +272,7 @@ describe('отсутствия и заявки', () => {
   });
 });
 
-describe('команда и стажировки', () => {
+describe('команда', () => {
   test('перевод показан с отдела на отдел, приём — в новых сотрудниках', async () => {
     network();
     renderApp(`${PAGE}&tab=team`);
@@ -301,18 +288,6 @@ describe('команда и стажировки', () => {
 
     // Продажи: 8 сейчас против 7 — вырос на одного.
     expect(await screen.findByText('Отдел Продажи вырос на 1 сотрудника за период.')).toBeTruthy();
-  });
-
-  test('стажёр с решением через три дня — в ближайших, наставника не выдумываем', async () => {
-    network();
-    renderApp(`${PAGE}&tab=probation`);
-
-    const table = await screen.findByRole('table', { name: 'Стажёры сейчас' });
-    expect(within(table).getByText('3 дня')).toBeTruthy();
-    // Колонка «Наставник» есть — сервер отдаёт наставника. Но если его
-    // не назначили, в строке честное «не назначен», а не выдуманное имя.
-    expect(within(table).getByText('не назначен')).toBeTruthy();
-    expect(screen.getByText(/Конверсия в найм — 75%/)).toBeTruthy();
   });
 });
 

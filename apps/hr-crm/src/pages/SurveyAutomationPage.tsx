@@ -4,8 +4,8 @@
  * Правило сработает через месяц — без кадровика и без подтверждения.
  * Единственный момент, когда ошибку ещё можно заметить, — сейчас, поэтому
  * справа настройка пересказана обычными словами: «сдвиг 1, час 10»
- * прочитать правильно нельзя, а «на следующий день после окончания
- * стажировки, в 10:00» — можно.
+ * прочитать правильно нельзя, а «на следующий день после выхода на
+ * работу, в 10:00» — можно.
  *
  * Круг людей здесь не показывается числом: он определится В ДЕНЬ
  * СОБЫТИЯ. Сегодняшнее «12 человек» было бы обещанием, которого правило
@@ -42,12 +42,11 @@ import '../styles/admin.css';
 import '../styles/surveys.css';
 
 const KINDS: api.SurveyTriggerKind[] = [
-  'PROBATION_END', 'FIRST_DAY', 'DAYS_AFTER_HIRE', 'BIRTHDAY', 'SCHEDULE',
+  'FIRST_DAY', 'DAYS_AFTER_HIRE', 'BIRTHDAY', 'SCHEDULE',
 ];
 
 /** С чего начинается история — первым шагом в «Как это будет работать». */
 const EVENT_STEP: Record<api.SurveyTriggerKind, [string, AppIconName]> = {
-  PROBATION_END: ['Заканчивается стажировка', 'calendar'],
   FIRST_DAY: ['Сотрудник выходит на работу', 'user-plus'],
   DAYS_AFTER_HIRE: ['Проходит N дней после выхода', 'calendar'],
   BIRTHDAY: ['День рождения сотрудника', 'calendar'],
@@ -70,7 +69,7 @@ type Draft = {
 const BLANK: Draft = {
   title: '',
   template_id: '',
-  trigger_kind: 'PROBATION_END',
+  trigger_kind: 'FIRST_DAY',
   offset_days: 1,
   send_hour: 10,
   send_minute: 0,
@@ -116,7 +115,6 @@ function sentence(draft: Pick<Draft, 'trigger_kind' | 'offset_days' | 'send_hour
     return `Сотрудники будут получать ${survey} ${period} в ${time}.`;
   }
   const lead: Record<Exclude<api.SurveyTriggerKind, 'SCHEDULE'>, string> = {
-    PROBATION_END: 'После завершения стажировки',
     FIRST_DAY: 'После выхода на работу',
     DAYS_AFTER_HIRE: 'После выхода на работу',
     BIRTHDAY: draft.offset_days === 0 ? 'В день рождения' : 'После дня рождения',
@@ -454,9 +452,9 @@ function RuleForm({ current, onCancel, onSaved }: {
 
       <p className="sv-note">
         <AppIcon name="info" size={16} />
-        {draft.trigger_kind === 'PROBATION_END'
-          ? 'Если дату окончания стажировки изменят, отправка перенесётся сама: правило каждый день читает дату из карточки. Если стажировку закончат досрочно и уберут дату окончания — опрос не уйдёт. Без Telegram опрос не уйдёт, а в истории останется пропуск с причиной.'
-          : 'Правило каждый день сверяется с карточками сотрудников: изменили дату — изменится и день отправки. Без Telegram опрос не уйдёт, а в истории останется пропуск с причиной.'}
+        Правило каждый день сверяется с карточками сотрудников: изменили
+        дату — изменится и день отправки. Без Telegram опрос не уйдёт, а в
+        истории останется пропуск с причиной.
       </p>
 
       <div className="sv-formfoot">

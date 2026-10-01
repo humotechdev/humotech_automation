@@ -56,7 +56,6 @@ from humotech.telegram.models import TelegramAccount
 CARD_FIELDS = (
     "employee_number", "first_name", "last_name", "middle_name", "phone",
     "corporate_email", "personal_email", "birth_date", "hire_date",
-    "probation_from", "probation_to", "mentor_employee_id",
     "termination_date", "termination_reason", "preferred_language",
     "employment_status",
 )
@@ -73,11 +72,10 @@ ASSIGNMENT_FIELDS = (
 CONTACT_FIELDS = ("first_name", "last_name", "middle_name", "phone",
                   "corporate_email", "personal_email", "birth_date",
                   "preferred_language", "employee_number",
-                  "gender", "marital_status",
-                  "probation_from", "probation_to", "mentor_employee_id")
+                  "gender", "marital_status")
 
 # Статусы, при которых сотрудник считается работающим.
-WORKING_STATUSES = ("ACTIVE", "PROBATION")
+WORKING_STATUSES = ("ACTIVE",)
 # Статусы, после которых кадровые операции недоступны.
 FINAL_STATUSES = ("TERMINATED", "ARCHIVED")
 
@@ -676,8 +674,6 @@ class EmployeeService(BaseService):
                                               field="personal_email"),
                 birth_date=contacts.get("birth_date"),
                 hire_date=hire_date,
-                probation_from=contacts.get("probation_from"),
-                probation_to=contacts.get("probation_to"),
                 preferred_language=contacts.get("preferred_language", "ru"),
                 employment_status=employment_status,
             )
@@ -757,28 +753,6 @@ class EmployeeService(BaseService):
             employee.gender = changes["gender"] or None
         if "marital_status" in changes:
             employee.marital_status = changes["marital_status"] or None
-        if "probation_from" in changes:
-            employee.probation_from = changes["probation_from"]
-        if "probation_to" in changes:
-            employee.probation_to = changes["probation_to"]
-        if "mentor_employee_id" in changes:
-            mentor = changes["mentor_employee_id"]
-            if mentor is not None:
-                if str(mentor) == str(employee.id):
-                    raise ValidationFailed("Сотрудник не может быть своим наставником",
-                                           details={"field": "mentor_employee_id"})
-                if not Employee.objects.filter(id=mentor, organization_id=employee.organization_id).exists():
-                    raise ValidationFailed("Наставник не найден", details={"field": "mentor_employee_id"})
-            employee.mentor_employee_id = mentor
-        # Порядок дат проверяется здесь, чтобы человек увидел причину, а
-        # не отказ базы. Правится одна из двух — сравнивать приходится с
-        # той, что уже записана.
-        require_order(
-            employee.probation_from, employee.probation_to,
-            message="Стажировка не может кончаться раньше, чем началась",
-            details={"probation_from": str(employee.probation_from),
-                     "probation_to": str(employee.probation_to)},
-        )
         if changes.get("preferred_language"):
             employee.preferred_language = changes["preferred_language"]
         if changes.get("employee_number") is not None:

@@ -251,7 +251,7 @@ export type OverviewGroup = {
   difference_points: number | null;
 };
 
-// --- люди за период: команда и стажировки ----------------------------------
+// --- люди за период: команда -----------------------------------------------
 
 export type PeopleScope = {
   date_from: string;
@@ -282,12 +282,8 @@ export type TeamReport = {
     previous_headcount_start: number;
     hired: number;
     previous_hired: number;
-    /** Переведены в штат после стажировки — по журналу. */
-    promoted: number;
-    previous_promoted: number;
     left: number;
     previous_left: number;
-    probation_failed: number;
   };
   series: { day: string; headcount: number }[];
   by_department: { id: string | null; name: string; hired: number; left: number; difference: number }[];
@@ -302,41 +298,8 @@ export type TeamReport = {
   }[];
 };
 
-export type Trainee = TeamPerson & {
-  probation_from: string;
-  probation_to: string | null;
-  /** Дней до решения; отрицательное — срок прошёл. */
-  days_left: number | null;
-  days_total: number | null;
-  /** Наставник на время стажировки. */
-  mentor?: { id: string; name: string } | null;
-};
-
-export type ProbationReport = {
-  period: { first: string; last: string; days: number };
-  previous_period: { first: string; last: string };
-  summary: {
-    active: number;
-    due: number;
-    overdue: number;
-    started: number;
-    promoted: number;
-    failed: number;
-    previous_started: number;
-    previous_promoted: number;
-    previous_failed: number;
-    conversion_percent: number | null;
-    previous_conversion_percent: number | null;
-  };
-  due_days: number;
-  trainees: Trainee[];
-};
-
 export const analyticsTeam = (params: PeopleScope, signal?: AbortSignal) =>
   request<TeamReport>(`/analytics/team${query(params)}`, signal ? { signal } : {});
-
-export const analyticsProbation = (params: PeopleScope, signal?: AbortSignal) =>
-  request<ProbationReport>(`/analytics/probation${query(params)}`, signal ? { signal } : {});
 
 // --- справочники -----------------------------------------------------------
 
@@ -585,10 +548,6 @@ export type EmployeeEdit = {
   birth_date?: string | null;
   gender?: string | null;
   marital_status?: string | null;
-  /** Срок стажировки. Обе даты необязательны и по отдельности тоже. */
-  probation_from?: string | null;
-  probation_to?: string | null;
-  mentor_employee_id?: string | null;
 };
 
 export const updateEmployee = (id: string, body: EmployeeEdit) =>
@@ -643,30 +602,6 @@ export const changeEmployeeAssignment = (
   method: 'POST',
   body,
 });
-
-/**
- * Принять стажёра в штат.
- *
- * Должность передаётся, только если её пересмотрели по итогам
- * стажировки: перевод в штат сам по себе не повод её менять.
- */
-export const promoteEmployee = (id: string, body: { position_id?: string } = {}) =>
-  request<Record<string, unknown>>(`/employees/${id}/promote/`, {
-    method: 'POST',
-    body,
-  });
-
-/**
- * Завершить стажировку расставанием.
- *
- * Это увольнение с причиной «Не прошёл стажировку» — отдельного статуса
- * для такого случая нет и заводить его не нужно.
- */
-export const endProbation = (id: string, body: { reason?: string } = {}) =>
-  request<Record<string, unknown>>(`/employees/${id}/end-probation/`, {
-    method: 'POST',
-    body,
-  });
 
 export const employeeAssignments = (id: string, signal?: AbortSignal) =>
   request<Items<Assignment>>(`/employees/${id}/assignments/`, signal ? { signal } : {});
@@ -2937,9 +2872,6 @@ export type OnboardBody = {
   manager_employee_id?: string | null;
   employment_type: string;
   employment_status?: string;
-  /** Срок стажировки. Сервер запишет его только при самой стажировке. */
-  probation_from?: string | null;
-  probation_to?: string | null;
   schedule_id: string;
   gender?: string | null;
   marital_status?: string | null;
@@ -3516,7 +3448,6 @@ export const surveySummary = (id: string, signal?: AbortSignal) =>
  */
 
 export type SurveyTriggerKind =
-  | 'PROBATION_END'
   | 'FIRST_DAY'
   | 'DAYS_AFTER_HIRE'
   | 'BIRTHDAY'

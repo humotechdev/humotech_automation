@@ -76,9 +76,6 @@ type Draft = {
   position_id: string;
   manager_employee_id: string;
   employment_type: string;
-  probation: string;
-  probation_from: string;
-  probation_to: string;
   schedule_id: string;
   gender: string;
   marital_status: string;
@@ -89,7 +86,6 @@ const EMPTY: Draft = {
   pinfl: '', phone: '', corporate_email: '', telegram_username: '',
   hire_date: '', region_id: '', office_id: '', department_id: '',
   position_id: '', manager_employee_id: '', employment_type: 'FULL_TIME',
-  probation: '', probation_from: '', probation_to: '',
   schedule_id: '', gender: '', marital_status: '',
 };
 
@@ -116,14 +112,8 @@ const FIELD_TITLE: Partial<Record<keyof Draft, string>> = {
   position_id: 'Должность',
   manager_employee_id: 'Руководитель',
   employment_type: 'Тип занятости',
-  probation: 'Выходит на',
-  probation_from: 'Стажировка с',
-  probation_to: 'Стажировка по',
   schedule_id: 'График работы',
 };
-
-/** Срок стажировки: правится карточкой, а не переводом. */
-const PROBATION_DATES: (keyof Draft)[] = ['probation_from', 'probation_to'];
 
 /** Что меняется переводом: новый период назначения с даты. */
 const ASSIGNMENT: (keyof Draft)[] = [
@@ -159,28 +149,11 @@ const MARITAL_STATUSES = [
 
 /*
  * Занятость — про то, сколько человек работает, а не кем он числится.
- *
- * «Стажировки» здесь нет намеренно: она отвечает на другой вопрос — в
- * штат человека берут или на испытательный срок, — и для него есть
- * поле «Выходит на». Два места для одной мысли однажды разойдутся:
- * стажёр на полный день оказался бы либо «полным днём», либо
- * «стажировкой», и оба ответа были бы половинчатыми.
  */
 const EMPLOYMENT_TYPES = [
   { id: 'FULL_TIME', name: 'Полный рабочий день' },
   { id: 'PART_TIME', name: 'Неполный день' },
   { id: 'CONTRACT', name: 'Договор подряда' },
-];
-
-/**
- * Кем человек выходит: на стажировку или сразу в штат.
- *
- * Названия те же, что и в карточке: увидеть «Испытательный срок» при
- * приёме и «Стажировка» на следующем экране — значит решить, что это
- * два разных состояния.
- */
-const PROBATION = [
-  { id: 'PROBATION', name: 'Стажировка' },
 ];
 
 /*
@@ -687,11 +660,8 @@ export function NewEmployeePage() {
       case 'gender': return named(GENDERS);
       case 'marital_status': return named(MARITAL_STATUSES);
       case 'employment_type': return named(EMPLOYMENT_TYPES);
-      case 'probation': return named(PROBATION);
       case 'birth_date':
-      case 'hire_date':
-      case 'probation_from':
-      case 'probation_to': return longDate(value);
+      case 'hire_date': return longDate(value);
       case 'region_id':
         return named(regions.state === 'ready' ? regions.data.items : []);
       case 'office_id':
@@ -718,11 +688,6 @@ export function NewEmployeePage() {
       // поле означало бы «не заполнен», а не «не меняется».
       if (editing && field === 'pinfl') continue;
       if (draft[field].trim() === '') found[field] = 'Заполните поле';
-    }
-    if (which === 1
-        && draft.probation_from && draft.probation_to
-        && draft.probation_to < draft.probation_from) {
-      found.probation_to = 'Конец стажировки раньше её начала';
     }
     if (which === 0) {
       // ПИНФЛ проверяется здесь же, а не только на сервере: четырнадцать
@@ -784,12 +749,6 @@ export function NewEmployeePage() {
       }
       if (changed('gender')) personal.gender = draft.gender || null;
       if (changed('marital_status')) personal.marital_status = draft.marital_status || null;
-      for (const field of PROBATION_DATES) {
-        if (draft[field] === initial[field]) continue;
-        // Снятая стажировка уносит и свои даты.
-        personal[field as 'probation_from' | 'probation_to'] =
-          draft.probation ? draft[field] || null : null;
-      }
       if (Object.keys(personal).length > 0) {
         await api.updateEmployee(id, personal);
         done.push('личные данные');
@@ -858,11 +817,7 @@ export function NewEmployeePage() {
         position_id: draft.position_id,
         manager_employee_id: draft.manager_employee_id || null,
         employment_type: draft.employment_type,
-        employment_status: draft.probation ? 'PROBATION' : 'ACTIVE',
-        // Срок уходит только вместе со стажировкой: у принятого в штат
-        // этим датам не к чему относиться.
-        probation_from: draft.probation ? draft.probation_from || null : null,
-        probation_to: draft.probation ? draft.probation_to || null : null,
+        employment_status: 'ACTIVE',
         schedule_id: draft.schedule_id,
         gender: draft.gender || null,
         marital_status: draft.marital_status || null,
@@ -1043,43 +998,6 @@ export function NewEmployeePage() {
                           options={EMPLOYMENT_TYPES}
                           onChange={(value) => set('employment_type', value)} />
               </Field>
-              <Field label="Выходит на" name="probation" errors={errors}>
-                <Dropdown label="Выходит на" value={draft.probation} empty="Сразу в штат"
-                          options={PROBATION}
-                          onChange={(value) => {
-                            set('probation', value);
-                            // Сняли стажировку — снимается и её срок:
-                            // иначе у принятого в штат осталась бы пара
-                            // дат, которым не к чему относиться.
-                            if (!value) {
-                              set('probation_from', '');
-                              set('probation_to', '');
-                            }
-                          }} />
-              </Field>
-              {/* Срок стажировки появляется только вместе с ней. Обе
-                  даты необязательны: стажёра берут и тогда, когда конец
-                  ещё не назван. */}
-              {draft.probation === 'PROBATION' && (
-                <>
-                  <Field label="Стажировка с" name="probation_from" errors={errors}>
-                    <DatePicker label="Начало стажировки" value={draft.probation_from}
-                                now={now}
-                                onChange={(value) => set('probation_from', value)} />
-                  </Field>
-                  <Field label="Стажировка по" name="probation_to" errors={errors}>
-                    <DatePicker label="Конец стажировки" value={draft.probation_to}
-                                now={now}
-                                {...(draft.probation_from ? { min: draft.probation_from } : {})}
-                                onChange={(value) => set('probation_to', value)} />
-                  </Field>
-                  <p className="nh-say nh-say--wide">
-                    <AppIcon name="clock" size={16} />
-                    Даты необязательны — приём состоится и без них.
-                    {draft.probation_to && ` Решение по стажёру принимают к ${longDate(draft.probation_to)}.`}
-                  </p>
-                </>
-              )}
               <Field label="График работы" required name="schedule_id" errors={errors}>
                 <Dropdown label="График работы" value={draft.schedule_id} empty="Выберите график"
                           options={schedules.state === 'ready' ? schedules.data.items : []}
@@ -1692,9 +1610,6 @@ function draftOf(card: Record<string, unknown>): Draft {
     position_id: text(at['position_id']),
     manager_employee_id: text(at['manager_employee_id']),
     employment_type: text(at['employment_type']) || 'FULL_TIME',
-    probation: card['employment_status'] === 'PROBATION' ? 'PROBATION' : '',
-    probation_from: text(card['probation_from']),
-    probation_to: text(card['probation_to']),
     schedule_id: text(plan['schedule_id']),
   };
 }

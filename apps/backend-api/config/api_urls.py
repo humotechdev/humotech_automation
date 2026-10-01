@@ -26,7 +26,6 @@ from humotech.analytics.views import (
     ComparisonView,
     DashboardView,
     MovementView,
-    ProbationView,
     TeamView,
 )
 from humotech.attendance.views import (
@@ -353,9 +352,8 @@ urlpatterns = [
     # Всё для страницы «Аналитика» одним ответом: сводка с прошлым
     # периодом, дни, рейтинг офисов, ритм прихода, дни недели.
     path("analytics/overview", AnalyticsOverviewView.as_view(), name="analytics-overview"),
-    # Люди за период: «Команда» и «Стажировки» страницы аналитики.
+    # Люди за период: страница аналитики «Команда».
     path("analytics/team", TeamView.as_view(), name="analytics-team"),
-    path("analytics/probation", ProbationView.as_view(), name="analytics-probation"),
     # Выгрузки. Право reports.export проверяется отдельно от прав на сами
     # данные: выгрузка не должна быть обходным путём к закрытому экрану.
     # Конструктор отчётов: поля видов и предпросмотр до заказа файла.

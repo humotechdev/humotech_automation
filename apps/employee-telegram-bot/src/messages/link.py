@@ -42,13 +42,6 @@ LINK_MESSAGES = {
 }
 
 
-#: Трудовой статус глазами человека. «PROBATION» ему ничего не говорит.
-EMPLOYMENT_WORDS = {
-    "PROBATION": "на стажировку",
-    "ACTIVE": "в штат",
-}
-
-
 def welcome(facts: dict) -> str:
     """Первое сообщение узнанному по имени сотруднику.
 

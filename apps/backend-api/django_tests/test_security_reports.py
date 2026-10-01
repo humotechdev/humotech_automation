@@ -329,7 +329,7 @@ class TestHostileParameters:
 
     @pytest.mark.parametrize("path", [
         "analytics", "analytics/overview", "analytics/movement",
-        "analytics/team", "analytics/probation",
+        "analytics/team",
     ])
     @pytest.mark.parametrize("first,last", [
         ("0001-01-01", "0001-01-02"), ("9999-12-30", "9999-12-31"),
@@ -372,7 +372,7 @@ class TestHostileParameters:
         api_client.force_authenticate(user=make_user(
             organization, permissions=EXPORTER, region=region))
         for path in ("analytics", "analytics/overview", "analytics/movement",
-                     "analytics/team", "analytics/probation"):
+                     "analytics/team"):
             response = api_client.get(f"{API}/{path}?office_id={other_office.id}")
             assert response.status_code == 403, path
 

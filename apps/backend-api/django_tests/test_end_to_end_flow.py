@@ -31,7 +31,6 @@ from humotech.analytics.movement import MovementService
 from humotech.attendance import reminders
 from humotech.attendance.hr import AttendanceHrService
 from humotech.attendance.models import DayNotice
-from humotech.employees.lifecycle import EmployeeLifecycleService
 from humotech.employees.models import Employee
 from humotech.notifications.models import Notification
 from humotech.offices.geo import EARTH_RADIUS_M
@@ -142,18 +141,17 @@ def test_the_whole_road(
         "schedule_id": str(schedule.id),
         "pinfl": "39803141234567",
         "phone": "+998901234567",
-        "employment_status": "PROBATION",
     }, format="json")
     assert onboarded.status_code == 201, onboarded.content
     employee_id = onboarded.json()["employee"]["id"]
     employee = Employee.objects.get(id=employee_id)
-    assert employee.employment_status == "PROBATION"
+    assert employee.employment_status == "ACTIVE"
 
     hello = Notification.objects.filter(
         employee_id=employee_id, notification_type="employee.hired"
     ).first()
     assert hello is not None, "человек должен узнать о приёме от бота"
-    assert "стажировку" in hello.body
+    assert "в штат" in hello.body
     assert "Инженер" in hello.body and "Разработка" in hello.body
 
     link_telegram(employee, telegram_user_id=TG_ID)
@@ -298,16 +296,10 @@ def test_the_whole_road(
     assert f"№{question.number}" in reply.body
     assert "2-НДФЛ" in reply.body
 
-    # --- 11. Стажёр в штат, потом увольнение ------------------------------
-    lifecycle = EmployeeLifecycleService()
-    lifecycle.promote_to_staff(hr_actor, employee.id)
+    # --- 11. Работающий виден в составе смены и в численности ------------
     employee.refresh_from_db()
     assert employee.employment_status == "ACTIVE"
-    assert Notification.objects.filter(
-        notification_type="employee.promoted"
-    ).exists()
 
-    # Работающий виден в составе смены и в численности.
     shift = AttendanceHrService().presence(hr_actor, day=date.today())
     assert [row.employee_id for row in shift.rows] == [employee.id]
     movement = MovementService().report(

@@ -182,7 +182,6 @@ REQUEST_STATUSES = {
 
 EMPLOYMENT_STATUSES = {
     "ACTIVE": ("Работает", "good"),
-    "PROBATION": ("Испытательный срок", "info"),
     "SUSPENDED": ("Приостановлен", "warn"),
     "TERMINATED": ("Уволен", "muted"),
     "ARCHIVED": ("В архиве", "muted"),

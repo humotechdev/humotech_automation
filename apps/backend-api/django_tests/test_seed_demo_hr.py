@@ -57,8 +57,8 @@ def test_seed_builds_the_company_and_keeps_the_rules(stand):
 
     demo = Employee.objects.filter(organization=stand).exclude(id=keep.id)
     assert demo.count() == 200
-    assert demo.filter(employment_status="ACTIVE").count() == 178
-    assert demo.filter(employment_status="PROBATION").count() == 12
+    assert demo.filter(employment_status="ACTIVE").count() == 190
+    assert demo.filter(employment_status="PROBATION").count() == 0
     assert demo.filter(employment_status="TERMINATED").count() == 10
     active = TelegramAccount.objects.filter(organization=stand, status="ACTIVE")
     assert active.count() == 165

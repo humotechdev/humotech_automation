@@ -101,7 +101,7 @@ def tz(organization):
 
 def hire(
     organization, office, *, number, hire_date=date(2024, 1, 9),
-    probation_to=None, birth_date=None, status="ACTIVE",
+    birth_date=None, status="ACTIVE",
     department=None, telegram=True,
 ):
     """Завести сотрудника с нужными для события датами."""
@@ -111,7 +111,6 @@ def hire(
         first_name="Сотрудник",
         last_name=number,
         hire_date=hire_date,
-        probation_to=probation_to,
         birth_date=birth_date,
         employment_status=status,
     )
@@ -382,7 +381,7 @@ class TestRules:
         with pytest.raises(ValidationFailed):
             rules.create(hr_actor, {
                 "template_id": str(template.id),
-                "trigger_kind": "PROBATION_END",
+                "trigger_kind": "FIRST_DAY",
             })
 
     def test_schedule_needs_a_period_and_an_event_does_not(
@@ -412,11 +411,11 @@ class TestRules:
     ):
         person = hire(
             organization, office, number="EMP-HIST",
-            probation_to=date(2026, 9, 22),
+            hire_date=date(2026, 9, 22),
         )
         rule = rules.create(hr_actor, {
             "template_id": str(published.id),
-            "trigger_kind": "PROBATION_END",
+            "trigger_kind": "FIRST_DAY",
         })
         run_due(now=at(tz, date(2026, 9, 22), 11))
 
@@ -444,41 +443,17 @@ class TestRules:
 
 @pytest.mark.django_db
 class TestFiring:
-    def test_probation_end_asks_exactly_that_person(
-        self, rules, hr_actor, published, organization, office, tz,
-    ):
-        ending = hire(
-            organization, office, number="EMP-END",
-            probation_to=date(2026, 9, 22), status="PROBATION",
-        )
-        other = hire(
-            organization, office, number="EMP-OTHER",
-            probation_to=date(2026, 12, 1), status="PROBATION",
-        )
-        rules.create(hr_actor, {
-            "template_id": str(published.id),
-            "trigger_kind": "PROBATION_END",
-        })
-
-        assert run_due(now=at(tz, date(2026, 9, 22), 10)) == 1
-
-        asked = set(
-            SurveyRecipient.objects.values_list("employee_id", flat=True)
-        )
-        assert asked == {ending.id}
-        assert other.id not in asked
-
     def test_nothing_happens_before_the_appointed_hour(
         self, rules, hr_actor, published, organization, office, tz,
     ):
         """Правило обещает «в 10:00». Отправка в 00:05 — другое обещание."""
         hire(
             organization, office, number="EMP-EARLY",
-            probation_to=date(2026, 9, 22), status="PROBATION",
+            hire_date=date(2026, 9, 22),
         )
         rules.create(hr_actor, {
             "template_id": str(published.id),
-            "trigger_kind": "PROBATION_END",
+            "trigger_kind": "FIRST_DAY",
             "send_hour": 10,
         })
 
@@ -492,11 +467,11 @@ class TestFiring:
         """Очередь опрашивается каждые несколько секунд весь день."""
         person = hire(
             organization, office, number="EMP-TWICE",
-            probation_to=date(2026, 9, 22), status="PROBATION",
+            hire_date=date(2026, 9, 22),
         )
         rules.create(hr_actor, {
             "template_id": str(published.id),
-            "trigger_kind": "PROBATION_END",
+            "trigger_kind": "FIRST_DAY",
         })
 
         run_due(now=at(tz, date(2026, 9, 22), 10))
@@ -532,15 +507,15 @@ class TestFiring:
         """Один день отправки — ещё не один повод."""
         hire(
             organization, office, number="EMP-A",
-            probation_to=date(2026, 9, 22), status="PROBATION",
+            hire_date=date(2026, 9, 22),
         )
         hire(
             organization, office, number="EMP-B",
-            probation_to=date(2026, 9, 22), status="PROBATION",
+            hire_date=date(2026, 9, 22),
         )
         rules.create(hr_actor, {
             "template_id": str(published.id),
-            "trigger_kind": "PROBATION_END",
+            "trigger_kind": "FIRST_DAY",
         })
         run_due(now=at(tz, date(2026, 9, 22), 10))
 
@@ -554,11 +529,11 @@ class TestFiring:
         """Опрос человеку, которого уже нет, — письмо в пустоту."""
         gone = hire(
             organization, office, number="EMP-GONE",
-            probation_to=date(2026, 9, 22), status="TERMINATED",
+            hire_date=date(2026, 9, 22), status="TERMINATED",
         )
         rules.create(hr_actor, {
             "template_id": str(published.id),
-            "trigger_kind": "PROBATION_END",
+            "trigger_kind": "FIRST_DAY",
         })
 
         assert run_due(now=at(tz, date(2026, 9, 22), 10)) == 0
@@ -569,11 +544,11 @@ class TestFiring:
     ):
         hire(
             organization, office, number="EMP-OFF",
-            probation_to=date(2026, 9, 22), status="PROBATION",
+            hire_date=date(2026, 9, 22),
         )
         rule = rules.create(hr_actor, {
             "template_id": str(published.id),
-            "trigger_kind": "PROBATION_END",
+            "trigger_kind": "FIRST_DAY",
         })
         rules.toggle(hr_actor, rule.id, active=False)
 
@@ -665,7 +640,7 @@ class TestFiring:
         })
         by_event = rules.create(hr_actor, {
             "template_id": str(published.id),
-            "trigger_kind": "PROBATION_END",
+            "trigger_kind": "FIRST_DAY",
         })
 
         assert next_run(regular) is not None
@@ -677,15 +652,15 @@ class TestFiring:
         """Отдел берётся из назначения: людей переводят."""
         ours = hire(
             organization, office, number="EMP-HERE",
-            probation_to=date(2026, 9, 22), status="PROBATION",
+            hire_date=date(2026, 9, 22),
         )
         hire(
             organization, other_office, number="EMP-THERE",
-            probation_to=date(2026, 9, 22), status="PROBATION",
+            hire_date=date(2026, 9, 22),
         )
         rules.create(hr_actor, {
             "template_id": str(published.id),
-            "trigger_kind": "PROBATION_END",
+            "trigger_kind": "FIRST_DAY",
             "scope": {"office_ids": [str(office.id)]},
         })
 
@@ -699,11 +674,11 @@ class TestFiring:
         """Кадровик отменил рассылку — правило не вправе вернуть её тиком."""
         hire(
             organization, office, number="EMP-CANCEL",
-            probation_to=date(2026, 9, 22), status="PROBATION",
+            hire_date=date(2026, 9, 22),
         )
         rules.create(hr_actor, {
             "template_id": str(published.id),
-            "trigger_kind": "PROBATION_END",
+            "trigger_kind": "FIRST_DAY",
         })
         run_due(now=at(tz, date(2026, 9, 22), 10))
 
@@ -711,7 +686,7 @@ class TestFiring:
         campaigns.cancel(hr_actor, campaign.id)
         late = hire(
             organization, office, number="EMP-LATER",
-            probation_to=date(2026, 9, 22), status="PROBATION",
+            hire_date=date(2026, 9, 22),
         )
 
         run_due(now=at(tz, date(2026, 9, 22), 12))
@@ -729,15 +704,15 @@ class TestHistory:
         """Без Telegram — пропуск с причиной, а не «успешно отправлено»."""
         hire(
             organization, office, number="EMP-ON",
-            probation_to=date(2026, 9, 22), status="PROBATION",
+            hire_date=date(2026, 9, 22),
         )
         hire(
             organization, office, number="EMP-OFF",
-            probation_to=date(2026, 9, 22), status="PROBATION", telegram=False,
+            hire_date=date(2026, 9, 22), telegram=False,
         )
         rule = rules.create(hr_actor, {
             "template_id": str(published.id),
-            "trigger_kind": "PROBATION_END",
+            "trigger_kind": "FIRST_DAY",
         })
         moment = at(tz, date(2026, 9, 22), 10)
         run_due(now=moment)

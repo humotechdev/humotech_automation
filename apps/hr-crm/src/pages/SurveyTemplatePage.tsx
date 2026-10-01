@@ -320,7 +320,7 @@ function TemplateEditor({ row, onSaved }: {
               <label className="sv-field">
                 <span>Название шаблона</span>
                 <input className="sv-input" value={draft.title} maxLength={255}
-                       placeholder="Например: Итоги стажировки"
+                       placeholder="Например: Оценка адаптации"
                        onChange={(event) => setDraft({ ...draft, title: event.target.value })} />
                 {touched && problems['title'] && (
                   <em role="alert">{problems['title']}</em>

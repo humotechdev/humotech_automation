@@ -84,11 +84,9 @@ ROUTES = {
         lambda w: {"pk": w["employee"].id, "document_id": w["document"].id}, {"delete": None}),
     "employee-document-download": (
         lambda w: {"pk": w["employee"].id, "document_id": w["document"].id}, {"get": None}),
-    "employee-end-probation": (_pk("employee"), {"post": {}}),
     "employee-photo": (_pk("employee"), {"get": None}),
     "employee-photo-set": (
         _pk("employee"), {"post": lambda w: {"file_id": str(w["employee"].photo_id)}}),
-    "employee-promote": (_pk("employee"), {"post": {}}),
     "employee-terminate": (_pk("employee"), {"post": {"termination_date": D}}),
     "work-schedule-detail": (
         _pk("schedule"), {"get": None, "patch": {"name": "Взлом"}, "delete": None}),

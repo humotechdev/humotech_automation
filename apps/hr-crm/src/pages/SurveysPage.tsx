@@ -958,7 +958,6 @@ function shortMoment(at: string, zone: string): string {
 
 /** Что стоит за событием — одной строкой под его названием. */
 const TRIGGER_ABOUT: Record<api.SurveyTriggerKind, string> = {
-  PROBATION_END: 'Последний день стажировки из карточки',
   FIRST_DAY: 'Дата приёма из карточки',
   DAYS_AFTER_HIRE: 'Отсчёт от даты приёма',
   BIRTHDAY: 'Дата рождения из карточки',
@@ -1015,7 +1014,7 @@ function Automations({
               <p className="sv-empty__about">
                 {ready === 0
                   ? 'Сначала опубликуйте шаблон: правило работает без присмотра и черновик рассылать не вправе.'
-                  : 'Правило настраивают один раз — дальше оно само отправляет опрос по событию: например, на следующий день после окончания стажировки.'}
+                  : 'Правило настраивают один раз — дальше оно само отправляет опрос по событию: например, на следующий день после выхода на работу.'}
               </p>
               <button type="button" className="sv-create"
                       onClick={() => navigate(ready === 0 ? '/surveys' : '/surveys/automations/new')}>
