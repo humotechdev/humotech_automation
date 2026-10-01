@@ -484,9 +484,9 @@ FILES = {
     "PROVIDER": env("FILES_PROVIDER", "local"),
     "PRIVATE_ROOT": env("FILES_PRIVATE_ROOT", str(BASE_DIR / "private-media")),
     # Антивируса в проекте нет. Пока флаг выключен, загруженный файл
-    # помечается CLEAN, и это означает «проверка не проводилась», а не
-    # «проверен и чист» — см. humotech/files/storage.py. Включение флага
-    # переводит новые файлы в PENDING, и до проверки они не отдаются.
+    # помечается UNSCANNED — честное «проверка не проводилась», а не
+    # фиктивное «проверен и чист» — см. humotech/files/storage.py. Включение
+    # флага переводит новые файлы в PENDING, и до проверки они не отдаются.
     "SCANNER_ENABLED": env("FILES_SCANNER_ENABLED", "false").lower() == "true",
 }
 
