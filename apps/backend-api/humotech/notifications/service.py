@@ -275,7 +275,9 @@ class NotificationService(BaseService):
                 organization_id=actor.organization_id, status="FAILED"
             )
             if employee_id is not None:
-                require_visible_employee(self.access, actor, employee_id)
+                require_visible_employee(
+                    self.access, actor, employee_id, "notifications.manage"
+                )
                 queryset = queryset.filter(employee_id=employee_id)
             else:
                 queryset = self._limit_to_scope(actor, queryset)

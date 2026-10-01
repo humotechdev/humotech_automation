@@ -737,7 +737,7 @@ class InboxService(BaseService):
     def refresh_draft(self, actor: Actor, question_id: uuid.UUID) -> dict:
         """Пересобрать черновик по опубликованной базе знаний."""
         self.access.require(actor, "questions.answer")
-        question = self._require(actor, question_id)
+        question = self._require(actor, question_id, "questions.answer")
         if question.status not in OPEN:
             raise Conflict("Обращение закрыто", details={"status": question.status})
         prepare_draft(question, strict=True)
@@ -1043,7 +1043,8 @@ class InboxService(BaseService):
             ),
         }
 
-    def _require(self, actor: Actor, question_id: uuid.UUID) -> EmployeeQuestion:
+    def _require(self, actor: Actor, question_id: uuid.UUID,
+                 permission: str | None = None) -> EmployeeQuestion:
         question = (
             EmployeeQuestion.objects.select_related(
                 "employee", "assigned_to_user__employee", "closed_by_user__employee"
@@ -1053,16 +1054,22 @@ class InboxService(BaseService):
         )
         if question is None:
             raise NotFound("Обращение не найдено")
-        require_visible_employee(self.access, actor, question.employee_id)
+        # `permission` для действий (ответ, взятие в работу) берёт область в
+        # разрезе этого права: право из одного назначения не должно работать
+        # на территории другого, выданного лишь на чтение (§3).
+        require_visible_employee(
+            self.access, actor, question.employee_id, permission
+        )
         return question
 
     def _lock(self, actor: Actor, question_id: uuid.UUID) -> EmployeeQuestion:
         """Та же проверка доступа плюс блокировка строки до конца транзакции.
 
         Два кадровика, одновременно нажавших «Взять в работу», иначе
-        оба увидели бы обращение свободным.
+        оба увидели бы обращение свободным. Зовётся только действиями
+        `questions.answer`, поэтому область берётся в разрезе этого права.
         """
-        self._require(actor, question_id)
+        self._require(actor, question_id, "questions.answer")
         return (
             EmployeeQuestion.objects.select_for_update(of=("self",))
             .select_related(

@@ -216,8 +216,13 @@ class TelegramLinkService(BaseService):
         if invitation is None:
             # чужая организация отвечает так же, как отсутствие записи
             raise NotFound("Приглашение не найдено")
-        # проверка области — через сотрудника, правило там одно на весь проект
-        require_visible_employee(self.access, actor, invitation.employee_id)
+        # проверка области — через сотрудника, правило там одно на весь проект.
+        # Помощник зовут только действия telegram.manage, поэтому область
+        # берём в разрезе этого права (§3): право из одного назначения не
+        # должно работать на территории другого, выданного лишь на чтение.
+        require_visible_employee(
+            self.access, actor, invitation.employee_id, "telegram.manage"
+        )
         return invitation
 
     # ------------------------------------------------------------------ чтение
@@ -282,7 +287,9 @@ class TelegramLinkService(BaseService):
         оставил бы его без входа вовсе.
         """
         self.access.require(actor, "telegram.manage")
-        employee = require_visible_employee(self.access, actor, employee_id)
+        employee = require_visible_employee(
+            self.access, actor, employee_id, "telegram.manage"
+        )
         self._require_employee_linkable(employee)
 
         bot_username = settings.TELEGRAM["BOT_USERNAME"]
@@ -525,7 +532,7 @@ class TelegramLinkService(BaseService):
     def disconnect(self, actor: Actor, employee_id: uuid.UUID) -> TelegramAccount:
         """Отключение привязки. После этого ни бот, ни Mini App не пускают."""
         self.access.require(actor, "telegram.manage")
-        require_visible_employee(self.access, actor, employee_id)
+        require_visible_employee(self.access, actor, employee_id, "telegram.manage")
 
         account = self._account_of(employee_id)
         if account is None:

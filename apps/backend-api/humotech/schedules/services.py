@@ -283,7 +283,7 @@ class WorkScheduleService(BaseService):
         (`daterange(..., '[]')`), и общий день считался бы пересечением.
         """
         self.access.require(actor, "schedules.manage")
-        employee = self._require_employee(actor, employee_id)
+        employee = self._require_employee(actor, employee_id, "schedules.manage")
         schedule = self.access.require_schedule(actor, schedule_id)
 
         if schedule.status != "ACTIVE":
@@ -452,13 +452,18 @@ class WorkScheduleService(BaseService):
 
     # ------------------------------------------------------ внутренние правила
 
-    def _require_employee(self, actor: Actor, employee_id: uuid.UUID) -> Employee:
+    def _require_employee(
+        self, actor: Actor, employee_id: uuid.UUID, permission: str | None = None
+    ) -> Employee:
         """Сотрудник своей организации И своей области видимости.
 
         Одной организации мало: региональный HR иначе назначал бы график
-        и читал историю графиков людей чужого региона.
+        и читал историю графиков людей чужого региона. `permission` для
+        записи (назначение графика) берёт область в разрезе этого права,
+        чтобы право из одного назначения не действовало на территории
+        другого, выданного лишь на чтение.
         """
-        return require_visible_employee(self.access, actor, employee_id)
+        return require_visible_employee(self.access, actor, employee_id, permission)
 
     @staticmethod
     def _validate_days(days: list[DaySpec]) -> None:

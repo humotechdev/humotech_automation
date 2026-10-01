@@ -267,7 +267,7 @@ class UserAdminService(BaseService):
         if employee_id is not None:
             # Та же проверка, что и в `update`: без неё к новой учётке
             # привязывался сотрудник чужой организации или вне области.
-            require_visible_employee(self.access, actor, employee_id)
+            require_visible_employee(self.access, actor, employee_id, "users.manage")
 
         with self.atomic():
             user = User(
@@ -403,7 +403,7 @@ class UserAdminService(BaseService):
                 user.employee_id = None
                 changed.append("employee_id")
         elif employee_id is not None and employee_id != user.employee_id:
-            require_visible_employee(self.access, actor, employee_id)
+            require_visible_employee(self.access, actor, employee_id, "users.manage")
             user.employee_id = employee_id
             changed.append("employee_id")
 

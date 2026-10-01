@@ -457,7 +457,9 @@ class OnboardingService(BaseService):
         (`enrol_new_hire`).
         """
         self.access.require(actor, "onboarding.manage")
-        employee = require_visible_employee(self.access, actor, employee_id)
+        employee = require_visible_employee(
+            self.access, actor, employee_id, "onboarding.manage"
+        )
         return self._enrol(actor, employee, self.program(actor.organization_id), now=now)
 
     def enrol_new_hire(
@@ -580,7 +582,7 @@ class OnboardingService(BaseService):
         """Отозвать действующую ссылку."""
         self.access.require(actor, "onboarding.manage")
         self.access.require(actor, "telegram.manage")
-        require_visible_employee(self.access, actor, employee_id)
+        require_visible_employee(self.access, actor, employee_id, "onboarding.manage")
         live = (
             TelegramLinkInvitation.objects.filter(
                 employee_id=employee_id, status="ACTIVE"
@@ -603,7 +605,7 @@ class OnboardingService(BaseService):
         честнее отказать с причиной, чтобы кадровик отправил ссылку.
         """
         self.access.require(actor, "onboarding.manage")
-        require_visible_employee(self.access, actor, employee_id)
+        require_visible_employee(self.access, actor, employee_id, "onboarding.manage")
         state = self.employee_state(actor, employee_id)
         if state.progress.completed:
             raise Conflict("Ознакомление уже завершено")
@@ -650,7 +652,7 @@ class OnboardingService(BaseService):
     def set_due(self, actor: Actor, employee_id: uuid.UUID, due_date: date | None) -> EmployeeOnboarding:
         """Назначить или снять срок ознакомления."""
         self.access.require(actor, "onboarding.manage")
-        require_visible_employee(self.access, actor, employee_id)
+        require_visible_employee(self.access, actor, employee_id, "onboarding.manage")
         row = EmployeeOnboarding.objects.filter(employee_id=employee_id).first()
         if row is None:
             raise NotFound("Сотрудник не включён в программу ознакомления")
