@@ -828,7 +828,16 @@ class EmployeeService(BaseService):
             actor, changes.get("office_id") or current.office_id
         )
 
-        if "employment_type" in changes:
+        # Тип занятости проверяем ТОЛЬКО когда его реально меняют на другой.
+        # Форма перевода CRM присылает текущий тип всегда; у существующего
+        # сотрудника со снятым типом INTERN («стажёр») это не изменение, и
+        # перевод (другой офис/должность) не должен падать из-за него — иначе
+        # таких сотрудников нельзя было бы вести. Ввести INTERN заново по-
+        # прежнему нельзя: это уже смена значения и она отвергается.
+        if (
+            "employment_type" in changes
+            and changes["employment_type"] != current.employment_type
+        ):
             self._validate_employment_type(changes["employment_type"])
 
         if "department_id" in changes:

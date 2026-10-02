@@ -146,6 +146,42 @@ def test_inactive_office_cannot_receive_transfer(
         )
 
 
+# --- Тип занятости INTERN («стажёр»): новый нельзя, существующий не ломаем ---
+
+def test_intern_employment_type_cannot_be_created(office, hr_actor):
+    with pytest.raises(ValidationFailed, match="Недопустимый тип занятости"):
+        EmployeeService().create(
+            hr_actor, **_new_employee(office, employment_type="INTERN")
+        )
+
+
+def test_employment_type_cannot_be_changed_to_intern(employee, hr_actor):
+    with pytest.raises(ValidationFailed, match="Недопустимый тип занятости"):
+        EmployeeService().change_assignment(
+            hr_actor, employee.id, effective_from=date(2025, 3, 1),
+            employment_type="INTERN",
+        )
+
+
+def test_existing_intern_is_transferable_without_changing_type(
+    other_office, employee, hr_actor
+):
+    """Существующему INTERN форма перевода CRM присылает тот же INTERN —
+    это не смена типа, и перевод в другой офис обязан пройти (иначе таких
+    сотрудников нельзя было бы вести после снятия стажировки)."""
+    EmployeeAssignment.objects.filter(
+        employee=employee, is_primary=True
+    ).update(employment_type="INTERN")
+
+    moved = EmployeeService().change_assignment(
+        hr_actor, employee.id, effective_from=date(2025, 3, 1),
+        office_id=other_office.id, employment_type="INTERN",
+    )
+
+    assert moved.office_id == other_office.id
+    assert moved.employment_type == "INTERN"
+
+
 # --- 11. Офис другой организации нельзя назначить ---------------------------
 
 def test_foreign_office_cannot_be_assigned(foreign_office, hr_actor, employee):

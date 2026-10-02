@@ -78,7 +78,9 @@ def test_seed_builds_the_company_and_keeps_the_rules(stand):
             employee=absence.employee, started_at__gte=absence.start_at, started_at__lt=absence.end_at).exists()
 
     assert EmployeeQuestion.objects.filter(organization=stand).count() == 14
-    assert SurveyCampaign.objects.filter(organization=stand).count() == 4
+    # Три кампании: satisfaction, manager, adapt-aug. Кампания «Итоги
+    # стажировки» убрана вместе со стажировкой (осталось 3, а не 4).
+    assert SurveyCampaign.objects.filter(organization=stand).count() == 3
     assert EmployeeOnboarding.objects.filter(organization=stand).count() == 190
     assert EmployeeAssignment.objects.filter(employee=keep).count() == 0
 
