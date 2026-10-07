@@ -362,7 +362,9 @@ function Crumbs({ path }: { path: string }) {
       {steps.map((step, at) => (
         <Fragment key={`${step}-${at}`}>
           <AppIcon name="next" size={16} className="crumbs__sep" />
-          <span className={at === steps.length - 1 ? 'crumbs__here' : undefined}>
+          {/* Длинный шаг сокращается многоточием на экране, а полное
+              значение остаётся в подсказке и для чтения с экрана. */}
+          <span className={at === steps.length - 1 ? 'crumbs__here' : 'crumbs__step'} title={step}>
             {step}
           </span>
         </Fragment>

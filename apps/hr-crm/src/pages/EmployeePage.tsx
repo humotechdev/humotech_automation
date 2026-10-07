@@ -163,7 +163,7 @@ export function EmployeePage() {
 
   return (
     <AppShell
-      breadcrumb={['Сотрудники', crumb(shortName(name)) || 'Карточка сотрудника',
+      breadcrumb={['Сотрудники', shortName(name) || 'Карточка сотрудника',
         TABS.find((item) => item.key === tab)?.title ?? ''].filter(Boolean).join(' / ')}
       section="employees"
     >
@@ -230,15 +230,6 @@ export function EmployeePage() {
 }
 
 // --- общая шапка -------------------------------------------------------------
-
-/**
- * Имя в строке навигации — не длиннее 20 знаков: двойная фамилия
- * растягивала общую верхнюю строку за край узкого экрана. Полное имя —
- * в шапке карточки.
- */
-function crumb(name: string): string {
-  return name.length > 20 ? `${name.slice(0, 19).trimEnd()}…` : name;
-}
 
 /** «Мирзаева Лола» из «Мирзаева Лола Азизовна». */
 function shortName(full: string | null): string {

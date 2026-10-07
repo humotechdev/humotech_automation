@@ -974,6 +974,31 @@ body.soft-type,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* Без этого элемент строки не сжимается меньше своего текста, и
+     длинное слово (двойная фамилия, название офиса) выдавливало
+     колокольчик и язык за край узкого экрана. */
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.crumbs__step {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.crumbs__home { flex: none; }
+
+/* На телефоне от пути остаётся текущая страница: промежуточные шаги
+   и «Главная» на 320–390 px не помещаются рядом с уведомлениями. */
+@media (max-width: 620px) {
+  .crumbs__home,
+  .crumbs__step,
+  .crumbs__sep {
+    display: none;
+  }
 }
 
 .topbar__tools {
