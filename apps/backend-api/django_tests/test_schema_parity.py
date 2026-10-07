@@ -362,7 +362,8 @@ def test_business_schema_has_expected_shape():
     #                    стажировкой (employees/0011).
     #   FK     202 + 4 — запрос выездной работы: организация, сотрудник,
     #                    офис и HR, отправивший запрос (attendance/0006).
-    assert counts["f"] == 206, f"FOREIGN KEY: {counts['f']}, ожидалось 206"
+    #   FK     206 + 1 — кто предложил новое место офиса (offices/0005), SET NULL.
+    assert counts["f"] == 207, f"FOREIGN KEY: {counts['f']}, ожидалось 207"
     #   UNIQUE  35 + 0 — «один активный запрос выездной работы на
     #                    сотрудника и дату» частичный: ИНДЕКС, не ограничение.
     assert counts["u"] == 35, f"UNIQUE: {counts['u']}, ожидалось 35"
@@ -407,7 +408,8 @@ def test_every_foreign_key_keeps_its_on_delete_action():
     # +4 — разделы материалов (onboarding/0006).
     # наставник стажёра (employees/0009) УДАЛЁН вместе со стажировкой.
     # +4 — запрос выездной работы (attendance/0006), все RESTRICT.
-    assert len(rows) == 206, f"внешних ключей {len(rows)}, ожидалось 206"
+    # +1 — кто предложил новое место офиса (offices/0005), SET NULL.
+    assert len(rows) == 207, f"внешних ключей {len(rows)}, ожидалось 207"
 
     # 'a' = NO ACTION: значит, действие не задано
     without_action = [f"{t}.{n}" for t, n, kind, _ in rows if kind == "a"]
@@ -465,5 +467,7 @@ def test_every_foreign_key_keeps_its_on_delete_action():
     # 27 + 3 — автор правила, прежняя редакция шаблона и правило
     # у рассылки: правило удаляют, а ответы людей остаются.
     # 30 + 1 — автор раздела материалов.
-    assert actions["n"] == 31, f"SET NULL: {actions['n']}, ожидалось 31"
+    # 31 + 1 — кто предложил новое место офиса: учётку HR можно удалить,
+    # а предложение остаётся ждать решения (offices/0005).
+    assert actions["n"] == 32, f"SET NULL: {actions['n']}, ожидалось 32"
     assert actions["c"] == 9, f"CASCADE: {actions['c']}, ожидалось 9"

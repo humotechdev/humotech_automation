@@ -195,18 +195,69 @@ describe('вкладка «Геолокация»', () => {
     expect(body!['geofence_radius_m']).toBe(100);
   });
 
-  test('«Очистить» снимает и круг, и контур', async () => {
-    const calls = openGeo(FENCED);
+  test('«Очистить» нет: офис без места не остаётся', async () => {
+    openGeo(FENCED);
 
     await screen.findByText(/13 углов/);
-    fireEvent.click(screen.getByRole('button', { name: 'Очистить' }));
-    fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Очистить' }));
-    await screen.findByText('Геолокация очищена');
+    expect(screen.queryByRole('button', { name: 'Очистить' })).toBeNull();
+  });
 
-    const [body] = patches(calls);
-    expect(body).toEqual({
-      geofence_kind: 'CIRCLE', geofence_polygon: null,
-      latitude: null, longitude: null, geofence_radius_m: null,
+  test('новое место ждёт подтверждения, прежнее названо действующим', async () => {
+    const calls = openGeo(OFFICE, (call) => json(200, {
+      ...OFFICE,
+      pending_location: {
+        geofence_kind: 'CIRCLE', latitude: '41.305000', longitude: '69.332414',
+        geofence_radius_m: (call.body as { geofence_radius_m: number }).geofence_radius_m,
+        geofence_polygon: null,
+      },
+      pending_location_by_name: 'Мадина',
+    }));
+
+    const slider = await screen.findByRole('slider', { name: 'Радиус допуска, метров' });
+    fireEvent.change(slider, { target: { value: '120' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }));
+
+    expect(await screen.findByText(/ждёт подтверждения\. Пока действует прежнее/)).toBeTruthy();
+    const region = screen.getByRole('region', { name: 'Новое местоположение ждёт подтверждения' });
+    // Действующая зона названа: прежние 70 м.
+    expect(within(region).getByText(/70 м/)).toBeTruthy();
+    expect(within(region).getByText(/Мадина/)).toBeTruthy();
+
+    fireEvent.click(within(region).getByRole('button', { name: 'Подтвердить' }));
+    await waitFor(() => expect(calls.some((call) =>
+      call.method === 'POST' && call.url.includes('/offices/o-1/location/confirm/'),
+    )).toBe(true));
+  });
+});
+
+describe('новый офис', () => {
+  test('создаётся только вместе с местом, одним запросом', async () => {
+    const calls = fakeNetwork((path, call) => {
+      if (path.includes('/auth/')) {
+        return json(200, { ...USER, permissions: ['offices.read', 'offices.manage'] });
+      }
+      if (call.method === 'POST' && /\/offices\/?$/.test(new URL(path, 'http://x').pathname)) {
+        return json(201, { ...OFFICE, ...(call.body as object), id: 'o-new' });
+      }
+      if (path.includes('/offices/o-new')) return json(200, OFFICE);
+      return crm(path) ?? json(200, { items: [], next_cursor: null, has_more: false });
+    });
+    renderApp('/offices/new?region=r-1&name=Самарканд');
+
+    const create = await screen.findByRole('button', { name: 'Создать офис' });
+    // Без точки создать нельзя.
+    expect((create as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.change(screen.getByPlaceholderText('41.311081'), { target: { value: '39.6542' } });
+    fireEvent.change(screen.getByPlaceholderText('69.240562'), { target: { value: '66.9597' } });
+    await waitFor(() => expect((create as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(create);
+
+    await waitFor(() => expect(calls.some((call) => call.method === 'POST')).toBe(true));
+    const sent = calls.find((call) => call.method === 'POST')!.body as Record<string, unknown>;
+    expect(sent).toMatchObject({
+      region_id: 'r-1', name: 'Самарканд', geofence_kind: 'CIRCLE',
+      latitude: '39.654200', longitude: '66.959700', geofence_radius_m: 100,
     });
   });
 });

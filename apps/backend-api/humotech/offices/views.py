@@ -47,6 +47,16 @@ class OfficeViewSet(ServiceViewSet):
     def reactivate(self, request, pk=None):
         return self.item_response(self.service.reactivate(self.actor, pk))
 
+    @action(detail=True, methods=["post"], url_path="location/confirm")
+    def confirm_location(self, request, pk=None):
+        """Новое местоположение начинает действовать вместо прежнего."""
+        return self.item_response(self.service.confirm_location(self.actor, pk))
+
+    @action(detail=True, methods=["post"], url_path="location/discard")
+    def discard_location(self, request, pk=None):
+        """Новое местоположение отброшено; прежнее продолжает действовать."""
+        return self.item_response(self.service.discard_location(self.actor, pk))
+
     @action(detail=True, methods=["post"])
     def close(self, request, pk=None):
         """Закрытие насовсем — отдельное действие, а не смена статуса правкой:

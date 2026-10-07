@@ -495,11 +495,12 @@ def _require_no_field_work(organization_id, office_ids, days) -> None:
     """
     from django.db.models import Q
 
-    from humotech.attendance.models import FieldWorkRequest
+    from humotech.attendance.field_work import blocking_field_work
 
-    rows = FieldWorkRequest.objects.filter(
+    # Истёкший, но ещё не закрытый ожидающий запрос день не держит —
+    # правило одно с `require_no_field_work`.
+    rows = blocking_field_work().filter(
         organization_id=organization_id, date__in=list(days),
-        status__in=("PENDING", "CONFIRMED"),
     )
     offices = [one for one in office_ids if one is not None]
     if None not in list(office_ids):

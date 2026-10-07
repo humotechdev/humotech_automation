@@ -152,37 +152,26 @@ async def start_with_link(
 
 @router.callback_query(F.data == kb.LINK_ACCEPT)
 async def accept_link_terms(callback: CallbackQuery, client: SelfServiceClient) -> None:
+    """Согласие с условиями. Доступа оно не открывает — его открывает HR.
+
+    Сервер на согласие всегда отвечает `hr_confirmation_required`: и по
+    ссылке, и при узнавании по имени. О подтверждении HR бот напишет сам
+    (уведомление `telegram.link.confirmed`), поэтому меню здесь не ставится.
+    """
     try:
         await client.accept_link_terms(telegram_user_id=callback.from_user.id)
     except ApiError as error:
         reason = (error.details or {}).get("reason") if isinstance(error.details, dict) else None
-        if reason == "hr_confirmation_required":
-            # Согласие записано, но доступ откроет только кадровик — и по
-            # ссылке, и при узнавании по имени. Кнопка снимается: повторное
-            # нажатие ничего не изменит. О подтверждении бот напишет сам.
-            await callback.answer("Условия приняты")
-            if callback.message:
-                await callback.message.edit_reply_markup(reply_markup=None)
-                await callback.message.answer(text.LINK_NEEDS_HR)
+        if reason != "hr_confirmation_required":
+            await callback.answer("Не получилось подтвердить условия. Попробуйте ещё раз.", show_alert=True)
             return
-        await callback.answer("Не получилось подтвердить условия. Попробуйте ещё раз.", show_alert=True)
-        return
+    # Сюда же попадает и успешный ответ сервера прежней версии (пока бот
+    # обновлён раньше backend): человеку в обоих случаях — одно и то же.
+    # Кнопка снимается: повторное нажатие ничего не изменит.
     await callback.answer("Условия приняты")
     if callback.message:
         await callback.message.edit_reply_markup(reply_markup=None)
-        from src.handlers.menu.router import build_menu
-
-        # Профиль перечитывается, а не подставляется заглушкой: меню
-        # зависит от того, ждёт ли человека ознакомление, и собранное
-        # по `True` обещало бы рабочие разделы тому, кому они закрыты.
-        try:
-            profile = await client.profile(callback.from_user.id)
-        except ApiError:
-            profile = None
-        await callback.message.answer(
-            text.LINK_CONNECTED,
-            reply_markup=build_menu(profile, callback.message),
-        )
+        await callback.message.answer(text.LINK_NEEDS_HR)
 
 
 @router.message(CommandStart(deep_link=False))

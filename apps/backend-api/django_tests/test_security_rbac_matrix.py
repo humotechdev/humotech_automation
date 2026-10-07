@@ -69,6 +69,8 @@ ROUTES = {
     "region-reactivate": (_pk("region"), {"post": {}}),
     "office-detail": (_pk("office"), {"get": None, "patch": {"name": "Взлом"}}),
     "office-close": (_pk("office"), {"post": {}}),
+    "office-confirm-location": (_pk("office"), {"post": {}}),
+    "office-discard-location": (_pk("office"), {"post": {}}),
     "office-deactivate": (_pk("office"), {"post": {}}),
     "office-reactivate": (_pk("office"), {"post": {}}),
     "employee-detail": (_pk("employee"), {"get": None, "patch": {"first_name": "Взлом"}}),

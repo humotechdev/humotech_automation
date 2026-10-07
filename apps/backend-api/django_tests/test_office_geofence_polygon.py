@@ -365,24 +365,31 @@ def test_hr_saves_and_edits_a_contour(hr, office):
     assert float(body["latitude"]) == pytest.approx(lat, abs=1e-6)
     assert float(body["longitude"]) == pytest.approx(lon, abs=1e-6)
 
-    # Правка: один угол сдвинут.
+    # Правка: один угол сдвинут. У офиса уже есть место, поэтому правка —
+    # предложение: действует прежний контур, пока его не подтвердят.
     moved = [list(vertex) for vertex in COMPOUND]
     moved[0] = [41.30490, 69.331620]
     edited = hr.patch(f"{API}/offices/{office.id}/", {
         "geofence_polygon": moved,
     }, format="json")
     assert edited.status_code == 200, edited.content
-    assert edited.json()["geofence_polygon"][0] == [41.3049, 69.33162]
+    assert edited.json()["geofence_polygon"][0] == [41.30495, 69.331616]
+    assert edited.json()["pending_location"]["geofence_polygon"][0] == [41.3049, 69.33162]
+
+    confirmed = hr.post(f"{API}/offices/{office.id}/location/confirm/")
+    assert confirmed.status_code == 200, confirmed.content
+    assert confirmed.json()["geofence_polygon"][0] == [41.3049, 69.33162]
 
     # В журнале — контур до и после, по вершинам, а не строкой.
-    entries = list(
+    switch = AuditLog.objects.get(entity_id=office.id, action="office.location.confirm")
+    assert switch.old_values["geofence_polygon"][0] == [41.30495, 69.331616]
+    assert switch.new_values["geofence_polygon"][0] == [41.3049, 69.33162]
+    first = (
         AuditLog.objects.filter(entity_id=office.id, action="office.update")
-        .order_by("occurred_at")
+        .order_by("occurred_at").first()
     )
-    assert entries[-1].old_values["geofence_polygon"][0] == [41.30495, 69.331616]
-    assert entries[-1].new_values["geofence_polygon"][0] == [41.3049, 69.33162]
-    assert entries[0].old_values["geofence_kind"] == "CIRCLE"
-    assert entries[0].new_values["geofence_kind"] == "POLYGON"
+    assert first.old_values["geofence_kind"] == "CIRCLE"
+    assert first.new_values["geofence_kind"] == "POLYGON"
 
 
 def test_hr_switches_back_to_the_circle(hr, fenced_office):
@@ -393,7 +400,11 @@ def test_hr_switches_back_to_the_circle(hr, fenced_office):
     }, format="json")
 
     assert back.status_code == 200, back.content
-    assert back.json()["geofence_kind"] == "CIRCLE"
+    # До подтверждения действует контур.
+    assert back.json()["geofence_kind"] == "POLYGON"
+    assert back.json()["pending_location"]["geofence_kind"] == "CIRCLE"
+
+    assert hr.post(f"{API}/offices/{fenced_office.id}/location/confirm/").status_code == 200
     fenced_office.refresh_from_db()
     assert geofence_kind(fenced_office) == CIRCLE
 

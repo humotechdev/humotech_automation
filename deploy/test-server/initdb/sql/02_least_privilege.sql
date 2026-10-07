@@ -15,7 +15,7 @@
 --
 -- Пароли ролей задаются переменными окружения контейнера postgres
 -- (POSTGRES_OWNER_PASSWORD, POSTGRES_APP_PASSWORD) и подставляются
--- entrypoint-скриптом 03_roles_passwords.sh ПЕРЕД этим файлом переменной
+-- entrypoint-скриптом 02_least_privilege.sh ПЕРЕД этим файлом переменной
 -- psql. Здесь пароли не хранятся.
 \set ON_ERROR_STOP on
 

@@ -80,7 +80,6 @@ export function OfficesPage() {
   const picked = params.get('office') ?? '';
 
   const [draft, setDraft] = useState(search);
-  const [attempt, setAttempt] = useState(0);
   const [updated, setUpdated] = useState<Date | null>(null);
   useEffect(() => setDraft(search), [search]);
 
@@ -108,7 +107,7 @@ export function OfficesPage() {
     return () => clearTimeout(timer);
   }, [draft, search, patch]);
 
-  const key = `${search}|${attempt}`;
+  const key = search;
 
   const [list] = useBlock(
     (signal) =>
@@ -151,22 +150,22 @@ export function OfficesPage() {
     key,
   );
 
-  const [regions] = useBlock((signal) => api.regions(signal), `regions|${attempt}`);
+  const [regions] = useBlock((signal) => api.regions(signal), 'regions');
   // Окно «Добавить офис». Регион заводится в нём же: без региона офис
   // создать не во что, а пустая система начинается именно с этого.
   const [adding, setAdding] = useState(false);
   const [addRegion, setAddRegion] = useState('');
   const [regionRows] = useBlock(
     (signal) => api.regionsPage({ status: 'ACTIVE', limit: '200' }, signal),
-    `regions-full|${attempt}`,
+    'regions-full',
   );
   const [staff] = useBlock(
     (signal) => api.employeeCounts({}, signal),
-    `staff|${attempt}`,
+    'staff',
   );
   const [today] = useBlock(
     (signal) => api.dashboard({}, signal),
-    `now|${attempt}`,
+    'now',
   );
   const [areas] = useBlock(() => loadAreas(), 'areas');
 
@@ -290,7 +289,6 @@ export function OfficesPage() {
             regions={regionRows.state === 'ready' ? regionRows.data.items : []}
             region={addRegion || undefined}
             onClose={() => { setAdding(false); setAddRegion(''); }}
-            onCreated={() => setAttempt((n) => n + 1)}
           />
         )}
 

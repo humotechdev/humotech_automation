@@ -64,10 +64,6 @@ THANKS_TYPE = "survey.completed"
 #: человека: кто прошёл опрос, видно в списке получателей.
 ANONYMOUS_MIN_RESPONSES = 3
 
-#: С чего начинается формула в Excel/LibreOffice. Ячейка CSV, которая
-#: начинается так, исполняется при открытии файла.
-FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
-
 logger = logging.getLogger("humotech.surveys")
 
 

@@ -79,11 +79,27 @@ def _forbid_self_field_work(actor, employee_id) -> None:
                                details={"reason": "self_attendance"})
 
 
+def blocking_field_work():
+    """Запросы, которые ещё держат день: подтверждённые и живые ожидающие.
+
+    Ожидающий запрос с истёкшим сроком — тот, на который сотрудник так и не
+    ответил. Закрывает его `expire_stale` только при обращении к списку, и
+    до этого он висел бы PENDING и запрещал HR одобрять отсутствия, вносить
+    отметки и править график на этот день без срока. Расчёт присутствия
+    (`attendance/hr.py`) такой запрос уже не считает — здесь то же правило.
+    """
+    from django.db.models import Q
+    from django.utils import timezone
+
+    return FieldWorkRequest.objects.filter(
+        Q(status="CONFIRMED") | Q(status="PENDING", expires_at__gt=timezone.now())
+    )
+
+
 def require_no_field_work(employee_id, first: date, last: date):
     """Call inside a transaction while holding the employee row lock."""
-    if FieldWorkRequest.objects.filter(employee_id=employee_id,
-        date__gte=first, date__lte=last,
-        status__in=("PENDING", "CONFIRMED")).exists():
+    if blocking_field_work().filter(employee_id=employee_id,
+        date__gte=first, date__lte=last).exists():
         raise Conflict("За этот период есть запрос выездной работы; сначала отмените его",
                        details={"reason": "field_work_conflict"})
 

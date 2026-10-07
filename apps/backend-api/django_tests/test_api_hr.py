@@ -112,6 +112,7 @@ def test_office_list_shows_region_and_supports_filters(hr_client, region):
             "region_id": str(region.id), "code": f"OF{index}",
             "name": f"Офис {index}", "address": f"ул. Тестовая, {index}",
             "timezone": "Asia/Dushanbe",
+            "latitude": "41.311081", "longitude": "69.240562", "geofence_radius_m": 100,
         })
 
     body = hr_client.get(f"{API}/offices/").json()
@@ -130,6 +131,7 @@ def test_office_pagination_walks_every_row_once(hr_client, region):
         hr_client.post(f"{API}/offices/", {
             "region_id": str(region.id), "code": f"P{index}", "name": f"Офис {index}",
             "address": "адрес", "timezone": "Asia/Dushanbe",
+            "latitude": "41.311081", "longitude": "69.240562", "geofence_radius_m": 100,
         })
 
     seen, cursor, pages = [], None, 0

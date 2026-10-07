@@ -377,7 +377,12 @@ def _fail(notification_id, *, error: str, moment: datetime) -> bool:
         ]
     )
     _log_attempt(row, outcome="FAILED", reason=row.error_message, moment=moment)
-    signals.deliveries_changed([row.id])
+    # Сигнал — только когда CRM увидит перемену. Повтор по расписанию
+    # оставляет строку PENDING, а PENDING и RUNNING в чате оба выглядят
+    # «в очереди» (`questions/inbox.DELIVERY`): будить ради этого каждую
+    # открытую вкладку на каждой попытке незачем.
+    if row.status == "FAILED":
+        signals.deliveries_changed([row.id])
     return True
 
 

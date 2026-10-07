@@ -290,7 +290,10 @@ class AccessControl:
     ):
         """Регион виден целиком — для действий, задевающих все его офисы."""
         region = self.require_region(actor, region_id, permission)
-        if self.offices_in_region(actor, region_id, permission) is not None:
+        # То же условие, при котором `offices_in_region` отвечает «весь
+        # регион», но без второго `require_region` и лишних запросов.
+        scope = self._scope_for_check(actor, permission)
+        if not (scope.all_offices or region_id in scope.region_ids):
             raise PermissionDenied("Регион вне вашей области видимости")
         return region
 

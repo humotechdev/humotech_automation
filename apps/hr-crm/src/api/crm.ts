@@ -1100,10 +1100,33 @@ export type OfficeFull = Office & {
   geofence_kind?: 'CIRCLE' | 'POLYGON';
   /** Углы участка `[широта, долгота]`, незамкнутый контур. */
   geofence_polygon?: [number, number][] | null;
+  /**
+   * Новое местоположение, ждущее подтверждения. Пока оно здесь, отметки
+   * сверяются с действующим (поля выше). `null` — предложения нет.
+   */
+  pending_location?: PendingLocation | null;
+  pending_location_at?: string | null;
+  pending_location_by_name?: string | null;
   opened_at: string | null;
   closed_at: string | null;
   updated_at?: string;
 };
+
+export type PendingLocation = {
+  geofence_kind: 'CIRCLE' | 'POLYGON';
+  latitude: string | null;
+  longitude: string | null;
+  geofence_radius_m: number | null;
+  geofence_polygon: [number, number][] | null;
+};
+
+/** Новое место начинает действовать вместо прежнего. */
+export const confirmOfficeLocation = (id: string) =>
+  request<OfficeFull>(`/offices/${id}/location/confirm/`, { method: 'POST', body: {} });
+
+/** Новое место отброшено; прежнее продолжает действовать. */
+export const discardOfficeLocation = (id: string) =>
+  request<OfficeFull>(`/offices/${id}/location/discard/`, { method: 'POST', body: {} });
 
 type Fenced = Pick<OfficeFull, 'latitude' | 'longitude' | 'geofence_radius_m'
   | 'geofence_kind' | 'geofence_polygon'>;
@@ -1126,12 +1149,13 @@ export function geofenceReady(office: Fenced): boolean {
 export function geofenceLabel(office: Fenced): string {
   if (!geofenceReady(office)) return 'не задана';
   if (office.geofence_kind === 'POLYGON') {
-    return `контур, ${office.geofence_polygon!.length} ${corners(office.geofence_polygon!.length)}`;
+    return `контур, ${office.geofence_polygon!.length} ${cornersWord(office.geofence_polygon!.length)}`;
   }
   return `${office.geofence_radius_m} м`;
 }
 
-function corners(count: number): string {
+/** «угол», «угла», «углов» — одно правило на всю CRM. */
+export function cornersWord(count: number): string {
   const tens = count % 100;
   const ones = count % 10;
   if (tens >= 11 && tens <= 14) return 'углов';
@@ -1180,15 +1204,17 @@ export const updateRegion = (
  * Часового пояса в теле нет: он один на страну и берётся у организации
  * на сервере. Передать его отсюда значило бы дать интерфейсу
  * возможность завести офис, живущий на час в стороне от остальных.
+ *
+ * Местоположение обязательно: точка с радиусом или контур. Без него
+ * сервер офис не заводит.
  */
 export const createOffice = (body: {
   region_id: string;
   /** Пусто — офис назовётся по региону. */
   name?: string;
-  /** Адрес задают в карточке офиса, а не при заведении. */
   address?: string;
   opened_at?: string;
-}) => request<OfficeFull>('/offices/', { method: 'POST', body });
+} & Record<string, unknown>) => request<OfficeFull>('/offices/', { method: 'POST', body });
 
 export const setRegionActive = (id: string, active: boolean) =>
   request<RegionFull>(`/regions/${id}/${active ? 'reactivate' : 'deactivate'}/`, {

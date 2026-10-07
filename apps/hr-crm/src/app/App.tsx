@@ -17,7 +17,7 @@ import { RequestPage } from '../pages/RequestPage';
 import { RequestsPage } from '../pages/RequestsPage';
 import { AttendancePage } from '../pages/AttendancePage';
 import { OfficesPage } from '../pages/OfficesPage';
-import { OfficeSetupPage } from '../pages/OfficeSetupPage';
+import { NewOfficePage, OfficeSetupPage } from '../pages/OfficeSetupPage';
 import { QuestionsPage } from '../pages/QuestionsPage';
 import { SurveysPage } from '../pages/SurveysPage';
 import { SurveyTemplatePage } from '../pages/SurveyTemplatePage';
@@ -67,6 +67,7 @@ export function App() {
         <Route path="/requests/:id" element={<RequestPage />} />
         <Route path="/attendance" element={<AttendancePage />} />
         <Route path="/offices" element={<OfficesPage />} />
+        <Route path="/offices/new" element={<NewOfficePage />} />
         <Route path="/offices/:id/setup" element={<OfficeSetupPage />} />
         <Route path="/questions" element={<QuestionsPage />} />
         {/*

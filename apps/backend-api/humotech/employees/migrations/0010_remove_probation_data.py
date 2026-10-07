@@ -54,15 +54,23 @@ UPDATE employees SET employment_status = 'ACTIVE' WHERE employment_status = 'PRO
 """
 
 # Откат возможен, только пока колонки ещё есть (т.е. при откате 0011 перед
-# 0010): возвращаем статус из снимка, если снимок есть.
+# 0010): возвращаем из снимка всё, что снимали, — статус, даты стажировки
+# и наставника. Откат 0011 воссоздаёт колонки пустыми, и без этого даты и
+# наставник терялись бы, хотя лежат в снимке.
 REVERSE = """
 DO $$
 BEGIN
     IF to_regclass('public.employees_probation_backup') IS NOT NULL THEN
         UPDATE employees e
-        SET employment_status = b.employment_status
+        SET employment_status = CASE
+                WHEN b.employment_status = 'PROBATION' THEN b.employment_status
+                ELSE e.employment_status
+            END,
+            probation_from = b.probation_from,
+            probation_to = b.probation_to,
+            mentor_employee_id = b.mentor_employee_id
         FROM employees_probation_backup b
-        WHERE e.id = b.employee_id AND b.employment_status = 'PROBATION';
+        WHERE e.id = b.employee_id;
     END IF;
 END $$;
 """

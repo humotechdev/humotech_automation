@@ -173,19 +173,33 @@ class WorkScheduleService(BaseService):
 
         with self.atomic():
             if days is not None or changes.get("weekly_minutes") is not None or changes.get("timezone") is not None:
-                from humotech.attendance.models import FieldWorkRequest
-                from humotech.attendance.field_work import require_no_field_work
+                from humotech.attendance.field_work import (
+                    blocking_field_work, require_no_field_work,
+                )
                 from humotech.absences.services import lock_employee
-                # Lock all assigned employees before the shared schedule row.
+                # Lock assigned employees before the shared schedule row.
                 # Field-work creation takes the locks in the same order.
-                ids = EmployeeScheduleAssignment.objects.filter(
-                    schedule_id=schedule_id).values_list("employee_id", flat=True).distinct().order_by("employee_id")
+                #
+                # Locking is needed only for those who can get a NEW request
+                # concurrently: a request is created only for today and only
+                # for an assignment in force today. Anyone whose assignment on
+                # this schedule ended earlier cannot gain one, so locking every
+                # employee who EVER held the schedule would serialize a routine
+                # edit on an ever-growing set. (A day of slack covers offices
+                # whose "today" is still yesterday in UTC.)
+                today = date.today()
+                assigned = EmployeeScheduleAssignment.objects.filter(schedule_id=schedule_id)
+                ids = list(assigned.filter(
+                    Q(valid_to__isnull=True) | Q(valid_to__gte=today - timedelta(days=1)),
+                ).values_list("employee_id", flat=True).distinct().order_by("employee_id"))
                 for employee_id in ids:
                     lock_employee(employee_id)
                     Employee.objects.select_for_update().get(id=employee_id)
                 WorkSchedule.objects.select_for_update().get(id=schedule_id)
-                protected = FieldWorkRequest.objects.filter(
-                    employee_id__in=ids, status__in=("PENDING", "CONFIRMED"))
+                # Existing requests still protect their days for everyone who
+                # held the schedule then, including those no longer on it.
+                protected = blocking_field_work().filter(
+                    employee_id__in=assigned.values("employee_id"))
                 for protected_day in protected:
                     active_assignment = EmployeeScheduleAssignment.objects.filter(
                         employee_id=protected_day.employee_id, schedule_id=schedule_id,

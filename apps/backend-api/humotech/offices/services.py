@@ -15,6 +15,8 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
+from django.utils import timezone as django_tz
+
 from humotech.core.errors import Conflict, ValidationFailed
 from humotech.core.pagination import Page, paginate
 from humotech.core.rbac import Actor, snapshot
@@ -26,10 +28,12 @@ from humotech.core.validation import (
     validate_timezone,
 )
 from humotech.offices.geo import (
+    CIRCLE,
     GEOFENCE_KINDS,
     POLYGON,
     PolygonError,
     clean_polygon,
+    geofence_kind,
     polygon_centre,
 )
 from humotech.offices.models import Office
@@ -43,6 +47,15 @@ AUDITED_FIELDS = (
     # Контур меняет круг допуска так же, как радиус: кто его перерисовал
     # и что было до, должно читаться из журнала целиком, по вершинам.
     "geofence_kind", "geofence_polygon",
+    # Предложенное, но ещё не подтверждённое место: кто предложил и что
+    # именно — видно в журнале до того, как оно начнёт действовать.
+    "pending_location",
+)
+
+#: Поля действующей геозоны — то, что переносится из ожидающего места.
+LOCATION_FIELDS = (
+    "geofence_kind", "latitude", "longitude", "geofence_radius_m",
+    "geofence_polygon",
 )
 
 #: Поля, правка которых меняет, кого пустит отметка.
@@ -162,6 +175,46 @@ def apply_geofence(office: Office, changes: dict) -> None:
         office.longitude = Decimal(f"{lon:.6f}")
 
 
+def require_location(office: Office) -> None:
+    """У офиса есть рабочая геозона: точка с радиусом или контур.
+
+    Офис без места — это офис, где печатный код не примет ни одной отметки,
+    а экранный — примет откуда угодно. Поэтому место обязательно с момента
+    создания и снять его потом нельзя: заменить — можно, оставить пустым — нет.
+    """
+    if geofence_kind(office) is None:
+        raise ValidationFailed(
+            "Укажите местоположение офиса: точку на карте с радиусом или контур",
+            details={"location": [
+                "Без местоположения офис не создаётся и не остаётся."
+            ]},
+        )
+
+
+def _location_of(office: Office) -> dict:
+    """Геозона офиса как значение для `pending_location`."""
+    return {
+        "geofence_kind": office.geofence_kind,
+        "latitude": None if office.latitude is None else str(office.latitude),
+        "longitude": None if office.longitude is None else str(office.longitude),
+        "geofence_radius_m": office.geofence_radius_m,
+        "geofence_polygon": office.geofence_polygon,
+    }
+
+
+def _put_location(office: Office, location: dict) -> None:
+    """Перенести геозону из `pending_location` в действующие поля."""
+    office.geofence_kind = location.get("geofence_kind") or CIRCLE
+    office.latitude = (
+        None if location.get("latitude") is None else Decimal(location["latitude"])
+    )
+    office.longitude = (
+        None if location.get("longitude") is None else Decimal(location["longitude"])
+    )
+    office.geofence_radius_m = location.get("geofence_radius_m")
+    office.geofence_polygon = location.get("geofence_polygon")
+
+
 class OfficeService(BaseService):
     """Требует `offices.read` для чтения и `offices.manage` для изменений."""
 
@@ -274,6 +327,9 @@ class OfficeService(BaseService):
             # полкоординаты или радиус в 0 м заводились при создании.
             apply_geofence(office, extra)
             check_location(office)
+            # Офис без места не заводится: на нём не работала бы ни одна
+            # проверка присутствия.
+            require_location(office)
             office.save(force_insert=True)
             self.audit.record(
                 actor, action="office.create", entity_type="offices",
@@ -306,13 +362,14 @@ class OfficeService(BaseService):
         if changes.get("timezone") is not None:
             office.timezone = validate_timezone(changes["timezone"])
         for field in SIMPLE_FIELDS:
-            if field in changes:
+            # Поля геозоны здесь не присваиваются: они идут через проверку
+            # и, у офиса с местом, через подтверждение (ниже).
+            if field in changes and field not in GEOFENCE_FIELDS:
                 setattr(office, field, changes[field])
         # Проверяется только то, что меняли: у старых офисов радиус мог быть
         # задан до появления границ, и правка названия не должна на нём падать.
         if GEOFENCE_FIELDS & set(changes):
-            apply_geofence(office, changes)
-            check_location(office)
+            self._propose_location(actor, office, changes)
 
         require_order(
             office.opened_at, office.closed_at,
@@ -327,6 +384,91 @@ class OfficeService(BaseService):
                 actor, action="office.update", entity_type="offices",
                 entity_id=office.id, before=before,
                 after=snapshot(office, AUDITED_FIELDS),
+            )
+        return office
+
+    # ----------------------------------------------------------- местоположение
+
+    def _propose_location(self, actor: Actor, office: Office, changes: dict) -> None:
+        """Новое место офиса: сразу — только если прежнего не было.
+
+        Офис, где уже отмечаются, меняет место в два шага. Правка кладёт
+        новое место в `pending_location`, а отметки до подтверждения
+        сверяются с прежним — у офиса не бывает ни минуты «без места», и
+        опечатка в координатах не начинает действовать молча.
+
+        Офис из прошлого, у которого места не было вовсе, получает его
+        сразу: беречь там нечего, а ждать подтверждения значило бы держать
+        его без места ещё дольше.
+
+        Пустое место не принимается ни в каком виде: снять геозону нельзя.
+        """
+        from copy import copy
+
+        candidate = copy(office)
+        for field in ("latitude", "longitude", "geofence_radius_m"):
+            if field in changes:
+                setattr(candidate, field, changes[field])
+        apply_geofence(candidate, changes)
+        check_location(candidate)
+        require_location(candidate)
+
+        if geofence_kind(office) is None:
+            for field in LOCATION_FIELDS:
+                setattr(office, field, getattr(candidate, field))
+            office.pending_location = None
+            office.pending_location_by_user_id = None
+            office.pending_location_at = None
+            return
+
+        proposed = _location_of(candidate)
+        if proposed == _location_of(office):
+            # Прислали то же, что действует: это «оставить как есть».
+            # Предлагать нечего, и прежнее предложение снимается — иначе
+            # оно висело бы, хотя человек на карте вернул старое место.
+            office.pending_location = None
+            office.pending_location_by_user_id = None
+            office.pending_location_at = None
+            return
+        office.pending_location = proposed
+        office.pending_location_by_user_id = actor.user_id
+        office.pending_location_at = django_tz.now()
+
+    def confirm_location(self, actor: Actor, office_id: uuid.UUID) -> Office:
+        """Новое место начинает действовать; прежнее заменяется им."""
+        return self._settle_location(actor, office_id, confirm=True)
+
+    def discard_location(self, actor: Actor, office_id: uuid.UUID) -> Office:
+        """Новое место отброшено; действует прежнее."""
+        return self._settle_location(actor, office_id, confirm=False)
+
+    def _settle_location(self, actor: Actor, office_id: uuid.UUID, *, confirm: bool) -> Office:
+        self.access.require(actor, "offices.manage")
+        self.access.require_office(actor, office_id, "offices.manage")
+        with self.atomic():
+            office = Office.objects.select_for_update().get(id=office_id)
+            if not office.pending_location:
+                raise Conflict(
+                    "Нового местоположения, ждущего подтверждения, нет",
+                    details={"reason": "no_pending_location"},
+                )
+            before = snapshot(office, AUDITED_FIELDS)
+            if confirm:
+                _put_location(office, office.pending_location)
+                # Предложение проверялось при сохранении, но правила могли
+                # ужесточиться: действующим не становится то, что сейчас
+                # не прошло бы.
+                check_location(office)
+                require_location(office)
+            office.pending_location = None
+            office.pending_location_by_user_id = None
+            office.pending_location_at = None
+            office.save()
+            self.audit.record(
+                actor,
+                action="office.location.confirm" if confirm else "office.location.discard",
+                entity_type="offices", entity_id=office.id,
+                before=before, after=snapshot(office, AUDITED_FIELDS),
             )
         return office
 

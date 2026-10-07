@@ -23,6 +23,7 @@ from django.utils import timezone
 from django_tests.conftest import bot_headers, link_telegram
 from humotech.attendance.models import AttendanceEvent, AttendanceSession
 from humotech.attendance.scanning import ScanStatus, scan
+from humotech.audit.models import AuditLog
 from humotech.core.errors import ValidationFailed
 from humotech.employees.models import Employee, EmployeeAssignment
 from humotech.offices.geo import EARTH_RADIUS_M, distance_m
@@ -274,14 +275,101 @@ def test_latitude_without_longitude_is_not_a_place(manager, office):
         OfficeService().update(manager, office.id, latitude=OFFICE_LAT)
 
 
-def test_clearing_the_location_removes_all_three(manager, located_office):
-    cleared = OfficeService().update(
-        manager, located_office.id, latitude=None, longitude=None,
-        geofence_radius_m=None,
+def test_the_location_cannot_be_cleared(manager, located_office):
+    """Офис без места не остаётся: снять геозону нельзя, только заменить."""
+    with pytest.raises(ValidationFailed):
+        OfficeService().update(
+            manager, located_office.id, latitude=None, longitude=None,
+            geofence_radius_m=None,
+        )
+    located_office.refresh_from_db()
+    assert located_office.latitude == OFFICE_LAT
+    assert located_office.geofence_radius_m == 100
+    assert located_office.pending_location is None
+
+
+def test_an_office_is_not_created_without_a_location(manager, region):
+    with pytest.raises(ValidationFailed):
+        OfficeService().create(manager, region_id=region.id, name="Без места")
+    # Полкруга — тоже не место: точка без радиуса.
+    with pytest.raises(ValidationFailed):
+        OfficeService().create(
+            manager, region_id=region.id, name="Без радиуса",
+            latitude=OFFICE_LAT, longitude=OFFICE_LON,
+        )
+
+
+def test_a_new_location_waits_and_the_old_one_keeps_working(
+    context, sticker, manager, located_office
+):
+    """Пока новое место не подтвердили, отметки сверяются с прежним."""
+    point, code = sticker("ENTRY")
+    far_lat, far_lon = north(3000)
+
+    proposed = OfficeService().update(
+        manager, located_office.id, latitude=far_lat, longitude=far_lon,
+        geofence_radius_m=100,
     )
-    assert cleared.latitude is None
-    assert cleared.longitude is None
-    assert cleared.geofence_radius_m is None
+
+    # Действует прежнее место, новое лежит отдельно.
+    assert proposed.latitude == OFFICE_LAT
+    assert proposed.pending_location["latitude"] == str(far_lat)
+    assert proposed.pending_location_by_user_id == manager.user_id
+    # И отметка у прежнего входа по-прежнему принимается.
+    assert mark(context, code).status == ScanStatus.ENTERED
+
+
+def test_confirming_switches_the_location(manager, located_office):
+    far_lat, far_lon = north(3000)
+    OfficeService().update(
+        manager, located_office.id, latitude=far_lat, longitude=far_lon,
+        geofence_radius_m=200,
+    )
+
+    confirmed = OfficeService().confirm_location(manager, located_office.id)
+
+    assert confirmed.latitude == far_lat
+    assert confirmed.geofence_radius_m == 200
+    assert confirmed.pending_location is None
+    actions = list(
+        AuditLog.objects.filter(entity_id=located_office.id)
+        .values_list("action", flat=True)
+    )
+    assert "office.location.confirm" in actions
+
+
+def test_discarding_keeps_the_old_location(manager, located_office):
+    far_lat, far_lon = north(3000)
+    OfficeService().update(
+        manager, located_office.id, latitude=far_lat, longitude=far_lon,
+        geofence_radius_m=200,
+    )
+
+    kept = OfficeService().discard_location(manager, located_office.id)
+
+    assert kept.latitude == OFFICE_LAT
+    assert kept.geofence_radius_m == 100
+    assert kept.pending_location is None
+
+
+def test_nothing_to_confirm_is_a_conflict(manager, located_office):
+    from humotech.core.errors import Conflict
+
+    with pytest.raises(Conflict):
+        OfficeService().confirm_location(manager, located_office.id)
+
+
+def test_an_office_from_before_without_a_location_gets_one_at_once(manager, office):
+    """Старому офису без места беречь нечего: место ставится сразу."""
+    assert office.latitude is None
+
+    placed = OfficeService().update(
+        manager, office.id, latitude=OFFICE_LAT, longitude=OFFICE_LON,
+        geofence_radius_m=100,
+    )
+
+    assert placed.latitude == OFFICE_LAT
+    assert placed.pending_location is None
 
 
 def test_the_sticker_secret_is_still_shown_only_once(manager, located_office,
@@ -309,23 +397,33 @@ def test_office_setup_scenario_end_to_end(
     )
     api_client.force_authenticate(user=hr)
 
-    # 1. Новый офис.
+    # 1–3. Новый офис сразу с точкой на карте и радиусом 100 м: без места
+    # офис не заводится.
     created = api_client.post(f"{API}/offices/", {
         "region_id": str(region.id), "code": "TASHKENT_CITY",
         "name": "Ташкент Сити", "address": "ул. Амира Темура, 107",
         "timezone": "Asia/Tashkent",
-    }, format="json")
-    assert created.status_code == 201, created.content
-    office_id = created.json()["id"]
-
-    # 2–3. Точка на карте и радиус 100 м.
-    placed = api_client.patch(f"{API}/offices/{office_id}/", {
         "latitude": str(OFFICE_LAT), "longitude": str(OFFICE_LON),
         "geofence_radius_m": 100,
-        "address": "Ташкент, ул. Амира Темура, 107",
     }, format="json")
-    assert placed.status_code == 200, placed.content
-    assert placed.json()["geofence_radius_m"] == 100
+    assert created.status_code == 201, created.content
+    assert created.json()["geofence_radius_m"] == 100
+    office_id = created.json()["id"]
+
+    # Перенос точки — в два шага: сначала предложение, место прежнее.
+    moved_lat, moved_lon = north(10)
+    proposed = api_client.patch(f"{API}/offices/{office_id}/", {
+        "latitude": str(moved_lat), "longitude": str(moved_lon),
+        "geofence_radius_m": 100,
+    }, format="json")
+    assert proposed.status_code == 200, proposed.content
+    assert proposed.json()["latitude"] == str(OFFICE_LAT)
+    assert proposed.json()["pending_location"]["latitude"] == str(moved_lat)
+    # Подтверждение — и новое место начинает действовать.
+    confirmed = api_client.post(f"{API}/offices/{office_id}/location/confirm/")
+    assert confirmed.status_code == 200, confirmed.content
+    assert confirmed.json()["latitude"] == str(moved_lat)
+    assert confirmed.json()["pending_location"] is None
 
     # 4. QR-точка входа.
     point = api_client.post(f"{API}/qr-points/", {

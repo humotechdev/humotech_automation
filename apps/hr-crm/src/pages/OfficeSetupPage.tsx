@@ -12,7 +12,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 
 import * as api from '../api/crm';
 import { messageFor } from '../api/errors';
@@ -197,6 +197,62 @@ export function OfficeSetupPage() {
   );
 }
 
+// --- новый офис ------------------------------------------------------------------
+
+/**
+ * Новый офис: регион и название пришли из диалога, здесь — место.
+ *
+ * Офис создаётся одним запросом вместе с точкой и радиусом или контуром.
+ * Без места сервер его не заведёт: офис, где не работает ни одна проверка
+ * присутствия, не должен существовать даже минуту.
+ */
+export function NewOfficePage() {
+  const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const regionId = params.get('region') ?? '';
+  const name = (params.get('name') ?? '').trim();
+
+  return (
+    <AppShell breadcrumb="Офисы и регионы / Новый офис" section="offices">
+      <div className="ofs">
+        <header className="ofs-head">
+          <Link className="ofs-back" to="/offices">
+            <AppIcon name="back" size={16} />
+            К офисам и регионам
+          </Link>
+          <div className="ofs-head__row">
+            <div className="ofs-head__text">
+              <h1 className="ofs-head__title">{name || 'Новый офис'}</h1>
+              <p className="ofs-head__sub">
+                Поставьте точку входа и радиус или обведите контур — без места офис не создаётся.
+              </p>
+            </div>
+          </div>
+        </header>
+        {!regionId ? (
+          <p className="ofs-empty ofs-empty--bad">
+            Не выбран регион. <Link className="link" to="/offices">Вернуться к офисам</Link>
+          </p>
+        ) : (
+          <div className="ofs-grid ofs-grid--wide">
+            <section className="ofs-main" aria-label="Геолокация нового офиса">
+              <GeoEditor
+                office={null}
+                canManage
+                submit={(body) => api.createOffice({
+                  region_id: regionId, ...(name ? { name } : {}), ...body,
+                })}
+                // Сразу к QR-точкам: место есть, без кодов офис ещё не работает.
+                onSaved={(made) => navigate(`/offices/${made.id}/setup?tab=qr`, { replace: true })}
+              />
+            </section>
+          </div>
+        )}
+      </div>
+    </AppShell>
+  );
+}
+
 // --- сводка слева ----------------------------------------------------------------
 
 function Summary({ office, points, onTab }: {
@@ -294,15 +350,6 @@ function areaOf(corners: Place[]): number {
   return Math.abs(twice) / 2;
 }
 
-function cornersWord(count: number): string {
-  const tens = count % 100;
-  const ones = count % 10;
-  if (tens >= 11 && tens <= 14) return 'углов';
-  if (ones === 1) return 'угол';
-  if (ones >= 2 && ones <= 4) return 'угла';
-  return 'углов';
-}
-
 /**
  * Пара полей с координатами.
  *
@@ -349,23 +396,44 @@ function Coordinates({ place, onPlace }: {
   );
 }
 
-function draftOf(office: api.OfficeFull): Draft {
-  const lat = office.latitude === null ? NaN : Number(office.latitude);
-  const lon = office.longitude === null ? NaN : Number(office.longitude);
+/**
+ * Черновик карты. Если новое место уже предложено и ждёт подтверждения,
+ * на карте — оно: подтверждают то, что видят, а не то, что действует.
+ */
+function draftOf(office: api.OfficeFull | null): Draft {
+  if (!office) {
+    return { place: null, radius: RADIUS_DEFAULT, address: '', shape: 'CIRCLE', polygon: [] };
+  }
+  const zone = office.pending_location ?? office;
+  const lat = zone.latitude === null ? NaN : Number(zone.latitude);
+  const lon = zone.longitude === null ? NaN : Number(zone.longitude);
   return {
     place: Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon } : null,
-    radius: office.geofence_radius_m ?? RADIUS_DEFAULT,
+    radius: zone.geofence_radius_m ?? RADIUS_DEFAULT,
     address: office.address ?? '',
-    shape: office.geofence_kind === 'POLYGON' ? 'POLYGON' : 'CIRCLE',
-    polygon: (office.geofence_polygon ?? []).map(([lat, lon]) => ({ lat, lon })),
+    shape: zone.geofence_kind === 'POLYGON' ? 'POLYGON' : 'CIRCLE',
+    polygon: (zone.geofence_polygon ?? []).map(([lat, lon]) => ({ lat, lon })),
   };
 }
 
-function GeoEditor({ office, canManage, onSaved }: {
-  office: api.OfficeFull;
+/**
+ * Карта, точка и зона офиса.
+ *
+ * `office === null` — офиса ещё нет: редактор работает как первый шаг
+ * создания, и `submit` заводит офис вместе с местом. Без места офис не
+ * создаётся, а место у существующего офиса нельзя снять — только заменить.
+ * Замена не действует сразу: сервер кладёт её в ожидание, и до
+ * подтверждения отметки сверяются с прежним местом.
+ */
+export function GeoEditor({ office, canManage, onSaved, submit, submitLabel }: {
+  office: api.OfficeFull | null;
   canManage: boolean;
   onSaved: (office: api.OfficeFull) => void;
+  /** Куда уходит сохранение. По умолчанию — правка существующего офиса. */
+  submit?: (body: Record<string, unknown>) => Promise<api.OfficeFull>;
+  submitLabel?: string;
 }) {
+  const creating = office === null;
   const initial = useMemo(() => draftOf(office), [office]);
   const [draft, setDraft] = useState<Draft>(initial);
   const [picking, setPicking] = useState(false);
@@ -377,7 +445,6 @@ function GeoEditor({ office, canManage, onSaved }: {
   const [failed, setFailed] = useState<string | null>(null);
   const [fields, setFields] = useState<Record<string, string[]>>({});
   const [done, setDone] = useState<string | null>(null);
-  const [confirmClear, setConfirmClear] = useState(false);
   const lookup = useRef<AbortController | null>(null);
   const hunt = useRef<AbortController | null>(null);
 
@@ -392,7 +459,7 @@ function GeoEditor({ office, canManage, onSaved }: {
     || cornersKey(draft.polygon) !== cornersKey(initial.polygon);
   const fenced = draft.shape === 'POLYGON';
   const ready = fenced ? draft.polygon.length >= 3 : draft.place !== null;
-  const hasZone = initial.place !== null || initial.polygon.length > 0;
+  const pending = office?.pending_location ?? null;
 
   const corners = useCallback((next: Place[]) => {
     setDraft((was) => ({ ...was, polygon: next }));
@@ -460,17 +527,17 @@ function GeoEditor({ office, canManage, onSaved }: {
     setDone(null);
   }
 
-  async function save(next: Draft | null) {
+  async function save(next: Draft) {
     if (sending) return;
     setSending(true);
     setFailed(null);
     setFields({});
     setDone(null);
     try {
-      const address = next?.address.trim() ? { address: next.address.trim() } : {};
+      const address = next.address.trim() ? { address: next.address.trim() } : {};
       // Контур уходит углами; точку офиса — его центр — ставит сервер.
-      // Круг уходит прежним видом. Сброс снимает и то и другое.
-      const body: Record<string, unknown> = next?.shape === 'POLYGON'
+      // Круг уходит прежним видом. Пустого места не бывает: снять его нельзя.
+      const body: Record<string, unknown> = next.shape === 'POLYGON'
         ? {
             geofence_kind: 'POLYGON',
             geofence_polygon: next.polygon.map((one) => [
@@ -478,38 +545,54 @@ function GeoEditor({ office, canManage, onSaved }: {
             ]),
             ...address,
           }
-        : next?.place
-          ? {
-              geofence_kind: 'CIRCLE',
-              latitude: next.place.lat.toFixed(6),
-              longitude: next.place.lon.toFixed(6),
-              geofence_radius_m: next.radius,
-              ...address,
-            }
-          : {
-              geofence_kind: 'CIRCLE', geofence_polygon: null,
-              latitude: null, longitude: null, geofence_radius_m: null,
-            };
-      const savedOffice = await api.updateOffice(office.id, body);
+        : {
+            geofence_kind: 'CIRCLE',
+            latitude: next.place!.lat.toFixed(6),
+            longitude: next.place!.lon.toFixed(6),
+            geofence_radius_m: next.radius,
+            ...address,
+          };
+      const send = submit ?? ((payload: Record<string, unknown>) => api.updateOffice(office!.id, payload));
+      const savedOffice = await send(body);
       // Сервер, который о контуре не знает, молча отбрасывает его поля и
       // возвращает офис кругом. Писать «сохранён» в этом случае — неправда:
       // человек уходит, уверенный, что зона настроена.
-      if (next?.shape === 'POLYGON'
-          && (savedOffice.geofence_kind !== 'POLYGON' || !savedOffice.geofence_polygon?.length)) {
+      const zone = savedOffice.pending_location ?? savedOffice;
+      if (next.shape === 'POLYGON'
+          && (zone.geofence_kind !== 'POLYGON' || !zone.geofence_polygon?.length)) {
         setFailed('Сервер не сохранил контур: эта версия сервера его ещё не поддерживает. '
           + 'Контур на экране остался — сохраните его после обновления сервера.');
         return;
       }
       setDone(
-        next?.shape === 'POLYGON' ? 'Контур территории сохранён'
-          : next?.place ? 'Расположение сохранено' : 'Геолокация очищена',
+        savedOffice.pending_location
+          ? 'Новое местоположение сохранено и ждёт подтверждения. Пока действует прежнее.'
+          : next.shape === 'POLYGON' ? 'Контур территории сохранён' : 'Расположение сохранено',
       );
-      setConfirmClear(false);
       onSaved(savedOffice);
     } catch (error) {
       setFailed(messageFor(error));
       const details = (error as { fields?: Record<string, string[]> }).fields;
       if (details) setFields(details);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  /** Решение по ожидающему месту: подтвердить или отбросить. */
+  async function settle(confirm: boolean) {
+    if (sending || !office) return;
+    setSending(true);
+    setFailed(null);
+    setDone(null);
+    try {
+      const updated = confirm
+        ? await api.confirmOfficeLocation(office.id)
+        : await api.discardOfficeLocation(office.id);
+      setDone(confirm ? 'Новое местоположение действует' : 'Предложение отменено, действует прежнее местоположение');
+      onSaved(updated);
+    } catch (error) {
+      setFailed(messageFor(error));
     } finally {
       setSending(false);
     }
@@ -614,7 +697,7 @@ function GeoEditor({ office, canManage, onSaved }: {
             <p className="ofs-geo__value">
               {draft.polygon.length === 0
                 ? <span className="ofs-geo__none">Углы не отмечены</span>
-                : `${draft.polygon.length} ${cornersWord(draft.polygon.length)}`
+                : `${draft.polygon.length} ${api.cornersWord(draft.polygon.length)}`
                   + (draft.polygon.length >= 3
                     ? ` · около ${Math.round(areaOf(draft.polygon)).toLocaleString('ru-RU')} м²`
                     : '')}
@@ -682,34 +765,41 @@ function GeoEditor({ office, canManage, onSaved }: {
             : 'Сотрудник может отметить вход или выход только внутри этой зоны.'}
         </p>
 
+        {pending && office && (
+          <div className="ofs-confirm ofs-pending" role="region" aria-label="Новое местоположение ждёт подтверждения">
+            <span>
+              <b>Новое местоположение ждёт подтверждения.</b> На карте — предложенное;
+              отметки пока сверяются с прежним ({api.geofenceLabel(office)}).
+              {office.pending_location_by_name && <> Предложил(а): {office.pending_location_by_name}.</>}
+            </span>
+            {canManage && (
+              <>
+                <button type="button" className="ofs-btn ofs-btn--blue" disabled={sending}
+                        onClick={() => void settle(true)}>
+                  Подтвердить
+                </button>
+                <button type="button" className="ofs-btn" disabled={sending}
+                        onClick={() => void settle(false)}>
+                  Отменить
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
         {failed && <p className="ofs-alert" role="alert">{failed}</p>}
         {done && <p className="ofs-done" role="status">{done}</p>}
 
         {canManage && (
-          confirmClear ? (
-            <div className="ofs-confirm" role="alertdialog" aria-label="Очистить геолокацию">
-              <span>
-                Без точки на карте печатные QR-коды офиса перестанут принимать
-                отметки. Очистить?
-              </span>
-              <button type="button" className="ofs-btn ofs-btn--danger" disabled={sending}
-                      onClick={() => void save(null)}>
-                {sending ? 'Очищаем…' : 'Очистить'}
-              </button>
-              <button type="button" className="ofs-btn" onClick={() => setConfirmClear(false)}>Отмена</button>
-            </div>
-          ) : (
-            <div className="ofs-geo__actions">
-              <button type="button" className="ofs-btn"
-                      disabled={sending || !hasZone} onClick={() => setConfirmClear(true)}>
-                Очистить
-              </button>
-              <button type="button" className="ofs-btn ofs-btn--blue"
-                      disabled={sending || !ready || !dirty} onClick={() => void save(draft)}>
-                {sending ? 'Сохраняем…' : 'Сохранить'}
-              </button>
-            </div>
-          )
+          <div className="ofs-geo__actions">
+            {/* «Очистить» нет: офис без места не остаётся — его можно
+                только заменить, и замена ждёт подтверждения. */}
+            <button type="button" className="ofs-btn ofs-btn--blue"
+                    disabled={sending || !ready || (!creating && !dirty)}
+                    onClick={() => void save(draft)}>
+              {sending ? 'Сохраняем…' : submitLabel ?? (creating ? 'Создать офис' : 'Сохранить')}
+            </button>
+          </div>
         )}
       </div>
     </div>

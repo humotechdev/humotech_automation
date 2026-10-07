@@ -89,19 +89,22 @@ def test_the_whole_road(
     telegram_settings, make_absence,
 ):
     # --- 1. Офис, карта, радиус, QR-точка ---------------------------------
+    # Без места офис не заводится: точка и радиус — в том же запросе.
+    bare = hr_client.post(f"{API}/offices/", {
+        "region_id": str(region.id), "code": "E2E0", "name": "Без места",
+        "timezone": "UTC",
+    }, format="json")
+    assert bare.status_code == 400, bare.content
+
     office = hr_client.post(f"{API}/offices/", {
         "region_id": str(region.id), "code": "E2E", "name": "Ташкент Сити",
         "timezone": "UTC",
-    }, format="json")
-    assert office.status_code == 201, office.content
-    office_id = office.json()["id"]
-
-    placed = hr_client.patch(f"{API}/offices/{office_id}/", {
         "latitude": str(OFFICE_LAT), "longitude": str(OFFICE_LON),
         "geofence_radius_m": 100,
     }, format="json")
-    assert placed.status_code == 200, placed.content
-    assert placed.json()["geofence_radius_m"] == 100
+    assert office.status_code == 201, office.content
+    assert office.json()["geofence_radius_m"] == 100
+    office_id = office.json()["id"]
 
     point = hr_client.post(f"{API}/qr-points/", {
         "office_id": office_id, "name": "Главный вход",

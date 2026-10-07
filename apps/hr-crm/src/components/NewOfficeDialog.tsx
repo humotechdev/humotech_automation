@@ -1,10 +1,10 @@
 /**
- * Завести офис: регион и название.
+ * Новый офис, шаг первый: регион и название.
  *
- * Больше здесь ничего не спрашивают. Адрес, точка на карте, радиус
- * геозоны и QR-точки — это настройка, и она открывается сразу после
- * создания. Требовать их в момент заведения значит не дать завести офис
- * тому, кто ещё не знает координат.
+ * Офис здесь ещё не создаётся. Без местоположения офис не заводится
+ * вовсе — на нём не работала бы ни одна проверка присутствия, — поэтому
+ * следующий шаг — карта (`/offices/new`), и уже там офис создаётся одним
+ * запросом вместе с точкой и радиусом или контуром.
  *
  * Название необязательно: пока офис один на регион, «Ташкентская
  * область» — достаточное имя, и сервер подставит его сам.
@@ -18,15 +18,14 @@
  * закрывалось бы ровно в тот момент, когда человек выбрал регион.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import * as api from '../api/crm';
 import { AppIcon } from './AppIcon';
 import { AppSelectField } from './AppSelect';
-import { ApiFailure, messageFor } from '../api/errors';
 
-export function NewOfficeDialog({ regions, region, onClose, onCreated }: {
+export function NewOfficeDialog({ regions, region, onClose }: {
   regions: api.RegionFull[];
   /**
    * Регион, выбранный заранее. Приходит с карты: человек ткнул в
@@ -35,16 +34,11 @@ export function NewOfficeDialog({ regions, region, onClose, onCreated }: {
    */
   region?: string | undefined;
   onClose: () => void;
-  /** Список на странице обновляется, даже если переход не случился. */
-  onCreated: () => void;
 }) {
   const navigate = useNavigate();
   const [regionId, setRegionId] = useState(region ?? '');
   const [name, setName] = useState('');
   const [touched, setTouched] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [refusal, setRefusal] = useState<string | null>(null);
-  const box = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -61,30 +55,12 @@ export function NewOfficeDialog({ regions, region, onClose, onCreated }: {
 
   const chosen = regions.find((one) => one.id === regionId);
 
-  const submit = async () => {
+  const next = () => {
     setTouched(true);
-    if (problem || busy) return;
-    setBusy(true);
-    setRefusal(null);
-    try {
-      const made = await api.createOffice({
-        region_id: regionId,
-        ...(name.trim() ? { name: name.trim() } : {}),
-      });
-      onCreated();
-      // Сразу к настройке: офис без геозоны и QR-точек ещё не работает,
-      // и возвращать человека в список значит просить его найти только
-      // что созданное и открыть заново.
-      navigate(`/offices/${made.id}/setup`);
-    } catch (error) {
-      setRefusal(
-        error instanceof ApiFailure
-          ? error.detail ?? messageFor(error)
-          : messageFor(error),
-      );
-    } finally {
-      setBusy(false);
-    }
+    if (problem) return;
+    const query = new URLSearchParams({ region: regionId });
+    if (name.trim()) query.set('name', name.trim());
+    navigate(`/offices/new?${query.toString()}`);
   };
 
   return (
@@ -92,7 +68,7 @@ export function NewOfficeDialog({ regions, region, onClose, onCreated }: {
          onMouseDown={(event) => {
            if (event.target === event.currentTarget) onClose();
          }}>
-      <div className="of-ask__box" ref={box}>
+      <div className="of-ask__box">
         <header className="of-ask__head">
           <h2 className="of-ask__title">Новый офис</h2>
           <button type="button" className="of-btn--icon" aria-label="Закрыть"
@@ -102,7 +78,7 @@ export function NewOfficeDialog({ regions, region, onClose, onCreated }: {
         </header>
 
         <form className="of-form"
-              onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+              onSubmit={(event) => { event.preventDefault(); next(); }}>
           <label className="of-field">
             <span className="of-field__label">Регион</span>
             <AppSelectField label="Регион" value={regionId} searchable
@@ -130,24 +106,16 @@ export function NewOfficeDialog({ regions, region, onClose, onCreated }: {
           </label>
 
           <p className="of-note">
-            После создания откроется настройка офиса: адрес, точка на карте,
-            радиус геозоны и QR-точки. Пока они не заданы, отметки в этом
-            офисе приниматься не будут.
+            Дальше — место на карте: точка входа с радиусом или контур
+            территории. Без места офис не создаётся.
           </p>
 
-          {refusal && (
-            <p className="of-refusal" role="alert">
-              <AppIcon name="alert" size={16} /> {refusal}
-            </p>
-          )}
-
           <div className="of-ask__tools">
-            <button type="button" className="of-btn of-btn--light" onClick={onClose}
-                    disabled={busy}>
+            <button type="button" className="of-btn of-btn--light" onClick={onClose}>
               Отмена
             </button>
-            <button type="submit" className="of-btn of-btn--blue" disabled={busy}>
-              {busy ? 'Создаём…' : 'Создать офис'}
+            <button type="submit" className="of-btn of-btn--blue">
+              Далее: место на карте
             </button>
           </div>
         </form>
