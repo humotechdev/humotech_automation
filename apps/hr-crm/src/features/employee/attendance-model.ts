@@ -14,6 +14,7 @@
  */
 
 import type { DailyRow, ScheduleDay, WorkScheduleDetail } from '../../api/crm';
+import { dayInZone } from '../time/zone';
 
 /** Состояния, в которых рабочего дня не было. Ложную линию по ним не ведут. */
 export const OFF_STATES = new Set([
@@ -144,12 +145,23 @@ export function points(
     const entry = minutesInZone(row.first_entry_at, zone);
     const exit = minutesInZone(row.last_exit_at, zone);
     const planned = fromClock(row.scheduled_start) ?? plan.start;
+    // Плановый конец — тот, что сервер прислал для ЭТОГО дня: в нём уже
+    // учтены праздник, перенос и смена графика внутри периода. Текущий
+    // график сотрудника — только запасной путь для ответа без поля.
+    const plannedEnd = row.scheduled_end !== undefined
+      ? (row.scheduled_start ? fromClock(row.scheduled_end) : null)
+      : plan.end;
+    // Выход в другие сутки (ночная смена) с концом смены по часам не
+    // сравнивается: 02:00 следующего дня — не «ушёл раньше 18:00».
+    const exitDay = row.last_exit_at ? dayInZone(row.last_exit_at, zone) : '';
+    const sameDay = !exitDay || exitDay === row.day;
     // Ранний уход считается только от планового конца И только когда
     // выход действительно есть: у открытой сессии выхода нет, и
     // «ушёл раньше» про неё — выдумка.
     const early =
-      exit !== null && plan.end !== null && exit < plan.end
-        ? plan.end - exit
+      exit !== null && plannedEnd !== null && sameDay
+        && (planned === null || plannedEnd > planned) && exit < plannedEnd
+        ? plannedEnd - exit
         : null;
 
     return {

@@ -1,70 +1,106 @@
 /**
- * Полная карточка сотрудника: одна страница, пять вкладок.
+ * Карточка сотрудника: один белый лист, общая шапка и пять вкладок.
  *
- * Шапка и вкладки живут выше содержимого и при переключении не
- * перезагружаются: меняется только то, что под ними. Открытая вкладка
- * лежит в адресе, поэтому прямая ссылка, обновление страницы и кнопки
- * «Назад»/«Вперёд» работают, а возврат в список сохраняет прежние поиск
- * и фильтры — они остаются в адресе списка.
+ * Шапка и вкладки не перезагружаются при переключении — меняется только
+ * то, что под ними. Открытая вкладка лежит в адресе, поэтому прямая
+ * ссылка, обновление страницы и «Назад»/«Вперёд» работают, а возврат в
+ * список сохраняет прежние поиск и фильтры.
  *
- * Ни одного бизнес-расчёта здесь нет. Время в офисе, опоздание,
- * состояние дня и границы суток считает сервер: у ночной смены,
- * открытой сессии и допуска опоздания должен быть один ответ, а не
- * второй, посчитанный в браузере.
+ * Ни одного расчёта учёта здесь нет. Время, опоздание, состояние дня,
+ * счётчики заявок считает сервер: у ночной смены, открытой сессии и
+ * допуска опоздания должен быть один ответ, а не второй, посчитанный в
+ * браузере. Карточка различает «ноль», «нет данных», «загрузка», «нет
+ * права» и «сбой» — ошибка запроса никогда не выглядит как «0» или «нет».
+ *
+ * Источники данных:
+ *   шапка, основные сведения, документы — GET /employees/{id}/;
+ *   «Сегодня», «Отработано» — GET /attendance/daily (пояс офиса);
+ *   «Ждут решения» — GET /requests/counts (по всему набору, не по странице);
+ *   уведомление о заявке, список заявок — GET /requests;
+ *   Telegram — GET /employees/{id}/telegram, ознакомление — /onboarding;
+ *   назначения и графики — /employees/{id}/assignments, /schedules, /work-schedules;
+ *   история — GET /audit-logs?employee_id=.
  */
 
 import { type ReactNode, useCallback, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 
 import * as api from '../api/crm';
-import { ApiFailure, messageFor } from '../api/errors';
+import { ApiFailure, messageFor, reasonFor } from '../api/errors';
 import { AppShell } from '../components/AppShell';
-import { AppIcon, type AppIconName } from '../components/AppIcon';
+import { AppIcon } from '../components/AppIcon';
 import { AppSelectField } from '../components/AppSelect';
-import { Attendance, AttendanceTools } from '../features/employee/Attendance';
+import { Attendance } from '../features/employee/Attendance';
 import { useSession } from '../features/auth/session';
 import { useBlock, type Block } from '../features/dashboard/data';
-import { employmentStatus } from '../features/employees/status';
-import { clockOnDay, moment } from '../features/time/zone';
 import {
-  CORRECTION_STATUS,
-  DOCUMENT_STATUS,
-  REQUEST_STATUS,
   TABS,
-  awaitingDecision,
-  currentMonth,
   dayState,
   duration,
   initials,
   isTab,
-  orDash,
-  todayIso,
   type Tab,
 } from '../features/employee/model';
+import {
+  auditField,
+  auditTitle,
+  auditValue,
+  dayMonth,
+  dayMonthYear,
+  dayRange,
+  monthIn,
+  monthStartOf,
+  plural,
+  scheduleSummary,
+  todayIn,
+} from '../features/employee/card-model';
+import { usePaged } from '../features/employee/paged';
+import {
+  certificateOf,
+  certificateState,
+  isOpen,
+  kindOf,
+  missingText,
+  statusOf,
+} from '../features/requests/model';
+import { clock, clockOnDay } from '../features/time/zone';
 import { internalPath } from '../utils/internal-path';
+import '../styles/employee-card.css';
 
 type Person = Record<string, unknown>;
 
 const text = (person: Person, key: string): string | null => {
   const value = person[key];
-  return value === null || value === undefined ? null : String(value);
+  if (value === null || value === undefined) return null;
+  const out = String(value).trim();
+  return out || null;
 };
 
 /** Текущее назначение: где, кем и в каком отделе человек работает сейчас. */
-const assignmentOf = (person: Person): Person =>
-  (person['current_assignment'] ?? {}) as Person;
+const assignmentOf = (person: Person): Person | null => {
+  const value = person['current_assignment'];
+  return value && typeof value === 'object' ? (value as Person) : null;
+};
+
+/** Ответ «нет такого сотрудника или он вне вашей области». */
+const MISSING = Symbol('missing');
+
+type Rights = {
+  read: boolean; attendance: boolean; absences: boolean; audit: boolean;
+  manage: boolean; manual: boolean; correct: boolean; decide: boolean;
+  export: boolean; telegramRead: boolean; telegramManage: boolean;
+  onboardingRead: boolean; onboardingManage: boolean; schedules: boolean;
+};
 
 export function EmployeePage() {
   const { id = '' } = useParams();
   const session = useSession();
   const mine = useMemo(
-    () =>
-      new Set(
-        session.status === 'authenticated' ? session.user.permissions : [],
-      ),
+    () => new Set(session.status === 'authenticated' ? session.user.permissions : []),
     [session],
   );
-  const rights = {
+  const rights: Rights = {
+    read: mine.has('employees.read'),
     attendance: mine.has('attendance.read'),
     absences: mine.has('absences.read'),
     audit: mine.has('audit.read'),
@@ -73,180 +109,196 @@ export function EmployeePage() {
     correct: mine.has('attendance.correct'),
     decide: mine.has('absences.approve'),
     export: mine.has('reports.export'),
+    telegramRead: mine.has('telegram.read'),
+    telegramManage: mine.has('telegram.manage'),
+    onboardingRead: mine.has('onboarding.read'),
+    onboardingManage: mine.has('onboarding.manage'),
+    schedules: mine.has('schedules.read'),
   };
 
   const [params, setParams] = useSearchParams();
   const raw = params.get('tab');
   const tab: Tab = isTab(raw) ? raw : 'overview';
-  // Адрес списка сохраняется целиком: возврат обязан вернуть человека
-  // к его поиску и фильтрам, а не к первой странице.
   // Только путь внутри CRM: `?back=https://…` из присланной ссылки
   // превращал «Назад» в переход на чужой сайт.
   const back = internalPath(params.get('back'), '');
 
-  const [attempt, setAttempt] = useState(0);
-  const reload = useCallback(() => setAttempt((n) => n + 1), []);
+  // Счётчик изменений: решение по заявке, привязка, ознакомление —
+  // и связанные сведения (счётчик ожиданий, уведомление, сегодняшний
+  // день) перечитываются, а не остаются вчерашними.
+  const [version, setVersion] = useState(0);
+  const changed = useCallback(() => setVersion((n) => n + 1), []);
 
   const open = useCallback(
-    (next: Tab) => setParams((was) => {
-      const copy = new URLSearchParams(was);
+    (next: Tab, extra: Record<string, string> = {}) => setParams((was) => {
+      const copy = new URLSearchParams();
+      const keepBack = was.get('back');
+      if (keepBack) copy.set('back', keepBack);
       copy.set('tab', next);
+      for (const [key, value] of Object.entries(extra)) copy.set(key, value);
       return copy;
-    }, { replace: false }),
+    }),
     [setParams],
   );
 
   const [card, reloadCard] = useBlock(
-    (signal) => api.employee(id, signal),
-    `employee|${id}|${attempt}`,
+    (signal) => api.employee(id, signal).catch((error: unknown) => {
+      // 404 — «нет такого или он вне области»: это ответ, а не сбой.
+      if (error instanceof ApiFailure && error.status === 404) return MISSING;
+      throw error;
+    }),
+    `employee|${id}|${version}`,
     Boolean(id),
   );
 
-  const person: Person = card.state === 'ready' ? card.data : {};
+  const person: Person = card.state === 'ready' && card.data !== MISSING
+    ? card.data as Person : {};
   const name = text(person, 'full_name') ?? '';
-  const zone = session.status === 'authenticated' ? session.user.timezone : '';
+  const post = assignmentOf(person);
+  // Пояс офиса — по нему «сегодня» и границы месяца. Без назначения —
+  // пояс пользователя CRM: он же пояс организации.
+  const zone = (post && text(post, 'office_timezone'))
+    || (session.status === 'authenticated' ? session.user.timezone : '')
+    || 'UTC';
 
   return (
     <AppShell
-      breadcrumb={['Сотрудники', shortName(name) || 'Карточка сотрудника',
+      breadcrumb={['Сотрудники', crumb(shortName(name)) || 'Карточка сотрудника',
         TABS.find((item) => item.key === tab)?.title ?? ''].filter(Boolean).join(' / ')}
       section="employees"
     >
+      <div className="ec">
+        <Link className="ec-back" to={back || '/employees'}>
+          <AppIcon name="back" size={16} />
+          Все сотрудники
+        </Link>
 
-      {card.state === 'loading' && (
-        <p className="empty" role="status">Открываем карточку…</p>
-      )}
-      {card.state === 'denied' && (
-        <p className="empty empty--bad">
-          Карточка закрыта вашей областью доступа.
-        </p>
-      )}
-      {card.state === 'error' && (
-        <p className="empty empty--bad">
-          Не удалось открыть карточку.{' '}
-          <button type="button" className="link" onClick={reloadCard}>
-            Повторить
-          </button>
-        </p>
-      )}
+        {card.state === 'loading' && <p className="ec-empty" role="status">Открываем карточку…</p>}
+        {card.state === 'denied' && (
+          <p className="ec-empty ec-bad">Сессия закончилась или прав на карточки нет. Войдите заново.</p>
+        )}
+        {card.state === 'error' && (
+          <p className="ec-empty ec-bad" role="alert">
+            Не удалось открыть карточку.{' '}
+            <button type="button" className="ec-link" onClick={reloadCard}>Повторить</button>
+          </p>
+        )}
+        {card.state === 'ready' && card.data === MISSING && (
+          <p className="ec-empty">
+            Сотрудник не найден или вне вашей области доступа. Возможно, карточку удалили или
+            перенесли.
+          </p>
+        )}
 
-      {card.state === 'ready' && (
-        <>
-          <Header
-            person={person}
-            back={back}
-            tools={tab === 'attendance' && rights.attendance ? (
-              <AttendanceTools id={id} canExport={rights.export} />
-            ) : rights.manage ? (
-              <Link className="ep-edit" to={`/employees/${id}/edit`}>Редактировать</Link>
-            ) : null}
-          />
+        {card.state === 'ready' && card.data !== MISSING && (
+          <>
+            <Header person={person} id={id} canEdit={rights.manage} />
 
-          <div className="ep-tabs" role="tablist" aria-label="Разделы карточки">
-            {TABS.map((item) => (
-              <button key={item.key} type="button" role="tab"
-                      aria-selected={tab === item.key}
-                      className={tab === item.key ? 'ep-tab ep-tab--on' : 'ep-tab'}
-                      onClick={() => open(item.key)}>
-                {item.title}
-              </button>
-            ))}
-          </div>
+            <div className="ec-tabs" role="tablist" aria-label="Разделы карточки">
+              {TABS.map((item) => (
+                <button key={item.key} type="button" role="tab"
+                        aria-selected={tab === item.key}
+                        className={tab === item.key ? 'ec-tab ec-tab--on' : 'ec-tab'}
+                        onClick={() => open(item.key)}>
+                  {item.title}
+                </button>
+              ))}
+            </div>
 
-          {tab === 'overview' && (
-            <Overview id={id} person={person} zone={zone} rights={rights}
-                      onGo={open} onChanged={reload} />
-          )}
-          {tab === 'attendance' && (
-            <Attendance
-              id={id}
-              name={name}
-              rights={{
-                attendance: rights.attendance,
-                export: rights.export,
-                correct: rights.correct,
-              }}
-              zone={zone}
-            />
-          )}
-          {tab === 'schedule' && <Schedule id={id} />}
-          {tab === 'requests' && (
-            <Requests id={id} rights={rights} zone={zone} />
-          )}
-          {tab === 'history' && (
-            <History id={id} rights={rights} zone={zone} />
-          )}
-        </>
-      )}
+            <div className="ec-body" role="tabpanel">
+              {tab === 'overview' && (
+                <Overview id={id} person={person} zone={zone} rights={rights}
+                          version={version} onGo={open} onChanged={changed} />
+              )}
+              {tab === 'attendance' && (
+                <Attendance id={id} name={name} zone={zone}
+                            rights={{ attendance: rights.attendance, export: rights.export,
+                              correct: rights.correct }} />
+              )}
+              {tab === 'schedule' && <Schedule id={id} zone={zone} />}
+              {tab === 'requests' && (
+                <Requests id={id} person={person} rights={rights} zone={zone}
+                          version={version} onChanged={changed} />
+              )}
+              {tab === 'history' && <History id={id} rights={rights} zone={zone} />}
+            </div>
+          </>
+        )}
+      </div>
     </AppShell>
   );
 }
 
-type Rights = {
-  attendance: boolean; absences: boolean; audit: boolean; manage: boolean;
-  manual: boolean; correct: boolean; decide: boolean; export: boolean;
-};
-
 // --- общая шапка -------------------------------------------------------------
+
+/**
+ * Имя в строке навигации — не длиннее 20 знаков: двойная фамилия
+ * растягивала общую верхнюю строку за край узкого экрана. Полное имя —
+ * в шапке карточки.
+ */
+function crumb(name: string): string {
+  return name.length > 20 ? `${name.slice(0, 19).trimEnd()}…` : name;
+}
 
 /** «Мирзаева Лола» из «Мирзаева Лола Азизовна». */
 function shortName(full: string | null): string {
-  return (full ?? '').split(' ').slice(0, 2).join(' ');
+  return (full ?? '').split(' ').filter(Boolean).slice(0, 2).join(' ');
 }
 
+const STATUS_TONE: Record<string, string> = {
+  ACTIVE: 'green', ONBOARDING: 'blue', PENDING: 'blue',
+  ON_LEAVE: 'amber', SUSPENDED: 'amber', TERMINATED: 'grey', ARCHIVED: 'grey',
+};
 
-/**
- * Шапка карточки по эталону: фото, имя, номер и должность с плашкой
- * состояния, отдел и офис. Справа — инструменты открытой вкладки
- * (у посещаемости это период и экспорт).
- */
-function Header({ person, back, tools }: { person: Person; back: string; tools: ReactNode }) {
+function Header({ person, id, canEdit }: { person: Person; id: string; canEdit: boolean }) {
   const status = text(person, 'employment_status') ?? '';
-  const [title, tone] = employmentStatus(status);
-  const id = text(person, 'id');
-  // В карточке приходит только признак фото; сам снимок — отдельным
-  // адресом, где право спрашивается при каждом открытии.
+  const title = text(person, 'employment_status_title') ?? status;
   const hasPhoto = person['photo'] !== null && person['photo'] !== undefined;
-  // Должность, отдел и офис живут в текущем назначении, а не в самой
-  // карточке: на верхнем уровне этих полей нет, и строки выходили пустыми.
-  const assignment = assignmentOf(person);
-  const first = text(assignment, 'position_name') ?? '';
-  const second = [text(assignment, 'department_name'), text(assignment, 'office_name')]
+  const post = assignmentOf(person);
+  const first = [post && text(post, 'position_name'), post && text(post, 'department_name')]
     .filter(Boolean).join(' · ');
+  const second = [post && text(post, 'office_name'), post && text(post, 'region_name')]
+    .filter(Boolean).join(' · ');
+  const hire = text(person, 'hire_date');
+  const archived = text(person, 'archived_at');
+  const zone = (post && text(post, 'office_timezone')) || 'UTC';
+  const notYet = hire !== null && hire > todayIn(zone);
+
   return (
-    <header className="ep-head">
-      <Link className="ep-back" to={back || '/employees'}>
-        <AppIcon name="back" size={16} />
-        Все сотрудники
-      </Link>
-      <div className="ep-head__row">
-        {hasPhoto && id ? (
-          <img className="ep-photo" src={api.employeePhotoUrl(id)} alt="" />
-        ) : (
-          <span className="ep-photo" aria-hidden="true">
-            {initials(text(person, 'first_name'), text(person, 'last_name'))}
-          </span>
-        )}
-        <div className="ep-head__text">
-          {/* Фамилия и имя, как в эталоне: отчество есть в «Обзоре». */}
-          <h1 className="ep-name">{shortName(text(person, 'full_name')) || '—'}</h1>
-          <p className="ep-line">
-            {first || 'Назначение не указано'}
-            <span className={`ep-status ep-status--${tone}`}>{title}</span>
-          </p>
-          {second && <p className="ep-line ep-line--muted">{second}</p>}
+    <header className="ec-head">
+      {hasPhoto ? (
+        <img className="ec-face" src={api.employeePhotoUrl(id)} alt="" />
+      ) : (
+        <span className="ec-face" aria-hidden="true">
+          {initials(text(person, 'first_name'), text(person, 'last_name'))}
+        </span>
+      )}
+      <div className="ec-head__text">
+        <div className="ec-head__line">
+          <h1 className="ec-name" title={text(person, 'full_name') ?? undefined}>
+            {shortName(text(person, 'full_name')) || 'Без имени'}
+          </h1>
+          {title && <span className={`ec-pill ec-pill--${STATUS_TONE[status] ?? 'grey'}`}>{title}</span>}
+          {archived && <span className="ec-pill ec-pill--grey">В архиве</span>}
         </div>
-        <div className="ep-head__tools">{tools}</div>
+        <p className="ec-sub">{first || 'Действующего назначения нет'}</p>
+        {second && <p className="ec-sub ec-sub--muted">{second}</p>}
+        {notYet && hire && (
+          <p className="ec-sub ec-sub--muted">Выходит на работу {dayMonthYear(hire)}</p>
+        )}
       </div>
+      {canEdit && (
+        <Link className="ec-btn ec-btn--primary ec-head__edit" to={`/employees/${id}/edit`}>
+          Редактировать
+        </Link>
+      )}
     </header>
   );
 }
 
-/** Анкетные значения словами. Кода в карточке человек видеть не должен. */
-const GENDER: Record<string, string> = {
-  MALE: 'Мужской',
-  FEMALE: 'Женский',
-};
+// --- вкладка «Обзор» ---------------------------------------------------------
+
+const GENDER: Record<string, string> = { MALE: 'Мужской', FEMALE: 'Женский' };
 
 const MARITAL: Record<string, string> = {
   SINGLE: 'Не женат / не замужем',
@@ -255,434 +307,187 @@ const MARITAL: Record<string, string> = {
   WIDOWED: 'Вдовец / вдова',
 };
 
-const PAPER_KIND: Record<string, string> = {
-  IDENTITY: 'Паспорт или ID-карта',
-  CONTRACT: 'Трудовой договор',
-  HIRE_ORDER: 'Приказ о приёме',
-  OTHER: 'Другой документ',
-};
-
-const PAPER_STATE: Record<string, string> = {
-  MISSING: 'Не добавлен',
-  UPLOADED: 'Загружен',
-  GENERATED_LATER: 'Будет сформирован',
-  REVIEW: 'Требует проверки',
-};
-
-/**
- * Документы сотрудника.
- *
- * Строка с файлом — ссылка: она открывает и позволяет сохранить. Строка
- * без файла остаётся строкой: чек-лист показывает, чего ещё нет, и
- * кнопка на ней обещала бы открыть несуществующее.
- */
-function Papers({ person }: { person: Person }) {
-  const id = text(person, 'id');
-  const rows = Array.isArray(person['documents'])
-    ? (person['documents'] as Record<string, unknown>[])
-    : [];
-
-  return (
-    <section className="panel">
-      <h3 className="panel__title">Документы</h3>
-      {rows.length === 0 ? (
-        <p className="muted">Документов пока нет.</p>
-      ) : (
-        <ul className="papers">
-          {rows.map((row) => {
-            const file = row['file_id'];
-            const key = String(row['id'] ?? '');
-            const kind = String(row['kind'] ?? '');
-            const title = String(row['title'] ?? '') || PAPER_KIND[kind] || 'Документ';
-            const state = String(row['status'] ?? '');
-            return (
-              <li key={key} className="papers__row">
-                <AppIcon name="doc" size={18} />
-                <span className="papers__title">{title}</span>
-                {file && id ? (
-                  <a className="link link--go"
-                     href={api.employeeDocumentUrl(id, key)}
-                     target="_blank" rel="noreferrer">
-                    Открыть
-                    <AppIcon name="arrow" size={16} />
-                  </a>
-                ) : (
-                  <span className="muted">{PAPER_STATE[state] ?? state}</span>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </section>
-  );
-}
-
-// --- вкладка «Обзор» ---------------------------------------------------------
-
-function Overview({ id, person, zone, rights, onGo, onChanged }: {
-  id: string; person: Person; zone: string; rights: Rights;
-  onGo: (tab: Tab) => void; onChanged: () => void;
+function Overview({ id, person, zone, rights, version, onGo, onChanged }: {
+  id: string; person: Person; zone: string; rights: Rights; version: number;
+  onGo: (tab: Tab, extra?: Record<string, string>) => void; onChanged: () => void;
 }) {
-  const month = useMemo(() => currentMonth(), []);
-  const today = useMemo(() => todayIso(), []);
+  const today = todayIn(zone);
+  const first = monthStartOf(today);
+  const post = assignmentOf(person);
+  const [contacts, setContacts] = useState(false);
 
-  const [journal] = useBlock(
-    (signal) => api.attendanceDaily(
-      { employee_id: id, date_from: month.first, date_to: month.last }, signal,
-    ),
-    `overview-journal|${id}|${month.first}`,
+  const [journal, reloadJournal] = useBlock(
+    (signal) => api.attendanceDaily({ employee_id: id, date_from: first, date_to: today }, signal),
+    `overview-journal|${id}|${first}|${today}|${version}`,
     rights.attendance,
   );
-  const [requests] = useBlock(
-    (signal) => api.queue({ employee_id: id, limit: '5' }, signal),
-    `overview-requests|${id}`,
+  const [counts, reloadCounts] = useBlock(
+    (signal) => api.queueCounts({ employee_id: id }, signal),
+    `overview-counts|${id}|${version}`,
     rights.absences,
   );
-  const [link] = useBlock(
-    (signal) => api.employeeTelegram(id, signal).catch(() => null),
-    `overview-telegram|${id}`,
+  const [waiting] = useBlock(
+    (signal) => api.queue({ employee_id: id, status: 'SUBMITTED,IN_REVIEW', limit: '1' }, signal),
+    `overview-waiting|${id}|${version}`,
+    rights.absences,
   );
 
   const report = journal.state === 'ready' ? journal.data : null;
   const todayRow = report?.days.find((row) => row.day === today) ?? null;
-  const waiting = requests.state === 'ready'
-    ? requests.data.items.filter((item) =>
-        item.kind === 'absence'
-          ? awaitingDecision(String(item.absence?.status ?? ''))
-          : String(item.correction?.status ?? '') === 'PENDING').length
-    : null;
+  const fieldSeconds = (report?.days ?? [])
+    .filter((row) => row.state === 'FIELD_WORK')
+    .reduce((sum, row) => sum + row.seconds, 0);
+  const open = counts.state === 'ready' ? counts.data['open'] ?? null : null;
+  const pending = waiting.state === 'ready' ? waiting.data.items[0] ?? null : null;
+  const unplaced = Boolean(report?.note) && (report?.days.length ?? 0) === 0;
 
   return (
     <>
-      <ul className="cards cards--four" aria-label="Показатели сотрудника">
-        <Tile icon="clock" title="Сегодня в офисе" note={`За ${today}`}
-              value={todayRow ? duration(todayRow.seconds) : '—'}
-              hint={todayRow ? dayState(todayRow) : 'нет данных'}
-              onGo={() => onGo('attendance')} />
-        <Tile icon="calendar" title="За месяц"
-              note={`${month.first} — ${month.last}`}
-              value={report ? duration(report.totals.seconds) : '—'}
-              onGo={() => onGo('attendance')} />
-        <Tile icon="check" title="Дней с отметками" note="За тот же месяц"
-              value={report ? String(report.totals.days_with_marks) : '—'}
-              {...(report ? { hint: `рабочих ${report.totals.working_days}` } : {})}
-              onGo={() => onGo('attendance')} />
-        <Tile icon="inbox" title="Заявок ждут решения" note="Все открытые"
-              value={waiting === null ? '—' : String(waiting)}
-              onGo={() => onGo('requests')} />
-      </ul>
-
-      <div className="split split--open">
-        <div className="setup__forms">
-          <section className="panel">
-            <h3 className="panel__title">Профиль</h3>
-            <dl className="facts">
-              <Fact label="Дата приёма" value={text(person, 'hire_date')} />
-              {/* Должность, отдел и офис — в текущем назначении, как и в
-                  шапке: на верхнем уровне карточки этих полей нет, и строки
-                  выходили «—» у каждого сотрудника. */}
-              <Fact label="Должность" value={text(assignmentOf(person), 'position_name')} />
-              <Fact label="Отдел" value={text(assignmentOf(person), 'department_name')} />
-              <Fact label="Офис" value={text(assignmentOf(person), 'office_name')} />
-              <Fact label="Телефон" value={text(person, 'phone')} />
-              <Fact label="Рабочая почта" value={text(person, 'corporate_email')} />
-              <Fact label="Пол" value={GENDER[text(person, 'gender') ?? ''] ?? null} />
-              <Fact label="Семейное положение"
-                    value={MARITAL[text(person, 'marital_status') ?? ''] ?? null} />
-            </dl>
-          </section>
-
-          <Papers person={person} />
-
-          <section className="panel">
-            <h3 className="panel__title">Последние заявки</h3>
-            {!rights.absences ? (
-              <p className="muted">Нет права на заявки.</p>
-            ) : (
-              <RequestList block={requests} zone={zone} picked={null}
-                           onPick={() => onGo('requests')} compact />
-            )}
-          </section>
-        </div>
-
-        <div className="setup__aside">
-          <section className="panel">
-            <h3 className="panel__title">Telegram и ознакомление</h3>
-            <TelegramBlock id={id} block={link} onChanged={onChanged} />
-          </section>
-
-          <section className="panel">
-            <h3 className="panel__title">Сегодняшний день</h3>
-            {!rights.attendance ? (
-              <p className="muted">Нет права на посещаемость.</p>
-            ) : journal.state === 'loading' ? (
-              <p className="empty" role="status">Считаем…</p>
-            ) : journal.state === 'error' ? (
-              <p className="empty empty--bad">Не удалось получить отметки.</p>
-            ) : todayRow ? (
-              <dl className="facts">
-                <Fact label="Состояние" value={dayState(todayRow)} />
-                <Fact label="Первый вход"
-                      value={todayRow.first_entry_at
-                        ? clockOnDay(todayRow.first_entry_at, todayRow.timezone, todayRow.day)
-                        : null} />
-                <Fact label="Последний выход"
-                      value={todayRow.last_exit_at
-                        ? clockOnDay(todayRow.last_exit_at, todayRow.timezone, todayRow.day)
-                        : todayRow.open_session_id ? 'Сессия открыта' : null} />
-                <Fact label="Сессий" value={String(todayRow.sessions)} />
-                <Fact label="Время в офисе" value={duration(todayRow.seconds)} />
-              </dl>
-            ) : (
-              <p className="muted">За сегодня отметок нет.</p>
-            )}
-          </section>
-        </div>
+      <div className="ec-band" aria-label="Показатели сотрудника">
+        <Cell title="Сегодня" note={todayNote(journal, todayRow, report?.note ?? null, rights.attendance)}
+              value={!rights.attendance ? '—'
+                : todayRow ? duration(todayRow.seconds) : journal.state === 'loading' ? '…' : '—'}
+              onRetry={journal.state === 'error' ? reloadJournal : undefined} />
+        <Cell title={`Отработано ${monthIn(today)}`}
+              value={!rights.attendance ? '—'
+                // Без назначения за период сервер отдаёт нули с пояснением:
+                // это «не с чем считать», а не подтверждённые «0 ч».
+                : report && unplaced ? '—'
+                : report ? duration(report.totals.seconds) : journal.state === 'loading' ? '…' : '—'}
+              note={!rights.attendance ? 'Нет права на посещаемость'
+                : journal.state === 'error' ? 'Не удалось получить'
+                : unplaced ? 'Нет назначения за этот период'
+                : [dayRange(first, today),
+                    fieldSeconds > 0 ? `в т. ч. выезд ${duration(fieldSeconds)}` : '']
+                    .filter(Boolean).join(' · ')}
+              onRetry={journal.state === 'error' ? reloadJournal : undefined} />
+        <Cell title="Ждут решения"
+              value={!rights.absences ? '—'
+                : open !== null ? `${open} ${plural(open, 'заявка', 'заявки', 'заявок')}`
+                : counts.state === 'loading' ? '…' : '—'}
+              note={!rights.absences ? 'Нет права на заявки'
+                : counts.state === 'error' ? 'Не удалось получить' : ''}
+              link={rights.absences && open !== null
+                ? { label: 'Открыть заявки', go: () => onGo('requests', open > 0 ? { status: 'open' } : {}) }
+                : undefined}
+              onRetry={counts.state === 'error' ? reloadCounts : undefined} />
       </div>
 
+      <div className="ec-split">
+        <section className="ec-col" aria-labelledby="ec-main-title">
+          <h2 id="ec-main-title" className="ec-h2">Основные сведения</h2>
+          <dl className="ec-facts">
+            <Fact label="Офис" value={post
+              ? [text(post, 'office_name'), text(post, 'region_name')].filter(Boolean).join(', ') || null
+              : null} empty={post ? 'Не указан' : 'Нет назначения'} />
+            <Fact label="Отдел" value={post ? text(post, 'department_name') : null}
+                  empty={post ? 'Не указано' : 'Нет назначения'} />
+            <Fact label="Должность" value={post ? text(post, 'position_name') : null}
+                  empty={post ? 'Не указано' : 'Нет назначения'} />
+            <Fact label="Дата приёма" value={text(person, 'hire_date')
+              ? dayMonthYear(text(person, 'hire_date') as string) : null} />
+            <Fact label="График"
+                  value={scheduleSummary(person['current_schedule'] as Parameters<typeof scheduleSummary>[0])}
+                  empty="Не назначен" />
+          </dl>
+          <div className="ec-reveal">
+            <span>Контакты и личные данные</span>
+            <button type="button" className="ec-link" aria-expanded={contacts}
+                    onClick={() => setContacts((was) => !was)}>
+              {contacts ? 'Скрыть' : 'Показать'}
+            </button>
+          </div>
+          {contacts && (
+            <dl className="ec-facts ec-facts--more">
+              <Fact label="Полное имя" value={text(person, 'full_name')} />
+              <Fact label="Табельный номер" value={text(person, 'employee_number')} />
+              <Fact label="Телефон" value={text(person, 'phone')} />
+              <Fact label="Рабочая почта" value={text(person, 'corporate_email')} />
+              <Fact label="Личная почта" value={text(person, 'personal_email')} />
+              <Fact label="Дата рождения" value={text(person, 'birth_date')
+                ? dayMonthYear(text(person, 'birth_date') as string) : null} />
+              <Fact label="Пол" value={GENDER[text(person, 'gender') ?? ''] ?? null} />
+              <Fact label="Семейное положение" value={MARITAL[text(person, 'marital_status') ?? ''] ?? null} />
+            </dl>
+          )}
+        </section>
+
+        <section className="ec-col ec-col--side" aria-labelledby="ec-link-title">
+          <h2 id="ec-link-title" className="ec-h2">Связь с сотрудником</h2>
+          <TelegramBlock id={id} rights={rights} version={version} onChanged={onChanged} />
+        </section>
+      </div>
+
+      {pending && (
+        <div className="ec-notice">
+          <span className="ec-notice__icon" aria-hidden="true"><AppIcon name="doc" size={20} /></span>
+          <span className="ec-notice__text">
+            <b>{kindOf(pending).title} ожидает решения</b>
+            <span>{noticeLine(pending)}</span>
+          </span>
+          <button type="button" className="ec-btn ec-btn--primary"
+                  onClick={() => onGo('requests', { status: 'open', request: pending.id })}>
+            Рассмотреть
+          </button>
+        </div>
+      )}
     </>
   );
 }
 
-/**
- * Показатель. Оформление — существующий `.metric`, тот же, что на
- * главной и в аналитике.
- *
- * Своих классов здесь заводить было нельзя: `.card` в этом проекте
- * не существует вовсе, и плитка, названная так, оставалась без фона,
- * рамки, отступов и без крупного значения — рисовался голый текст.
- *
- * `onGo` необязателен: показатель без перехода остаётся текстом, а не
- * превращается в кнопку, которая ничего не делает.
- */
-function Tile({ icon, title, note, value, hint, onGo }: {
-  icon: AppIconName;
-  title: string;
-  note: string;
-  value: string;
-  hint?: string;
-  onGo?: () => void;
+function todayNote(
+  journal: Block<api.DailyReport>, row: api.DailyRow | null, note: string | null, allowed: boolean,
+): string {
+  if (!allowed) return 'Нет права на посещаемость';
+  if (journal.state === 'loading') return 'Загружаем…';
+  if (journal.state === 'error') return 'Не удалось получить';
+  if (journal.state === 'denied') return 'Закрыто правами';
+  if (note) return note;
+  if (!row) return 'Нет данных за сегодня';
+  const zone = row.timezone;
+  if (row.state === 'IN_OFFICE' && row.first_entry_at) {
+    return `В офисе с ${clockOnDay(row.first_entry_at, zone, row.day)}`;
+  }
+  if (row.state === 'LEFT' && row.last_exit_at) {
+    return `Ушёл в ${clockOnDay(row.last_exit_at, zone, row.day)}`;
+  }
+  return dayState(row);
+}
+
+function noticeLine(item: api.QueueItem): string {
+  const absence = item.absence;
+  const days = absence?.first_day
+    ? dayRange(absence.first_day, absence.last_day ?? absence.first_day) : '';
+  const paper = absence?.requires_document
+    ? (certificateOf(item) ? 'справка приложена' : 'справки нет') : '';
+  return [days, paper].filter(Boolean).join(' · ') || 'Подробности — на вкладке заявок';
+}
+
+function Cell({ title, value, note, link, onRetry }: {
+  title: string; value: string; note: string;
+  link?: { label: string; go: () => void } | undefined;
+  onRetry?: (() => void) | undefined;
 }) {
-  const body = (
-    <>
-      <span className="metric__head">
-        <AppIcon name={icon} size={16} />
-        <span>{title}</span>
-      </span>
-      <span className="metric__value">{value}</span>
-      <span className="metric__note">{note}{hint ? ` \u00b7 ${hint}` : ''}</span>
-    </>
-  );
-  if (!onGo) return <li className="metric">{body}</li>;
   return (
-    <li className="metric-cell">
-      <button type="button" className="metric metric--go" onClick={onGo}>
-        {body}
-      </button>
-    </li>
-  );
-}
-
-function Fact({ label, value }: { label: string; value: string | null }) {
-  return (
-    <div className="facts__row">
-      <dt>{label}</dt>
-      <dd>{orDash(value)}</dd>
+    <div className="ec-cell">
+      <span className="ec-cell__title">{title}</span>
+      <strong className="ec-cell__value">{value}</strong>
+      {note && <span className="ec-cell__note">{note}</span>}
+      {onRetry && <button type="button" className="ec-link" onClick={onRetry}>Повторить</button>}
+      {link && !onRetry && (
+        <button type="button" className="ec-link" onClick={link.go}>{link.label}</button>
+      )}
     </div>
   );
 }
 
-/**
- * Telegram и ознакомление — один блок, потому что это одна дорога.
- *
- * Привязка без ознакомления открывает человеку бота, ознакомление без
- * привязки некуда отправить. Держать их в двух панелях значило бы
- * заставить кадровика собирать картину из двух мест и гадать, почему
- * «приглашение отправлено», а человек ничего не читает.
- *
- * Ссылка показывается РОВНО ОДИН раз — в ответе на её выдачу: в базе
- * лежит хеш токена, и достать её оттуда нельзя. Потерянная отзывается
- * и выпускается заново.
- */
-function TelegramBlock({ id, block, onChanged }: {
-  id: string; block: Block<api.TelegramLink | null>; onChanged: () => void;
+function Fact({ label, value, empty = 'Не указано' }: {
+  label: string; value: string | null; empty?: string;
 }) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [issued, setIssued] = useState<string | null>(null);
-  const [note, setNote] = useState<string | null>(null);
-
-  // Ознакомление грузится отдельно и молча: сотрудника могли не звать в
-  // программу, и 404 здесь — обычный ответ, а не сбой.
-  const [plan, reloadPlan] = useBlock(
-    (signal) => api.employeeOnboarding(id, signal).catch(() => null),
-    `overview-onboarding|${id}`,
-  );
-
-  if (block.state === 'loading') return <p className="empty" role="status">Проверяем…</p>;
-  if (block.state !== 'ready') {
-    return <p className="empty empty--bad">Состояние привязки недоступно.</p>;
-  }
-  const link = block.data;
-  const state = link?.state ?? null;
-  const card = plan.state === 'ready' ? plan.data : null;
-  const linked = state === 'ACTIVE';
-  const live = card?.invitation_status === 'ACTIVE';
-  // Человек перешёл по ссылке и ждёт решения HR. Подтверждать надо, только
-  // если это действительно он: ссылку могли переслать или перехватить.
-  const awaiting = state === 'PENDING'
-    && link?.invitation?.status === 'PENDING_CONFIRMATION' ? link.invitation : null;
-  const claimant = link?.account?.telegram_username
-    ? `@${link.account.telegram_username}` : 'Telegram без имени пользователя';
-
-  const run = async (action: () => Promise<unknown>, after?: () => void) => {
-    setBusy(true);
-    setError(null);
-    setNote(null);
-    try {
-      await action();
-      after?.();
-      reloadPlan();
-      onChanged();
-    } catch (failure) {
-      setError(failure instanceof ApiFailure
-        ? messageFor(failure) : 'Не удалось выполнить действие.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
-    <div className="tg-block">
-      <p className="tg__state">
-        {linked ? 'Привязан'
-          : state === 'PENDING' ? 'Перешёл по ссылке — ждёт подтверждения HR'
-          : state === 'INVITED' ? 'Приглашение отправлено'
-          : 'Не привязан'}
-      </p>
-
-      {awaiting && (
-        <div className="tg-block__confirm">
-          <p>
-            По ссылке перешёл <strong>{claimant}</strong>. Подтвердите, только
-            если это действительно сотрудник: доступ к кабинету откроется сразу.
-          </p>
-          <div className="tg-block__tools">
-            <button type="button" className="btn btn--primary" disabled={busy}
-                    onClick={() => run(
-                      () => api.confirmTelegramLink(awaiting.id),
-                      () => setNote('Привязка подтверждена'),
-                    )}>
-              Подтвердить
-            </button>
-            <button type="button" className="btn" disabled={busy}
-                    onClick={() => run(
-                      () => api.rejectTelegramLink(awaiting.id),
-                      () => setNote('Привязка отклонена. Выдайте сотруднику новую ссылку.'),
-                    )}>
-              Это не он — отклонить
-            </button>
-          </div>
-        </div>
-      )}
-
-      {card ? (
-        <dl className="facts">
-          <Fact label="Ознакомление" value={ONBOARDING_STATE[card.status] ?? card.status} />
-          <Fact label="Разделы"
-                value={`${card.sections_done} из ${card.sections_total}`} />
-          <Fact label="Документы"
-                value={`${card.policies_done} из ${card.policies_total}`} />
-        </dl>
-      ) : (
-        <p className="muted">Ознакомление не назначено.</p>
-      )}
-
-      <div className="tg-block__tools">
-        {!card && (
-          <button type="button" className="btn btn--primary" disabled={busy}
-                  onClick={() => run(async () => {
-                    // Одним действием: человек включается в программу и
-                    // получает ссылку. Два раздельных нажатия здесь
-                    // означали бы состояние «позвали, но не позвали».
-                    const made = await api.inviteToOnboarding(id);
-                    setIssued(made.link);
-                    if (made.linked) {
-                      // Ссылка не нужна: бот у человека уже есть, и
-                      // ознакомление он увидит при следующем заходе.
-                      setNote('Ознакомление назначено. Ссылка не нужна — Telegram уже привязан.');
-                    }
-                  })}>
-            Отправить ознакомление
-          </button>
-        )}
-        {card && !linked && !live && !awaiting && (
-          <button type="button" className="btn btn--primary" disabled={busy}
-                  onClick={() => run(async () => {
-                    const made = await api.inviteToOnboarding(id);
-                    setIssued(made.link);
-                  })}>
-            Создать приглашение
-          </button>
-        )}
-        {card && live && (
-          <>
-            <button type="button" className="btn" disabled={busy}
-                    onClick={() => run(async () => {
-                      const made = await api.inviteToOnboarding(id, true);
-                      setIssued(made.link);
-                    })}>
-              Новая ссылка
-            </button>
-            <button type="button" className="btn" disabled={busy}
-                    onClick={() => run(
-                      () => api.revokeOnboardingInvite(id),
-                      () => setIssued(null),
-                    )}>
-              Отозвать
-            </button>
-          </>
-        )}
-        {card && linked && !card.completed && (
-          <button type="button" className="btn" disabled={busy}
-                  onClick={() => run(
-                    () => api.remindOnboarding(id),
-                    () => setNote('Напоминание отправлено'),
-                  )}>
-            Напомнить
-          </button>
-        )}
-        {/* Обычная привязка остаётся: она нужна тем, кого в программу
-            не зовут, — например, уже работающим сотрудникам. */}
-        {!card && !linked && !awaiting && (
-          <button type="button" className="btn" disabled={busy}
-                  onClick={() => run(() => api.inviteToTelegram(id))}>
-            Пригласить в Telegram
-          </button>
-        )}
-      </div>
-
-      {issued && (
-        <div className="tg-block__link">
-          <p className="muted">
-            Ссылка персональная и одноразовая — показывается один раз.
-          </p>
-          <input readOnly value={issued} aria-label="Ссылка на ознакомление"
-                 onFocus={(event) => event.currentTarget.select()} />
-        </div>
-      )}
-
-      {card && (
-        <p className="tg-block__more">
-          <Link className="link" to={`/onboarding?employee=${id}`}>
-            Открыть ознакомление
-          </Link>
-        </p>
-      )}
-
-      {note && <p className="muted">{note}</p>}
-      {error && <p className="form-grid__error" role="alert">{error}</p>}
+    <div className="ec-fact">
+      <dt>{label}</dt>
+      <dd className={value ? undefined : 'ec-muted'}>{value ?? empty}</dd>
     </div>
   );
 }
@@ -698,7 +503,232 @@ const ONBOARDING_STATE: Record<string, string> = {
   BLOCKED_BY_DECLINED_POLICY: 'Отказался',
 };
 
-function Schedule({ id }: { id: string }) {
+const TELEGRAM_STATE: Record<string, { title: string; tone: string }> = {
+  ACTIVE: { title: 'Привязан', tone: 'green' },
+  PENDING: { title: 'Ждёт подтверждения HR', tone: 'amber' },
+  INVITED: { title: 'Приглашение отправлено', tone: 'blue' },
+  REVOKED: { title: 'Отключён', tone: 'grey' },
+  NOT_LINKED: { title: 'Не привязан', tone: 'grey' },
+};
+
+/**
+ * Telegram и ознакомление — одна дорога: привязка без ознакомления
+ * открывает человеку бота, ознакомление без привязки некуда отправить.
+ *
+ * Ссылка показывается РОВНО ОДИН раз — в ответе на её выдачу: в базе
+ * лежит хеш токена, и достать её оттуда нельзя. Потерянная отзывается
+ * и выпускается заново.
+ */
+function TelegramBlock({ id, rights, version, onChanged }: {
+  id: string; rights: Rights; version: number; onChanged: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [issued, setIssued] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+
+  const [block, reloadBlock] = useBlock(
+    (signal) => api.employeeTelegram(id, signal),
+    `card-telegram|${id}|${version}`,
+    rights.telegramRead,
+  );
+  // 404 у ознакомления — обычный ответ «не назначено»; сбой — это сбой,
+  // а не «не назначено».
+  const [plan, reloadPlan] = useBlock(
+    (signal) => api.employeeOnboarding(id, signal).catch((failure: unknown) => {
+      if (failure instanceof ApiFailure && failure.status === 404) return null;
+      throw failure;
+    }),
+    `card-onboarding|${id}|${version}`,
+    rights.onboardingRead,
+  );
+
+  const link = block.state === 'ready' ? block.data : null;
+  const state = link?.state ?? null;
+  const card = plan.state === 'ready' ? plan.data : null;
+  const linked = state === 'ACTIVE';
+  const live = card?.invitation_status === 'ACTIVE';
+  // Человек перешёл по ссылке и ждёт решения HR. Подтверждать надо, только
+  // если это действительно он: ссылку могли переслать или перехватить.
+  const awaiting = state === 'PENDING'
+    && link?.invitation?.status === 'PENDING_CONFIRMATION' ? link.invitation : null;
+  const claimant = link?.account?.telegram_username
+    ? `@${link.account.telegram_username}` : 'Telegram без имени пользователя';
+  const pill = state ? TELEGRAM_STATE[state] ?? { title: state, tone: 'grey' } : null;
+
+  const run = async (action: () => Promise<unknown>, after?: (result: unknown) => void) => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    setNote(null);
+    try {
+      const result = await action();
+      after?.(result);
+      reloadPlan();
+      reloadBlock();
+      onChanged();
+    } catch (failure) {
+      setError(reasonFor(failure));
+      // Ответ не дошёл — сначала узнаём, что на сервере, а не жмём ещё раз.
+      if (failure instanceof ApiFailure && failure.kind === 'offline') {
+        reloadBlock();
+        reloadPlan();
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="ec-tg">
+      <div className="ec-fact ec-fact--pill">
+        <dt>Telegram</dt>
+        <dd>
+          {!rights.telegramRead ? <span className="ec-muted">Нет права на просмотр</span>
+            : block.state === 'loading' ? <span className="ec-muted">Загружаем…</span>
+            : block.state === 'error' ? (
+              <span className="ec-bad">Не удалось получить{' '}
+                <button type="button" className="ec-link" onClick={reloadBlock}>Повторить</button>
+              </span>
+            )
+            : block.state === 'denied' ? <span className="ec-muted">Закрыто правами</span>
+            : pill && <span className={`ec-pill ec-pill--${pill.tone}`}>{pill.title}</span>}
+          {linked && link?.account?.telegram_username && (
+            <span className="ec-muted"> @{link.account.telegram_username}</span>
+          )}
+        </dd>
+      </div>
+
+      {awaiting && (
+        <div className="ec-confirm">
+          <p>
+            По ссылке перешёл <strong>{claimant}</strong>. Подтвердите, только если это
+            действительно сотрудник: доступ к кабинету откроется сразу.
+          </p>
+          {rights.telegramManage && (
+            <div className="ec-actions">
+              <button type="button" className="ec-btn ec-btn--primary" disabled={busy}
+                      onClick={() => run(() => api.confirmTelegramLink(awaiting.id),
+                        () => setNote('Привязка подтверждена'))}>
+                Подтвердить
+              </button>
+              <button type="button" className="ec-btn ec-btn--line" disabled={busy}
+                      onClick={() => run(() => api.rejectTelegramLink(awaiting.id),
+                        () => setNote('Привязка отклонена. Выдайте сотруднику новую ссылку.'))}>
+                Это не он — отклонить
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {rights.telegramManage && !card && !linked && !awaiting && !rights.onboardingManage && (
+        <div className="ec-actions">
+          <button type="button" className="ec-btn ec-btn--line" disabled={busy}
+                  onClick={() => run(() => api.inviteToTelegram(id), (made) => {
+                    const out = made as { link?: string; url?: string } | undefined;
+                    setIssued(out?.link ?? out?.url ?? null);
+                  })}>
+            Пригласить в Telegram
+          </button>
+        </div>
+      )}
+
+      <h2 className="ec-h2 ec-h2--gap">Ознакомление</h2>
+      {!rights.onboardingRead ? (
+        <p className="ec-muted">Нет права на ознакомление.</p>
+      ) : plan.state === 'loading' ? (
+        <p className="ec-muted" role="status">Загружаем…</p>
+      ) : plan.state === 'error' ? (
+        <p className="ec-bad">
+          Не удалось получить.{' '}
+          <button type="button" className="ec-link" onClick={reloadPlan}>Повторить</button>
+        </p>
+      ) : plan.state === 'denied' ? (
+        <p className="ec-muted">Закрыто правами.</p>
+      ) : card ? (
+        <dl className="ec-facts">
+          <Fact label="Состояние" value={ONBOARDING_STATE[card.status] ?? card.status} />
+          <Fact label="Разделы" value={`${card.sections_done} из ${card.sections_total}`} />
+          <Fact label="Документы" value={`${card.policies_done} из ${card.policies_total}`} />
+        </dl>
+      ) : (
+        <p className="ec-muted">Не назначено</p>
+      )}
+
+      {rights.onboardingManage && plan.state === 'ready' && (
+        <div className="ec-actions">
+          {!card && (
+            <button type="button" className="ec-btn ec-btn--line" disabled={busy}
+                    onClick={() => run(() => api.inviteToOnboarding(id), (made) => {
+                      // Одним действием: человек включается в программу и
+                      // получает ссылку — без состояния «позвали, но не позвали».
+                      const out = made as api.OnboardingInvite;
+                      setIssued(out.link);
+                      if (out.linked) setNote('Ознакомление назначено. Ссылка не нужна — Telegram уже привязан.');
+                    })}>
+              Назначить ознакомление
+            </button>
+          )}
+          {card && !linked && !live && !awaiting && (
+            <button type="button" className="ec-btn ec-btn--line" disabled={busy}
+                    onClick={() => run(() => api.inviteToOnboarding(id),
+                      (made) => setIssued((made as api.OnboardingInvite).link))}>
+              Создать приглашение
+            </button>
+          )}
+          {card && live && (
+            <>
+              <button type="button" className="ec-btn ec-btn--line" disabled={busy}
+                      onClick={() => run(() => api.inviteToOnboarding(id, true),
+                        (made) => setIssued((made as api.OnboardingInvite).link))}>
+                Новая ссылка
+              </button>
+              <button type="button" className="ec-btn ec-btn--line" disabled={busy}
+                      onClick={() => run(() => api.revokeOnboardingInvite(id), () => setIssued(null))}>
+                Отозвать
+              </button>
+            </>
+          )}
+          {card && linked && !card.completed && (
+            <button type="button" className="ec-btn ec-btn--line" disabled={busy}
+                    onClick={() => run(() => api.remindOnboarding(id), () => setNote('Напоминание отправлено'))}>
+              Напомнить
+            </button>
+          )}
+          {card && (
+            <Link className="ec-link" to={`/onboarding?employee=${id}`}>Открыть ознакомление</Link>
+          )}
+        </div>
+      )}
+
+      {issued && (
+        <div className="ec-issued">
+          <p className="ec-muted">Ссылка персональная и одноразовая — показывается один раз.</p>
+          <input readOnly value={issued} aria-label="Ссылка для сотрудника"
+                 onFocus={(event) => event.currentTarget.select()} />
+        </div>
+      )}
+      {note && <p className="ec-muted" role="status">{note}</p>}
+      {error && <p className="ec-bad" role="alert">{error}</p>}
+    </div>
+  );
+}
+
+// --- вкладка «График и назначения» -------------------------------------------
+
+const WEEKDAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+
+const EMPLOYMENT: Record<string, string> = {
+  FULL_TIME: 'Полная занятость', PART_TIME: 'Частичная занятость',
+  CONTRACT: 'Договор', INTERN: 'Стажёр (прежний тип)',
+};
+const WORK_MODE: Record<string, string> = {
+  ONSITE: 'В офисе', REMOTE: 'Удалённо', HYBRID: 'Гибрид', FIELD: 'Выездной',
+};
+
+function Schedule({ id, zone }: { id: string; zone: string }) {
+  const [history, setHistory] = useState(false);
   const [data, reload] = useBlock(
     (signal) => Promise.all([
       api.employeeAssignments(id, signal),
@@ -710,137 +740,177 @@ function Schedule({ id }: { id: string }) {
     `schedule|${id}`,
   );
 
-  const current = data.state === 'ready'
-    ? data.data.schedules.find((row) => !row.valid_to) ?? null
-    : null;
+  const today = todayIn(zone);
+  const active = (row: { valid_from: string | null; valid_to: string | null }) =>
+    (!row.valid_from || row.valid_from <= today) && (!row.valid_to || row.valid_to >= today);
+  const current = data.state === 'ready' ? data.data.schedules.find(active) ?? null : null;
 
-  // Карточка графика — вторым запросом и только когда есть что спрашивать:
-  // назначение знает лишь имя графика, а недельная полоса собирается
-  // из его дней.
-  const [detail] = useBlock(
+  // Карточка графика — вторым запросом и только когда есть что спрашивать.
+  const [detail, reloadDetail] = useBlock(
     (signal) => api.workSchedule(current?.schedule_id ?? '', signal),
     `schedule-detail|${current?.schedule_id ?? 'none'}`,
     Boolean(current?.schedule_id),
   );
 
-  if (data.state === 'loading') return <p className="empty" role="status">Загружаем…</p>;
-  if (data.state === 'denied') {
-    return <p className="empty empty--bad">Назначения закрыты вашей областью доступа.</p>;
-  }
+  if (data.state === 'loading') return <p className="ec-empty" role="status">Загружаем…</p>;
+  if (data.state === 'denied') return <p className="ec-empty ec-bad">Назначения закрыты вашими правами.</p>;
   if (data.state === 'error') {
     return (
-      <p className="empty empty--bad">
+      <p className="ec-empty ec-bad" role="alert">
         Не удалось загрузить назначения.{' '}
-        <button type="button" className="link" onClick={reload}>Повторить</button>
+        <button type="button" className="ec-link" onClick={reload}>Повторить</button>
       </p>
     );
   }
 
-  const post = data.data.assignments.find((row) => !row.valid_to) ?? null;
+  const post = data.data.assignments.find((row) => row.is_primary && active(row))
+    ?? data.data.assignments.find(active) ?? null;
+  const plan = detail.state === 'ready' ? detail.data : null;
 
   return (
     <>
-      <div className="split split--open">
-        <section className="panel">
-          <h3 className="panel__title">Текущее назначение</h3>
+      <div className="ec-split">
+        <section className="ec-col">
+          <h2 className="ec-h2">Текущее назначение</h2>
           {post ? (
-            <dl className="facts">
-              <Fact label="Регион" value={post.region_name} />
-              <Fact label="Офис" value={post.office_name} />
+            <dl className="ec-facts ec-facts--right">
+              <Fact label="Офис" value={[post.office_name, post.region_name].filter(Boolean).join(', ') || null} />
               <Fact label="Отдел" value={post.department_name} />
               <Fact label="Должность" value={post.position_name} />
-              <Fact label="Действует с" value={post.valid_from} />
+              <Fact label="Занятость" value={post.employment_type
+                ? EMPLOYMENT[post.employment_type] ?? post.employment_type : null} />
+              <Fact label="Формат работы" value={post.work_mode
+                ? WORK_MODE[post.work_mode] ?? post.work_mode : null} />
+              <Fact label="Действует с" value={post.valid_from ? dayMonthYear(post.valid_from) : null} />
             </dl>
           ) : (
-            <p className="empty">Действующего назначения нет.</p>
+            <p className="ec-empty">Действующего назначения нет.</p>
           )}
-          <p className="field__hint">
-            Перевод создаёт новый период и закрывает прежний: история
-            сохраняется целиком, а прошлые расчёты не меняются.
+        </section>
+
+        <section className="ec-col ec-col--side">
+          <h2 className="ec-h2">Рабочий график</h2>
+          {!current ? (
+            <p className="ec-empty">График не назначен.</p>
+          ) : detail.state === 'loading' ? (
+            <p className="ec-empty" role="status">Читаем график…</p>
+          ) : detail.state === 'error' ? (
+            <p className="ec-empty ec-bad">
+              Карточку графика получить не удалось.{' '}
+              <button type="button" className="ec-link" onClick={reloadDetail}>Повторить</button>
+            </p>
+          ) : detail.state === 'denied' ? (
+            <p className="ec-empty">Карточка графика закрыта правами.</p>
+          ) : plan && (
+            <dl className="ec-facts ec-facts--right">
+              <Fact label="Режим" value={plan.name} />
+              <Fact label="Рабочее время" value={workHours(plan)} />
+              <Fact label="Перерыв" value={breakText(plan)} empty="Не предусмотрен" />
+              <Fact label="Допуск опоздания" value={plan.late_grace_minutes === null
+                ? null : `${plan.late_grace_minutes} мин`} />
+              <Fact label="Действует с" value={dayMonthYear(current.valid_from)} />
+            </dl>
+          )}
+        </section>
+      </div>
+
+      {current && plan && (
+        <section className="ec-week-wrap">
+          <div className="ec-row-head">
+            <h2 className="ec-h2">Обычная рабочая неделя</h2>
+            <span className="ec-muted">
+              {Math.round(plan.weekly_minutes / 60)} {plural(Math.round(plan.weekly_minutes / 60), 'час', 'часа', 'часов')}
+              {' · '}время {zoneCity(plan.timezone)}
+            </span>
+          </div>
+          <Week days={plan.days} />
+          <p className="ec-hint">
+            Это график, как он назначен. Праздники и переносы сервер применяет в день события —
+            их видно в журнале посещаемости.
           </p>
         </section>
+      )}
 
-        <section className="panel">
-          <h3 className="panel__title">Текущий график</h3>
-          {!current ? (
-            <p className="empty">График не назначен.</p>
-          ) : detail.state === 'ready' ? (
-            <dl className="facts">
-              <Fact label="Название" value={detail.data.name} />
-              <Fact label="Часовой пояс" value={detail.data.timezone} />
-              <Fact label="Часов в неделю"
-                    value={`${Math.round(detail.data.weekly_minutes / 60)}`} />
-              <Fact label="Допуск опоздания"
-                    value={detail.data.late_grace_minutes === null
-                      ? null : `${detail.data.late_grace_minutes} мин`} />
-              <Fact label="Действует с" value={current.valid_from} />
-            </dl>
-          ) : detail.state === 'error' ? (
-            <p className="empty empty--bad">Карточку графика получить не удалось.</p>
-          ) : (
-            <p className="empty" role="status">Читаем график…</p>
-          )}
-        </section>
-      </div>
-
-      <section className="panel">
-        <h3 className="panel__title">Неделя по графику</h3>
-        {!current ? (
-          <p className="empty">График не назначен.</p>
-        ) : detail.state === 'ready' ? (
-          <Week days={detail.data.days} />
-        ) : (
-          <p className="empty" role="status">Читаем график…</p>
+      <section className="ec-more">
+        <button type="button" className="ec-more__head" aria-expanded={history}
+                onClick={() => setHistory((was) => !was)}>
+          <AppIcon name={history ? 'chevron' : 'next'} size={18} />
+          История назначений и графиков
+        </button>
+        {history && (
+          <div className="ec-more__body ec-split">
+            <section className="ec-col">
+              <h3 className="ec-h3">Назначения</h3>
+              <Periods today={today} empty="Записей о назначениях нет."
+                       rows={data.data.assignments.map((row) => ({
+                         id: row.id, from: row.valid_from ?? '', to: row.valid_to,
+                         what: [row.office_name, row.department_name, row.position_name]
+                           .filter(Boolean).join(' · ') || 'Без подробностей',
+                       }))} />
+            </section>
+            <section className="ec-col ec-col--side">
+              <h3 className="ec-h3">Графики</h3>
+              <Periods today={today} empty="Графиков не назначалось."
+                       rows={data.data.schedules.map((row) => ({
+                         id: row.id, from: row.valid_from, to: row.valid_to,
+                         what: row.schedule_name ?? 'График',
+                       }))} />
+            </section>
+          </div>
         )}
-        <p className="field__hint">
-          Полоса показывает график как он назначен. Праздники и переносы
-          применяются расчётом на стороне сервера в день события.
-        </p>
       </section>
-
-      <div className="split split--open">
-        <section className="panel">
-          <h3 className="panel__title">История назначений</h3>
-          <Periods rows={data.data.assignments.map((row) => ({
-            id: row.id,
-            from: row.valid_from ?? '',
-            to: row.valid_to,
-            what: [row.office_name, row.department_name, row.position_name]
-              .filter(Boolean).join(' · ') || 'Без подробностей',
-          }))} empty="Записей о назначениях нет." />
-        </section>
-
-        <section className="panel">
-          <h3 className="panel__title">История графиков</h3>
-          <Periods rows={data.data.schedules.map((row) => ({
-            id: row.id,
-            from: row.valid_from,
-            to: row.valid_to,
-            what: row.schedule_name ?? 'График',
-          }))} empty="Графиков не назначалось." />
-        </section>
-      </div>
     </>
   );
 }
 
-const WEEKDAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+/** «время Ташкента». Незнакомый пояс — как есть, без выдуманного города. */
+const ZONE_CITY: Record<string, string> = {
+  'Asia/Tashkent': 'Ташкента',
+  'Asia/Samarkand': 'Самарканда',
+  'Asia/Dushanbe': 'Душанбе',
+  'Asia/Almaty': 'Алматы',
+  'Asia/Bishkek': 'Бишкека',
+  'Europe/Moscow': 'Москвы',
+};
+
+const zoneCity = (zone: string): string => ZONE_CITY[zone] ?? zone;
+
+/** «09:00–18:00», если у всех рабочих дней одни часы, иначе «разное по дням». */
+function workHours(plan: api.WorkScheduleDetail): string | null {
+  const days = plan.days.filter((day) => day.is_working_day && day.start_time && day.end_time);
+  if (!days.length) return plan.is_flexible ? 'Свободный' : null;
+  const spans = new Set(days.map((day) => `${day.start_time?.slice(0, 5)}–${day.end_time?.slice(0, 5)}`));
+  return spans.size === 1 ? [...spans][0] ?? null : 'Разное по дням';
+}
+
+/** «1 ч, не оплачивается» — по перерывам первого рабочего дня. */
+function breakText(plan: api.WorkScheduleDetail): string | null {
+  const day = plan.days.find((one) => one.is_working_day && (one.breaks?.length ?? 0) > 0);
+  if (!day?.breaks?.length) return null;
+  return day.breaks.map((one) => {
+    const [h1 = 0, m1 = 0] = one.start_time.split(':').map(Number);
+    const [h2 = 0, m2 = 0] = one.end_time.split(':').map(Number);
+    const minutes = (h2 * 60 + m2) - (h1 * 60 + m1);
+    const length = minutes % 60 === 0 ? `${minutes / 60} ч` : `${minutes} мин`;
+    return `${length}, ${one.is_paid ? 'оплачивается' : 'не оплачивается'}`;
+  }).join('; ');
+}
 
 /** Неделя рабочих интервалов. Выходной — не «нет данных», и наоборот. */
 function Week({ days }: { days: api.ScheduleDay[] }) {
   const byWeekday = new Map(days.map((day) => [day.weekday, day]));
   return (
-    <ul className="week" aria-label="Неделя по графику">
+    <ul className="ec-week" aria-label="Обычная рабочая неделя">
       {WEEKDAYS.map((title, index) => {
         const day = byWeekday.get(index + 1);
         const working = Boolean(day?.is_working_day);
         return (
-          <li key={title} className={`week__day${working ? ' week__day--on' : ''}`}>
-            <span className="week__title">{title}</span>
-            <span className="week__hours">
+          <li key={title} className={working ? 'ec-week__day ec-week__day--on' : 'ec-week__day'}>
+            <b>{title}</b>
+            <span>
               {!day ? 'нет данных'
-                : working ? `${(day.start_time ?? '').slice(0, 5)} — ${(day.end_time ?? '').slice(0, 5)}`
-                : 'выходной'}
+                : working ? `${(day.start_time ?? '').slice(0, 5)}–${(day.end_time ?? '').slice(0, 5)}`
+                : 'Выходной'}
             </span>
           </li>
         );
@@ -849,415 +919,523 @@ function Week({ days }: { days: api.ScheduleDay[] }) {
   );
 }
 
-/**
- * История периодов: действующие, будущие и завершённые — разными словами.
- *
- * Даты приходят с сервера и здесь не пересчитываются: смена пояса
- * отображения CRM не должна сдвигать границы кадровых периодов.
- */
-function Periods({ rows, empty }: {
+/** История периодов: действующие, будущие и завершённые — разными словами. */
+function Periods({ rows, empty, today }: {
   rows: Array<{ id: string; from: string; to: string | null; what: string }>;
   empty: string;
+  today: string;
 }) {
-  const today = todayIso();
-  if (rows.length === 0) return <p className="empty">{empty}</p>;
+  if (rows.length === 0) return <p className="ec-empty">{empty}</p>;
   return (
-    <div className="scroller">
-      <table className="grid-table" aria-label="История периодов">
-        <thead>
-          <tr>
-            <th scope="col">Период</th>
-            <th scope="col">Что</th>
-            <th scope="col">Состояние</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={row.id}>
-              <td>{row.from} — {row.to ?? 'по настоящее время'}</td>
-              <td>{row.what}</td>
-              <td>
-                {row.from > today ? 'Начнётся позже'
-                  : row.to && row.to < today ? 'Завершено'
-                  : 'Действует'}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-// --- вкладка «Заявки и документы» --------------------------------------------
-
-function Requests({ id, rights, zone }: {
-  id: string; rights: Rights; zone: string;
-}) {
-  const [status, setStatus] = useState('');
-  const [kind, setKind] = useState('');
-  const [picked, setPicked] = useState<string | null>(null);
-
-  const [list, reloadList] = useBlock(
-    (signal) => api.queue(
-      {
-        employee_id: id,
-        ...(status ? { status } : {}),
-        ...(kind ? { kind } : {}),
-        limit: '50',
-      },
-      signal,
-    ),
-    `requests|${id}|${status}|${kind}`,
-    rights.absences,
-  );
-
-  if (!rights.absences) {
-    return (
-      <p className="empty empty--bad">
-        Нет права на заявки. Это отдельное разрешение —
-        попросите <span className="mono">absences.read</span>.
-      </p>
-    );
-  }
-
-  const items = list.state === 'ready' ? list.data.items : [];
-  const chosen = items.find((item) => item.id === picked) ?? null;
-
-  return (
-    <>
-      <div className="toolbar toolbar--thin">
-        <AppSelectField className="toolbar-select" label="Тип заявки" value={kind} onChange={(value) => { setKind(value); setPicked(null); }}>
-            <option value="">Все типы</option>
-            <option value="absence">Отсутствия</option>
-            <option value="correction">Исправления отметок</option>
-        </AppSelectField>
-        <AppSelectField className="toolbar-select" label="Состояние" value={status} onChange={(value) => { setStatus(value); setPicked(null); }}>
-            <option value="">Все состояния</option>
-            <option value="SUBMITTED">На рассмотрении</option>
-            <option value="APPROVED">Подтверждены</option>
-            <option value="REJECTED">Отклонены</option>
-            <option value="CANCELLED">Отменены</option>
-        </AppSelectField>
-        <span className="toolbar__note">
-          {list.state === 'ready'
-            ? `Показано ${items.length}${list.data.has_more ? ' — есть ещё' : ''}`
-            : ''}
-        </span>
-      </div>
-
-      <div className="split split--open">
-        <section className="panel panel--list">
-          <RequestList block={list} zone={zone} picked={picked}
-                       onPick={setPicked} compact={false} />
-        </section>
-        <section className="panel panel--view">
-          {chosen ? (
-            <RequestDetails item={chosen} zone={zone} rights={rights}
-                            onClose={() => setPicked(null)}
-                            onDone={() => { setPicked(null); reloadList(); }} />
-          ) : (
-            <p className="empty">Выберите заявку, чтобы увидеть подробности.</p>
-          )}
-        </section>
-      </div>
-    </>
-  );
-}
-
-function RequestList({ block, zone, picked, onPick, compact }: {
-  block: Block<api.Cursored<api.QueueItem>>;
-  zone: string;
-  picked: string | null;
-  onPick: (id: string) => void;
-  compact: boolean;
-}) {
-  if (block.state === 'loading') return <p className="empty" role="status">Загружаем…</p>;
-  if (block.state === 'denied') return <p className="empty empty--bad">Заявки закрыты правами.</p>;
-  if (block.state === 'error') return <p className="empty empty--bad">Не удалось загрузить заявки.</p>;
-  if (block.data.items.length === 0) return <p className="empty">Заявок нет.</p>;
-
-  return (
-    <ul className="roster">
-      {block.data.items.map((item) => {
-        const body = item.kind === 'absence' ? item.absence : item.correction;
-        const status = String(body?.status ?? '');
-        return (
-          <li key={item.id}>
-            <button type="button"
-                    className={`roster__go${picked === item.id ? ' roster__go--on' : ''}`}
-                    onClick={() => onPick(item.id)}>
-              <span className="who">
-                <span className="who__text">
-                  <span className="who__name">
-                    {item.kind === 'absence'
-                      ? orDash((item.absence as Record<string, unknown> | undefined)?.['absence_type_name'])
-                      : 'Исправление отметки'}
-                  </span>
-                  <span className="who__id">
-                    {moment(item.created_at, zone, false)}
-                    {compact ? '' : ` · ${item.kind === 'absence'
-                      ? (REQUEST_STATUS[status] ?? status)
-                      : (CORRECTION_STATUS[status] ?? status)}`}
-                  </span>
-                </span>
-              </span>
-            </button>
-          </li>
-        );
-      })}
-    </ul>
-  );
-}
-
-function RequestDetails({ item, zone, rights, onClose, onDone }: {
-  item: api.QueueItem; zone: string; rights: Rights;
-  onClose: () => void; onDone: () => void;
-}) {
-  const [comment, setComment] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const absence = item.kind === 'absence'
-    ? (item.absence as Record<string, unknown> | undefined) : undefined;
-  const correction = item.kind === 'correction'
-    ? (item.correction as Record<string, unknown> | undefined) : undefined;
-  const status = String((absence ?? correction)?.['status'] ?? '');
-  const documents = (absence?.['documents'] as Array<Record<string, unknown>>) ?? [];
-
-  const decide = async (decision: 'approve' | 'reject') => {
-    setBusy(true);
-    setError(null);
-    try {
-      if (item.kind === 'absence') await api.decideAbsence(item.id, decision, comment);
-      else await api.decideCorrection(item.id, decision, comment);
-      onDone();
-    } catch (failure) {
-      // Введённый комментарий переживает отказ: набирать его заново
-      // из-за сетевой ошибки человек не должен.
-      setError(failure instanceof ApiFailure
-        ? messageFor(failure) : 'Не удалось отправить решение.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <>
-      <div className="side-panel__head">
-        <h3 className="side-panel__title">
-          {item.kind === 'absence' ? 'Заявка на отсутствие' : 'Исправление отметки'}
-        </h3>
-        <button type="button" className="nav" onClick={onClose} aria-label="Закрыть">
-          <AppIcon name="cross" size={16} />
-        </button>
-      </div>
-
-      <dl className="facts">
-        <Fact label="Состояние"
-              value={item.kind === 'absence'
-                ? (REQUEST_STATUS[status] ?? status)
-                : (CORRECTION_STATUS[status] ?? status)} />
-        <Fact label="Подана" value={moment(item.created_at, zone, false)} />
-        {absence && (
-          <>
-            <Fact label="Тип" value={String(absence['absence_type_name'] ?? '')} />
-            <Fact label="С" value={String(absence['requested_start_at'] ?? '')} />
-            <Fact label="По" value={String(absence['requested_end_at'] ?? '')} />
-            <Fact label="Комментарий сотрудника"
-                  value={String(absence['employee_comment'] ?? '')} />
-          </>
-        )}
-        {correction && (
-          <Fact label="Причина" value={String(correction['reason'] ?? '')} />
-        )}
-      </dl>
-
-      {absence && (
-        <>
-          <h4 className="side-panel__label">Документы</h4>
-          {documents.length === 0 ? (
-            <p className="muted">
-              Документа нет. Отсутствие не считается подтверждённым только
-              потому, что файл загружен, — и наоборот.
-            </p>
-          ) : (
-            <ul className="marks">
-              {documents.map((doc) => (
-                <li key={String(doc['id'])} className="marks__line">
-                  <span className="marks__what">{orDash(doc['file_name'])}</span>
-                  <span className="marks__kind">
-                    {DOCUMENT_STATUS[String(doc['verification_status'] ?? '')]
-                      ?? orDash(doc['verification_status'])}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </>
-      )}
-
-      {awaitingDecision(status) && rights.decide ? (
-        <>
-          <label className="form-grid__field">
-            <span className="form-grid__label">Комментарий к решению</span>
-            <textarea className="form-grid__input area" value={comment} rows={2}
-                      aria-label="Комментарий к решению"
-                      onChange={(event) => setComment(event.target.value)} />
-          </label>
-          <div className="side-panel__actions">
-            <button type="button" className="btn" disabled={busy}
-                    onClick={() => void decide('reject')}>Отклонить</button>
-            <button type="button" className="btn btn--dark" disabled={busy}
-                    onClick={() => void decide('approve')}>
-              {busy ? 'Отправляем…' : 'Подтвердить'}
-            </button>
-          </div>
-        </>
-      ) : (
-        <p className="field__hint">
-          {awaitingDecision(status)
-            ? 'Решение принимает тот, у кого есть право рассмотрения.'
-            : 'Заявка уже рассмотрена: повторное решение процессом не предусмотрено.'}
-        </p>
-      )}
-      {error && <p className="form-grid__error" role="alert">{error}</p>}
-    </>
-  );
-}
-
-// --- вкладка «История изменений» ---------------------------------------------
-
-function History({ id, rights, zone }: {
-  id: string; rights: Rights; zone: string;
-}) {
-  const [action, setAction] = useState('');
-  const [picked, setPicked] = useState<string | null>(null);
-
-  const [log, reloadLog] = useBlock(
-    (signal) => api.auditLogs(
-      { employee_id: id, ...(action ? { action } : {}), limit: '50' }, signal,
-    ),
-    `history|${id}|${action}`,
-    rights.audit,
-  );
-
-  if (!rights.audit) {
-    return (
-      <p className="empty empty--bad">
-        Нет права на журнал изменений. В нём видно, кто и что менял, поэтому
-        это отдельное разрешение — попросите <span className="mono">audit.read</span>.
-      </p>
-    );
-  }
-
-  const rows = log.state === 'ready' ? log.data.items : [];
-  const chosen = rows.find((row) => row.id === picked) ?? null;
-
-  return (
-    <>
-      <div className="toolbar toolbar--thin">
-        <AppSelectField className="toolbar-select" label="Действие" value={action} onChange={(value) => { setAction(value); setPicked(null); }}>
-            <option value="">Все действия</option>
-            <option value="employee.">Профиль и переводы</option>
-            <option value="attendance.">Посещаемость</option>
-            <option value="absence">Заявки на отсутствие</option>
-            <option value="schedule">Графики</option>
-        </AppSelectField>
-        <span className="toolbar__note">
-          {log.state === 'ready'
-            ? `Показано ${rows.length}${log.data.has_more ? ' — есть ещё' : ''}`
-            : ''}
-        </span>
-      </div>
-
-      <div className="split split--open">
-        <section className="panel panel--list">
-          {log.state === 'loading' && <p className="empty" role="status">Загружаем…</p>}
-          {log.state === 'error' && (
-            <p className="empty empty--bad">
-              Не удалось загрузить журнал.{' '}
-              <button type="button" className="link" onClick={reloadLog}>Повторить</button>
-            </p>
-          )}
-          {log.state === 'ready' && rows.length === 0 && (
-            <p className="empty">Записей об этом сотруднике пока нет.</p>
-          )}
-          {log.state === 'ready' && rows.length > 0 && (
-            <ul className="roster">
-              {rows.map((row) => (
-                <li key={row.id}>
-                  <button type="button"
-                          className={`roster__go${picked === row.id ? ' roster__go--on' : ''}`}
-                          onClick={() => setPicked(row.id)}>
-                    <span className="who">
-                      <span className="who__text">
-                        <span className="who__name">{row.action}</span>
-                        <span className="who__id">
-                          {moment(row.occurred_at, zone, false)}
-                          {row.actor_email ? ` · ${row.actor_email}` : ''}
-                        </span>
-                      </span>
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-
-        <section className="panel panel--view">
-          {chosen ? (
-            <>
-              <div className="side-panel__head">
-                <h3 className="side-panel__title">{chosen.action}</h3>
-                <button type="button" className="nav" aria-label="Закрыть"
-                        onClick={() => setPicked(null)}>
-                  <AppIcon name="cross" size={16} />
-                </button>
-              </div>
-              <dl className="facts">
-                <Fact label="Когда" value={moment(chosen.occurred_at, zone, false)} />
-                <Fact label="Инициатор"
-                      value={chosen.actor_email ?? chosen.actor_user_id} />
-                <Fact label="Объект" value={chosen.entity_type} />
-                <Fact label="Идентификатор объекта" value={chosen.entity_id} />
-              </dl>
-              <h4 className="side-panel__label">Было → стало</h4>
-              <Diff before={chosen.old_values} after={chosen.new_values} />
-              <p className="field__hint">
-                Показаны значения из журнала на момент события. Сегодняшние
-                названия сюда не подставляются: если записан только
-                идентификатор, он и показан.
-              </p>
-            </>
-          ) : (
-            <p className="empty">Выберите событие, чтобы увидеть подробности.</p>
-          )}
-        </section>
-      </div>
-    </>
-  );
-}
-
-function Diff({ before, after }: {
-  before: Record<string, unknown> | null;
-  after: Record<string, unknown> | null;
-}) {
-  const keys = [...new Set([
-    ...Object.keys(before ?? {}), ...Object.keys(after ?? {}),
-  ])];
-  if (keys.length === 0) return <p className="muted">Значения не записаны.</p>;
-  return (
-    <ul className="marks">
-      {keys.map((key) => (
-        <li key={key} className="marks__line">
-          <span className="marks__kind">{key}</span>
-          <span className="marks__what">{orDash(before?.[key])}</span>
-          <span className="marks__time"><AppIcon name="arrow" size={16} /> {orDash(after?.[key])}</span>
+    <ul className="ec-periods">
+      {rows.map((row) => (
+        <li key={row.id}>
+          <span className="ec-periods__what">{row.what}</span>
+          <span className="ec-muted">
+            {row.from ? dayMonthYear(row.from) : '—'} — {row.to ? dayMonthYear(row.to) : 'по настоящее время'}
+            {' · '}
+            {row.from > today ? 'начнётся позже'
+              : row.to && row.to < today ? 'завершено' : 'действует'}
+          </span>
         </li>
       ))}
     </ul>
   );
 }
 
+// --- вкладка «Заявки и документы» --------------------------------------------
+
+const STATUS_FILTER: Record<string, string> = {
+  open: 'SUBMITTED,IN_REVIEW',
+  APPROVED: 'APPROVED',
+  REJECTED: 'REJECTED',
+  CANCELLED: 'CANCELLED',
+};
+
+const DOC_KIND: Record<string, string> = {
+  IDENTITY: 'Паспорт или ID-карта',
+  CONTRACT: 'Трудовой договор',
+  HIRE_ORDER: 'Приказ о приёме',
+  OTHER: 'Другой документ',
+};
+
+const DOC_STATE: Record<string, string> = {
+  MISSING: 'Не добавлен',
+  UPLOADED: 'Загружен',
+  GENERATED_LATER: 'Будет сформирован',
+  REVIEW: 'Требует проверки',
+};
+
+function Requests({ id, person, rights, zone, version, onChanged }: {
+  id: string; person: Person; rights: Rights; zone: string; version: number;
+  onChanged: () => void;
+}) {
+  const [params, setParams] = useSearchParams();
+  const status = params.get('status') ?? '';
+  const kind = params.get('kind') ?? '';
+  const picked = params.get('request');
+  const [docs, setDocs] = useState(false);
+
+  const patch = (changes: Record<string, string | null>) => setParams((was) => {
+    const next = new URLSearchParams(was);
+    for (const [key, value] of Object.entries(changes)) {
+      if (value) next.set(key, value);
+      else next.delete(key);
+    }
+    return next;
+  }, { replace: true });
+
+  const [list, { reload, loadMore }] = usePaged(
+    (cursor, signal) => api.queue({
+      employee_id: id,
+      ...(STATUS_FILTER[status] ? { status: STATUS_FILTER[status] } : {}),
+      ...(kind ? { kind } : {}),
+      limit: '20',
+      ...(cursor ? { cursor } : {}),
+    }, signal),
+    `requests|${id}|${status}|${kind}|${version}`,
+    rights.absences,
+  );
+  const [counts] = useBlock(
+    (signal) => api.queueCounts({ employee_id: id }, signal),
+    `requests-counts|${id}|${version}`,
+    rights.absences,
+  );
+
+  const total = counts.state !== 'ready' || kind ? null
+    : status === '' ? counts.data['all'] ?? null
+    : status === 'open' ? counts.data['open'] ?? null
+    : null;
+  const shownText = list.state !== 'ready' ? ''
+    : total !== null ? `${total} ${plural(total, 'заявка', 'заявки', 'заявок')}`
+    : list.hasMore ? `Показано ${list.items.length}, есть ещё`
+    : `${list.items.length} ${plural(list.items.length, 'заявка', 'заявки', 'заявок')}`;
+
+  const documents = Array.isArray(person['documents'])
+    ? (person['documents'] as Record<string, unknown>[]) : [];
+
+  return (
+    <>
+      <h2 className="ec-h2">Заявки сотрудника</h2>
+      {!rights.absences ? (
+        <p className="ec-note ec-note--bad">
+          Нет права на заявки. Это отдельное разрешение — absences.read.
+        </p>
+      ) : (
+        <>
+          <div className="ec-toolbar">
+            <span className="ec-toolbar__label">Статус</span>
+            <AppSelectField className="ec-select" label="Статус заявок" value={status}
+                            onChange={(value) => patch({ status: value || null, request: null })}>
+              <option value="">Все заявки</option>
+              <option value="open">Ждут решения</option>
+              <option value="APPROVED">Подтверждены</option>
+              <option value="REJECTED">Отклонены</option>
+              <option value="CANCELLED">Отменены</option>
+            </AppSelectField>
+            <AppSelectField className="ec-select" label="Вид заявок" value={kind}
+                            onChange={(value) => patch({ kind: value || null, request: null })}>
+              <option value="">Все виды</option>
+              <option value="absence">Отсутствия</option>
+              <option value="correction">Исправления отметок</option>
+            </AppSelectField>
+            <span className="ec-muted">{shownText}</span>
+          </div>
+
+          {list.state === 'loading' && <p className="ec-empty" role="status">Загружаем заявки…</p>}
+          {list.state === 'denied' && <p className="ec-empty ec-bad">Заявки закрыты вашими правами.</p>}
+          {list.state === 'missing' && <p className="ec-empty">Сотрудник вне вашей области.</p>}
+          {list.state === 'error' && (
+            <p className="ec-empty ec-bad" role="alert">
+              Не удалось загрузить заявки.{' '}
+              <button type="button" className="ec-link" onClick={reload}>Повторить</button>
+            </p>
+          )}
+          {list.state === 'ready' && list.items.length === 0 && (
+            <p className="ec-empty">
+              {status || kind ? 'По этому фильтру заявок нет.' : 'Заявок у сотрудника пока нет.'}
+            </p>
+          )}
+          {list.state === 'ready' && list.items.length > 0 && (
+            <div className="ec-table-wrap">
+              <table className="ec-table ec-table--requests">
+                <caption className="ec-sr">Заявки сотрудника</caption>
+                <thead>
+                  <tr>
+                    <th scope="col"><span className="ec-sr">Раскрыть</span></th>
+                    <th scope="col">Тип</th>
+                    <th scope="col">Даты</th>
+                    <th scope="col">Статус</th>
+                    <th scope="col"><span className="ec-sr">Подробности</span></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {list.items.map((item) => {
+                    const open = picked === item.id;
+                    const state = statusOf(item);
+                    const toggle = () => patch({ request: open ? null : item.id });
+                    return (
+                      <RequestRows key={item.id} item={item} open={open} state={state}
+                                   onToggle={toggle} rights={rights} zone={zone}
+                                   onDone={() => { reload(); onChanged(); }} />
+                    );
+                  })}
+                </tbody>
+              </table>
+              {list.hasMore && (
+                <button type="button" className="ec-btn ec-btn--line ec-more-btn" disabled={list.more}
+                        onClick={loadMore}>
+                  {list.more ? 'Загружаем…' : 'Показать ещё'}
+                </button>
+              )}
+              {list.moreFailed && (
+                <p className="ec-bad" role="alert">Следующую страницу получить не удалось — нажмите ещё раз.</p>
+              )}
+            </div>
+          )}
+        </>
+      )}
+
+      <section className="ec-more">
+        <button type="button" className="ec-more__head" aria-expanded={docs}
+                onClick={() => setDocs((was) => !was)}>
+          <AppIcon name="doc" size={18} />
+          Документы сотрудника · {documents.length}
+          <span className="ec-more__arrow"><AppIcon name={docs ? 'chevron' : 'next'} size={18} /></span>
+        </button>
+        {docs && (
+          documents.length === 0 ? (
+            <p className="ec-empty">Документов пока нет.</p>
+          ) : (
+            <ul className="ec-docs">
+              {documents.map((row) => {
+                const key = String(row['id'] ?? '');
+                const kindCode = String(row['kind'] ?? '');
+                const title = String(row['title'] ?? '') || DOC_KIND[kindCode] || 'Документ';
+                const state = String(row['status'] ?? '');
+                return (
+                  <li key={key}>
+                    <AppIcon name="doc" size={18} />
+                    <span className="ec-docs__title" title={title}>{title}</span>
+                    {row['file_id'] && rights.manage ? (
+                      // Файл отдаёт сервер с проверкой права и области при
+                      // каждом открытии — ссылку нельзя «передать» без входа.
+                      <a className="ec-link" href={api.employeeDocumentUrl(id, key)}
+                         target="_blank" rel="noreferrer">Открыть</a>
+                    ) : row['file_id'] ? (
+                      <span className="ec-muted">Файл доступен кадровой службе</span>
+                    ) : (
+                      <span className="ec-muted">{DOC_STATE[state] ?? state}</span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )
+        )}
+      </section>
+    </>
+  );
+}
+
+function RequestRows({ item, open, state, onToggle, rights, zone, onDone }: {
+  item: api.QueueItem; open: boolean; state: { title: string; tone: string };
+  onToggle: () => void; rights: Rights; zone: string; onDone: () => void;
+}) {
+  const kind = kindOf(item);
+  const absence = item.absence;
+  const dates = absence?.first_day
+    ? dayRange(absence.first_day, absence.last_day ?? absence.first_day)
+    : item.correction?.requested_entry_at
+      ? dayMonth((item.correction.requested_entry_at).slice(0, 10)) : '—';
+  return (
+    <>
+      <tr className={open ? 'ec-row ec-row--open' : 'ec-row'}>
+        <td className="ec-chev">
+          <button type="button" className="ec-icon-btn" aria-expanded={open}
+                  aria-label={open ? 'Скрыть подробности' : 'Открыть подробности'} onClick={onToggle}>
+            <AppIcon name={open ? 'chevron' : 'next'} size={18} />
+          </button>
+        </td>
+        <td><b>{kind.title}</b></td>
+        <td className="ec-nowrap">{dates}</td>
+        <td><span className={`ec-pill ec-pill--${toneOf(state.tone)}`}>{state.title}</span></td>
+        <td className="ec-act">
+          <button type="button" className="ec-link" onClick={onToggle}>{open ? 'Скрыть' : 'Открыть'}</button>
+        </td>
+      </tr>
+      {open && (
+        <tr className="ec-row-more">
+          <td colSpan={5}>
+            <RequestDetails item={item} title={`${kind.title} · ${dates}`} rights={rights}
+                            zone={zone} onDone={onDone} />
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+const toneOf = (tone: string): string =>
+  tone === 'orange' ? 'amber' : tone === 'red' ? 'red' : tone === 'green' ? 'green'
+    : tone === 'blue' ? 'blue' : 'grey';
+
+function RequestDetails({ item, title, rights, zone, onDone }: {
+  item: api.QueueItem; title: string; rights: Rights; zone: string; onDone: () => void;
+}) {
+  const [comment, setComment] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  const absence = item.absence;
+  const correction = item.correction;
+  const submitted = absence?.submitted_at ?? correction?.submitted_at ?? item.created_at;
+  const missing = absence?.missing_for_approval ?? [];
+  const canDecide = isOpen(item)
+    && (item.kind === 'absence' ? rights.decide && absence?.kind !== 'CANCEL' : rights.correct);
+  const paper = absence ? certificateOf(item) : null;
+
+  const decide = async (decision: 'approve' | 'reject') => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      if (item.kind === 'absence') await api.decideAbsence(item.id, decision, comment);
+      else await api.decideCorrection(item.id, decision, comment);
+      setDone(decision === 'approve' ? 'Заявка подтверждена' : 'Заявка отклонена');
+      onDone();
+    } catch (failure) {
+      // Связь прервалась — неизвестно, дошло ли решение. Сначала
+      // спрашиваем сервер, а не отправляем второй раз вслепую.
+      if (failure instanceof ApiFailure && failure.kind === 'offline' && item.kind === 'absence') {
+        try {
+          const now = await api.absenceRequest(item.id);
+          const settled = now.status !== 'SUBMITTED' && now.status !== 'IN_REVIEW';
+          setError(settled
+            ? 'Связь прерывалась, но решение дошло — список обновлён.'
+            : 'Связь прервалась, решение не дошло. Можно отправить ещё раз.');
+          if (settled) onDone();
+        } catch {
+          setError('Связь прервалась. Состояние заявки неизвестно — обновите страницу, прежде чем решать снова.');
+        }
+      } else if (failure instanceof ApiFailure && failure.kind === 'offline') {
+        setError('Связь прервалась. Список перечитан — проверьте состояние, прежде чем решать снова.');
+        onDone();
+      } else if (failure instanceof ApiFailure && (failure.kind === 'conflict' || failure.status === 404)) {
+        // Другой HR успел решить или запись исчезла — показываем свежее.
+        setError(`${reasonFor(failure)} Список обновлён.`);
+        onDone();
+      } else {
+        // Комментарий остаётся: набирать заново после сбоя человек не должен.
+        setError(failure instanceof ApiFailure ? reasonFor(failure) : messageFor(failure));
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="ec-detail">
+      <div className="ec-detail__main">
+        <b className="ec-detail__title">{title}</b>
+        <span className="ec-muted">
+          {[
+            absence?.requires_document ? `Справка: ${certificateState(item).title.toLowerCase()}` : '',
+            submitted ? `отправлено ${whenDay(submitted, zone)}` : '',
+          ].filter(Boolean).join(' · ')}
+        </span>
+        {absence?.comment && <p className="ec-quote">«{absence.comment}»</p>}
+        {correction?.reason && <p className="ec-quote">«{correction.reason}»</p>}
+        {missing.length > 0 && isOpen(item) && (
+          <p className="ec-muted">До подтверждения не хватает: {missingText(missing)}.</p>
+        )}
+        {absence?.review_comment && <p className="ec-muted">Комментарий к решению: {absence.review_comment}</p>}
+        {paper && (
+          <a className="ec-link" href={api.absenceDocumentUrl(item.id, paper.id)} target="_blank"
+             rel="noreferrer" title={paper.file.name}>
+            Открыть справку
+          </a>
+        )}
+        {item.kind === 'absence' && (
+          <Link className="ec-link" to={`/requests/${item.id}`}>Открыть заявку полностью</Link>
+        )}
+      </div>
+
+      {canDecide && !done && (
+        <div className="ec-detail__decide">
+          <label className="ec-field">
+            <span>Комментарий к решению</span>
+            <textarea value={comment} rows={2} maxLength={2000}
+                      onChange={(event) => setComment(event.target.value)} />
+          </label>
+          <div className="ec-actions">
+            <button type="button" className="ec-btn ec-btn--primary"
+                    disabled={busy || (item.kind === 'absence' && missing.length > 0)}
+                    title={missing.length > 0 ? `Не хватает: ${missingText(missing)}` : undefined}
+                    onClick={() => void decide('approve')}>
+              {busy ? 'Отправляем…' : 'Одобрить'}
+            </button>
+            <button type="button" className="ec-btn ec-btn--line" disabled={busy}
+                    onClick={() => void decide('reject')}>
+              Отклонить
+            </button>
+          </div>
+        </div>
+      )}
+      {!canDecide && isOpen(item) && (
+        <p className="ec-muted ec-detail__aside">Решение принимает тот, у кого есть право рассмотрения.</p>
+      )}
+      {done && <p className="ec-ok ec-detail__aside" role="status">{done}</p>}
+      {error && <p className="ec-bad ec-detail__aside" role="alert">{error}</p>}
+    </div>
+  );
+}
+
+// --- вкладка «История изменений» ---------------------------------------------
+
+function History({ id, rights, zone }: { id: string; rights: Rights; zone: string }) {
+  const [action, setAction] = useState('');
+  const [opened, setOpened] = useState<string | null>(null);
+
+  const [log, { reload, loadMore }] = usePaged(
+    (cursor, signal) => api.auditLogs({
+      employee_id: id, ...(action ? { action } : {}), limit: '25', ...(cursor ? { cursor } : {}),
+    }, signal),
+    `history|${id}|${action}`,
+    rights.audit,
+  );
+
+  if (!rights.audit) {
+    return (
+      <p className="ec-note ec-note--bad">
+        Нет права на журнал изменений. В нём видно, кто и что менял, поэтому это отдельное
+        разрешение — audit.read.
+      </p>
+    );
+  }
+
+  const count = log.state === 'ready'
+    ? (log.hasMore ? `Показано ${log.items.length}, есть ещё`
+      : `${log.items.length} ${plural(log.items.length, 'событие', 'события', 'событий')}`)
+    : '';
+
+  return (
+    <>
+      <div className="ec-row-head">
+        <div>
+          <h2 className="ec-h2">История изменений</h2>
+          <span className="ec-muted">{count}</span>
+        </div>
+        <AppSelectField className="ec-select" label="Раздел журнала" value={action}
+                        onChange={(value) => { setAction(value); setOpened(null); }}>
+          <option value="">Все события</option>
+          <option value="employee.">Профиль и переводы</option>
+          <option value="attendance.">Посещаемость</option>
+          <option value="absence">Заявки на отсутствие</option>
+          <option value="telegram.">Telegram</option>
+          <option value="onboarding.">Ознакомление</option>
+        </AppSelectField>
+      </div>
+
+      {log.state === 'loading' && <p className="ec-empty" role="status">Загружаем…</p>}
+      {log.state === 'denied' && <p className="ec-empty ec-bad">Журнал закрыт вашими правами.</p>}
+      {log.state === 'missing' && (
+        <p className="ec-empty">История этого сотрудника вне области вашего права на журнал.</p>
+      )}
+      {log.state === 'error' && (
+        <p className="ec-empty ec-bad" role="alert">
+          Не удалось загрузить журнал.{' '}
+          <button type="button" className="ec-link" onClick={reload}>Повторить</button>
+        </p>
+      )}
+      {log.state === 'ready' && log.items.length === 0 && (
+        <p className="ec-empty">{action ? 'По этому разделу событий нет.' : 'Записей об этом сотруднике пока нет.'}</p>
+      )}
+      {log.state === 'ready' && log.items.length > 0 && (
+        <ul className="ec-log">
+          {log.items.map((row) => {
+            const open = opened === row.id;
+            return (
+              <li key={row.id} className={open ? 'ec-log__item ec-log__item--open' : 'ec-log__item'}>
+                <div className="ec-log__row">
+                  <span className="ec-log__when">
+                    <b>{whenDay(row.occurred_at, zone)}</b>
+                    <span className="ec-muted">{clock(row.occurred_at, zone)}</span>
+                  </span>
+                  <span className="ec-log__what">
+                    <b>{auditTitle(row.action)}</b>
+                    <span className="ec-muted">{authorOf(row)}</span>
+                  </span>
+                  <button type="button" className="ec-link" aria-expanded={open}
+                          onClick={() => setOpened(open ? null : row.id)}>
+                    {open ? 'Скрыть' : 'Подробнее'}
+                  </button>
+                </div>
+                {open && <Diff before={row.old_values} after={row.new_values} action={row.action} />}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {log.state === 'ready' && log.hasMore && (
+        <button type="button" className="ec-btn ec-btn--line ec-more-btn" disabled={log.more} onClick={loadMore}>
+          {log.more ? 'Загружаем…' : 'Показать ещё'}
+        </button>
+      )}
+      {log.moreFailed && <p className="ec-bad" role="alert">Следующую страницу получить не удалось — нажмите ещё раз.</p>}
+    </>
+  );
+}
+
+function whenDay(at: string, zone: string): string {
+  try {
+    return new Intl.DateTimeFormat('ru-RU', { timeZone: zone, day: 'numeric', month: 'long' }).format(new Date(at));
+  } catch {
+    return at.slice(0, 10);
+  }
+}
+
+type AuditRow = api.AuditEntry & { actor_name?: string | null; actor_employee_name?: string | null };
+
+function authorOf(row: AuditRow): string {
+  if (row.actor_name) return row.actor_name;
+  if (row.actor_email) return row.actor_email;
+  if (row.actor_employee_name) return `${row.actor_employee_name} · сотрудник, Telegram`;
+  if (row.actor_employee_id) return 'Сотрудник, Telegram';
+  return 'Система';
+}
+
+/** Было и стало. Пустая запись — словами, без пустой таблицы. */
+function Diff({ before, after, action }: {
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
+  action: string;
+}) {
+  const keys = [...new Set([...Object.keys(before ?? {}), ...Object.keys(after ?? {})])]
+    .filter((key) => JSON.stringify(before?.[key]) !== JSON.stringify(after?.[key]) || !before);
+  if (keys.length === 0) {
+    return <p className="ec-diff ec-muted">Подробности не записаны. Код события: {action}.</p>;
+  }
+  const column = (title: string, values: Record<string, unknown> | null): ReactNode => (
+    <div className="ec-diff__col">
+      <span className="ec-muted">{title}</span>
+      {values === null ? <span>не было</span> : (
+        <dl>
+          {keys.map((key) => (
+            <div key={key}>
+              <dt>{auditField(key)}</dt>
+              <dd>{auditValue(values[key], key)}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </div>
+  );
+  return (
+    <div className="ec-diff">
+      {column('Было', before)}
+      {column('Стало', after)}
+    </div>
+  );
+}

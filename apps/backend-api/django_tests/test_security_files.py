@@ -380,6 +380,45 @@ class TestScanStatus:
         File.objects.filter(id=photo.id).update(deleted_at=timezone.now())
         assert client.get(f"{API}/employees/{employee.id}/photo/").status_code == 404
 
+    def test_employee_papers_open_only_for_hr(self, make_user, organization, employee):
+        """Паспорт и договор открывает кадровик, а не каждый, кто видит карточку.
+
+        Матрица ролей обещает наблюдателю, бухгалтеру и руководителю
+        «документы — нет», а сервер до 07.10 отдавал файл по `employees.read`.
+        Список документов (название, состояние) им по-прежнему виден в
+        карточке — закрыт только сам файл.
+        """
+        from humotech.core.rbac import Actor
+
+        hr = make_user(organization, permissions=EMPLOYEE_HR)
+        actor = Actor(user_id=hr.id, organization_id=organization.id)
+        service = EmployeeAttachmentService()
+        record = service.upload(actor, upload=upload("pass.pdf", PDF, "application/pdf"),
+                                purpose="document")
+        row = service.attach_document(actor, employee.id, kind="IDENTITY",
+                                      file_id=record.id, title="Паспорт")
+        url = f"{API}/employees/{employee.id}/documents/{row.id}/download/"
+
+        for perms in (
+            ("employees.read",),  # наблюдатель
+            ("employees.read", "attendance.read", "absences.read",
+             "absences.approve"),  # руководитель
+            ("employees.read", "reports.export"),  # бухгалтер
+        ):
+            reader = APIClient()
+            reader.force_authenticate(user=make_user(organization, permissions=perms))
+            refused = reader.get(url)
+            assert refused.status_code == 403, (perms, refused.status_code)
+            assert b"%PDF" not in refused.content
+            # Карточка с перечнем документов при этом открывается.
+            card = reader.get(f"{API}/employees/{employee.id}/")
+            assert card.status_code == 200
+            assert [doc["title"] for doc in card.json()["documents"]] == ["Паспорт"]
+
+        hr_client = APIClient()
+        hr_client.force_authenticate(user=hr)
+        assert hr_client.get(url).status_code == 200
+
     def test_rules_of_the_helper(self, organization):
         record = put(organization)
         assert viewable_for(record, STAFF) and viewable_for(record, EMPLOYEE)

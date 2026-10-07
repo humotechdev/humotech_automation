@@ -198,6 +198,47 @@ class TestOfficeScope:
         request.refresh_from_db()
         assert request.status == "SUBMITTED"
 
+    def test_viewer_http_approve_is_refused_and_changes_nothing(
+        self, api_client, organization, service, context, hr, sick_leave
+    ):
+        """Карточка сотрудника прячет кнопки без права, но проверяет сервер:
+        наблюдатель, отправивший решение напрямую, получает отказ, и
+        заявка остаётся как была."""
+        request = sick_ready(service, context, hr)
+        viewer, _ = create_actor(
+            organization, permissions=("employees.read", "absences.read"),
+        )
+        api_client.force_authenticate(user=viewer)
+
+        for word in ("approve", "reject"):
+            answer = api_client.post(
+                f"{API}/absence-requests/{request.id}/{word}", {"comment": "x"}, format="json",
+            )
+            assert answer.status_code == 403, (word, answer.status_code)
+        request.refresh_from_db()
+        assert request.status == "SUBMITTED"
+        assert not live_absences(request).exists()
+
+    def test_approve_without_csrf_token_is_refused(
+        self, organization, service, context, hr, sick_leave
+    ):
+        """Решение из браузера без CSRF-токена не проходит, даже при
+        живой сессии кадровика с правом рассмотрения."""
+        from rest_framework.test import APIClient
+
+        request = sick_ready(service, context, hr)
+        user, _ = create_actor(organization, permissions=ABSENCE_HR)
+        browser = APIClient(enforce_csrf_checks=True)
+        browser.force_login(user)
+
+        answer = browser.post(
+            f"{API}/absence-requests/{request.id}/approve", {}, format="json",
+        )
+
+        assert answer.status_code == 403
+        request.refresh_from_db()
+        assert request.status == "SUBMITTED"
+
     def test_foreign_organization_cannot_approve(
         self, service, context, hr, foreign_actor, sick_leave
     ):

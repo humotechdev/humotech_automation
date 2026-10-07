@@ -49,7 +49,23 @@ class AuditLogSerializer(serializers.Serializer):
     actor_email = serializers.CharField(
         source="actor_user.email", allow_null=True, default=None
     )
+    # Имя — для человека, читающего историю: «Марина Петрова», а не почта.
+    # Почта остаётся рядом: имя бывает пустым, а разбор инцидента ведут по ней.
+    actor_name = serializers.CharField(
+        source="actor_user.full_name", allow_null=True, default=None
+    )
     actor_employee_id = serializers.UUIDField(allow_null=True)
+    # Действие сотрудника из бота или Mini App: у него нет учётной записи
+    # CRM, и без имени строка читалась бы как «кто-то».
+    actor_employee_name = serializers.SerializerMethodField()
+
+    def get_actor_employee_name(self, row) -> str | None:
+        employee = row.actor_employee
+        if employee is None:
+            return None
+        return " ".join(
+            part for part in (employee.last_name, employee.first_name) if part
+        ) or None
 
     old_values = serializers.JSONField(allow_null=True)
     new_values = serializers.JSONField(allow_null=True)
@@ -134,7 +150,7 @@ class AuditLogView(APIView):
 
         queryset = AuditLog.objects.filter(
             organization_id=actor.organization_id
-        ).select_related("actor_user")
+        ).select_related("actor_user", "actor_employee")
 
         # Область ответственности. Кому видна вся организация (all_offices
         # у SUPER_ADMIN, HR_ADMIN, TECH_ADMIN без сужения) — журнал целиком.
@@ -142,7 +158,12 @@ class AuditLogView(APIView):
         # положен: он увидит либо историю КОНКРЕТНОГО сотрудника из своей
         # области (ниже, с проверкой видимости), либо только свои действия.
         # Отсутствие office_id у записи само по себе доступа не даёт.
-        scope_limited = not access.scope(actor).all_offices
+        #
+        # Область — того назначения, что несёт `audit.read`, а не общая: у
+        # «HR на офис A + наблюдатель на офис B» журнал читается только по A.
+        # Через общую область соседнее «только чтение» открывало бы историю
+        # сотрудников B — с прежними и новыми значениями полей.
+        scope_limited = not access.scope_for(actor, "audit.read").all_offices
 
         action = _text_param(request, "action")
         if action:
@@ -252,7 +273,10 @@ def _employee_trail(actor, employee_id) -> list:
     from humotech.employees.models import EmployeeAssignment
     from humotech.schedules.models import EmployeeScheduleAssignment
 
-    AttendanceHrService()._require_employee_visible(actor, employee_id)  # noqa: SLF001
+    # Видимость — через то же назначение, что даёт право читать журнал.
+    AttendanceHrService()._require_employee_visible(  # noqa: SLF001
+        actor, employee_id, permission="audit.read",
+    )
 
     ids = [employee_id]
     for model in (

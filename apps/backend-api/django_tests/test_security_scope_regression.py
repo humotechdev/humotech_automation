@@ -271,3 +271,83 @@ def test_roles_manage_scope_confined_to_its_grant(organization, region):
     manage = access.scope_for(actor, "roles.manage").office_ids
     assert office_a.id in manage
     assert office_b.id not in manage
+
+
+# --- 07.10: журнал изменений — та же связка «право × область» ----------------
+#
+# История сотрудника (`/audit-logs?employee_id=`) проверяла видимость по общей
+# области актора. У «журнал на офис A + только чтение на офис B» право
+# `audit.read` из назначения на A открывало историю сотрудника из B — с
+# прежними и новыми значениями полей. Теперь видимость — через назначение,
+# которое несёт `audit.read`.
+
+
+def _auditor_a_viewer_b(organization, region):
+    office_a = make_office(organization, region, "AU-A")
+    office_b = make_office(organization, region, "AU-B")
+    user, _ = create_actor(
+        organization, permissions=("audit.read", "employees.read"),
+        office=office_a, role_code="AU_AUDIT_A",
+    )
+    _add_grant(organization, user, permissions=("employees.read",),
+               office=office_b, role_code="AU_READ_B")
+    return user, office_a, office_b
+
+
+def _trail_row(organization, employee):
+    from humotech.audit.models import AuditLog
+
+    return AuditLog.objects.create(
+        organization=organization, action="employee.update",
+        entity_type="employees", entity_id=employee.id,
+        old_values={"phone": "+998 90 000 00 01"},
+        new_values={"phone": "+998 90 000 00 02"},
+    )
+
+
+def test_employee_history_confined_to_audit_grant(api_client, organization, region):
+    user, office_a, office_b = _auditor_a_viewer_b(organization, region)
+    emp_a = _employee(organization, office_a, "AU-EA")
+    emp_b = _employee(organization, office_b, "AU-EB")
+    _trail_row(organization, emp_a)
+    _trail_row(organization, emp_b)
+    api_client.force_authenticate(user=user)
+
+    # B виден только на чтение карточки — истории изменений там нет.
+    foreign = api_client.get("/api/v1/audit-logs", {"employee_id": str(emp_b.id)})
+    assert foreign.status_code == 404, foreign.content
+    assert "+998" not in foreign.content.decode()
+
+    # A — офис права на журнал: история открывается. Контроль, что чиним
+    # не «запретить всё».
+    own = api_client.get("/api/v1/audit-logs", {"employee_id": str(emp_a.id)})
+    assert own.status_code == 200, own.content
+    assert [row["entity_id"] for row in own.json()["items"]] == [str(emp_a.id)]
+
+
+def test_history_names_its_authors(api_client, organization, region):
+    """Автор называется по имени: и HR, и сотрудник, действовавший из бота."""
+    from humotech.audit.models import AuditLog
+
+    office = make_office(organization, region, "AU-N")
+    employee = _employee(organization, office, "AU-NE")
+    hr, _ = create_actor(organization, permissions=("audit.read",))
+    hr.full_name = "Петрова Марина"
+    hr.save(update_fields=["full_name"])
+    AuditLog.objects.create(
+        organization=organization, action="employee.update",
+        entity_type="employees", entity_id=employee.id, actor_user=hr,
+    )
+    AuditLog.objects.create(
+        organization=organization, action="telegram.link.consume",
+        entity_type="employees", entity_id=employee.id, actor_employee=employee,
+    )
+    api_client.force_authenticate(user=hr)
+
+    rows = api_client.get(
+        "/api/v1/audit-logs", {"employee_id": str(employee.id)}
+    ).json()["items"]
+
+    by_action = {row["action"]: row for row in rows}
+    assert by_action["employee.update"]["actor_name"] == "Петрова Марина"
+    assert by_action["telegram.link.consume"]["actor_employee_name"] == "Скоуп Тест"

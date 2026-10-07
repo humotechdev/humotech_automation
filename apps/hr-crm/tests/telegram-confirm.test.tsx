@@ -70,7 +70,7 @@ describe('подтверждение привязки Telegram', () => {
     const calls = await openCard(AWAITING);
 
     expect(await screen.findByText('@alisher_k')).toBeTruthy();
-    expect(screen.getByText('Перешёл по ссылке — ждёт подтверждения HR')).toBeTruthy();
+    expect(screen.getByText('Ждёт подтверждения HR')).toBeTruthy();
     // Пока ждём решения, новую ссылку не предлагаем: она бы спорила с этой.
     expect(screen.queryByRole('button', { name: 'Пригласить в Telegram' })).toBeNull();
 

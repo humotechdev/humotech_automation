@@ -245,8 +245,18 @@ class EmployeeAttachmentService(BaseService):
     def open_document(
         self, actor: Actor, employee_id: uuid.UUID, document_id: uuid.UUID
     ):
-        self.access.require(actor, "employees.read")
-        require_visible_employee(self.access, actor, employee_id)
+        # Файл кадрового документа — паспорт, договор, приказ — открывает
+        # кадровик (`employees.manage`), а не каждый, кто видит карточку.
+        # Наблюдателю, бухгалтеру и руководителю виден список документов
+        # (название и состояние), но не сами бумаги: так записано в матрице
+        # ролей (`docs/security/pentest-role-matrix.md`, «документы — нет»),
+        # а до 07.10 сервер отдавал файл по одному `employees.read`.
+        # Область — того назначения, что несёт право (§3): «HR на офис A +
+        # наблюдатель на офис B» паспорт сотрудника из B не открывает.
+        # Справки к заявкам на отсутствие идут другой дорогой
+        # (`AbsenceService.open_document`): их смотрит тот, кто решает.
+        self.access.require(actor, "employees.manage")
+        require_visible_employee(self.access, actor, employee_id, "employees.manage")
         document = (
             EmployeeDocument.objects.filter(
                 id=document_id,
