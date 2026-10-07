@@ -618,11 +618,17 @@ function DayPanel({ id, name, point, zone, canCorrect, onChanged }: {
                   ? duration(Math.round((Date.parse(mark.occurred_at) - Date.parse(previous.occurred_at)) / 1000))
                   : '';
               const where = mark.qr_point_name ?? mark.office_name;
+              const flags = (mark.anomalies ?? []).map((code) => ANOMALY_TEXT[code] ?? code);
               return (
                 <li key={mark.id} className={entry ? 'ea-marks__in' : 'ea-marks__out'}>
                   <b>{clock(mark.occurred_at, zoned)}</b>
                   <span>{entry ? 'Вход' : 'Выход'}{where ? ` · ${where}` : ''}</span>
                   <small>{aside}</small>
+                  {flags.length > 0 && (
+                    <span className="ea-bad ea-marks__flag" title={flags.join('\n')}>
+                      Проверить: {flags.join('; ')}
+                    </span>
+                  )}
                 </li>
               );
             })}
@@ -641,6 +647,16 @@ function DayPanel({ id, name, point, zone, canCorrect, onChanged }: {
     </section>
   );
 }
+
+/**
+ * Признаки принятой отметки, на которые стоит взглянуть. Не приговор:
+ * у каждого бывает честное объяснение, поэтому отметка остаётся в силе.
+ */
+const ANOMALY_TEXT: Record<string, string> = {
+  NO_LOCATION: 'место не проверялось',
+  PERFECT_ACCURACY: 'подозрительно точная геолокация',
+  SHARED_CODE: 'тот же код у другого сотрудника с другого адреса',
+};
 
 function Check({ ok, yes, no }: { ok: boolean; yes: string; no: string }) {
   return (

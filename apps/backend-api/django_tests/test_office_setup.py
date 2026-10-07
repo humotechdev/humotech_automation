@@ -365,8 +365,7 @@ def test_office_setup_scenario_end_to_end(
     assert result["office_name"] == "Ташкент Сити"
     assert result["point_name"] == "Главный вход"
     assert result["point_mode"] == "ENTRY"
-    assert result["distance_m"] <= 100
-    assert result["radius_m"] == 100
+    assert result["geofence_kind"] == "CIRCLE"
     assert len(result["occurred_at_local"]) == 5
 
     # В карточке точки — автор и сегодняшний скан.
@@ -377,9 +376,9 @@ def test_office_setup_scenario_end_to_end(
     assert card["description"] == "Слева от ресепшен"
     assert "static_token" not in card
 
-    # 6. Попытка из-за пределов радиуса. Отказ обязан назвать и
-    # расстояние, и допуск: «слишком далеко» без чисел — это спор,
-    # в котором человеку нечем проверить, кто прав.
+    # 6. Попытка из-за пределов радиуса. Чисел в отказе нет: координаты
+    # присылает клиент, и точное расстояние подсказывало бы, какую точку
+    # подставить. Расстояние остаётся в записи отметки.
     far_lat, far_lon = FAR
     far = bot_client.post(f"{API}/me/attendance/scan", {
         "token": sticker_link, "client_event_id": "tg-1-101",
@@ -390,8 +389,8 @@ def test_office_setup_scenario_end_to_end(
     refused = far.json()
     assert refused["status"] == "OUTSIDE_GEOFENCE"
     assert refused["accepted"] is False
-    assert refused["distance_m"] > 100
-    assert refused["radius_m"] == 100
+    assert "distance_m" not in refused and "radius_m" not in refused
+    assert AttendanceEvent.objects.get(client_event_id="tg-1-101").distance_m > 100
 
     # 7. Переименовать точку и убедиться, что удалить её уже нельзя:
     # по ней отмечались, и это часть истории.
@@ -413,3 +412,78 @@ def test_office_setup_scenario_end_to_end(
     assert spare.status_code == 201, spare.content
     gone = api_client.delete(f"{API}/qr-points/{spare.json()['point']['id']}/")
     assert gone.status_code == 204, gone.content
+
+
+# --- признаки для HR: отметку не отменяют, а подсвечивают --------------------
+
+def test_a_normal_mark_carries_no_anomalies(context, sticker):
+    point, code = sticker("ENTRY")
+
+    assert mark(context, code).status == ScanStatus.ENTERED
+
+    event = AttendanceEvent.objects.get(qr_point=point)
+    assert "anomalies" not in (event.event_metadata or {})
+
+
+def test_a_too_perfect_accuracy_is_flagged_but_accepted(context, sticker):
+    """«1 м» телефон почти не отвечает — частый почерк подмены геолокации."""
+    point, code = sticker("ENTRY")
+
+    assert mark(context, code, accuracy="1").status == ScanStatus.ENTERED
+
+    event = AttendanceEvent.objects.get(qr_point=point)
+    assert event.verification_status == "ACCEPTED"
+    assert event.event_metadata["anomalies"] == ["PERFECT_ACCURACY"]
+
+
+def test_a_code_accepted_for_someone_else_from_another_address_is_flagged(
+    context, sticker
+):
+    import uuid as _uuid
+
+    from humotech.attendance.services import _anomalies
+
+    point, code = sticker("ENTRY")
+    mark(context, code)
+    AttendanceEvent.objects.filter(qr_point=point).update(
+        qr_nonce_hash="nonce-1", ip_address="10.0.0.1",
+    )
+    common = {"latitude": NEAR[0], "longitude": NEAR[1], "accuracy_m": "12"}
+    stranger = _uuid.uuid4()
+
+    assert _anomalies(employee_id=stranger, qr_nonce_hash="nonce-1",
+                      ip_address="10.0.0.2", **common) == ("SHARED_CODE",)
+    # Тот же адрес — коллеги у одной двери в одной сети: это норма.
+    assert _anomalies(employee_id=stranger, qr_nonce_hash="nonce-1",
+                      ip_address="10.0.0.1", **common) == ()
+    # Свой же код — не «чужой».
+    own = AttendanceEvent.objects.get(qr_point=point).employee_id
+    assert _anomalies(employee_id=own, qr_nonce_hash="nonce-1",
+                      ip_address="10.0.0.2", **common) == ()
+
+
+def test_no_location_is_flagged_unless_the_office_network_confirmed_it():
+    import uuid as _uuid
+
+    from humotech.attendance.services import _anomalies
+
+    bare = {"employee_id": _uuid.uuid4(), "qr_nonce_hash": None,
+            "ip_address": None, "latitude": None, "longitude": None,
+            "accuracy_m": None}
+    assert _anomalies(**bare) == ("NO_LOCATION",)
+    assert _anomalies(**bare, inside_office_network=True) == ()
+
+
+def test_the_journal_shows_anomalies_to_hr(context, sticker):
+    from humotech.attendance.serializers import AttendanceEventSerializer
+
+    point, code = sticker("ENTRY")
+    mark(context, code, accuracy="0.5")
+    event = AttendanceEvent.objects.select_related("office", "qr_point", "employee").get(
+        qr_point=point
+    )
+
+    data = AttendanceEventSerializer(event).data
+    assert data["anomalies"] == ["PERFECT_ACCURACY"]
+    # Координат и расстояния в журнале по-прежнему нет.
+    assert "latitude" not in data and "distance_m" not in data

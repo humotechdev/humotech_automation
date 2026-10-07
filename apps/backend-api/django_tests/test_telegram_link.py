@@ -200,17 +200,29 @@ def test_consume_creates_pending_binding_not_access(service, hr, employee):
     )
 
 
-def test_employee_terms_activate_link_without_hr_confirmation(service, hr, employee):
-    """Согласие в боте завершает именно свою персональную привязку."""
+def test_employee_terms_do_not_activate_link_without_hr(service, hr, employee):
+    """Согласие в боте пишется в журнал, но привязку не активирует.
+
+    Ссылку могли переслать или перехватить: кто первым её открыл, тот и
+    соглашается. Рабочей привязку делает только подтверждение HR.
+    """
     issued = service.create_invitation(hr, employee.id)
     service.consume(token=issued.token, telegram_user_id=777_1, telegram_chat_id=777_1)
 
-    account = service.accept_terms(telegram_user_id=777_1)
+    with pytest.raises(TelegramLinkError) as exc:
+        service.accept_terms(telegram_user_id=777_1)
+    assert exc.value.reason == "hr_confirmation_required"
 
-    assert account.status == "ACTIVE"
-    assert TelegramLinkInvitation.objects.get(id=issued.invitation.id).status == "USED"
+    assert TelegramAccount.objects.get(employee=employee).status == "PENDING"
+    assert (
+        TelegramLinkInvitation.objects.get(id=issued.invitation.id).status
+        == "PENDING_CONFIRMATION"
+    )
     employee.refresh_from_db()
-    assert employee.telegram_connected is True
+    assert employee.telegram_connected is False
+
+    account = service.confirm(hr, issued.invitation.id)
+    assert account.status == "ACTIVE"
 
 
 def test_used_token_cannot_be_used_twice(service, hr, employee):

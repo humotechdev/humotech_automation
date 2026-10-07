@@ -57,10 +57,19 @@ class AttendanceEventSerializer(serializers.Serializer):
         help_text="Кто внёс ручную отметку; у отметки по QR — пусто",
     )
 
+    anomalies = serializers.SerializerMethodField(
+        help_text="Почему принятую отметку стоит проверить: NO_LOCATION, "
+        "PERFECT_ACCURACY, SHARED_CODE. Пусто — признаков нет",
+    )
+
     def get_author_name(self, event) -> str | None:
         authors = self.context.get("authors") or {}
         user_id = (event.event_metadata or {}).get("created_by_user_id")
         return authors.get(str(user_id)) if user_id else None
+
+    def get_anomalies(self, event) -> list[str]:
+        found = (event.event_metadata or {}).get("anomalies") or []
+        return [str(item) for item in found if isinstance(item, str)]
 
     # Ни `qr_nonce_hash`, ни координат, ни IP: журнал смотрит кадровик,
     # а это технические поля разбора инцидентов. Их место в аудите.

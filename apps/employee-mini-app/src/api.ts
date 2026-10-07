@@ -219,13 +219,9 @@ export interface ScanResponse {
   office_name: string | null;
   point_name: string | null;
   occurred_at: string | null;
-  /** Сколько метров до офиса вышло по координатам. `null` — не проверялось. */
-  distance_m: number | null;
-  /** Радиус офиса, с которым сравнивали. Есть только у круга. */
-  radius_m: number | null;
   /**
-   * Чем проверяли место: кругом, контуром территории или ничем. У
-   * контура `distance_m` — до его границы, а не до центра.
+   * Чем проверяли место: кругом, контуром территории или ничем.
+   * Расстояния в ответе нет — оно остаётся только в записи отметки.
    */
   geofence_kind?: 'CIRCLE' | 'POLYGON' | null;
   session: {

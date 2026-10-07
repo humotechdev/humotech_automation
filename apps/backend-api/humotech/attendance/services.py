@@ -23,7 +23,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from django.conf import settings
 from django.db import transaction
@@ -336,6 +336,15 @@ def _register_locked(
         event_metadata=_location_metadata(
             location, location_age_s=location_age_s,
             location_source=location_source,
+            anomalies=(
+                _anomalies(
+                    employee_id=employee_id, qr_nonce_hash=qr_nonce_hash,
+                    ip_address=ip_address, latitude=latitude,
+                    longitude=longitude, accuracy_m=location_accuracy_m,
+                    inside_office_network=inside_office_network,
+                )
+                if accepted else ()
+            ),
         ),
     )
 
@@ -539,7 +548,7 @@ def _stale(age_s) -> bool:
     return not age.is_finite() or age < 0 or age > limit
 
 
-def _location_metadata(location, *, location_age_s, location_source):
+def _location_metadata(location, *, location_age_s, location_source, anomalies=()):
     """Как получена точка — для разбора спорной отметки, не для решения.
 
     Источник и возраст присылает клиент, и доказательством они не
@@ -556,7 +565,64 @@ def _location_metadata(location, *, location_age_s, location_source):
             data["location_age_s"] = float(location_age_s)
         except (TypeError, ValueError):
             pass
+    if anomalies:
+        data["anomalies"] = list(anomalies)
     return data or None
+
+
+# Точнее этого телефон в реальной жизни почти не отвечает: в помещении
+# погрешность — десятки метров, на улице — от трёх-пяти. Ровные «1 м» —
+# частый почерк подменённой геолокации.
+SUSPICIOUS_ACCURACY_M = Decimal("2")
+
+
+class Anomaly:
+    """Почему принятая отметка подсвечена HR. Отметку это не отменяет."""
+
+    # Ни координат, ни подтверждённой офисной сети: место не проверялось.
+    NO_LOCATION = "NO_LOCATION"
+    # Погрешность подозрительно мала для телефона.
+    PERFECT_ACCURACY = "PERFECT_ACCURACY"
+    # Тот же сменный код уже засчитан другому сотруднику с другого адреса:
+    # похоже, код сфотографировали и переслали.
+    SHARED_CODE = "SHARED_CODE"
+
+
+def _anomalies(
+    *, employee_id, qr_nonce_hash, ip_address, latitude, longitude, accuracy_m,
+    inside_office_network=None,
+) -> tuple[str, ...]:
+    """Признаки, по которым HR стоит взглянуть на принятую отметку.
+
+    Ни один из них не доказывает обман — у каждого бывает честное
+    объяснение, — поэтому отметку они не отклоняют, а только помечают.
+    Решение остаётся за человеком, который видит журнал целиком.
+    """
+    found = []
+    if latitude is None or longitude is None:
+        # Офисная сеть — тоже проверка места: экран внутри офиса без
+        # геолокации иначе подсвечивал бы каждую отметку.
+        if inside_office_network is not True:
+            found.append(Anomaly.NO_LOCATION)
+    elif accuracy_m is not None:
+        try:
+            if Decimal(str(accuracy_m)) < SUSPICIOUS_ACCURACY_M:
+                found.append(Anomaly.PERFECT_ACCURACY)
+        except (InvalidOperation, ValueError):
+            pass
+    if qr_nonce_hash is not None and ip_address:
+        shared = (
+            AttendanceEvent.objects.filter(
+                qr_nonce_hash=qr_nonce_hash, verification_status="ACCEPTED",
+            )
+            .exclude(employee_id=employee_id)
+            .exclude(ip_address__isnull=True)
+            .exclude(ip_address=ip_address)
+            .exists()
+        )
+        if shared:
+            found.append(Anomaly.SHARED_CODE)
+    return tuple(found)
 
 
 def office_is_located(office) -> bool:

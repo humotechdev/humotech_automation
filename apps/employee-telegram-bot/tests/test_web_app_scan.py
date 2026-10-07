@@ -341,18 +341,18 @@ def test_neither_the_code_nor_the_coordinates_reach_the_chat():
     assert "68.78" not in body
 
 
-def test_a_contour_refusal_names_the_distance_to_its_edge_not_a_radius():
-    """У контура радиуса нет: «допустимо: None м» было бы бессмыслицей."""
+def test_a_contour_refusal_does_not_name_the_distance():
+    """Отказ без цифр: расстояние остаётся только в записи отметки."""
     message = FakeMessage(payload())
     run(message, FakeClient(result={
         "status": "OUTSIDE_GEOFENCE", "accepted": False,
         "office_name": None, "point_name": None, "occurred_at": None,
-        "session": None, "distance_m": 147.7, "radius_m": None,
-        "geofence_kind": "POLYGON",
+        "session": None, "geofence_kind": "POLYGON",
     }))
 
     answer = message.answers[-1][0]
-    assert "148 м до её границы" in answer
+    assert "Вы слишком далеко от офиса" in answer
+    assert " м " not in answer
     assert "None" not in answer
 
 

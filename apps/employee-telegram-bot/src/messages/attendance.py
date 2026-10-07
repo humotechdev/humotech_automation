@@ -136,13 +136,9 @@ def outcome(result: dict) -> str:
             lines.append(f"Офис: {where}")
         if point:
             lines.append(f"QR-точка: {point}")
-        metres = _metres(result.get("distance_m"))
-        if result.get("geofence_kind") == "POLYGON":
-            # У контура расстояние — до границы, и внутри оно ноль:
-            # «0 м до офиса» читалось бы как ошибка.
+        # Расстояния сервер не присылает: только было ли место проверено.
+        if result.get("geofence_kind"):
             lines.append("Место: на территории офиса")
-        elif metres is not None:
-            lines.append(f"Расстояние до офиса: {metres} м")
         at = result.get("occurred_at_local")
         if at:
             lines.append(f"Время: {escape(at)}")
@@ -160,27 +156,11 @@ def outcome(result: dict) -> str:
 def _head(status: str, result: dict) -> str | None:
     """Первая строка ответа. Для части отказов — с числами из ответа."""
     mode = result.get("point_mode")
-    if status == "OUTSIDE_GEOFENCE":
-        metres = _metres(result.get("distance_m"))
-        radius = result.get("radius_m")
-        if metres is not None and result.get("geofence_kind") == "POLYGON":
-            return (
-                f"Вы вне территории офиса: {metres} м до её границы. "
-                "Отметиться можно на месте."
-            )
-        if metres is not None and isinstance(radius, int) and radius > 0:
-            return f"Вы слишком далеко от офиса: {metres} м. Допустимо: {radius} м"
     if status == "ALREADY_INSIDE" and mode == "ENTRY":
         return ONLY_ENTRY
     if status == "NOT_INSIDE" and mode == "EXIT":
         return ONLY_EXIT
     return OUTCOMES.get(status)
-
-
-def _metres(value) -> int | None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    return int(round(value))
 
 
 def duration(seconds: int) -> str:

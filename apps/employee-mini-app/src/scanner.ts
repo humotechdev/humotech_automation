@@ -287,39 +287,29 @@ export const SCAN_RESULTS: Record<string, { title: string; hint?: string }> = {
 /**
  * Итог отметки словами, с уточнением от самого ответа.
  *
- * Отдельно от таблицы: «слишком далеко» без числа — это спор, в котором
- * человеку нечем проверить, кто прав. «Вы в 340 м, нужно ближе 100 м»
- * уже понятно: либо подойти, либо идти к HR с конкретной цифрой.
+ * Цифр здесь нет: сервер больше не присылает расстояние и радиус.
+ * Координаты задаёт сам клиент, и точное «вы в 340 м, нужно 100 м»
+ * подсказывало бы, какую точку подставить. Расстояние остаётся в записи
+ * отметки — по ней отдел кадров и разберёт спорный случай.
  */
 export function scanView(result: {
   status: string;
-  distance_m?: number | null;
-  radius_m?: number | null;
   geofence_kind?: string | null;
 }): { title: string; hint?: string } {
   const view = SCAN_RESULTS[result.status] ?? SCAN_UNKNOWN;
   if (result.status !== 'OUTSIDE_GEOFENCE') return view;
 
-  const { distance_m: distance, radius_m: radius } = result;
-  if (result.geofence_kind === 'POLYGON' && typeof distance === 'number') {
-    // У контура расстояние — до его границы, а радиуса нет вовсе.
+  const inaccurate =
+    'Если вы уже на месте — телефон определил место неточно: так бывает '
+    + 'в помещении. Подождите несколько секунд у окна или у входа и '
+    + 'попробуйте снова. Если не выходит — обратитесь в отдел кадров.';
+  if (result.geofence_kind === 'POLYGON') {
     return {
       title: 'Вы вне территории офиса',
-      hint:
-        `До границы территории ${Math.round(distance)} м. Отметиться можно `
-        + 'на месте. Если вы уже внутри — телефон определил место неточно: '
-        + 'подождите несколько секунд у окна или у входа и попробуйте снова.',
+      hint: `Отметиться можно на месте. ${inaccurate}`,
     };
   }
-  if (typeof distance !== 'number' || typeof radius !== 'number') return view;
-  return {
-    title: view.title,
-    hint:
-      `До офиса ${Math.round(distance)} м, а отметиться можно в пределах `
-      + `${radius} м. Подойдите ближе и отсканируйте код ещё раз. Если вы `
-      + 'уже у двери — значит, телефон определил место неточно: так бывает '
-      + 'в помещении. Выйдите наружу и попробуйте снова.',
-  };
+  return { title: view.title, hint: `${view.hint} ${inaccurate}` };
 }
 
 export const SCAN_UNKNOWN = {

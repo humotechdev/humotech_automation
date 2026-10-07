@@ -36,11 +36,13 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import NoReturn
 
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
+from humotech.audit.models import AuditLog
 from humotech.core.errors import Conflict, NotFound, PermissionDenied, ValidationFailed
 from humotech.core.pagination import Page, paginate
 from humotech.core.rbac import Actor, snapshot
@@ -795,9 +797,21 @@ class TelegramLinkService(BaseService):
         )
         return account
 
-    def accept_terms(self, *, telegram_user_id: int) -> TelegramAccount:
-        """Активировать привязку после согласия сотрудника в чате с ботом."""
-        now = self._now()
+    def accept_terms(self, *, telegram_user_id: int) -> NoReturn:
+        """Записать согласие сотрудника с условиями. Доступа оно не открывает.
+
+        Раньше согласие по персональной ссылке сразу делало привязку
+        рабочей. Но ссылка — не личность: её пересылают, перехватывают в
+        почте и мессенджерах, она живёт сутки, а ссылка на ознакомление —
+        неделю. Кто первым её открывал и нажимал «согласен», получал
+        кабинет чужого сотрудника. Теперь путь один для ссылки и для
+        узнавания по имени: согласие пишется в журнал, привязка остаётся
+        PENDING, а рабочей её делает только `confirm` — решение HR,
+        который видит, какой именно Telegram перешёл по ссылке.
+
+        Ответ всегда — `hr_confirmation_required`: бот по нему говорит
+        человеку, что доступ откроет отдел кадров.
+        """
         with transaction.atomic():
             account = TelegramAccount.objects.select_for_update().filter(
                 telegram_user_id=telegram_user_id, status="PENDING"
@@ -811,28 +825,26 @@ class TelegramLinkService(BaseService):
             ).first()
             if invitation is None:
                 raise TelegramLinkError("invalid", "Приглашение не найдено")
-            if invitation.consumed_via == "USERNAME":
-                # Узнали по имени в Telegram, а не по ссылке. Имя можно
-                # занять: кадровик вписал его в карточку, а в Telegram его
-                # взял посторонний. Согласие такого человека с условиями
-                # доступа не открывает — только подтверждение HR.
-                raise TelegramLinkError(
-                    "hr_confirmation_required",
-                    "Привязку подтвердит отдел кадров",
+            # Согласие пишется один раз: повторное нажатие кнопки не должно
+            # засорять журнал одинаковыми записями.
+            already = AuditLog.objects.filter(
+                entity_type=ENTITY_ACCOUNT,
+                entity_id=account.id,
+                action="telegram.link.accept_terms",
+                occurred_at__gte=invitation.used_at,
+            ).exists()
+            if not already:
+                self.audit.record_by_employee(
+                    organization_id=account.organization_id,
+                    employee_id=account.employee_id,
+                    action="telegram.link.accept_terms", entity_type=ENTITY_ACCOUNT,
+                    entity_id=account.id, after=snapshot(account, ACCOUNT_AUDIT_FIELDS),
                 )
-            account.status = "ACTIVE"
-            account.connected_at = now
-            account.save(update_fields=["status", "connected_at", "updated_at"])
-            invitation.status = "USED"
-            invitation.reviewed_at = now
-            invitation.save(update_fields=["status", "reviewed_at", "updated_at"])
-            Employee.objects.filter(pk=account.employee_id).update(telegram_connected=True)
-            self.audit.record_by_employee(
-                organization_id=account.organization_id, employee_id=account.employee_id,
-                action="telegram.link.accept_terms", entity_type=ENTITY_ACCOUNT,
-                entity_id=account.id, after=snapshot(account, ACCOUNT_AUDIT_FIELDS),
-            )
-        return account
+        # Вне транзакции: исключение внутри неё откатило бы запись согласия.
+        raise TelegramLinkError(
+            "hr_confirmation_required",
+            "Привязку подтвердит отдел кадров",
+        )
 
 
 def welcome_facts(employee) -> dict:

@@ -281,7 +281,7 @@ describe('сканирование', () => {
     expect(posted(calls, '/me/attendance/scan')).toHaveLength(1);
   });
 
-  it('«слишком далеко» называет расстояние, а не спорит', async () => {
+  it('«слишком далеко» не называет цифр, даже если они пришли', async () => {
     const scanner = openTelegram();
     stubApi({
       scan: {
@@ -298,7 +298,7 @@ describe('сканирование', () => {
     scanner.emit(STICKER);
 
     await screen.findByText('Вы слишком далеко от офиса');
-    expect(screen.getByText(/342 м.*100 м/)).toBeTruthy();
+    expect(screen.queryByText(/342/)).toBeNull();
   });
 
   it('чужой код в кадре не закрывает сканер и не уходит на сервер', async () => {

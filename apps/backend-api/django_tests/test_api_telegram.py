@@ -21,6 +21,7 @@ from django_tests.conftest import (
     bot_headers,
     build_init_data,
 )
+from humotech.audit.models import AuditLog
 from humotech.telegram.models import TelegramAccount, TelegramLinkInvitation
 
 pytestmark = pytest.mark.django_db
@@ -185,7 +186,12 @@ def test_bot_consumes_the_link_into_pending(hr_client, api_client, employee):
     assert TelegramAccount.objects.get(employee=employee).status == "PENDING"
 
 
-def test_bot_accepts_terms_and_activates_the_link(hr_client, api_client, employee):
+def test_consent_does_not_activate_the_link_hr_does(hr_client, api_client, employee):
+    """Согласие по ссылке пишется, но доступ открывает только HR.
+
+    (было: согласие сразу делало привязку ACTIVE — кто первым открыл
+    пересланную или перехваченную ссылку, получал кабинет сотрудника.)
+    """
     body = _invite(hr_client, employee)
     _consume(api_client, body["token"], telegram_user_id=770_777)
 
@@ -195,8 +201,15 @@ def test_bot_accepts_terms_and_activates_the_link(hr_client, api_client, employe
         **BOT_HEADERS,
     )
 
-    assert response.status_code == 200, response.json()
-    assert response.json()["status"] == "ACTIVE"
+    assert response.status_code == 409, response.json()
+    assert response.json()["error"]["details"]["reason"] == "hr_confirmation_required"
+    assert TelegramAccount.objects.get(employee=employee).status == "PENDING"
+    assert AuditLog.objects.filter(action="telegram.link.accept_terms").count() == 1
+
+    confirmed = hr_client.post(
+        f"{API}/telegram/invitations/{body['invitation']['id']}/confirm/"
+    )
+    assert confirmed.status_code == 200, confirmed.content
     assert TelegramAccount.objects.get(employee=employee).status == "ACTIVE"
 
 

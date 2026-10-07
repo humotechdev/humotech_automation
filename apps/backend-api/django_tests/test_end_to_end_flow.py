@@ -178,10 +178,13 @@ def test_the_whole_road(
         "latitude": far_lat, "longitude": far_lon, "accuracy_m": "12",
     }, format="json", **bot_headers(TG_ID))
     assert refused.json()["status"] == "OUTSIDE_GEOFENCE"
-    # Отказ обязан назвать числа: «слишком далеко» без них — спор,
-    # в котором человеку нечем проверить, кто прав.
-    assert refused.json()["distance_m"] > 100
-    assert refused.json()["radius_m"] == 100
+    # Чисел в ответе нет: координаты присылает клиент, и точное расстояние
+    # подсказывало бы, какую точку подставить. Оно остаётся в записи отметки.
+    assert "distance_m" not in refused.json()
+    assert "radius_m" not in refused.json()
+    from humotech.attendance.models import AttendanceEvent
+    logged = AttendanceEvent.objects.get(client_event_id="e2e-far")
+    assert logged.distance_m > 100
 
     # --- 5. «Опаздываю» ----------------------------------------------------
     late = bot_client.post(f"{API}/me/attendance/notice",

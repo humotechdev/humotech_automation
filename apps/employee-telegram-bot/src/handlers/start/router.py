@@ -157,9 +157,13 @@ async def accept_link_terms(callback: CallbackQuery, client: SelfServiceClient) 
     except ApiError as error:
         reason = (error.details or {}).get("reason") if isinstance(error.details, dict) else None
         if reason == "hr_confirmation_required":
-            # Узнали по имени в Telegram, а не по ссылке: доступ откроет
-            # только кадровик. Повторное нажатие ничего не изменит.
-            await callback.answer(text.LINK_NEEDS_HR, show_alert=True)
+            # Согласие записано, но доступ откроет только кадровик — и по
+            # ссылке, и при узнавании по имени. Кнопка снимается: повторное
+            # нажатие ничего не изменит. О подтверждении бот напишет сам.
+            await callback.answer("Условия приняты")
+            if callback.message:
+                await callback.message.edit_reply_markup(reply_markup=None)
+                await callback.message.answer(text.LINK_NEEDS_HR)
             return
         await callback.answer("Не получилось подтвердить условия. Попробуйте ещё раз.", show_alert=True)
         return

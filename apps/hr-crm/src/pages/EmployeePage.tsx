@@ -529,6 +529,12 @@ function TelegramBlock({ id, block, onChanged }: {
   const card = plan.state === 'ready' ? plan.data : null;
   const linked = state === 'ACTIVE';
   const live = card?.invitation_status === 'ACTIVE';
+  // Человек перешёл по ссылке и ждёт решения HR. Подтверждать надо, только
+  // если это действительно он: ссылку могли переслать или перехватить.
+  const awaiting = state === 'PENDING'
+    && link?.invitation?.status === 'PENDING_CONFIRMATION' ? link.invitation : null;
+  const claimant = link?.account?.telegram_username
+    ? `@${link.account.telegram_username}` : 'Telegram без имени пользователя';
 
   const run = async (action: () => Promise<unknown>, after?: () => void) => {
     setBusy(true);
@@ -551,9 +557,35 @@ function TelegramBlock({ id, block, onChanged }: {
     <div className="tg-block">
       <p className="tg__state">
         {linked ? 'Привязан'
-          : state === 'PENDING' ? 'Приглашение отправлено, ожидает подтверждения'
+          : state === 'PENDING' ? 'Перешёл по ссылке — ждёт подтверждения HR'
+          : state === 'INVITED' ? 'Приглашение отправлено'
           : 'Не привязан'}
       </p>
+
+      {awaiting && (
+        <div className="tg-block__confirm">
+          <p>
+            По ссылке перешёл <strong>{claimant}</strong>. Подтвердите, только
+            если это действительно сотрудник: доступ к кабинету откроется сразу.
+          </p>
+          <div className="tg-block__tools">
+            <button type="button" className="btn btn--primary" disabled={busy}
+                    onClick={() => run(
+                      () => api.confirmTelegramLink(awaiting.id),
+                      () => setNote('Привязка подтверждена'),
+                    )}>
+              Подтвердить
+            </button>
+            <button type="button" className="btn" disabled={busy}
+                    onClick={() => run(
+                      () => api.rejectTelegramLink(awaiting.id),
+                      () => setNote('Привязка отклонена. Выдайте сотруднику новую ссылку.'),
+                    )}>
+              Это не он — отклонить
+            </button>
+          </div>
+        </div>
+      )}
 
       {card ? (
         <dl className="facts">
@@ -585,7 +617,7 @@ function TelegramBlock({ id, block, onChanged }: {
             Отправить ознакомление
           </button>
         )}
-        {card && !linked && !live && (
+        {card && !linked && !live && !awaiting && (
           <button type="button" className="btn btn--primary" disabled={busy}
                   onClick={() => run(async () => {
                     const made = await api.inviteToOnboarding(id);
@@ -623,7 +655,7 @@ function TelegramBlock({ id, block, onChanged }: {
         )}
         {/* Обычная привязка остаётся: она нужна тем, кого в программу
             не зовут, — например, уже работающим сотрудникам. */}
-        {!card && !linked && (
+        {!card && !linked && !awaiting && (
           <button type="button" className="btn" disabled={busy}
                   onClick={() => run(() => api.inviteToTelegram(id))}>
             Пригласить в Telegram

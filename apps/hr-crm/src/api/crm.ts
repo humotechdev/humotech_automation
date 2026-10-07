@@ -635,6 +635,19 @@ export const inviteToTelegram = (employee_id: string, replace = false) =>
     { method: 'POST', body: { employee_id, replace } },
   );
 
+/**
+ * Решение HR по переходу по ссылке привязки.
+ *
+ * Согласие сотрудника в боте доступа не открывает: рабочей привязку
+ * делает только подтверждение здесь. Перед ним HR видит, какой именно
+ * Telegram перешёл по ссылке, — её могли переслать или перехватить.
+ */
+export const confirmTelegramLink = (invitationId: string) =>
+  request<unknown>(`/telegram/invitations/${invitationId}/confirm/`, { method: 'POST' });
+
+export const rejectTelegramLink = (invitationId: string) =>
+  request<unknown>(`/telegram/invitations/${invitationId}/reject/`, { method: 'POST' });
+
 export type Department = { id: string; name: string; office_id?: string | null };
 
 export const departments = (signal?: AbortSignal) =>
@@ -1019,7 +1032,14 @@ export type EventRow = {
    */
   inside_geofence: boolean | null;
   inside_office_network: boolean | null;
+  /**
+   * Почему принятую отметку стоит проверить. Отметку они не отменяют:
+   * у каждого признака бывает честное объяснение. Пусто — признаков нет.
+   */
+  anomalies?: AttendanceAnomaly[];
 };
+
+export type AttendanceAnomaly = 'NO_LOCATION' | 'PERFECT_ACCURACY' | 'SHARED_CODE';
 
 export type EventQuery = {
   employee_id?: string;

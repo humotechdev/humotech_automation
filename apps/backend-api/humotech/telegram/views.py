@@ -326,16 +326,17 @@ class BotLinkView(APIView):
 
 
 class BotLinkAcceptView(BotLinkView):
-    """Подтверждение условий сотрудником; HR в этом шаге не участвует."""
-    @extend_schema(request=BotLinkAcceptSerializer, responses={200: BotLinkResultSerializer}, tags=["Telegram"])
+    """Согласие сотрудника с условиями.
+
+    Записывается в журнал, но доступа не открывает: ответ всегда 409
+    `hr_confirmation_required`. Рабочей привязку делает только HR
+    (`/telegram/invitations/{id}/confirm/`).
+    """
+    @extend_schema(request=BotLinkAcceptSerializer, responses={409: None}, tags=["Telegram"])
     def post(self, request):
         payload = validated(BotLinkAcceptSerializer, request.data)
-        account = TelegramLinkService().accept_terms(telegram_user_id=payload["telegram_user_id"])
-        return Response({
-            "status": account.status,
-            "employee_known": True,
-            "onboarding_required": _onboarding_required(account.employee_id),
-        })
+        # Всегда бросает TelegramLinkError -> 409 с причиной для бота.
+        TelegramLinkService().accept_terms(telegram_user_id=payload["telegram_user_id"])
 
 
 class BotRecognizeView(APIView):

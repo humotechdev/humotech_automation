@@ -19,6 +19,7 @@ from django_tests.conftest import (
     bot_headers,
     link_telegram,
 )
+from humotech.audit.models import AuditLog
 from humotech.employees.models import Employee, EmployeeAssignment
 from humotech.telegram.models import TelegramAccount, TelegramLinkInvitation
 
@@ -330,7 +331,8 @@ class TestLinkTokens:
         )
         again = _consume(bot_client, invitation["token"], telegram_user_id=880_003)
         assert again.status_code == 409
-        assert again.json()["error"]["details"]["reason"] == "used"
+        # Согласие привязку не завершает: ссылка ждёт HR, а не «использована».
+        assert again.json()["error"]["details"]["reason"] == "pending"
         assert TelegramAccount.objects.get(employee=employee).telegram_user_id == 880_001
 
     def test_expired_token(self, bot_client, hr_client, employee):
@@ -389,14 +391,17 @@ class TestLinkTokens:
         assert foreign.status_code == 409
         assert TelegramAccount.objects.get(employee=employee).status == "PENDING"
 
-    def test_accept_twice_is_conflict(self, bot_client, hr_client, employee):
+    def test_accept_twice_records_consent_once(self, bot_client, hr_client, employee):
         invitation = _invite(hr_client, employee)
         _consume(bot_client, invitation["token"], telegram_user_id=880_012)
         body = {"telegram_user_id": 880_012}
         first = bot_client.post(f"{API}/telegram/bot/link/accept", body, format="json", **SECRET)
         again = bot_client.post(f"{API}/telegram/bot/link/accept", body, format="json", **SECRET)
-        assert first.status_code == 200
-        assert again.status_code == 409
+        for response in (first, again):
+            assert response.status_code == 409
+            assert response.json()["error"]["details"]["reason"] == "hr_confirmation_required"
+        assert AuditLog.objects.filter(action="telegram.link.accept_terms").count() == 1
+        assert TelegramAccount.objects.get(employee=employee).status == "PENDING"
 
     def test_accept_refused_for_rejected_link(self, bot_client, hr_client, employee):
         invitation = _invite(hr_client, employee)
@@ -463,16 +468,23 @@ class TestRecognizeNeedsHr:
             f"{API}/me/profile", **bot_headers(880_300)
         ).status_code == 200
 
-    def test_link_still_activates_by_consent(self, bot_client, hr_client, employee):
-        """Персональная ссылка по-прежнему активируется согласием сотрудника."""
+    def test_link_consent_also_needs_hr(self, bot_client, hr_client, employee):
+        """Персональная ссылка тоже не активируется согласием сотрудника.
+
+        (было: согласие по ссылке давало ACTIVE без HR — кто первым открыл
+        пересланную или перехваченную ссылку, получал чужой кабинет.)
+        """
         invitation = _invite(hr_client, employee)
         _consume(bot_client, invitation["token"], telegram_user_id=880_301)
         response = bot_client.post(
             f"{API}/telegram/bot/link/accept", {"telegram_user_id": 880_301},
             format="json", **SECRET,
         )
-        assert response.status_code == 200
-        assert response.json()["status"] == "ACTIVE"
+        assert response.status_code == 409
+        assert response.json()["error"]["details"]["reason"] == "hr_confirmation_required"
+        assert bot_client.get(
+            f"{API}/me/profile", **bot_headers(880_301)
+        ).status_code in (401, 403)
 
     def test_recognize_username_is_case_and_at_insensitive_but_exact(
         self, bot_client, hr_client, employee

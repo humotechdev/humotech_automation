@@ -208,11 +208,11 @@ class ScanView(EmployeeSelfView):
                     outcome.occurred_at, outcome.office_timezone
                 ),
                 "point_mode": outcome.point_mode,
-                "distance_m": (
-                    round(outcome.distance_m) if outcome.distance_m is not None
-                    else None
-                ),
-                "radius_m": outcome.radius_m,
+                # Расстояния и радиуса в ответе нет намеренно. Координаты
+                # присылает сам клиент, и точное «вы в 340 м, нужно 100 м»
+                # служило бы подсказкой, как подобрать подходящую точку.
+                # Сотруднику достаточно «внутри / снаружи»; цифры остаются
+                # в записи отметки для разбора спорных случаев.
                 "geofence_kind": outcome.geofence_kind,
                 "session": (
                     {

@@ -105,29 +105,18 @@ describe('итог отметки', () => {
     }
   });
 
-  it('«слишком далеко» называет расстояние и радиус', () => {
-    const view = scanView({
-      status: 'OUTSIDE_GEOFENCE', distance_m: 341.7, radius_m: 100,
-    });
+  it('«слишком далеко» не называет цифр, но говорит, что делать', () => {
+    const view = scanView({ status: 'OUTSIDE_GEOFENCE', geofence_kind: 'CIRCLE' });
     expect(view.title).toBe('Вы слишком далеко от офиса');
-    expect(view.hint).toContain('342 м');
-    expect(view.hint).toContain('100 м');
+    expect(view.hint).toContain(SCAN_RESULTS.OUTSIDE_GEOFENCE!.hint!);
+    expect(view.hint).toMatch(/отдел кадров/);
+    expect(view.hint).not.toMatch(/\d/);
   });
 
-  it('без расстояния остаётся общий текст, а не «до офиса null м»', () => {
-    const view = scanView({ status: 'OUTSIDE_GEOFENCE', distance_m: null,
-                            radius_m: null });
-    expect(view.hint).toBe(SCAN_RESULTS.OUTSIDE_GEOFENCE!.hint);
-  });
-
-  it('у контура — расстояние до границы и никакого радиуса', () => {
-    const view = scanView({
-      status: 'OUTSIDE_GEOFENCE', distance_m: 147.7, radius_m: null,
-      geofence_kind: 'POLYGON',
-    });
+  it('у контура — «вне территории» и тоже без цифр', () => {
+    const view = scanView({ status: 'OUTSIDE_GEOFENCE', geofence_kind: 'POLYGON' });
     expect(view.title).toBe('Вы вне территории офиса');
-    expect(view.hint).toContain('148 м');
-    expect(view.hint).not.toMatch(/null|радиус/);
+    expect(view.hint).not.toMatch(/\d|null|радиус/);
   });
 
   it('неоднозначная точка просит повторить и называет, куда идти', () => {
