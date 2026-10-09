@@ -584,7 +584,7 @@ describe('вход: ограничение попыток и CSRF', () => {
     renderApp('/login');
     await typeAndSubmit();
 
-    expect(await screen.findByText('Сессия устарела. Обновите страницу и повторите')).toBeTruthy();
+    expect(await screen.findByText('Страница устарела. Обновите её и войдите снова.')).toBeTruthy();
     expect(calls.filter((call) => call.url.endsWith('/auth/login'))).toHaveLength(2);
     dropCsrf();
   });

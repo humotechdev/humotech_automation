@@ -39,7 +39,12 @@ export const organizationCode = (): string =>
  * повторяется один раз со свежим токеном — человеку незачем знать, что
  * такое CSRF, и незачем вводить пароль дважды.
  */
-export async function login(email: string, password: string): Promise<CurrentUser> {
+export async function login(
+  email: string,
+  password: string,
+  /** Отмена по таймауту формы входа: зависший сервер не держит её вечно. */
+  signal?: AbortSignal,
+): Promise<CurrentUser> {
   const send = () => request<CurrentUser>('/auth/login', {
     method: 'POST',
     body: {
@@ -47,6 +52,7 @@ export async function login(email: string, password: string): Promise<CurrentUse
       email,
       password,
     },
+    ...(signal ? { signal } : {}),
   });
   if (!csrfToken()) await primeCsrf();
   try {

@@ -210,8 +210,53 @@ describe('отправка', () => {
 
     expect(await screen.findByRole('alert')).toHaveProperty(
       'textContent',
-      'Нет связи с сервером. Проверьте подключение',
+      'Нет связи с сервером. Проверьте подключение и попробуйте ещё раз.',
     );
+  });
+
+  test('после сбоя сети пароль остаётся — можно просто повторить', async () => {
+    let attempts = 0;
+    fakeNetwork((path, call) => {
+      if (path.endsWith('/auth/me')) {
+        return json(403, { error: { code: 'not_authenticated', message: '…', details: null } });
+      }
+      if (path.endsWith('/auth/login') && call.method === 'POST') {
+        attempts += 1;
+        if (attempts === 1) throw new TypeError('Failed to fetch');
+        return json(200, USER);
+      }
+      return crm(path) ?? json(200, { items: [] });
+    });
+    renderApp('/login');
+    await openForm();
+
+    await userEvent.type(screen.getByLabelText('Логин'), 'hr@humotech.local');
+    await userEvent.type(screen.getByLabelText('Пароль'), 'пароль');
+    await userEvent.click(screen.getByRole('button', { name: 'Войти' }));
+    await screen.findByRole('alert');
+    // Не «неверный пароль» — и пароль не стёрт.
+    expect(screen.getByRole('alert').textContent).not.toContain('Неверный');
+    expect((screen.getByLabelText('Пароль') as HTMLInputElement).value).toBe('пароль');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Войти' }));
+    expect(await screen.findByText('Обзор на сегодня')).toBeTruthy();
+    expect(attempts).toBe(2);
+  });
+
+  test('слишком много попыток — просьба подождать, а не «неверный пароль»', async () => {
+    anonymous(() => json(429, {
+      error: { code: 'too_many_attempts', message: '…', details: { retry_after: 120 } },
+    }));
+    renderApp('/login');
+    await openForm();
+
+    await userEvent.type(screen.getByLabelText('Логин'), 'hr@humotech.local');
+    await userEvent.type(screen.getByLabelText('Пароль'), 'пароль');
+    await userEvent.click(screen.getByRole('button', { name: 'Войти' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('Слишком много попыток');
+    expect(alert.textContent).not.toContain('Неверный');
   });
 
   test('HTML-страница ошибки Django не попадает на экран', async () => {
@@ -226,7 +271,7 @@ describe('отправка', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Войти' }));
 
     const alert = await screen.findByRole('alert');
-    expect(alert.textContent).toBe('Сервер временно недоступен. Попробуйте позже');
+    expect(alert.textContent).toBe('Сервис временно недоступен. Попробуйте позже.');
     expect(document.body.textContent).not.toContain('Server Error');
     expect(document.body.textContent).not.toContain('doctype');
   });
@@ -262,6 +307,17 @@ describe('«Запомнить логин»', () => {
     await screen.findByText('Обзор на сегодня');
 
     expect(JSON.stringify(localStorage)).not.toContain('hr@humotech.local');
+  });
+
+  test('снятая галочка сразу удаляет запомненный логин', async () => {
+    localStorage.setItem('humotech.crm.login', 'hr@humotech.local');
+    anonymous(() => empty(204));
+    renderApp('/login');
+    await openForm();
+
+    await userEvent.click(screen.getByLabelText('Запомнить логин'));
+
+    expect(localStorage.getItem('humotech.crm.login')).toBeNull();
   });
 
   test('запомненный логин подставляется при следующем открытии', async () => {

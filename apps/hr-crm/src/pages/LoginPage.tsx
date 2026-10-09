@@ -7,9 +7,10 @@
  * система не отправляет, хуже, чем не обещать ничего.
  */
 
-import { useId, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 
-import { messageFor } from '../api/errors';
+import { currentUser } from '../api/auth';
+import { ApiFailure, messageFor } from '../api/errors';
 import { BrandPanel } from '../components/BrandPanel';
 import { LanguageSwitch } from '../components/LanguageSwitch';
 import { Wordmark } from '../components/Logo';
@@ -17,9 +18,43 @@ import { AppIcon, ICON_SIZE } from '../components/AppIcon';
 import { forgetLogin, rememberLogin, rememberedLogin } from '../features/auth/remembered';
 import { useSession } from '../features/auth/session';
 
+/** Сколько ждать ответа на вход. Дольше — человек решит, что всё зависло. */
+const LOGIN_TIMEOUT_MS = 20_000;
+
+/**
+ * Отказ — словами, по ответу сервера. Неверные данные называются
+ * одинаково для любой причины: по ответу нельзя узнать, есть ли такая
+ * учётная запись. Сетевой сбой — не «неверный пароль».
+ */
+function loginMessage(error: unknown, timedOut: boolean): string {
+  if (timedOut) return 'Сервер не ответил вовремя. Попробуйте ещё раз.';
+  if (!(error instanceof ApiFailure)) return 'Не удалось войти. Попробуйте ещё раз.';
+  switch (error.kind) {
+    case 'credentials':
+      return 'Неверный логин или пароль';
+    case 'throttled':
+      return messageFor(error);
+    case 'offline':
+      return 'Нет связи с сервером. Проверьте подключение и попробуйте ещё раз.';
+    case 'csrf':
+      return 'Страница устарела. Обновите её и войдите снова.';
+    case 'session':
+      return 'Доступ к системе закрыт. Обратитесь к администратору.';
+    case 'validation':
+      return 'Проверьте логин и пароль.';
+    default:
+      return 'Сервис временно недоступен. Попробуйте позже.';
+  }
+}
+
 export function LoginPage() {
   const session = useSession();
   const saved = useRef(rememberedLogin());
+  // Повторная отправка блокируется синхронно: `sending` обновится только
+  // после перерисовки, а двойной клик быстрее.
+  const busy = useRef(false);
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
 
   const [login, setLogin] = useState(saved.current);
   const [password, setPassword] = useState('');
@@ -33,9 +68,16 @@ export function LoginPage() {
   const loginErrorId = `${loginId}-error`;
   const passwordErrorId = `${passwordId}-error`;
 
+  function toggleRemember(next: boolean) {
+    setRemember(next);
+    // Снятая галочка — «не помнить»: сохранённый логин убирается сразу,
+    // а не после следующего входа.
+    if (!next) forgetLogin();
+  }
+
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (sending) return; // вторая отправка той же формы ничего не добавит
+    if (busy.current) return; // вторая отправка той же формы ничего не добавит
 
     const problems: typeof failed = {};
     if (login.trim() === '') problems.login = 'Введите логин';
@@ -45,17 +87,35 @@ export function LoginPage() {
       return;
     }
 
+    busy.current = true;
     setFailed({});
     setSending(true);
+    const stop = new AbortController();
+    let timedOut = false;
+    const timer = window.setTimeout(() => { timedOut = true; stop.abort(); }, LOGIN_TIMEOUT_MS);
     try {
-      await session.signIn(login.trim(), password);
+      await session.signIn(login.trim(), password, stop.signal);
+      // Хранится только логин — пароль и сессия в браузерное хранилище
+      // не попадают.
       if (remember) rememberLogin(login.trim());
       else forgetLogin();
     } catch (error) {
-      setFailed({ common: messageFor(error) });
-      setPassword('');
+      if (!alive.current) return;
+      setFailed({ common: loginMessage(error, timedOut) });
+      // Пароль стирается только при неверных данных: после сетевого
+      // сбоя человек просто нажимает «Войти» ещё раз.
+      if (error instanceof ApiFailure && error.kind === 'credentials') setPassword('');
+      // Ответ мог потеряться уже после того, как сервер открыл сессию:
+      // тихо спрашиваем сервер и, если вход прошёл, ведём дальше. Общую
+      // перепроверку сразу не зовём: на время она показывает «проверяем»
+      // вместо формы, и введённое вместе с сообщением пропало бы.
+      if (timedOut || (error instanceof ApiFailure && error.kind === 'offline')) {
+        currentUser().then(() => session.recheck()).catch(() => undefined);
+      }
     } finally {
-      setSending(false);
+      window.clearTimeout(timer);
+      busy.current = false;
+      if (alive.current) setSending(false);
     }
   }
 
@@ -94,7 +154,7 @@ export function LoginPage() {
                     autoCorrect="off"
                     placeholder="Введите логин"
                     value={login}
-                    disabled={sending}
+                    readOnly={sending}
                     aria-invalid={failed.login !== undefined}
                     aria-describedby={failed.login ? loginErrorId : undefined}
                     onChange={(event) => setLogin(event.target.value)}
@@ -120,7 +180,7 @@ export function LoginPage() {
                     autoComplete="current-password"
                     placeholder="Введите пароль"
                     value={password}
-                    disabled={sending}
+                    readOnly={sending}
                     aria-invalid={failed.password !== undefined}
                     aria-describedby={failed.password ? passwordErrorId : undefined}
                     onChange={(event) => setPassword(event.target.value)}
@@ -148,7 +208,7 @@ export function LoginPage() {
                   type="checkbox"
                   checked={remember}
                   disabled={sending}
-                  onChange={(event) => setRemember(event.target.checked)}
+                  onChange={(event) => toggleRemember(event.target.checked)}
                 />
                 <span>Запомнить логин</span>
               </label>
