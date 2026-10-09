@@ -5,10 +5,14 @@
  * сервер и чего на этой странице быть не должно.
  */
 
-import { screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
+import { StrictMode } from 'react';
+import { MemoryRouter } from 'react-router-dom';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 
+import { App } from '../src/app/App';
+import { SessionProvider } from '../src/features/auth/session';
 import { USER, crm, empty, fakeNetwork, html, json, renderApp } from './helpers';
 
 /** Сессии нет: приложение спрашивает `/auth/me` и получает отказ. */
@@ -22,7 +26,7 @@ function anonymous(after: (path: string, method: string) => Response | Promise<R
 }
 
 async function openForm() {
-  await screen.findByRole('heading', { name: 'Добро пожаловать' });
+  await screen.findByRole('heading', { name: 'Вход в систему' });
 }
 
 describe('форма входа', () => {
@@ -34,8 +38,8 @@ describe('форма входа', () => {
     expect(screen.getByLabelText('Логин')).toBeTruthy();
     expect(screen.getByLabelText('Пароль')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Войти' })).toBeTruthy();
-    expect(screen.getByText('Войдите в HR-систему HUMOTECH')).toBeTruthy();
-    expect(screen.getByText('Доступ только для авторизованных сотрудников')).toBeTruthy();
+    expect(screen.getByText('Введите данные вашей учётной записи')).toBeTruthy();
+    expect(screen.getByText('Доступ предоставляется администратором')).toBeTruthy();
     expect(screen.getByText('Нет доступа? Обратитесь к администратору')).toBeTruthy();
   });
 
@@ -91,6 +95,38 @@ describe('форма входа', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Скрыть пароль' }));
     expect(password.getAttribute('type')).toBe('password');
+  });
+
+  test('показ пароля не теряет введённое', async () => {
+    anonymous(() => empty(204));
+    renderApp('/login');
+    await openForm();
+
+    const password = screen.getByLabelText('Пароль') as HTMLInputElement;
+    await userEvent.type(password, 'секрет-123');
+    await userEvent.click(screen.getByRole('button', { name: 'Показать пароль' }));
+    expect(password.value).toBe('секрет-123');
+    await userEvent.click(screen.getByRole('button', { name: 'Скрыть пароль' }));
+    expect(password.value).toBe('секрет-123');
+  });
+
+  test('подсказки автозаполнения стоят на своих полях', async () => {
+    // Без них менеджер паролей браузера не узнаёт форму входа и
+    // предлагает сохранить логин как пароль.
+    anonymous(() => empty(204));
+    renderApp('/login');
+    await openForm();
+
+    expect(screen.getByLabelText('Логин').getAttribute('autocomplete')).toBe('username');
+    expect(screen.getByLabelText('Пароль').getAttribute('autocomplete')).toBe('current-password');
+  });
+
+  test('переключателя языка нет: перевод один, выбирать не из чего', async () => {
+    anonymous(() => empty(204));
+    renderApp('/login');
+    await openForm();
+
+    expect(screen.queryByRole('button', { name: /язык/i })).toBeNull();
   });
 
   test('вход отправляется клавишей Enter', async () => {
@@ -274,6 +310,96 @@ describe('отправка', () => {
     expect(alert.textContent).toBe('Сервис временно недоступен. Попробуйте позже.');
     expect(document.body.textContent).not.toContain('Server Error');
     expect(document.body.textContent).not.toContain('doctype');
+  });
+});
+
+describe('отказы, которых не видно по коду ответа', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function fillAndSend() {
+    await userEvent.type(screen.getByLabelText('Логин'), 'hr@humotech.local');
+    await userEvent.type(screen.getByLabelText('Пароль'), 'пароль');
+    await userEvent.click(screen.getByRole('button', { name: 'Войти' }));
+  }
+
+  test('зависший сервер обрывается по таймауту, пароль остаётся', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    fakeNetwork((path, call) => {
+      if (path.endsWith('/auth/me')) {
+        return json(403, { error: { code: 'not_authenticated', message: '…', details: null } });
+      }
+      // Ответа нет, пока форма сама не оборвёт запрос.
+      return new Promise<Response>((_, reject) => {
+        call.signal?.addEventListener('abort', () =>
+          reject(new DOMException('The operation was aborted.', 'AbortError')));
+      });
+    });
+    renderApp('/login');
+    await openForm();
+
+    await fillAndSend();
+    expect(screen.getByRole('button', { name: 'Проверяем…' })).toBeTruthy();
+    await act(() => vi.advanceTimersByTimeAsync(20_000));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toBe('Сервер не ответил вовремя. Попробуйте ещё раз.');
+    expect((screen.getByLabelText('Пароль') as HTMLInputElement).value).toBe('пароль');
+    expect(screen.getByRole('button', { name: 'Войти' }).hasAttribute('disabled')).toBe(false);
+  });
+
+  test('в StrictMode после отказа форма снова готова к попытке', async () => {
+    // Приложение запущено в StrictMode (`main.tsx`): страница монтируется
+    // дважды. Флаг «форма на экране» после второго монтирования должен
+    // снова стать истинным — иначе кнопка навсегда остаётся «Проверяем…».
+    anonymous(() =>
+      json(401, { error: { code: 'invalid_credentials', message: '…', details: null } }),
+    );
+    render(
+      <StrictMode>
+        <MemoryRouter initialEntries={['/login']}>
+          <SessionProvider>
+            <App />
+          </SessionProvider>
+        </MemoryRouter>
+      </StrictMode>,
+    );
+    await openForm();
+
+    await fillAndSend();
+
+    expect((await screen.findByRole('alert')).textContent).toBe('Неверный логин или пароль');
+    const button = screen.getByRole('button', { name: 'Войти' });
+    expect(button.hasAttribute('disabled')).toBe(false);
+  });
+
+  test('200 без учётной записи в теле — не вход', async () => {
+    // Прокси или заглушка может ответить 200 чем угодно. Открыть кабинет
+    // с таким «пользователем» значит упасть на первом же списке прав.
+    anonymous((path) => (path.endsWith('/auth/login') ? json(200, { ok: true }) : empty(204)));
+    renderApp('/login');
+    await openForm();
+
+    await fillAndSend();
+
+    expect((await screen.findByRole('alert')).textContent)
+      .toBe('Сервис временно недоступен. Попробуйте позже.');
+    expect(screen.queryByText('Обзор на сегодня')).toBeNull();
+  });
+
+  test('отказ в доступе — не «неверный пароль» и без слов сервера', async () => {
+    anonymous(() => json(403, {
+      error: { code: 'permission_denied', message: 'Учётная запись отключена', details: null },
+    }));
+    renderApp('/login');
+    await openForm();
+
+    await fillAndSend();
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toBe('Доступ к системе закрыт. Обратитесь к администратору.');
+    expect(document.body.textContent).not.toContain('Учётная запись отключена');
   });
 });
 

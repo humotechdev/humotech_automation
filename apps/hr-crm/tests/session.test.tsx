@@ -36,14 +36,14 @@ describe('проверка сессии при запуске', () => {
     renderApp('/login');
 
     await screen.findByText('Обзор на сегодня');
-    expect(screen.queryByRole('heading', { name: 'Добро пожаловать' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Вход в систему' })).toBeNull();
   });
 
   test('без сессии защищённая страница не показывается', async () => {
     fakeNetwork(() => REFUSED.clone());
     renderApp('/');
 
-    expect(await screen.findByRole('heading', { name: 'Добро пожаловать' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Вход в систему' })).toBeTruthy();
     expect(screen.queryByText('Обзор на сегодня')).toBeNull();
   });
 
@@ -51,7 +51,7 @@ describe('проверка сессии при запуске', () => {
     fakeNetwork(() => REFUSED.clone());
     renderApp('/employees');
 
-    expect(await screen.findByRole('heading', { name: 'Добро пожаловать' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Вход в систему' })).toBeTruthy();
   });
 
   test('пока идёт проверка, не показывают ни форму, ни кабинет', async () => {
@@ -65,7 +65,7 @@ describe('проверка сессии при запуске', () => {
     renderApp('/');
 
     expect(await screen.findByRole('status')).toHaveProperty('textContent', 'Проверяем сессию…');
-    expect(screen.queryByRole('heading', { name: 'Добро пожаловать' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Вход в систему' })).toBeNull();
 
     answer(json(200, USER));
     await screen.findByText('Обзор на сегодня');
@@ -104,7 +104,7 @@ describe('backend не отвечает — это не выход', () => {
       'textContent',
       expect.stringContaining('Сервер не отвечает'),
     );
-    expect(screen.queryByRole('heading', { name: 'Добро пожаловать' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Вход в систему' })).toBeNull();
   });
 
   test('пятисотка тоже не считается отсутствием доступа', async () => {
@@ -113,7 +113,7 @@ describe('backend не отвечает — это не выход', () => {
     renderApp('/admin');
 
     await screen.findByRole('alert');
-    expect(screen.queryByRole('heading', { name: 'Добро пожаловать' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Вход в систему' })).toBeNull();
   });
 
   test('страница не подменяется формой входа: человек остаётся где был',
@@ -154,7 +154,7 @@ describe('backend не отвечает — это не выход', () => {
       fakeNetwork(() => REFUSED.clone());
       renderApp('/admin');
 
-      expect(await screen.findByRole('heading', { name: 'Добро пожаловать' }))
+      expect(await screen.findByRole('heading', { name: 'Вход в систему' }))
         .toBeTruthy();
       expect(screen.queryByText('Сервер не отвечает')).toBeNull();
     });
@@ -170,7 +170,7 @@ describe('выход', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Выйти' }));
 
-    expect(await screen.findByRole('heading', { name: 'Добро пожаловать' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Вход в систему' })).toBeTruthy();
     const out = calls.find((call) => call.url.endsWith('/auth/logout'));
     expect(out?.method).toBe('POST');
   });
@@ -189,7 +189,7 @@ describe('выход', () => {
 
       await userEvent.click(screen.getByRole('button', { name: 'Выйти' }));
 
-      await screen.findByRole('heading', { name: 'Добро пожаловать' });
+      await screen.findByRole('heading', { name: 'Вход в систему' });
       // Оболочка кабинета живёт в маршруте-раскладке: после выхода её не
       // должно остаться вместе со всем, что она показывала.
       expect(screen.queryByRole('navigation', { name: 'Разделы' })).toBeNull();
@@ -209,7 +209,7 @@ describe('выход', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Выйти' }));
 
     await waitFor(() =>
-      expect(screen.queryByRole('heading', { name: 'Добро пожаловать' })).not.toBeNull(),
+      expect(screen.queryByRole('heading', { name: 'Вход в систему' })).not.toBeNull(),
     );
   });
 });

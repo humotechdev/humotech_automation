@@ -362,7 +362,7 @@ describe('хранение на клиенте и CSRF', () => {
       return crm(path) ?? json(200, { items: [] });
     });
     renderApp('/login');
-    await screen.findByRole('heading', { name: 'Добро пожаловать' });
+    await screen.findByRole('heading', { name: 'Вход в систему' });
     await userEvent.type(screen.getByLabelText('Логин'), 'hr@humotech.local');
     await userEvent.type(screen.getByLabelText('Пароль'), 'Secret-Test-Pass-1');
     await userEvent.click(screen.getByRole('button', { name: 'Войти' }));
@@ -471,7 +471,7 @@ const CSRF_REFUSED = json(403, {
 const ANONYMOUS = json(403, { error: { code: 'not_authenticated', message: '…', details: null } });
 
 async function typeAndSubmit() {
-  await screen.findByRole('heading', { name: 'Добро пожаловать' });
+  await screen.findByRole('heading', { name: 'Вход в систему' });
   await userEvent.type(screen.getByLabelText('Логин'), 'hr@humotech.local');
   await userEvent.type(screen.getByLabelText('Пароль'), 'Test-Pass-1');
   await userEvent.click(screen.getByRole('button', { name: 'Войти' }));
@@ -518,7 +518,7 @@ describe('вход: ограничение попыток и CSRF', () => {
       { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': '10' } }));
     renderApp('/');
     expect(await screen.findByText(/Сервер не отвечает/)).toBeTruthy();
-    expect(screen.queryByRole('heading', { name: 'Добро пожаловать' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Вход в систему' })).toBeNull();
   });
 
   test('чистая вкладка без cookie: токен запрашивается до входа, вход проходит', async () => {

@@ -12,8 +12,6 @@ import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { currentUser } from '../api/auth';
 import { ApiFailure, messageFor } from '../api/errors';
 import { BrandPanel } from '../components/BrandPanel';
-import { LanguageSwitch } from '../components/LanguageSwitch';
-import { Wordmark } from '../components/Logo';
 import { AppIcon, ICON_SIZE } from '../components/AppIcon';
 import { forgetLogin, rememberLogin, rememberedLogin } from '../features/auth/remembered';
 import { useSession } from '../features/auth/session';
@@ -54,7 +52,13 @@ export function LoginPage() {
   // после перерисовки, а двойной клик быстрее.
   const busy = useRef(false);
   const alive = useRef(true);
-  useEffect(() => () => { alive.current = false; }, []);
+  // Флаг поднимается при каждом монтировании: StrictMode монтирует
+  // страницу дважды, и без этого после первой «размонтировки» форма
+  // считала себя закрытой и навсегда оставалась в «Проверяем…».
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
 
   const [login, setLogin] = useState(saved.current);
   const [password, setPassword] = useState('');
@@ -120,22 +124,17 @@ export function LoginPage() {
   }
 
   return (
-    <main className="page">
-      <div className="card">
-        <BrandPanel />
+    <main className="login">
+      <BrandPanel />
 
-        <section className="form-side">
-          <div className="form-side__top">
-            <LanguageSwitch />
-          </div>
-
-          <div className="form-side__body">
-            <div className="form-side__brand">
-              <Wordmark size={48} />
-            </div>
-
-            <h1 className="form-side__title">Добро пожаловать</h1>
-            <p className="form-side__subtitle">Войдите в HR-систему HUMOTECH</p>
+      {/* Переключателя языка здесь нет: перевод один, и кнопка «RU»
+          только обещала бы выбор, которого система не даёт. */}
+      <section className="login__side">
+        <div className="login__card">
+          <div className="login__main">
+            <p className="login__eyebrow">HUMOTECH HR</p>
+            <h1 className="login__title">Вход в систему</h1>
+            <p className="login__subtitle">Введите данные вашей учётной записи</p>
 
             <form className="form" onSubmit={submit} noValidate>
               <div className="field">
@@ -229,17 +228,17 @@ export function LoginPage() {
                 {sending ? 'Проверяем учётные данные' : ''}
               </span>
             </form>
-
-            <footer className="form-side__footer">
-              <AppIcon name="admin" size={ICON_SIZE.card} className="form-side__shield" />
-              <div>
-                <p>Доступ только для авторизованных сотрудников</p>
-                <p>Нет доступа? Обратитесь к администратору</p>
-              </div>
-            </footer>
           </div>
-        </section>
-      </div>
+
+          <footer className="login__footer">
+            <AppIcon name="admin" size={ICON_SIZE.card} className="login__shield" />
+            <div>
+              <p>Доступ предоставляется администратором</p>
+              <p>Нет доступа? Обратитесь к администратору</p>
+            </div>
+          </footer>
+        </div>
+      </section>
     </main>
   );
 }

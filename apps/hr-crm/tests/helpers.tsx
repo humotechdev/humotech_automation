@@ -7,7 +7,14 @@ import { vi } from 'vitest';
 import { App } from '../src/app/App';
 import { SessionProvider } from '../src/features/auth/session';
 
-export type Call = { url: string; method: string; headers: Record<string, string>; body: unknown };
+export type Call = {
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  body: unknown;
+  /** Сигнал отмены запроса — чтобы зависший ответ можно было оборвать. */
+  signal?: AbortSignal | null;
+};
 
 export const json = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), {
@@ -54,6 +61,7 @@ export function fakeNetwork(handler: (path: string, call: Call) => Response | Pr
       body: init?.body instanceof FormData
         ? init.body
         : init?.body ? JSON.parse(String(init.body)) : undefined,
+      signal: init?.signal ?? null,
     };
     calls.push(call);
     return handler(url, call);

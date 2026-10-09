@@ -55,13 +55,28 @@ export async function login(
     ...(signal ? { signal } : {}),
   });
   if (!csrfToken()) await primeCsrf();
+  let user: CurrentUser;
   try {
-    return await send();
+    user = await send();
   } catch (failure) {
     if (!(failure instanceof ApiFailure) || failure.kind !== 'csrf') throw failure;
     await primeCsrf();
-    return send();
+    user = await send();
   }
+  // 200 от чужого узла (прокси, заглушка) — ещё не вход. Без этой
+  // проверки кабинет открылся бы с «пользователем» без прав и упал на
+  // первом же `permissions.includes`.
+  if (!looksLikeUser(user)) throw new ApiFailure('server', 200);
+  return user;
+}
+
+function looksLikeUser(value: unknown): value is CurrentUser {
+  if (value === null || typeof value !== 'object') return false;
+  const user = value as Partial<CurrentUser>;
+  return typeof user.id === 'string'
+    && typeof user.email === 'string'
+    && Array.isArray(user.roles)
+    && Array.isArray(user.permissions);
 }
 
 /** Получить cookie `csrftoken`. Ответ неважен: 403 без сессии — норма. */
