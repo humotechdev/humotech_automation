@@ -35,7 +35,7 @@ export function Logo({ size = 72, className }: Props) {
         borderRadius: Math.round(size * 0.28),
       }}
     >
-      <img src={mark} alt="" width={size} height={size} />
+      <img src={mark} alt="" width={size} height={size} draggable={false} />
     </span>
   );
 }
@@ -50,10 +50,13 @@ export function Logo({ size = 72, className }: Props) {
 export function BrandLockup() {
   return (
     <>
-      <img className="brand__full" src={lockupDark} alt="HUMOTECH" />
+      {/* Знак не перетаскивается: иначе браузер бросает адрес файла в
+          поле ввода, на которое его случайно уронили. */}
+      <img className="brand__full" src={lockupDark} alt="HUMOTECH" draggable={false} />
       {/* Узкое меню сжимается до полосы иконок: там остаётся один знак,
           вырезанный из того же файла, а не уменьшённая надпись. */}
-      <img className="brand__mark" src={markDark} alt="HUMOTECH" aria-hidden="true" />
+      <img className="brand__mark" src={markDark} alt="HUMOTECH" aria-hidden="true"
+        draggable={false} />
     </>
   );
 }
