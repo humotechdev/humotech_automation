@@ -42,9 +42,25 @@ describe('левая панель', () => {
     const { container } = render(<BrandPanel />);
     const text = container.textContent ?? '';
 
-    expect(container.querySelector('svg')).toBeNull();
+    // Единственные рисунки — иконки шагов, и они скрыты от читалки.
+    for (const svg of container.querySelectorAll('svg')) {
+      expect(svg.closest('[aria-hidden="true"]')).not.toBeNull();
+    }
     expect(text).not.toMatch(/\d+\s*%/);
     expect(text).not.toMatch(/\d+\+/);
+  });
+
+  test('три шага рабочего процесса — списком, а не кнопками', () => {
+    render(<BrandPanel />);
+
+    const steps = screen.getAllByRole('listitem');
+    expect(steps.map((step) => step.textContent)).toEqual([
+      'СотрудникОтметки, заявки и обращения',
+      'HRРассмотрение и работа с персоналом',
+      'РуководительПосещаемость и отчёты',
+    ]);
+    expect(screen.queryAllByRole('button')).toHaveLength(0);
+    expect(screen.getByRole('region', { name: 'Единый рабочий процесс' })).toBeTruthy();
   });
 
   test('заголовок панели не спорит с заголовком формы', () => {
