@@ -10,43 +10,27 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 
 import { currentUser } from '../api/auth';
-import { ApiFailure, messageFor } from '../api/errors';
+import { ApiFailure } from '../api/errors';
 import { BrandPanel } from '../components/BrandPanel';
 import { AppIcon, ICON_SIZE } from '../components/AppIcon';
+import { LoginLanguageSwitch } from '../components/LoginLanguageSwitch';
+import { LOGIN_TEXT, useLoginLanguage, type LoginFailure } from '../features/auth/login-language';
 import { forgetLogin, rememberLogin, rememberedLogin } from '../features/auth/remembered';
 import { useSession } from '../features/auth/session';
 
 /** Сколько ждать ответа на вход. Дольше — человек решит, что всё зависло. */
 const LOGIN_TIMEOUT_MS = 20_000;
 
-/**
- * Отказ — словами, по ответу сервера. Неверные данные называются
- * одинаково для любой причины: по ответу нельзя узнать, есть ли такая
- * учётная запись. Сетевой сбой — не «неверный пароль».
- */
-function loginMessage(error: unknown, timedOut: boolean): string {
-  if (timedOut) return 'Сервер не ответил вовремя. Попробуйте ещё раз.';
-  if (!(error instanceof ApiFailure)) return 'Не удалось войти. Попробуйте ещё раз.';
-  switch (error.kind) {
-    case 'credentials':
-      return 'Неверный логин или пароль';
-    case 'throttled':
-      return messageFor(error);
-    case 'offline':
-      return 'Нет связи с сервером. Проверьте подключение и попробуйте ещё раз.';
-    case 'csrf':
-      return 'Страница устарела. Обновите её и войдите снова.';
-    case 'session':
-      return 'Доступ к системе закрыт. Обратитесь к администратору.';
-    case 'validation':
-      return 'Проверьте логин и пароль.';
-    default:
-      return 'Сервис временно недоступен. Попробуйте позже.';
-  }
+function failureOf(error: unknown, timedOut: boolean): LoginFailure {
+  if (timedOut) return { reason: 'timeout' };
+  if (error instanceof ApiFailure) return { reason: 'refused', error };
+  return { reason: 'unknown' };
 }
 
 export function LoginPage() {
   const session = useSession();
+  const [language, setLanguage] = useLoginLanguage();
+  const t = LOGIN_TEXT[language];
   const saved = useRef(rememberedLogin());
   // Повторная отправка блокируется синхронно: `sending` обновится только
   // после перерисовки, а двойной клик быстрее.
@@ -65,7 +49,9 @@ export function LoginPage() {
   const [remember, setRemember] = useState(saved.current !== '');
   const [visible, setVisible] = useState(false);
   const [sending, setSending] = useState(false);
-  const [failed, setFailed] = useState<{ login?: string; password?: string; common?: string }>({});
+  // Причина, а не готовый текст: сменили язык после отказа — сообщение
+  // переводится вместе со страницей.
+  const [failed, setFailed] = useState<{ login?: true; password?: true; common?: LoginFailure }>({});
 
   const loginId = useId();
   const passwordId = useId();
@@ -84,8 +70,8 @@ export function LoginPage() {
     if (busy.current) return; // вторая отправка той же формы ничего не добавит
 
     const problems: typeof failed = {};
-    if (login.trim() === '') problems.login = 'Введите логин';
-    if (password === '') problems.password = 'Введите пароль';
+    if (login.trim() === '') problems.login = true;
+    if (password === '') problems.password = true;
     if (problems.login || problems.password) {
       setFailed(problems);
       return;
@@ -105,7 +91,7 @@ export function LoginPage() {
       else forgetLogin();
     } catch (error) {
       if (!alive.current) return;
-      setFailed({ common: loginMessage(error, timedOut) });
+      setFailed({ common: failureOf(error, timedOut) });
       // Пароль стирается только при неверных данных: после сетевого
       // сбоя человек просто нажимает «Войти» ещё раз.
       if (error instanceof ApiFailure && error.kind === 'credentials') setPassword('');
@@ -125,21 +111,23 @@ export function LoginPage() {
 
   return (
     <main className="login">
-      <BrandPanel />
+      <BrandPanel text={t} />
 
-      {/* Переключателя языка здесь нет: перевод один, и кнопка «RU»
-          только обещала бы выбор, которого система не даёт. */}
       <section className="login__side">
+        <div className="login__lang">
+          <LoginLanguageSwitch value={language} label={t.languageGroup} onChange={setLanguage} />
+        </div>
+
         <div className="login__card">
           <div className="login__main">
             <p className="login__eyebrow">HUMOTECH HR</p>
-            <h1 className="login__title">Вход в систему</h1>
-            <p className="login__subtitle">Введите данные вашей учётной записи</p>
+            <h1 className="login__title">{t.title}</h1>
+            <p className="login__subtitle">{t.subtitle}</p>
 
             <form className="form" onSubmit={submit} noValidate>
               <div className="field">
                 <label className="field__label" htmlFor={loginId}>
-                  Логин
+                  {t.login}
                 </label>
                 <div className="field__box">
                   <AppIcon name="user" size={ICON_SIZE.nav} className="field__icon" />
@@ -151,7 +139,7 @@ export function LoginPage() {
                     autoComplete="username"
                     autoCapitalize="off"
                     autoCorrect="off"
-                    placeholder="Введите логин"
+                    placeholder={t.loginPlaceholder}
                     value={login}
                     readOnly={sending}
                     aria-invalid={failed.login !== undefined}
@@ -161,14 +149,14 @@ export function LoginPage() {
                 </div>
                 {failed.login && (
                   <p className="field__error" id={loginErrorId}>
-                    {failed.login}
+                    {t.emptyLogin}
                   </p>
                 )}
               </div>
 
               <div className="field">
                 <label className="field__label" htmlFor={passwordId}>
-                  Пароль
+                  {t.password}
                 </label>
                 <div className="field__box">
                   <AppIcon name="lock" size={ICON_SIZE.nav} className="field__icon" />
@@ -177,7 +165,7 @@ export function LoginPage() {
                     className="field__input"
                     type={visible ? 'text' : 'password'}
                     autoComplete="current-password"
-                    placeholder="Введите пароль"
+                    placeholder={t.passwordPlaceholder}
                     value={password}
                     readOnly={sending}
                     aria-invalid={failed.password !== undefined}
@@ -187,7 +175,7 @@ export function LoginPage() {
                   <button
                     type="button"
                     className="field__reveal"
-                    aria-label={visible ? 'Скрыть пароль' : 'Показать пароль'}
+                    aria-label={visible ? t.hidePassword : t.showPassword}
                     aria-pressed={visible}
                     onClick={() => setVisible((was) => !was)}
                   >
@@ -197,7 +185,7 @@ export function LoginPage() {
                 </div>
                 {failed.password && (
                   <p className="field__error" id={passwordErrorId}>
-                    {failed.password}
+                    {t.emptyPassword}
                   </p>
                 )}
               </div>
@@ -209,23 +197,23 @@ export function LoginPage() {
                   disabled={sending}
                   onChange={(event) => toggleRemember(event.target.checked)}
                 />
-                <span>Запомнить логин</span>
+                <span>{t.remember}</span>
               </label>
 
               {failed.common && (
                 <p className="form__alert" role="alert">
-                  {failed.common}
+                  {t.failure(failed.common)}
                 </p>
               )}
 
               <button type="submit" className="submit" disabled={sending} aria-busy={sending}>
-                {sending ? 'Проверяем…' : 'Войти'}
+                {sending ? t.sending : t.submit}
               </button>
 
               {/* Для читалки экрана состояние отправки — текстом, а не
                   только сменой подписи на кнопке. */}
               <span className="visually-hidden" role="status">
-                {sending ? 'Проверяем учётные данные' : ''}
+                {sending ? t.sendingStatus : ''}
               </span>
             </form>
           </div>
@@ -233,8 +221,8 @@ export function LoginPage() {
           <footer className="login__footer">
             <AppIcon name="admin" size={ICON_SIZE.card} className="login__shield" />
             <div>
-              <p>Доступ предоставляется администратором</p>
-              <p>Нет доступа? Обратитесь к администратору</p>
+              <p>{t.footerAccess}</p>
+              <p>{t.footerHelp}</p>
             </div>
           </footer>
         </div>

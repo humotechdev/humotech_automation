@@ -5,7 +5,7 @@
  * сервер и чего на этой странице быть не должно.
  */
 
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import { StrictMode } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import userEvent from '@testing-library/user-event';
@@ -400,6 +400,65 @@ describe('отказы, которых не видно по коду ответ�
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toBe('Доступ к системе закрыт. Обратитесь к администратору.');
     expect(document.body.textContent).not.toContain('Учётная запись отключена');
+  });
+});
+
+describe('язык страницы входа', () => {
+  test('по умолчанию русский, выбор — из двух: русский и узбекский', async () => {
+    anonymous(() => empty(204));
+    renderApp('/login');
+    await openForm();
+
+    const group = screen.getByRole('radiogroup', { name: 'Язык интерфейса' });
+    const options = within(group).getAllByRole('radio');
+    expect(options.map((one) => one.getAttribute('aria-label'))).toEqual(['Русский', 'Oʻzbekcha']);
+    expect((within(group).getByRole('radio', { name: 'Русский' }) as HTMLInputElement).checked).toBe(true);
+    expect(document.documentElement.lang).toBe('ru');
+  });
+
+  test('узбекский переводит форму, а ошибка переводится вместе с ней', async () => {
+    anonymous(() =>
+      json(401, { error: { code: 'invalid_credentials', message: '…', details: null } }),
+    );
+    renderApp('/login');
+    await openForm();
+
+    await userEvent.type(screen.getByLabelText('Логин'), 'hr@humotech.local');
+    await userEvent.type(screen.getByLabelText('Пароль'), 'не тот');
+    await userEvent.click(screen.getByRole('button', { name: 'Войти' }));
+    expect((await screen.findByRole('alert')).textContent).toBe('Неверный логин или пароль');
+
+    await userEvent.click(screen.getByRole('radio', { name: 'Oʻzbekcha' }));
+
+    expect(screen.getByRole('heading', { name: 'Tizimga kirish' })).toBeTruthy();
+    expect(screen.getByLabelText('Parol')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Kirish' })).toBeTruthy();
+    expect(screen.getByRole('alert').textContent).toBe('Login yoki parol notoʻgʻri');
+    // Введённый логин при смене языка не пропадает.
+    expect((screen.getByLabelText('Login') as HTMLInputElement).value).toBe('hr@humotech.local');
+    expect(document.documentElement.lang).toBe('uz');
+  });
+
+  test('запоминается только код языка', async () => {
+    anonymous(() => empty(204));
+    renderApp('/login');
+    await openForm();
+
+    await userEvent.click(screen.getByRole('radio', { name: 'Oʻzbekcha' }));
+
+    expect(localStorage.getItem('humotech.crm.language')).toBe('uz');
+  });
+
+  test('сохранённый узбекский открывается сразу, непонятное значение — русским', async () => {
+    localStorage.setItem('humotech.crm.language', 'uz');
+    anonymous(() => empty(204));
+    const first = renderApp('/login');
+    expect(await screen.findByRole('heading', { name: 'Tizimga kirish' })).toBeTruthy();
+    first.unmount();
+
+    localStorage.setItem('humotech.crm.language', 'en');
+    renderApp('/login');
+    await openForm();
   });
 });
 

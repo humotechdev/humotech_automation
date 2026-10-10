@@ -341,8 +341,64 @@ input {
   min-width: 0;
   display: flex;
   align-items: flex-start;
-  padding: max(clamp(24px, 4vh, 56px), calc((100dvh - 620px) / 2)) clamp(20px, 4vw, 72px)
+  position: relative;
+  /* Сверху не меньше 72 px: там стоит переключатель языка, и в низком
+     окне карточка не должна заезжать под него. */
+  padding: max(72px, calc((100dvh - 620px) / 2)) clamp(20px, 4vw, 72px)
     clamp(24px, 4vh, 56px);
+}
+
+/* --- вход: язык ---------------------------------------------------------- */
+
+.login__lang {
+  position: absolute;
+  top: 18px;
+  right: clamp(16px, 2.4vw, 32px);
+}
+
+/* Три варианта рядом, выбранный — на голубой подложке. Это группа
+   радиокнопок: сами кнопки скрыты, видны подписи. */
+.login-lang {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--white);
+  box-shadow: 0 1px 2px var(--shadow-lift);
+}
+
+.login-lang__option {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.login-lang__option:hover {
+  color: var(--text-body);
+  background: var(--hover-bg);
+}
+
+.login-lang__option:has(input:checked) {
+  background: var(--blue-100);
+  color: var(--action-text);
+}
+
+.login-lang__option:has(input:focus-visible) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
 }
 
 /* Одна белая форма: основная часть и серый подвал под тонкой линией —
@@ -686,8 +742,42 @@ input {
    виден вход, а не синий экран над ним. */
 @media (max-width: 900px) {
   .login {
+    position: relative;
     grid-template-columns: 1fr;
     grid-template-rows: auto 1fr;
+  }
+
+  /* На телефоне язык — в тёмной полосе справа от знака, а не над
+     формой: форма остаётся первым, что видно под полосой. */
+  .login__side {
+    position: static;
+  }
+
+  .login__lang {
+    top: 14px;
+    right: 16px;
+  }
+
+  .login-lang {
+    border-color: var(--border-on-deep);
+    background: var(--overlay-on-deep);
+    box-shadow: none;
+  }
+
+  .login-lang__option {
+    min-width: 36px;
+    padding: 0 8px;
+    color: var(--text-on-deep-muted);
+  }
+
+  .login-lang__option:hover {
+    color: var(--text-on-deep);
+    background: var(--overlay-on-deep);
+  }
+
+  .login-lang__option:has(input:checked) {
+    background: var(--white);
+    color: var(--blue-deep);
   }
 
   .brand {
