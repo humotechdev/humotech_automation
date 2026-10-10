@@ -487,3 +487,79 @@ describe('контекст сотрудника', () => {
     expect(within(side).queryByText('Сегодня на работе')).toBeNull();
   });
 });
+
+describe('отправка при обрыве связи', () => {
+  const text = 'Да, можно. Оформите изменение в «Мои заявки».';
+
+  test('текст остаётся, кнопка — «Повторить», повтор с тем же ключом', async () => {
+    const calls = network((path, call) => {
+      if (call.method === 'POST' && path.includes('/reply/')) throw new TypeError('Failed to fetch');
+      return null;
+    });
+    renderApp('/questions?id=q-1');
+
+    const field = await screen.findByLabelText('Ответ сотруднику');
+    fireEvent.change(field, { target: { value: text } });
+    fireEvent.click(screen.getByRole('button', { name: 'Отправить' }));
+
+    expect((await screen.findByRole('alert')).textContent).toContain('неизвестно, дошёл ли ответ');
+    expect((field as HTMLTextAreaElement).value).toBe(text);
+    const again = await screen.findByRole('button', { name: 'Повторить' });
+    fireEvent.click(again);
+
+    await waitFor(() => expect(posts(calls, 'reply')).toHaveLength(2));
+    const [first, second] = posts(calls, 'reply').map((call) => (call.body as { client_request_id: string }).client_request_id);
+    // Сервер отдаёт уже сохранённое по тому же ключу — второго сообщения нет.
+    expect(second).toBe(first);
+  });
+
+  test('ответ всё-таки сохранился — поле очищается без повторной отправки', async () => {
+    let key: string | null = null;
+    const calls = network((path, call) => {
+      if (call.method === 'POST' && path.includes('/reply/')) {
+        key = (call.body as { client_request_id: string }).client_request_id;
+        throw new TypeError('Failed to fetch');
+      }
+      if (key && call.method === 'GET' && /\/knowledge\/escalations\/q-1\/?$/.test(path)) {
+        return json(200, {
+          ...QUESTION,
+          messages: [
+            ...QUESTION.messages,
+            {
+              id: 'm-9', kind: 'HR', source: 'CRM', body: text, event: null, details: null,
+              author: { type: 'user', id: HR.id, name: 'Кадровик' }, created_at: minutesAgo(0),
+              client_request_id: key,
+              delivery: { status: 'QUEUED', sent_at: null, read_at: null, error: null },
+            },
+          ],
+        });
+      }
+      return null;
+    });
+    renderApp('/questions?id=q-1');
+
+    const field = await screen.findByLabelText('Ответ сотруднику');
+    fireEvent.change(field, { target: { value: text } });
+    fireEvent.click(screen.getByRole('button', { name: 'Отправить' }));
+
+    await waitFor(() => expect((field as HTMLTextAreaElement).value).toBe(''));
+    // Реплика одна — та, что вернул сервер, без «отправляется»-двойника.
+    expect(screen.getAllByText(text)).toHaveLength(1);
+    expect(posts(calls, 'reply')).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: 'Повторить' })).toBeNull();
+  });
+});
+
+describe('окно закрытия', () => {
+  test('Escape закрывает окно без запроса', async () => {
+    const calls = network();
+    renderApp('/questions?id=q-1');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Закрыть обращение' }));
+    await screen.findByRole('dialog', { name: 'Закрытие обращения' });
+    fireEvent.keyDown(document, { key: 'Escape' });
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Закрытие обращения' })).toBeNull());
+    expect(posts(calls, 'close')).toHaveLength(0);
+  });
+});

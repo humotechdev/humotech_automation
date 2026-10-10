@@ -35,7 +35,7 @@ import { AppIcon, type AppIconName } from '../components/AppIcon';
 import { AppPopover, AppSelectField } from '../components/AppSelect';
 import { useSession } from '../features/auth/session';
 import { useBlock, type Block } from '../features/dashboard/data';
-import { liveState, onLive, onLiveState } from '../features/realtime/events';
+import { liveState, liveSupported, onLive, onLiveState, type LiveState } from '../features/realtime/events';
 import { useStickyState } from '../features/shell/sticky';
 import '../styles/questions.css';
 
@@ -243,8 +243,9 @@ export function QuestionsPage() {
 
   // --- резервный опрос: часто без потока, редко — с ним ---
   const [tick, setTick] = useState(0);
-  const [live, setLive] = useState(liveState() === 'live');
-  useEffect(() => onLiveState((next) => setLive(next === 'live')), []);
+  const [stream, setStream] = useState<LiveState>(liveState());
+  useEffect(() => onLiveState(setStream), []);
+  const live = stream === 'live';
   useEffect(() => {
     const timer = window.setInterval(() => {
       if (!document.hidden) setTick((n) => n + 1);
@@ -438,8 +439,14 @@ export function QuestionsPage() {
         if (done) setNotice({ tone: 'ok', text: done });
         return fresh;
       } catch (error) {
-        setNotice({ tone: 'error', text: failureText(error) });
-        if (error instanceof ApiFailure && error.kind === 'conflict') reloadDetail();
+        setNotice({ tone: 'error', text: failureText(error, label) });
+        // Конфликт, обрыв и сбой сервера — исход мог быть не тем, что
+        // кажется: перечитываем обращение. Ответ, который всё-таки
+        // сохранился, придёт в ленте; повтор с тем же ключом второго
+        // сообщения не создаст.
+        if (error instanceof ApiFailure && ['conflict', 'offline', 'server'].includes(error.kind)) {
+          reloadDetail();
+        }
         return null;
       } finally {
         setBusy(null);
@@ -521,6 +528,13 @@ export function QuestionsPage() {
             <div>
               <h1 className="tk-head__title">Обращения</h1>
               <p className="tk-head__sub">Вопросы сотрудников и ответы HR</p>
+              {/* Поток событий упал: показанное — последнее полученное, а
+                  не «обращений нет». Переподключение идёт само. */}
+              {stream === 'down' && liveSupported() && (
+                <p className="tk-offline" role="status">
+                  Нет связи для живых обновлений — переподключаемся. Показаны последние полученные данные.
+                </p>
+              )}
             </div>
             <div className="tk-head__tools">
               <span className="tk-filter">
@@ -649,7 +663,7 @@ export function QuestionsPage() {
                   )
                   : detailBlock.state === 'denied'
                     ? <p className="tk-empty tk-empty--center">Нет доступа к этому обращению.</p>
-                    : <p className="tk-empty tk-empty--center">Загружаем переписку…</p>
+                    : <ThreadSkeleton />
               )}
               {detail && (
                 <Conversation
@@ -692,9 +706,9 @@ export function QuestionsPage() {
                   onRetry={reloadContext}
                 />
               ) : currentId ? (
-                <p className="tk-empty tk-empty--center">
-                  {detailBlock.state === 'error' ? 'Не удалось загрузить обращение.' : 'Загружаем…'}
-                </p>
+                detailBlock.state === 'error'
+                  ? <p className="tk-empty tk-empty--center">Не удалось загрузить обращение.</p>
+                  : <SideSkeleton />
               ) : (
                 <div className="tk-empty tk-empty--center">
                   <AppIcon name="user" size={20} />
@@ -772,6 +786,42 @@ function QueueSkeleton() {
   );
 }
 
+/** Заглушка переписки: шапка и несколько реплик по сторонам, без текста. */
+function ThreadSkeleton() {
+  return (
+    <div className="tk-talk__body tk-sk-talk">
+      <span className="visually-hidden" role="status">Загружаем переписку…</span>
+      <div aria-hidden="true">
+        <div className="tk-sk-head">
+          <span className="tk-ghost tk-ghost--round" />
+          <span className="tk-sk-lines"><span className="tk-ghost" /><span className="tk-ghost tk-ghost--short" /></span>
+        </div>
+        <div className="tk-sk-thread">
+          <span className="tk-sk-bubble" />
+          <span className="tk-sk-bubble tk-sk-bubble--mine" />
+          <span className="tk-sk-bubble tk-sk-bubble--wide" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Заглушка контекста: сотрудник и два поля управления. */
+function SideSkeleton() {
+  return (
+    <div className="tk-side__body">
+      <span className="visually-hidden" role="status">Загружаем данные обращения…</span>
+      <div aria-hidden="true" className="tk-sk-side">
+        <div className="tk-ghost-block"><span className="tk-ghost tk-ghost--round" /><span className="tk-ghost" /></div>
+        <span className="tk-ghost" />
+        <span className="tk-ghost tk-ghost--short" />
+        <span className="tk-ghost tk-sk-field" />
+        <span className="tk-ghost tk-sk-field" />
+      </div>
+    </div>
+  );
+}
+
 // --- переписка ----------------------------------------------------------------
 
 function Conversation({
@@ -821,6 +871,14 @@ function Conversation({
   const [unseen, setUnseen] = useState(0);
   const sentKeys = useRef(new Set<string>());
   for (const one of pending) sentKeys.current.add(one.key);
+  // Реплики первого показа — история: её не проявляем. Новыми считаются
+  // пришедшие потом, кроме своей реплики, сменившей «Отправляется», —
+  // она встаёт на то же место и проявляться второй раз не должна.
+  const history = useRef<Set<string> | null>(null);
+  if (history.current === null) history.current = new Set(question.messages.map((one) => one.id));
+  const isNew = (message: api.QuestionMessage) =>
+    !history.current!.has(message.id)
+    && !(message.client_request_id != null && sentKeys.current.has(message.client_request_id));
   const lastMessage = question.messages[question.messages.length - 1];
   const tail = waiting.length > 0
     ? `pending:${waiting[waiting.length - 1]!.key}`
@@ -862,9 +920,11 @@ function Conversation({
     if (!box) return;
     atBottom.current = true;
     setUnseen(0);
-    // Плавно: человек видит, откуда и куда его перенесло.
+    // Плавно: человек видит, откуда и куда его перенесло. При
+    // уменьшенном движении — сразу.
+    const quiet = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
     if (typeof box.scrollTo === 'function') {
-      box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
+      box.scrollTo({ top: box.scrollHeight, behavior: quiet ? 'auto' : 'smooth' });
     } else {
       box.scrollTop = box.scrollHeight;
     }
@@ -934,7 +994,7 @@ function Conversation({
       )}
 
       <div className="tk-thread" ref={thread} onScroll={onScroll}>
-        <Thread question={question} pending={waiting} canResend={canResend} onResend={onResend} />
+        <Thread question={question} pending={waiting} canResend={canResend} onResend={onResend} isNew={isNew} />
         {question.status === 'CLOSED' && (
           <p className="tk-event tk-event--closed">
             Обращение закрыто{question.closed_at ? ` ${fullDay(question.closed_at)} в ${clock(question.closed_at)}` : ''}
@@ -988,12 +1048,15 @@ function Conversation({
   );
 }
 
-function Thread({ question, pending = [], canResend = false, onResend }: {
+function Thread({ question, pending = [], canResend = false, onResend, isNew }: {
   question: api.Question;
   pending?: Pending[];
   canResend?: boolean;
   onResend?: ((notificationId: string) => Promise<void>) | undefined;
+  /** Пришла после открытия — коротко проявляется. История — нет. */
+  isNew?: (message: api.QuestionMessage) => boolean;
 }) {
+  const fresh = (message: api.QuestionMessage) => (isNew?.(message) ? ' tk-msg--new' : '');
   const out: ReactNode[] = [];
   let day = '';
   for (const message of question.messages) {
@@ -1006,7 +1069,7 @@ function Thread({ question, pending = [], canResend = false, onResend }: {
       // История обращения: кто взял, кому передали, когда закрыли. Мелко
       // и по центру — это работа с обращением, а не реплика в разговоре.
       out.push(
-        <p key={message.id} className="tk-event">
+        <p key={message.id} className={`tk-event${fresh(message)}`}>
           {eventText(message)}
           {message.author.type === 'user' && <> · {message.author.name}</>}
           <time dateTime={message.created_at}> · {clock(message.created_at)}</time>
@@ -1033,7 +1096,7 @@ function Thread({ question, pending = [], canResend = false, onResend }: {
       // синим, со статусом доставки. Подпись с именем остаётся: HR в
       // переписке бывает несколько, и видно, кто именно ответил.
       out.push(
-        <article key={message.id} className="tk-msg tk-msg--mine">
+        <article key={message.id} className={`tk-msg tk-msg--mine${fresh(message)}`}>
           <p className="tk-msg__who">
             <b>{message.author.name}</b>
             <span aria-hidden="true">·</span>
@@ -1055,7 +1118,7 @@ function Thread({ question, pending = [], canResend = false, onResend }: {
     }
     // Сообщение сотрудника — собеседник: слева, белое, с его лицом.
     out.push(
-      <article key={message.id} className="tk-msg tk-msg--theirs">
+      <article key={message.id} className={`tk-msg tk-msg--theirs${fresh(message)}`}>
         <Photo id={question.employee.id} name={message.author.name} has={question.employee.has_photo} className="tk-face tk-face--sm" />
         <div className="tk-msg__bubble">
           {body}
@@ -1071,7 +1134,7 @@ function Thread({ question, pending = [], canResend = false, onResend }: {
     // Свой ответ до подтверждения сервером: тот же вид, что у ответа HR,
     // и честное «Отправляется».
     out.push(
-      <article key={`pending-${one.key}`} className="tk-msg tk-msg--mine tk-msg--pending">
+      <article key={`pending-${one.key}`} className="tk-msg tk-msg--mine tk-msg--pending tk-msg--new">
         <div className="tk-msg__bubble">
           {one.text && (
             <p className="tk-msg__text">
@@ -1158,6 +1221,22 @@ function Composer({ question, value, onChange, sending, onSend }: {
   // Защёлка — от двойного клика раньше, чем React успел отключить кнопку.
   const pending = useRef<{ sign: string; key: string } | null>(null);
   const inFlight = useRef(false);
+  /** Последняя отправка не подтверждена: текст и файл остаются, кнопка — «Повторить». */
+  const [failed, setFailed] = useState(false);
+
+  // Отправка оборвалась, но ответ всё-таки сохранился — он пришёл в
+  // ленте с нашим ключом. Тогда поле очищается, как после успеха, и
+  // повторять нечего.
+  useEffect(() => {
+    const key = pending.current?.key;
+    if (!key || inFlight.current) return;
+    if (question.messages.some((one) => one.client_request_id === key)) {
+      pending.current = null;
+      setFailed(false);
+      onChange('');
+      setFile(null);
+    }
+  }, [question.messages, onChange]);
   const connected = question.telegram.connected;
   const text = value.trim();
   const ready = (text.length > 0 || file !== null) && connected && !sending;
@@ -1203,11 +1282,14 @@ function Composer({ question, value, onChange, sending, onSend }: {
     const key = pending.current?.sign === sign ? pending.current.key : requestKey();
     pending.current = { sign, key };
     try {
+      setFailed(false);
       const fresh = await onSend({ text, after: 'KEEP', client_request_id: key, file });
       if (fresh) {
         pending.current = null;
         onChange('');
         setFile(null);
+      } else {
+        setFailed(true);
       }
     } finally {
       inFlight.current = false;
@@ -1224,7 +1306,8 @@ function Composer({ question, value, onChange, sending, onSend }: {
   }
 
   return (
-    <form className="tk-compose" aria-label="Отправка ответа" onSubmit={(event) => { event.preventDefault(); void send(); }}>
+    <form className={failed ? 'tk-compose tk-compose--failed' : 'tk-compose'} aria-label="Отправка ответа"
+          aria-busy={sending} onSubmit={(event) => { event.preventDefault(); void send(); }}>
       {(file || fileError) && (
         <div className="tk-compose__file">
           {file && (
@@ -1257,7 +1340,8 @@ function Composer({ question, value, onChange, sending, onSend }: {
             maxLength={4000}
             value={value}
             placeholder={connected ? 'Введите сообщение…' : `${telegramReason(question.telegram.reason)} — отправка недоступна`}
-            onChange={(event) => onChange(event.target.value)}
+            readOnly={sending}
+            onChange={(event) => { setFailed(false); onChange(event.target.value); }}
             onKeyDown={onKey}
           />
           <button type="button" className="tk-emoji" aria-label="Эмодзи" aria-expanded={emoji}
@@ -1272,10 +1356,15 @@ function Composer({ question, value, onChange, sending, onSend }: {
             ))}
           </AppPopover>
         </span>
-        <button type="submit" className="tk-send" disabled={!ready}>
-          {sending ? 'Отправляем…' : 'Отправить'}
+        <button type="submit" className="tk-send" disabled={!ready} aria-busy={sending}>
+          {sending ? 'Отправляем…' : failed ? 'Повторить' : 'Отправить'}
         </button>
       </div>
+      {failed && !sending && (
+        <p className="tk-compose__failed" role="status">
+          Ответ не подтверждён сервером — {file ? 'текст и файл сохранены' : 'текст сохранён'}. Повтор не создаст второго сообщения.
+        </p>
+      )}
     </form>
   );
 }
@@ -1509,9 +1598,45 @@ function CloseDialog({ busy, onCancel, onClose }: {
   const [choice, setChoice] = useState(CLOSE_REASONS[0] ?? '');
   const [note, setNote] = useState('');
   const reason = choice === 'Другое' ? note.trim() : [choice, note.trim()].filter(Boolean).join(': ');
+  const card = useRef<HTMLFormElement | null>(null);
+  const [leaving, setLeaving] = useState(false);
+  const left = useRef(false);
+  // Кнопка, с которой открыли окно: фокус вернётся к ней. Запоминается
+  // при отрисовке — до того, как фокус уйдёт в окно.
+  const [opener] = useState(() => document.activeElement as HTMLElement | null);
+
+  /**
+   * Отмена с короткой обратной анимацией. Повторная отмена ничего не
+   * делает; снятие окна подстраховано таймером — затемнение не
+   * останется. Пока сервер закрывает обращение, отменить нельзя.
+   */
+  const cancel = useCallback(() => {
+    if (left.current || busy) return;
+    left.current = true;
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      onCancel();
+      return;
+    }
+    setLeaving(true);
+    window.setTimeout(onCancel, 160);
+  }, [busy, onCancel]);
+
+  useEffect(() => {
+    card.current?.focus();
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') cancel();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [cancel]);
+  useEffect(() => () => {
+    if (opener && opener.isConnected) opener.focus();
+  }, [opener]);
+
   return (
-    <div className="tk-modal" role="presentation">
-      <form className="tk-modal__card" role="dialog" aria-modal="true" aria-label="Закрытие обращения"
+    <div className={leaving ? 'tk-modal tk-modal--leaving' : 'tk-modal'} role="presentation"
+         onMouseDown={(event) => { if (event.target === event.currentTarget) cancel(); }}>
+      <form ref={card} tabIndex={-1} className="tk-modal__card" role="dialog" aria-modal="true" aria-label="Закрытие обращения"
             onSubmit={(event) => {
               event.preventDefault();
               if (reason && !busy) void onClose(reason);
@@ -1531,8 +1656,8 @@ function CloseDialog({ busy, onCancel, onClose }: {
                placeholder={choice === 'Другое' ? 'Опишите причину' : 'Комментарий (необязательно)'}
                value={note} maxLength={900} onChange={(event) => setNote(event.target.value)} />
         <div className="tk-modal__buttons">
-          <button type="button" className="tk-btn" onClick={onCancel}>Отмена</button>
-          <button type="submit" className="tk-btn tk-btn--main" disabled={!reason || busy}>
+          <button type="button" className="tk-btn" disabled={busy} onClick={cancel}>Отмена</button>
+          <button type="submit" className="tk-btn tk-btn--main" disabled={!reason || busy} aria-busy={busy}>
             {busy ? 'Закрываем…' : 'Закрыть обращение'}
           </button>
         </div>
@@ -1555,8 +1680,11 @@ function Photo({ id, name, has, className }: { id: string; name: string; has: bo
   );
 }
 
-function failureText(error: unknown): string {
+function failureText(error: unknown, label?: string): string {
   if (error instanceof ApiFailure) {
+    if (label === 'reply' && (error.kind === 'offline' || error.kind === 'server')) {
+      return 'Связь прервалась — неизвестно, дошёл ли ответ. Переписка перечитывается: если ответа в ней нет, отправьте снова — второго сообщения не будет.';
+    }
     if (error.code === 'telegram_not_connected') {
       return 'Telegram сотрудника не подключён — сообщение не отправлено и в ленту не добавлено.';
     }
