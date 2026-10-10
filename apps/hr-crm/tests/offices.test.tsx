@@ -103,9 +103,9 @@ async function officeCard(id: string): Promise<HTMLElement> {
   return document.querySelector(`[data-office-id="${id}"]`) as HTMLElement;
 }
 
-/** Число дня в карточке ленты: «В офисе», «Отпуск», «Больничный». */
+/** Число дня в карточке офиса: «В офисе», «Отпуск», «Больничный». */
 const dayNumber = (card: HTMLElement, title: string) =>
-  within(card).getByText(title).parentElement?.querySelector('b')?.textContent;
+  within(card).getByText(title).parentElement?.querySelector('dd')?.textContent;
 
 describe('карта сети', () => {
   test('лента берёт числа дня с сервера', async () => {
@@ -140,7 +140,8 @@ describe('карта сети', () => {
     // Все офисы с координатами — строки «Без координат» в легенде нет.
     expect(screen.queryByText(/Без координат/)).toBeNull();
 
-    fireEvent.click(card);
+    // Верх карточки выбирает офис; низ — переход на страницу офиса.
+    fireEvent.click(within(card).getByRole('button'));
 
     expect(await screen.findByRole('complementary', { name: 'Карточка офиса' })).toBeTruthy();
   });
@@ -323,8 +324,9 @@ describe('карточка офиса', () => {
     renderApp('/offices?office=o-1');
 
     await screen.findAllByText('Главный офис');
-    expect(screen.getByRole('link', { name: /Настроить/ })).toBeTruthy();
-    expect(screen.getByRole('link', { name: /Открыть офис/ })).toBeTruthy();
+    const panel = await screen.findByRole('complementary', { name: 'Карточка офиса' });
+    expect(within(panel).getByRole('link', { name: /Настроить/ })).toBeTruthy();
+    expect(within(panel).getByRole('link', { name: /Открыть офис/ })).toBeTruthy();
   });
 
   test('«Настроить» ведёт сразу к карте офиса', async () => {
@@ -370,7 +372,7 @@ describe('регионы', () => {
     );
     renderApp('/offices?view=regions');
 
-    expect(await screen.findByRole('region', { name: 'Карта сети' })).toBeTruthy();
+    expect(await screen.findByRole('region', { name: 'Карта офисов' })).toBeTruthy();
     const table = await screen.findByRole('complementary', { name: 'Регионы сети' });
     await waitFor(() => expect(within(table).getByText('Центральный регион')).toBeTruthy());
     const cells = within(table).getByText('Центральный регион').closest('tr')?.querySelectorAll('td');
@@ -398,5 +400,50 @@ describe('правило настройки', () => {
     expect(
       needsSetup({ office: OFFICE, counts: {}, points: [], pointsKnown: false } as never),
     ).toBe(false);
+  });
+});
+
+describe('один лист: сводка и карточки', () => {
+  /** Значение показателя сводки по его подписи. */
+  const stat = (label: RegExp) =>
+    [...document.querySelectorAll('.orp-stat')].find((item) => label.test(item.textContent ?? ''))
+      ?.querySelector('.orp-stat__value')?.textContent;
+
+  test('сводка — по всей сети: поиск сужает карточки, а не число офисов', async () => {
+    network((path) => (path.includes('/offices/') && path.includes('search=')
+      ? json(200, { items: [], next_cursor: null, has_more: false }) : null));
+    renderApp('/offices?search=nothing');
+
+    await screen.findByText(/Офисов пока нет|Здесь офисов нет|Нет активных/);
+    await waitFor(() => expect(stat(/Офис/)).toBe('1'));
+    expect(stat(/Сотрудник/)).toBe('42');
+    expect(stat(/Сейчас в офисах/)).toBe('32');
+    expect(stat(/QR-точ/)).toBe('1');
+  });
+
+  test('присутствие по офису не получено — «нет данных», а не нули', async () => {
+    network((path) => (path.includes('/attendance/presence') ? json(500, {}) : null));
+    renderApp('/offices');
+
+    const card = await officeCard('o-1');
+    await waitFor(() => expect(dayNumber(card, 'В офисе')).toBe('—'));
+    expect(dayNumber(card, 'Отпуск')).toBe('—');
+    expect(card.textContent).toContain('Сотрудники: —');
+  });
+
+  test('регионов больше пяти — остальные по «Все регионы»', async () => {
+    const many = Array.from({ length: 8 }, (_, n) => ({
+      id: `r-${n + 1}`, code: `R${n}`, name: `Регион ${n + 1}`, status: 'ACTIVE',
+    }));
+    network((path) => (path.includes('/regions')
+      ? json(200, { items: many, next_cursor: null, has_more: false }) : null));
+    renderApp('/offices');
+
+    const table = await screen.findByRole('complementary', { name: 'Регионы сети' });
+    // Шапка и пять строк.
+    await waitFor(() => expect(within(table).getAllByRole('row').length).toBe(1 + 5));
+    fireEvent.click(within(table).getByRole('button', { name: /Все регионы/ }));
+    // Все восемь регионов (офис числится в «Регион 1» — строки «Без региона» нет).
+    expect(within(table).getAllByRole('row').length).toBe(1 + 8);
   });
 });

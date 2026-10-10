@@ -60,6 +60,23 @@ const offices: Record<string, Record<string, unknown>> = {
   },
 };
 
+// Ещё офисы для сетки карточек и страниц: разные регионы, неактивный,
+// очень длинное название, без точки.
+[
+  ['o-3', 'Офис Юнусабад', 'r-1', 'город Ташкент', 'ACTIVE', true],
+  ['o-4', 'Офис Бухара', 'r-3', 'Бухарская область', 'ACTIVE', true],
+  ['o-5', 'Главный офис', 'r-1', 'город Ташкент', 'ACTIVE', true],
+  ['o-6', 'Офис Наманган', 'r-4', 'Наманганская область', 'INACTIVE', false],
+  ['o-7', 'Региональный центр обслуживания клиентов и развития партнёрской сети Ферганской долины', 'r-5', 'Ферганская область', 'ACTIVE', false],
+  ['o-8', 'Офис Карши', 'r-6', 'Кашкадарьинская область', 'ACTIVE', true],
+  ['o-9', 'Офис Нукус', 'r-7', 'Республика Каракалпакстан', 'ACTIVE', true],
+].forEach(([id, name, region, regionName, status, located]) => {
+  offices[id as string] = {
+    ...CIRCLE, id, code: id, name, region_id: region, region_name: regionName, status,
+    ...(located ? {} : { latitude: null, longitude: null, geofence_radius_m: null }),
+  };
+});
+
 const answer = (body: unknown) =>
   new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
 
@@ -92,6 +109,12 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     return answer({ items: [
       { id: 'r-1', code: 'TK', name: 'город Ташкент', status: 'ACTIVE' },
       { id: 'r-2', code: 'SM', name: 'Самаркандская область', status: 'ACTIVE' },
+      { id: 'r-3', code: 'BU', name: 'Бухарская область', status: 'ACTIVE' },
+      { id: 'r-4', code: 'NM', name: 'Наманганская область', status: 'ACTIVE' },
+      { id: 'r-5', code: 'FG', name: 'Ферганская область', status: 'ACTIVE' },
+      { id: 'r-6', code: 'KA', name: 'Кашкадарьинская область', status: 'ACTIVE' },
+      { id: 'r-7', code: 'QR', name: 'Республика Каракалпакстан', status: 'ACTIVE' },
+      { id: 'r-8', code: 'AN', name: 'Андижанская область', status: 'ACTIVE' },
     ], next_cursor: null, has_more: false });
   }
   if (path.includes('/qr-points')) {

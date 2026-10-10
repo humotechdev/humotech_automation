@@ -14,7 +14,7 @@
  * запросом с точным `counts`, а не делением строк общего ответа.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 
 import * as api from '../api/crm';
@@ -44,6 +44,11 @@ export type OfficeStats = {
    * QR-точки). Пустой список тогда означает «неизвестно», а не «ноль».
    */
   pointsKnown?: boolean;
+  /**
+   * Получено ли присутствие за сегодня. `false` — запрос не удался:
+   * счётчики тогда «нет данных», а не нули.
+   */
+  presenceKnown?: boolean;
 };
 
 /**
@@ -78,6 +83,7 @@ export function OfficesPage() {
   const area = params.get('area') ?? '';
   const strip = params.get('strip') ?? 'all';
   const picked = params.get('office') ?? '';
+  const officePage = Math.max(1, Number(params.get('opage') ?? '1') || 1);
 
   const [draft, setDraft] = useState(search);
   const [updated, setUpdated] = useState<Date | null>(null);
@@ -103,7 +109,7 @@ export function OfficesPage() {
 
   useEffect(() => {
     if (draft === search) return;
-    const timer = setTimeout(() => patch({ search: draft || null }), 350);
+    const timer = setTimeout(() => patch({ search: draft || null, opage: null }), 350);
     return () => clearTimeout(timer);
   }, [draft, search, patch]);
 
@@ -141,6 +147,7 @@ export function OfficesPage() {
                   : null,
                 points: points ?? [],
                 pointsKnown: points !== null,
+                presenceKnown: presence !== null,
               };
             }),
           );
@@ -168,6 +175,19 @@ export function OfficesPage() {
     'now',
   );
   const [areas] = useBlock(() => loadAreas(), 'areas');
+  /**
+   * Сводка сети — отдельно от списка карточек: список сужает поиск, а
+   * «сколько у компании офисов и QR-точек» от поиска не зависит. Два
+   * запроса по всей области доступа; ответ с `has_more` показывается
+   * как «100+», а не как точное число.
+   */
+  const [network] = useBlock(
+    (signal) => Promise.all([
+      api.officesPage({ limit: '100' }, signal),
+      api.qrPoints({}, signal).catch(() => null),
+    ]).then(([page, points]) => ({ page, points })),
+    'offices-network',
+  );
 
   const rows = useMemo(() => (list.state === 'ready' ? list.data.rows : []), [list]);
   const areaList = areas.state === 'ready' ? areas.data : [];
@@ -228,14 +248,17 @@ export function OfficesPage() {
   const current = rows.find((row) => row.office.id === picked) ?? null;
   const withoutCoords = rows.filter((row) => coordinates(row.office) === null);
 
-  const inOffice = today.state === 'ready'
-    ? today.data.cards.find((card) => card.key === 'in_office')?.value ?? null
-    : null;
-  const pointsTotal = rows.some((row) => row.pointsKnown === false)
-    ? null
-    : rows.reduce((sum, row) => sum + row.points.length, 0);
+  // Сводка: офисы и точки — по всей сети, сотрудники — все состояния
+  // занятости в области доступа (как на «Сотрудниках»), «сейчас в
+  // офисах» — показатель главной за сегодня.
+  const networkOffices = metricOf(network, (data) => data.page.items.length, (data) => data.page.has_more);
+  const networkPoints = metricOf(network, (data) => data.points?.items.length ?? null,
+    (data) => Boolean(data.points?.has_more));
+  const networkStaff = metricOf(staff, (data) => data['total'] ?? null);
+  const networkNow = metricOf(today,
+    (data) => data.cards.find((card) => card.key === 'in_office')?.value ?? null);
 
-  const pickArea = useCallback((iso: string | null) => patch({ area: iso, office: null }), [patch]);
+  const pickArea = useCallback((iso: string | null) => patch({ area: iso, office: null, opage: null }), [patch]);
 
   const pickOfficeFromStrip = useCallback((id: string) => {
     // Только выбор. Прокрутки к карте здесь больше нет: нажатие на
@@ -248,22 +271,16 @@ export function OfficesPage() {
   return (
     <AppShell breadcrumb="Офисы и регионы" section="offices">
       <div className="orp">
-        <header className="of-head">
-          <div>
-            <h1 className="of-head__title">Офисы и регионы</h1>
-            <p className="of-head__sub">Сеть компании в реальном времени</p>
-            <p className="of-head__facts">
-              <span><b>{list.state === 'ready' ? rows.length : '—'}</b> {officesWord(rows.length)}</span>
-              <i>·</i>
-              <span><b>{staff.state === 'ready' ? staff.data['total'] ?? 0 : '—'}</b> {staffWord(staff.state === 'ready' ? staff.data['total'] ?? 0 : 0)}</span>
-              <i>·</i>
-              <span><b>{inOffice ?? '—'}</b> сейчас в офисах</span>
-              <i>·</i>
-              <span><b>{list.state === 'ready' && pointsTotal !== null ? pointsTotal : '—'}</b> QR-точек</span>
-            </p>
-          </div>
-          <div className="of-head__side">
-            <div className="of-head__tools">
+        {/* Один белый лист: шапка, сводка сети, карта с регионами и офисы.
+            Разделы внутри — тонкими линиями, без отдельных плавающих
+            карточек вокруг карты и регионов. */}
+        <section className="orp-sheet">
+          <header className="orp-head">
+            <div className="orp-head__text">
+              <h1 className="orp-head__title">Офисы и регионы</h1>
+              <p className="orp-head__sub">Офисы, сотрудники и QR-точки</p>
+            </div>
+            <div className="orp-head__tools">
               <label className="of-search">
                 <AppIcon name="search" size={18} />
                 <input type="search" value={draft} placeholder="Найти офис" aria-label="Найти офис"
@@ -275,62 +292,68 @@ export function OfficesPage() {
               </Link>
               {can('offices.manage') && (
                 <button type="button" className="of-btn of-btn--blue"
-                        onClick={() => { setAddRegion(''); setAdding(true); }}>
+                        onClick={() => { setAddRegion(area ? areaRegionId : ''); setAdding(true); }}>
                   <AppIcon name="plus" size={20} />
                   Добавить офис
                 </button>
               )}
             </div>
-          </div>
-        </header>
+          </header>
 
-        {adding && (
-          <NewOfficeDialog
-            regions={regionRows.state === 'ready' ? regionRows.data.items : []}
-            region={addRegion || undefined}
-            onClose={() => { setAdding(false); setAddRegion(''); }}
-          />
-        )}
+          {/* Сводка — по всей сети в области доступа, а не по найденному
+              поиском: поиск сужает карточки ниже, а не размер компании. */}
+          <ul className="orp-stats" aria-label="Сеть компании">
+            <Stat value={networkOffices} label={capital(officesWord(numberOf(networkOffices)))} />
+            <Stat value={networkStaff} label={capital(staffWord(numberOf(networkStaff)))} />
+            <Stat value={networkNow} label="Сейчас в офисах" />
+            <Stat value={networkPoints} label="QR-точек" />
+          </ul>
 
-        <div className="of-grid">
-              <section className="of-map" aria-label="Карта сети">
-                {areas.state === 'error' ? (
-                  <p className="of-empty of-empty--bad">Не удалось загрузить границы. Список офисов ниже работает.</p>
-                ) : areas.state !== 'ready' ? (
-                  <p className="of-empty">Загружаем карту…</p>
-                ) : (
-                  <UzbekistanMap
-                    areas={areas.data}
-                    area={area}
-                    onPickArea={pickArea}
-                  />
+          {adding && (
+            <NewOfficeDialog
+              regions={regionRows.state === 'ready' ? regionRows.data.items : []}
+              region={addRegion || undefined}
+              onClose={() => { setAdding(false); setAddRegion(''); }}
+            />
+          )}
+
+          <div className="orp-body">
+            <section className="orp-map of-map" aria-label="Карта офисов">
+              <h2 className="orp-title">Карта офисов</h2>
+              {areas.state === 'error' ? (
+                <p className="of-empty of-empty--bad">Не удалось загрузить границы. Список офисов ниже работает.</p>
+              ) : areas.state !== 'ready' ? (
+                <p className="of-empty">Загружаем карту…</p>
+              ) : (
+                <UzbekistanMap
+                  areas={areas.data}
+                  area={area}
+                  onPickArea={pickArea}
+                />
+              )}
+              {area && (
+                /* Название — подпись, а не кнопка: нажатие по нему
+                   снимало выбор случайно, когда человек просто хотел
+                   прочитать, что выбрано. Снимает только крестик. */
+                <span className="of-area">
+                  {AREA_NAMES[area] ?? area}
+                  <button type="button" className="of-area__close"
+                          aria-label="Показать все области"
+                          onClick={() => patch({ area: null, opage: null })}>
+                    <AppIcon name="close" size={16} />
+                  </button>
+                </span>
+              )}
+              <ul className="of-legend">
+                <li><i className="of-box of-box--ok" />Активный офис</li>
+                <li><i className="of-box of-box--off" />Неактивный офис</li>
+                {withoutCoords.length > 0 && (
+                  <li className="of-legend__note">Без координат: {withoutCoords.length}</li>
                 )}
-                {area && (
-                  /* Название — подпись, а не кнопка: нажатие по нему
-                     снимало выбор случайно, когда человек просто хотел
-                     прочитать, что выбрано. Снимает только крестик. */
-                  <span className="of-area">
-                    {AREA_NAMES[area] ?? area}
-                    <button type="button" className="of-area__close"
-                            aria-label="Показать все области"
-                            onClick={() => patch({ area: null })}>
-                      <AppIcon name="close" size={16} />
-                    </button>
-                  </span>
-                )}
-                <ul className="of-legend">
-                  {/* Два состояния вместо трёх: «требует внимания» —
-                      это про настройку конкретного офиса, а не про то,
-                      что показывает карта, и в легенде областей ему
-                      места нет. */}
-                  <li><i className="of-box of-box--ok" />Активный офис</li>
-                  <li><i className="of-box of-box--off" />Неактивный офис</li>
-                  {withoutCoords.length > 0 && (
-                    <li className="of-legend__note">Без координат: {withoutCoords.length}</li>
-                  )}
-                </ul>
-              </section>
+              </ul>
+            </section>
 
+            <div className="orp-side">
               {current ? (
                 // Ключ — офис: вкладка, поиск и страница сотрудников одного
                 // офиса не уходят в запросы по другому.
@@ -339,30 +362,59 @@ export function OfficesPage() {
               ) : area ? (
                 <RegionPanel name={AREA_NAMES[area] ?? area} rows={inArea}
                              canAdd={can('offices.manage')}
-                             onClose={() => patch({ area: null, office: null })}
+                             onClose={() => patch({ area: null, office: null, opage: null })}
                              onPick={(id) => patch({ office: id })}
                              onAdd={() => { setAddRegion(areaRegionId); setAdding(true); }} />
               ) : (
-                /* Область не выбрана — показываем, из чего состоит сеть:
-                   регион и сколько в нём офисов. Сводка «сколько активно»
-                   тут ни о чём не говорит, пока не видно, о каком месте
-                   речь. */
                 <RegionTable rows={rows} regions={regions}
-                             onPick={(iso) => patch({ area: iso, office: null })} />
+                             onPick={(iso) => patch({ area: iso, office: null, opage: null })} />
               )}
             </div>
+          </div>
 
-            <OfficeStrip rows={stripRows} total={inArea.length} block={list} strip={strip}
-                         picked={picked} hasAny={rows.length > 0} canAdd={can('offices.manage')}
-                         onStrip={(value) => patch({ strip: value === 'all' ? null : value })}
-                         onPick={pickOfficeFromStrip} onAdd={() => setAdding(true)}
-                         onReset={() => {
-                           setDraft('');
-                           patch({ area: null, search: null, strip: null, office: null });
-                         }} />
+          <OfficeGrid rows={stripRows} total={inArea.length} block={list} strip={strip}
+                      page={officePage} picked={picked} hasAny={rows.length > 0}
+                      canAdd={can('offices.manage')}
+                      onStrip={(value) => patch({ strip: value === 'all' ? null : value, opage: null })}
+                      onPage={(next) => patch({ opage: next > 1 ? String(next) : null })}
+                      onPick={pickOfficeFromStrip} onAdd={() => setAdding(true)}
+                      onReset={() => {
+                        setDraft('');
+                        patch({ area: null, search: null, strip: null, office: null, opage: null });
+                      }} />
+        </section>
       </div>
     </AppShell>
   );
+}
+
+/** Показатель сводки: число, «нет данных» при сбое, «…» пока грузится. */
+type Metric = { state: 'loading' } | { state: 'none' } | { state: 'ready'; value: number; more?: boolean };
+
+function Stat({ value, label }: { value: Metric; label: string }) {
+  return (
+    <li className="orp-stat">
+      <b className={value.state === 'ready' ? 'orp-stat__value' : 'orp-stat__value orp-stat__value--muted'}>
+        {value.state === 'ready' ? `${value.value}${value.more ? '+' : ''}`
+          : value.state === 'loading' ? '…' : '—'}
+      </b>
+      <span className="orp-stat__label">
+        {label}
+        {value.state === 'none' && <small> · нет данных</small>}
+      </span>
+    </li>
+  );
+}
+
+const numberOf = (metric: Metric) => (metric.state === 'ready' ? metric.value : 0);
+const capital = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+
+function metricOf<T>(block: Block<T>, pick: (data: T) => number | null, more?: (data: T) => boolean): Metric {
+  if (block.state === 'loading') return { state: 'loading' };
+  if (block.state !== 'ready') return { state: 'none' };
+  const value = pick(block.data);
+  if (value === null) return { state: 'none' };
+  return { state: 'ready', value, ...(more?.(block.data) ? { more: true } : {}) };
 }
 
 // --- карта ---------------------------------------------------------------------
@@ -533,11 +585,15 @@ function RegionPanel({ name, rows, canAdd, onClose, onPick, onAdd }: {
  * открывают новое место. Офисы, чей регион в справочнике не найден,
  * собираются в строку «Без региона»: потерять их совсем нельзя.
  */
+/** Сколько регионов видно сразу; остальные — по «Все регионы». */
+const REGIONS_SHOWN = 5;
+
 function RegionTable({ rows, regions, onPick }: {
   rows: OfficeStats[];
   regions: Block<api.Items<api.Region>>;
   onPick: (iso: string) => void;
 }) {
+  const [all, setAll] = useState(false);
   const byName = useMemo(() => new Map(
     Object.entries(AREA_NAMES).map(([iso, name]) => [name.trim().toLowerCase(), iso]),
   ), []);
@@ -600,7 +656,7 @@ function RegionTable({ rows, regions, onPick }: {
                     : regions.state === 'error' ? 'Не удалось загрузить регионы.'
                       : 'Регионов пока нет.'}
               </td></tr>
-            ) : list.map((one) => (
+            ) : (all ? list : list.slice(0, REGIONS_SHOWN)).map((one) => (
               <tr key={one.id}>
                 <th scope="row">
                   {/* Без области на карте строка не нажимается:
@@ -625,9 +681,13 @@ function RegionTable({ rows, regions, onPick }: {
           </tbody>
         </table>
       </div>
-      <p className="of-regions__foot">
-        Показано {list.length} из {list.length} регионов
-      </p>
+      {list.length > REGIONS_SHOWN && (
+        <button type="button" className="orp-regions__more" aria-expanded={all}
+                onClick={() => setAll((was) => !was)}>
+          {all ? 'Свернуть' : `Все регионы · ${list.length}`}
+          <AppIcon name={all ? 'chevron' : 'next'} size={16} />
+        </button>
+      )}
     </aside>
   );
 }
@@ -697,128 +757,137 @@ function OfficeBlank({ kind, strip, total, canAdd, onAdd, onStrip, onReset }: {
   );
 }
 
-// --- лента офисов ---------------------------------------------------------------
+// --- офисы: сетка карточек --------------------------------------------------------
 
-function OfficeStrip({
-  rows, total, block, strip, picked, hasAny, canAdd, onStrip, onPick, onAdd, onReset,
+/** Карточек на странице: два ряда по четыре на широком экране. */
+const PAGE_SIZE = 8;
+
+function OfficeGrid({
+  rows, total, block, strip, page, picked, hasAny, canAdd, onStrip, onPage, onPick, onAdd, onReset,
 }: {
   rows: OfficeStats[];
   total: number;
   block: Block<unknown>;
   strip: string;
+  page: number;
   picked: string;
   /** Есть ли офисы вообще — не в этом отборе, а во всей сети. */
   hasAny: boolean;
   canAdd: boolean;
   onStrip: (value: string) => void;
+  onPage: (next: number) => void;
   onPick: (id: string) => void;
   onAdd: () => void;
-  /** Снять область, поиск и «требует настройки» разом. */
+  /** Снять область, поиск и отбор разом. */
   onReset: () => void;
 }) {
-  const track = useRef<HTMLDivElement>(null);
-
-  // Смена отбора возвращает ленту к началу: иначе человек нажимает
-  // «Неактивные» и смотрит в пустоту там, где раньше были карточки.
-  useEffect(() => {
-    track.current?.scrollTo({ left: 0, behavior: smooth() });
-  }, [strip, rows.length]);
-
-  useEffect(() => {
-    const element = track.current;
-    if (!element || !picked) return;
-    const card = [...element.querySelectorAll<HTMLElement>('.of-card')]
-      .find((item) => item.dataset.officeId === picked);
-    if (!card) return;
-    const trackBounds = element.getBoundingClientRect();
-    const cardBounds = card.getBoundingClientRect();
-    if (cardBounds.left < trackBounds.left) {
-      element.scrollBy({ left: cardBounds.left - trackBounds.left, behavior: smooth() });
-    } else if (cardBounds.right > trackBounds.right) {
-      element.scrollBy({ left: cardBounds.right - trackBounds.right, behavior: smooth() });
-    }
-  }, [picked, rows]);
+  const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const at = Math.min(Math.max(1, page), pages);
+  const shown = rows.slice((at - 1) * PAGE_SIZE, at * PAGE_SIZE);
 
   return (
-    <section className="of-strip" aria-label="Офисы">
-      <div className="of-strip__head">
-        <div className="of-strip__identity">
-          <h2>Офисы <span className="of-count">{total}</span></h2>
-        </div>
-        <div className="of-strip__controls">
-          {/* Три отбора и прокрутка — больше здесь ничего не нужно.
-              Стрелки и «1–3 из 7» повторяли то, что человек и так
-              делает пальцем или колесом, и занимали место рядом с
-              фильтрами, по которым действительно нажимают. */}
-          <div className="of-strip__filters" role="group" aria-label="Отбор офисов">
+    <section className="orp-offices" aria-label="Офисы">
+      <div className="orp-offices__head">
+        <h2 className="orp-title">Офисы <span className="orp-offices__count">· {total}</span></h2>
+        <div className="orp-offices__filters" role="group" aria-label="Отбор офисов">
           {[
             { key: 'all', title: 'Все' },
             { key: 'active', title: 'Активные' },
             { key: 'inactive', title: 'Неактивные' },
           ].map((item) => (
-            <AppFilterButton key={item.key} className="of-chip" active={strip === item.key} onClick={() => onStrip(item.key)}>{item.title}</AppFilterButton>
+            <AppFilterButton key={item.key} className="of-chip" active={strip === item.key}
+                             onClick={() => onStrip(item.key)}>{item.title}</AppFilterButton>
           ))}
-          </div>
         </div>
       </div>
       <Rows block={block} name="офисы">
-          {() => rows.length === 0 ? (
-            <OfficeBlank kind={!hasAny ? 'none' : total > 0 ? 'filter' : 'area'}
-                         strip={strip} total={total} canAdd={canAdd}
-                         onAdd={onAdd} onStrip={onStrip} onReset={onReset} />
-          ) : (
-            <div className="of-strip__track" ref={track} key={strip}>
-            {rows.map((row) => {
-              const staff = staffOf(row);
-              const located = coordinates(row.office) !== null
-                && api.geofenceReady(row.office);
-              return (
-                <button key={row.office.id} type="button" data-office-id={row.office.id}
-                        className={`of-card${row.office.id === picked ? ' of-card--on' : ''}`}
-                        onClick={() => onPick(row.office.id)}>
-                  {/* Регион сверху, мельче: он отвечает на вопрос «где»,
-                      а название — на вопрос «какой именно». */}
-                  <span className="of-card__region">{row.office.region_name ?? '—'}</span>
-                  <b className="of-card__name">{row.office.name}</b>
-                  <span className="of-card__staff">
-                    Сотрудники: <b>{staff}</b>
-                  </span>
-                  {/* Три числа дня. «Сотрудники» — это сколько людей за
-                      офисом числится, а не сколько их там сегодня: без
-                      этой тройки карточка не отвечает на первый же
-                      вопрос, с которым на неё смотрят. */}
-                  <span className="of-card__now">
-                    <span className="of-card__now-one">
-                      <span className="of-card__now-title">В офисе</span>
-                      <b>{row.counts['IN_OFFICE'] ?? 0}</b>
-                    </span>
-                    <span className="of-card__now-one">
-                      <span className="of-card__now-title">Отпуск</span>
-                      <b>{row.counts['VACATION'] ?? 0}</b>
-                    </span>
-                    <span className="of-card__now-one">
-                      <span className="of-card__now-title">Больничный</span>
-                      <b>{row.counts['SICK_LEAVE'] ?? 0}</b>
-                    </span>
-                  </span>
-                  <span className="of-card__foot">
-                    <span>
-                      QR: <b>{row.pointsKnown === false ? '—' : row.points.length}</b>
-                    </span>
-                    <span>
-                      {/* Геопозиция — это «настроена или нет», а не
-                          число: без точки и радиуса отметка по коду
-                          у двери не примется вовсе. */}
-                      Геопозиция: <b>{located ? 'есть' : 'нет'}</b>
-                    </span>
-                  </span>
-                </button>
-              );
-            })}
+        {() => rows.length === 0 ? (
+          <OfficeBlank kind={!hasAny ? 'none' : total > 0 ? 'filter' : 'area'}
+                       strip={strip} total={total} canAdd={canAdd}
+                       onAdd={onAdd} onStrip={onStrip} onReset={onReset} />
+        ) : (
+          <>
+            {/* Ключ — отбор и страница: новая подборка проявляется разом. */}
+            <div className="orp-cards" key={`${strip}:${at}`}>
+              {shown.map((row) => (
+                <OfficeTile key={row.office.id} row={row} on={row.office.id === picked} onPick={onPick} />
+              ))}
             </div>
-          )}
+            <footer className="orp-offices__foot">
+              <p>Показано {shown.length} из {rows.length} {officesWord(rows.length)}</p>
+              {pages > 1 && (
+                <nav className="orp-pages" aria-label="Страницы офисов">
+                  <button type="button" className="orp-pages__arrow" aria-label="Предыдущая"
+                          disabled={at <= 1} onClick={() => onPage(at - 1)}>
+                    <AppIcon name="back" size={16} />
+                  </button>
+                  {Array.from({ length: pages }, (_, n) => n + 1).map((n) => (
+                    <button key={n} type="button"
+                            className={n === at ? 'orp-pages__one orp-pages__one--on' : 'orp-pages__one'}
+                            aria-current={n === at ? 'page' : undefined}
+                            onClick={() => onPage(n)}>
+                      {n}
+                    </button>
+                  ))}
+                  <button type="button" className="orp-pages__arrow" aria-label="Следующая"
+                          disabled={at >= pages} onClick={() => onPage(at + 1)}>
+                    <AppIcon name="next" size={16} />
+                  </button>
+                </nav>
+              )}
+            </footer>
+          </>
+        )}
       </Rows>
     </section>
+  );
+}
+
+/**
+ * Карточка офиса. Верх — выбор офиса (справа откроется его карточка),
+ * низ — переход на страницу офиса. Два действия, две отдельные цели:
+ * кнопка внутри кнопки была бы недоступна с клавиатуры.
+ */
+function OfficeTile({ row, on, onPick }: { row: OfficeStats; on: boolean; onPick: (id: string) => void }) {
+  const known = row.presenceKnown !== false;
+  const located = coordinates(row.office) !== null && api.geofenceReady(row.office);
+  const active = row.office.status === 'ACTIVE';
+  const care = attentionOf(row);
+  // Присутствие не получено — это «нет данных», а не нули.
+  const count = (state: string) => (known ? row.counts[state] ?? 0 : '—');
+  return (
+    <article className={`orp-card${on ? ' orp-card--on' : ''}${active ? '' : ' orp-card--off'}`}
+             data-office-id={row.office.id}>
+      <button type="button" className="orp-card__pick" aria-pressed={on}
+              onClick={() => onPick(row.office.id)}>
+        <span className="orp-card__region">{row.office.region_name ?? 'Регион не указан'}</span>
+        <b className="orp-card__name">{row.office.name}</b>
+        <span className="orp-card__staff">
+          Сотрудники: <b>{known ? staffOf(row) : '—'}</b>
+        </span>
+      </button>
+      {(!active || care) && (
+        <p className={active ? 'orp-card__note orp-card__note--warn' : 'orp-card__note'}>
+          {active ? care : 'Неактивен'}
+        </p>
+      )}
+      <dl className="orp-card__now">
+        <div><dt>В офисе</dt><dd>{count('IN_OFFICE')}</dd></div>
+        <div><dt>Отпуск</dt><dd>{count('VACATION')}</dd></div>
+        <div><dt>Больничный</dt><dd>{count('SICK_LEAVE')}</dd></div>
+      </dl>
+      <footer className="orp-card__foot">
+        <span className="orp-card__facts">
+          QR: <b>{row.pointsKnown === false ? '—' : row.points.length}</b>
+          <i aria-hidden="true">·</i>
+          Геопозиция: <b>{located ? 'есть' : 'нет'}</b>
+        </span>
+        <Link className="orp-card__open" to={`/offices/${row.office.id}/setup`}>
+          Открыть офис
+          <AppIcon name="next" size={16} />
+        </Link>
+      </footer>
+    </article>
   );
 }
 
@@ -890,11 +959,6 @@ function Rows<T>({ block, name, children }: {
     return <p className="of-empty of-empty--bad">Не удалось загрузить {name}. Это ошибка запроса, а не «их нет».</p>;
   }
   return <>{children(block.data)}</>;
-}
-
-/** Плавная прокрутка ленты — кроме режима уменьшенного движения. */
-function smooth(): ScrollBehavior {
-  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
 }
 
 export type { Area };
