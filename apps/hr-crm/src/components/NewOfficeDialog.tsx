@@ -18,7 +18,7 @@
  * закрывалось бы ровно в тот момент, когда человек выбрал регион.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import * as api from '../api/crm';
@@ -40,13 +40,38 @@ export function NewOfficeDialog({ regions, region, onClose }: {
   const [name, setName] = useState('');
   const [touched, setTouched] = useState(false);
 
+  const box = useRef<HTMLDivElement | null>(null);
+  const [leaving, setLeaving] = useState(false);
+  const left = useRef(false);
+  // Кнопка, открывшая окно: фокус вернётся к ней.
+  const [opener] = useState(() => document.activeElement as HTMLElement | null);
+
+  /** Закрытие с коротким обратным движением; повторное — без эффекта. */
+  const close = useCallback(() => {
+    if (left.current) return;
+    left.current = true;
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      onClose();
+      return;
+    }
+    setLeaving(true);
+    window.setTimeout(onClose, 160);
+  }, [onClose]);
+
   useEffect(() => {
+    box.current?.focus();
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key !== 'Escape') return;
+      // Открытый список региона закрывается своим Escape — окно остаётся.
+      if (document.querySelector('.app-select__menu')) return;
+      close();
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [close]);
+  useEffect(() => () => {
+    if (opener && opener.isConnected) opener.focus();
+  }, [opener]);
 
   const problem = useMemo(
     () => (regionId ? null : 'Выберите регион'),
@@ -64,15 +89,15 @@ export function NewOfficeDialog({ regions, region, onClose }: {
   };
 
   return (
-    <div className="of-ask" role="dialog" aria-modal="true" aria-label="Новый офис"
+    <div className={leaving ? 'of-ask of-ask--leaving' : 'of-ask'} role="dialog" aria-modal="true" aria-label="Новый офис"
          onMouseDown={(event) => {
-           if (event.target === event.currentTarget) onClose();
+           if (event.target === event.currentTarget) close();
          }}>
-      <div className="of-ask__box">
+      <div className="of-ask__box" ref={box} tabIndex={-1}>
         <header className="of-ask__head">
           <h2 className="of-ask__title">Новый офис</h2>
           <button type="button" className="of-btn--icon" aria-label="Закрыть"
-                  onClick={onClose}>
+                  onClick={close}>
             <AppIcon name="close" size={18} />
           </button>
         </header>
@@ -111,7 +136,7 @@ export function NewOfficeDialog({ regions, region, onClose }: {
           </p>
 
           <div className="of-ask__tools">
-            <button type="button" className="of-btn of-btn--light" onClick={onClose}>
+            <button type="button" className="of-btn of-btn--light" onClick={close}>
               Отмена
             </button>
             <button type="submit" className="of-btn of-btn--blue">

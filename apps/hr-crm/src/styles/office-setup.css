@@ -1901,3 +1901,70 @@
   box-shadow: 0 1px 4px rgba(19, 41, 90, 0.35);
   cursor: grab;
 }
+
+/* --- движение страницы настройки офиса --------------------------------------------- */
+
+@keyframes ofs-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes ofs-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ofs-drop { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+@keyframes ofs-pop { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
+
+/* Вход: шапка один раз; содержимое вкладки проявляется при переключении
+   (ключ — вкладка). Без сдвига у содержимого: в нём карта, а карта, у
+   которой контейнер едет, на миг считает щелчки со смещением. Размер
+   карты Leaflet подстраивает сам (ResizeObserver → invalidateSize). */
+.ofs > .ofs-head { animation: ofs-rise 0.22s cubic-bezier(0.2, 0.7, 0.2, 1) backwards; }
+.ofs-grid { animation: ofs-fade 0.2s ease-out 0.05s backwards; }
+.ofs-main { animation: ofs-fade 0.18s ease-out backwards; }
+
+/* Результаты поиска адреса, подсказки и сообщения формы. */
+.ofs-found,
+.ofs-alert,
+.ofs-map__hint,
+.ofs-new { animation: ofs-drop 0.16s ease-out backwards; }
+
+/* Окно QR-кода. */
+.ofs-modal { animation: ofs-fade 0.18s ease-out backwards; }
+.ofs-modal__box { animation: ofs-pop 0.22s cubic-bezier(0.2, 0.7, 0.2, 1) backwards; }
+
+/* Подложка карты не грузится — строка поверх карты, не тревога. */
+.ofs-map__tiles {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 500;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #f1d9b5;
+  border-radius: 10px;
+  background: #fff8ec;
+  font-size: 13px;
+  color: #8a5a10;
+  animation: ofs-fade 0.16s ease-out backwards;
+}
+
+/* Заглушка страницы — сводка и основная часть. */
+.ofs-sk { display: grid; grid-template-columns: minmax(0, 320px) minmax(0, 1fr); gap: 16px; }
+.ofs-sk__block { display: block; border-radius: 12px; background: #eef3f9; }
+.ofs-sk__side { height: 260px; }
+.ofs-sk__main { height: 420px; }
+@media (max-width: 860px) { .ofs-sk { grid-template-columns: minmax(0, 1fr); } }
+
+.ofs-tab,
+.ofs-shape__opt,
+.ofs-link { transition: background-color 0.14s ease, border-color 0.14s ease, color 0.14s ease; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ofs > .ofs-head,
+  .ofs-grid,
+  .ofs-main,
+  .ofs-found,
+  .ofs-alert,
+  .ofs-map__hint,
+  .ofs-new,
+  .ofs-modal__box { animation: ofs-fade 0.12s linear backwards; animation-delay: 0s; }
+  .ofs-tab,
+  .ofs-shape__opt,
+  .ofs-link { transition: none; }
+}

@@ -24,7 +24,7 @@ import { createPortal } from 'react-dom';
 import QRCode from 'qrcode';
 
 import * as api from '../api/crm';
-import { messageFor } from '../api/errors';
+import { ApiFailure, messageFor } from '../api/errors';
 import { useBlock } from '../features/dashboard/data';
 import { AppIcon } from './AppIcon';
 
@@ -58,7 +58,9 @@ export function QrPointsManager({ office, canManage, located, onChanged, onGeo }
   const [adding, setAdding] = useState(false);
   const [shown, setShown] = useState<api.QrPoint | null>(null);
   // Ссылки, уже полученные в этой вкладке: второй раз за ними не ходим.
-  const [links, setLinks] = useState<Record<string, string | null>>({});
+  // В ref, а не в состоянии: функция ниже остаётся той же самой, и окно
+  // кода не перерисовывает картинку («Готовим код…») на каждый рендер.
+  const links = useRef<Record<string, string | null>>({});
 
   const reload = () => {
     setAttempt((n) => n + 1);
@@ -70,12 +72,12 @@ export function QrPointsManager({ office, canManage, located, onChanged, onGeo }
   const leave = active.some((point) => point.direction_mode !== 'ENTRY');
 
   /** Ссылка наклейки: из памяти или с сервера. */
-  async function linkOf(point: api.QrPoint): Promise<string | null> {
-    if (point.id in links) return links[point.id] ?? null;
+  const linkOf = useCallback(async (point: api.QrPoint): Promise<string | null> => {
+    if (point.id in links.current) return links.current[point.id] ?? null;
     const answer = await api.qrPointSticker(point.id);
-    setLinks((was) => ({ ...was, [point.id]: answer.sticker_link }));
+    links.current = { ...links.current, [point.id]: answer.sticker_link };
     return answer.sticker_link;
-  }
+  }, []);
 
   // Пока точек нет, кнопка стоит в самом пустом состоянии — рядом с
   // объяснением, зачем она. Вторая такая же в шапке была бы тем же
@@ -112,7 +114,7 @@ export function QrPointsManager({ office, canManage, located, onChanged, onGeo }
             onCancel={() => setAdding(false)}
             onCreated={(result) => {
               setAdding(false);
-              setLinks((was) => ({ ...was, [result.point.id]: result.sticker_link }));
+              links.current = { ...links.current, [result.point.id]: result.sticker_link };
               setShown(result.point);
               reload();
             }}
@@ -169,7 +171,7 @@ export function QrPointsManager({ office, canManage, located, onChanged, onGeo }
                     onShow={() => setShown(point)}
                     linkOf={linkOf}
                     onIssued={(result) => {
-                      setLinks((was) => ({ ...was, [result.point.id]: result.sticker_link }));
+                      links.current = { ...links.current, [result.point.id]: result.sticker_link };
                       setShown(result.point);
                       reload();
                     }}
@@ -212,7 +214,7 @@ export function QrPointsManager({ office, canManage, located, onChanged, onGeo }
           canManage={canManage}
           onClose={() => setShown(null)}
           onIssued={(result) => {
-            setLinks((was) => ({ ...was, [result.point.id]: result.sticker_link }));
+            links.current = { ...links.current, [result.point.id]: result.sticker_link };
             setShown(result.point);
             reload();
           }}
@@ -243,12 +245,16 @@ function PointRow({ office, point, canManage, onChanged, onShow, onIssued, linkO
   linkOf: (point: api.QrPoint) => Promise<string | null>;
 }) {
   const [busy, setBusy] = useState(false);
+  /** Замок строки: печать, переименование, выключение, удаление — по одному. */
+  const lock = useRef(false);
   const [confirm, setConfirm] = useState<'reissue' | 'off' | 'delete' | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
 
   /** Код в руки: и «печать», и «скачать» идут одной дорогой. */
   async function withImage(use: (image: string, link: string) => void) {
+    if (lock.current) return;
+    lock.current = true;
     setBusy(true);
     setFailed(null);
     try {
@@ -261,11 +267,14 @@ function PointRow({ office, point, canManage, onChanged, onShow, onIssued, linkO
     } catch (error) {
       setFailed(messageFor(error));
     } finally {
+      lock.current = false;
       setBusy(false);
     }
   }
 
   async function act(run: () => Promise<unknown>) {
+    if (lock.current) return;
+    lock.current = true;
     setBusy(true);
     setFailed(null);
     try {
@@ -275,7 +284,11 @@ function PointRow({ office, point, canManage, onChanged, onShow, onIssued, linkO
     } catch (error) {
       setFailed(messageFor(error));
       setConfirm(null);
+      // Обрыв или конфликт: состояние точки на сервере могло измениться —
+      // список перечитывается, повтора вслепую нет.
+      if (error instanceof ApiFailure && ['offline', 'conflict'].includes(error.kind)) onChanged();
     } finally {
+      lock.current = false;
       setBusy(false);
     }
   }
@@ -504,6 +517,7 @@ function QrDialog({ office, point, canManage, linkOf, onClose, onIssued }: {
   const [image, setImage] = useState<string | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const replacing = useRef(false);
 
   useEffect(() => {
     let alive = true;
@@ -530,6 +544,8 @@ function QrDialog({ office, point, canManage, linkOf, onClose, onIssued }: {
   }, [onClose]);
 
   async function replace() {
+    if (replacing.current) return;
+    replacing.current = true;
     setBusy(true);
     setFailed(null);
     try {
@@ -537,6 +553,7 @@ function QrDialog({ office, point, canManage, linkOf, onClose, onIssued }: {
     } catch (error) {
       setFailed(messageFor(error));
     } finally {
+      replacing.current = false;
       setBusy(false);
     }
   }
@@ -596,10 +613,12 @@ function NewPoint({ officeId, onCancel, onCreated }: {
   const [mode, setMode] = useState<'ENTRY' | 'EXIT' | 'BOTH'>('ENTRY');
   const [description, setDescription] = useState('');
   const [sending, setSending] = useState(false);
+  const creating = useRef(false);
   const [failed, setFailed] = useState<string | null>(null);
 
   async function create() {
-    if (sending) return;
+    if (creating.current) return;
+    creating.current = true;
     setSending(true);
     setFailed(null);
     try {
@@ -614,8 +633,11 @@ function NewPoint({ officeId, onCancel, onCreated }: {
       });
       onCreated(result);
     } catch (error) {
-      setFailed(messageFor(error));
+      setFailed(error instanceof ApiFailure && error.kind === 'offline'
+        ? 'Связь прервалась — неизвестно, создана ли точка. Проверьте список точек, прежде чем создавать снова.'
+        : messageFor(error));
     } finally {
+      creating.current = false;
       setSending(false);
     }
   }

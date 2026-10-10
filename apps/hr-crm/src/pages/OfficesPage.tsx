@@ -332,7 +332,9 @@ export function OfficesPage() {
               </section>
 
               {current ? (
-                <OfficeCard row={current} canManage={can('offices.manage')} updated={updated}
+                // Ключ — офис: вкладка, поиск и страница сотрудников одного
+                // офиса не уходят в запросы по другому.
+                <OfficeCard key={current.office.id} row={current} canManage={can('offices.manage')} updated={updated}
                             onClose={() => patch({ office: null })} />
               ) : area ? (
                 <RegionPanel name={AREA_NAMES[area] ?? area} rows={inArea}
@@ -591,7 +593,13 @@ function RegionTable({ rows, regions, onPick }: {
           </thead>
           <tbody>
             {list.length === 0 ? (
-              <tr><td colSpan={3}>Регионов пока нет.</td></tr>
+              /* Загрузка, отказ и ошибка — не «регионов нет». */
+              <tr><td colSpan={3}>
+                {regions.state === 'loading' ? 'Загружаем регионы…'
+                  : regions.state === 'denied' ? 'Нет доступа к регионам.'
+                    : regions.state === 'error' ? 'Не удалось загрузить регионы.'
+                      : 'Регионов пока нет.'}
+              </td></tr>
             ) : list.map((one) => (
               <tr key={one.id}>
                 <th scope="row">
@@ -713,7 +721,7 @@ function OfficeStrip({
   // Смена отбора возвращает ленту к началу: иначе человек нажимает
   // «Неактивные» и смотрит в пустоту там, где раньше были карточки.
   useEffect(() => {
-    track.current?.scrollTo({ left: 0, behavior: 'smooth' });
+    track.current?.scrollTo({ left: 0, behavior: smooth() });
   }, [strip, rows.length]);
 
   useEffect(() => {
@@ -725,9 +733,9 @@ function OfficeStrip({
     const trackBounds = element.getBoundingClientRect();
     const cardBounds = card.getBoundingClientRect();
     if (cardBounds.left < trackBounds.left) {
-      element.scrollBy({ left: cardBounds.left - trackBounds.left, behavior: 'smooth' });
+      element.scrollBy({ left: cardBounds.left - trackBounds.left, behavior: smooth() });
     } else if (cardBounds.right > trackBounds.right) {
-      element.scrollBy({ left: cardBounds.right - trackBounds.right, behavior: 'smooth' });
+      element.scrollBy({ left: cardBounds.right - trackBounds.right, behavior: smooth() });
     }
   }, [picked, rows]);
 
@@ -759,7 +767,7 @@ function OfficeStrip({
                          strip={strip} total={total} canAdd={canAdd}
                          onAdd={onAdd} onStrip={onStrip} onReset={onReset} />
           ) : (
-            <div className="of-strip__track" ref={track}>
+            <div className="of-strip__track" ref={track} key={strip}>
             {rows.map((row) => {
               const staff = staffOf(row);
               const located = coordinates(row.office) !== null
@@ -818,7 +826,9 @@ function OfficeStrip({
 
 /** Координаты офиса числами. `null` — у офиса их нет, и на карту он не ставится. */
 function coordinates(office: api.OfficeFull): [number, number] | null {
-  if (office.latitude === null || office.longitude === null) return null;
+  // Пустая строка — «точки нет», а не 0,0 (`Number('')` даёт ноль).
+  const blank = (value: unknown) => value === null || value === undefined || String(value).trim() === '';
+  if (blank(office.latitude) || blank(office.longitude)) return null;
   const lat = Number(office.latitude);
   const lon = Number(office.longitude);
   return Number.isFinite(lat) && Number.isFinite(lon) ? [lat, lon] : null;
@@ -864,12 +874,27 @@ function Rows<T>({ block, name, children }: {
   name: string;
   children: (data: T) => React.ReactNode;
 }) {
-  if (block.state === 'loading') return <p className="of-empty">Загружаем {name}…</p>;
+  if (block.state === 'loading') {
+    // Заглушки по форме карточек ленты — неподвижные.
+    return (
+      <>
+        <span className="visually-hidden" role="status">Загружаем {name}…</span>
+        <div className="of-sk-strip" aria-hidden="true">
+          {[0, 1, 2].map((n) => <i key={n} className="of-sk-card" />)}
+        </div>
+      </>
+    );
+  }
   if (block.state === 'denied') return <p className="of-empty">Нет доступа к разделу «{name}».</p>;
   if (block.state === 'error') {
     return <p className="of-empty of-empty--bad">Не удалось загрузить {name}. Это ошибка запроса, а не «их нет».</p>;
   }
   return <>{children(block.data)}</>;
+}
+
+/** Плавная прокрутка ленты — кроме режима уменьшенного движения. */
+function smooth(): ScrollBehavior {
+  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
 }
 
 export type { Area };

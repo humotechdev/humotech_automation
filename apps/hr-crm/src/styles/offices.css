@@ -2164,3 +2164,59 @@
   justify-content: center;
   min-height: 0;
 }
+
+/* --- движение (только «Офисы и регионы») ------------------------------------------- */
+
+/*
+ * Прозрачность и сдвиг на 6 px, замедление к концу, один раз — при
+ * открытии раздела. Отбор, поиск и обновление секции не пересоздают.
+ * Заливка `backwards`: после анимации у блоков нет `transform`.
+ */
+@keyframes of-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes of-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes of-slide { from { opacity: 0; transform: translateX(8px); } to { opacity: 1; transform: none; } }
+@keyframes of-pop { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
+@keyframes of-fade-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes of-pop-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(6px) scale(0.98); } }
+
+.orp > .of-head { animation: of-rise 0.22s cubic-bezier(0.2, 0.7, 0.2, 1) backwards; }
+.orp > .of-grid { animation: of-rise 0.22s cubic-bezier(0.2, 0.7, 0.2, 1) 0.05s backwards; }
+.orp > .of-strip { animation: of-fade 0.2s ease-out 0.1s backwards; }
+
+/* Правая колонка: карточка офиса, регион или таблица регионов — новая
+   появляется со своей стороны. Карточка пересоздаётся по офису, поэтому
+   при выборе другого офиса данные прежнего под новым названием не стоят. */
+.of-grid .ofc,
+.of-grid .of-region,
+.of-grid .of-regions { animation: of-slide 0.2s cubic-bezier(0.2, 0.7, 0.2, 1) backwards; }
+
+/* Смена отбора ленты — карточки проявляются разом. */
+.of-strip__track { animation: of-fade 0.16s ease-out backwards; }
+
+/* Заглушки ленты — неподвижные, по форме карточек. */
+.of-sk-strip { display: flex; gap: 14px; overflow: hidden; padding: 4px 0; }
+.of-sk-card { flex: 0 0 300px; height: 200px; border-radius: 12px; background: #eef3f9; }
+
+/* Окно «Новый офис»: появление и короткое закрытие. */
+.of-ask { animation: of-fade 0.18s ease-out backwards; }
+.of-ask__box { animation: of-pop 0.22s cubic-bezier(0.2, 0.7, 0.2, 1) backwards; }
+.of-ask__box:focus { outline: none; }
+.of-ask--leaving { animation: of-fade-out 0.16s ease-in forwards; pointer-events: none; }
+.of-ask--leaving .of-ask__box { animation: of-pop-out 0.16s ease-in forwards; }
+
+@media (prefers-reduced-motion: reduce) {
+  .orp > .of-head,
+  .orp > .of-grid,
+  .orp > .of-strip,
+  .of-grid .ofc,
+  .of-grid .of-region,
+  .of-grid .of-regions,
+  .of-strip__track,
+  .of-ask__box { animation: of-fade 0.12s linear backwards; animation-delay: 0s; }
+  .of-ask--leaving,
+  .of-ask--leaving .of-ask__box { animation: none; }
+  .map__area,
+  .of-btn--icon { transition: none; }
+  .of-btn--icon:hover,
+  .of-btn--icon:focus-visible { transform: none; }
+}

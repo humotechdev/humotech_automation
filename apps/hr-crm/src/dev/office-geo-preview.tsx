@@ -47,18 +47,52 @@ const FENCED = {
   latitude: '41.304174', longitude: '69.332151',
 };
 
-let office: Record<string, unknown> =
-  new URLSearchParams(window.location.search).get('shape') === 'circle' ? CIRCLE : FENCED;
+const mode = new URLSearchParams(window.location.search);
+const DELAY = Number(mode.get('delay') ?? 0);
+
+/** Офисы предпросмотра: второй — без точки, у него «точки нет», а не 0,0. */
+const offices: Record<string, Record<string, unknown>> = {
+  'o-1': mode.get('shape') === 'circle' ? CIRCLE : FENCED,
+  'o-2': {
+    ...CIRCLE, id: 'o-2', code: 'OFF-4', name: 'Самарканд — региональный офис продаж и сервиса',
+    region_id: 'r-2', region_name: 'Самаркандская область', address: '',
+    latitude: null, longitude: null, geofence_radius_m: null,
+  },
+};
 
 const answer = (body: unknown) =>
   new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
 
+const real = window.fetch.bind(window);
 window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-  const path = new URL(String(input), 'http://x').pathname;
+  const raw = String(input);
+  // Границы областей, подложка и геокодер — настоящие, подменяется только API.
+  if (!raw.includes('/api/v1/')) return real(input, init);
+  const path = new URL(raw, 'http://x').pathname;
   if (path.includes('/auth/')) return answer(HR);
-  if (path.includes('/offices/o-1')) {
-    if (init?.method === 'PATCH') office = { ...office, ...JSON.parse(String(init.body)) };
-    return answer(office);
+  if (DELAY > 0) {
+    await new Promise<void>((resolve, reject) => {
+      const timer = window.setTimeout(resolve, DELAY);
+      init?.signal?.addEventListener('abort', () => {
+        window.clearTimeout(timer);
+        reject(new DOMException('aborted', 'AbortError'));
+      });
+    });
+  }
+  const one = path.match(/\/offices\/(o-\d+)/)?.[1];
+  if (one && offices[one]) {
+    if (init?.method === 'PATCH') offices[one] = { ...offices[one], ...JSON.parse(String(init.body)) };
+    return answer(offices[one]);
+  }
+  if (/\/offices\/?$/.test(path)) return answer({ items: Object.values(offices), next_cursor: null, has_more: false });
+  if (path.includes('/dashboard')) return answer({ date: '', timezone: 'Asia/Tashkent', cards: [], warnings: [] });
+  if (path.includes('/employees/counts')) return answer({ total: 3, statuses: { ACTIVE: 3 } });
+  if (path.includes('/presence')) return answer({ date: '', timezone: 'Asia/Tashkent', counts: {}, total: 0, truncated: false, items: [] });
+  if (path.includes('/regions')) {
+    return answer({ items: [
+      { id: 'r-1', code: 'TK', name: 'город Ташкент', status: 'ACTIVE' },
+      { id: 'r-2', code: 'SM', name: 'Самаркандская область', status: 'ACTIVE' },
+    ], next_cursor: null, has_more: false });
   }
   if (path.includes('/qr-points')) {
     return answer({
@@ -78,7 +112,7 @@ const root = document.getElementById('root');
 if (root) {
   createRoot(root).render(
     <StrictMode>
-      <MemoryRouter initialEntries={['/offices/o-1/setup?tab=geo']}>
+      <MemoryRouter initialEntries={[mode.get('start') ?? '/offices/o-1/setup?tab=geo']}>
         <SessionProvider>
           <App />
         </SessionProvider>

@@ -84,6 +84,8 @@ export function OfficeMap({
   const area = useRef<L.Polygon | L.Polyline | null>(null);
   const vertices = useRef<L.Marker[]>([]);
   const [failed, setFailed] = useState(false);
+  /** Подложка не грузится: карта работает, но без тайлов. */
+  const [tilesDown, setTilesDown] = useState(false);
 
   handler.current = onPlace;
   pickingRef.current = picking;
@@ -106,7 +108,19 @@ export function OfficeMap({
         // Колесо карта слушает сама — ниже, и только вместе с Ctrl.
         scrollWheelZoom: false,
       });
-      L.tileLayer(TILES, { maxZoom: 19, attribution: ATTRIBUTION }).addTo(created);
+      const layer = L.tileLayer(TILES, { maxZoom: 19, attribution: ATTRIBUTION }).addTo(created);
+      // Подложка не грузится (сервис недоступен, сеть) — говорим об этом,
+      // а не оставляем серое поле, похожее на «здесь ничего нет». Точка,
+      // круг и щелчки работают и без подложки.
+      let broken = 0;
+      layer.on('tileerror', () => {
+        broken += 1;
+        if (broken >= 4) setTilesDown(true);
+      });
+      layer.on('tileload', () => {
+        broken = 0;
+        setTilesDown(false);
+      });
     } catch {
       setFailed(true);
       return;
@@ -256,7 +270,13 @@ export function OfficeMap({
 
   useEffect(() => {
     if (!focus || !map.current) return;
-    map.current.flyTo([focus.lat, focus.lon], Math.max(map.current.getZoom(), 17), { duration: 0.6 });
+    const zoom = Math.max(map.current.getZoom(), 17);
+    // При уменьшенном движении — сразу на место, без перелёта.
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      map.current.setView([focus.lat, focus.lon], zoom, { animate: false });
+    } else {
+      map.current.flyTo([focus.lat, focus.lon], zoom, { duration: 0.6 });
+    }
   }, [focus]);
 
   useEffect(() => {
@@ -266,7 +286,16 @@ export function OfficeMap({
   if (failed) {
     return <p className="ofs-map__failed">Карта не загрузилась. Координаты можно ввести вручную ниже.</p>;
   }
-  return <div ref={box} className="ofs-map__canvas" role="application" aria-label="Карта расположения офиса" />;
+  return (
+    <>
+      <div ref={box} className="ofs-map__canvas" role="application" aria-label="Карта расположения офиса" />
+      {tilesDown && (
+        <p className="ofs-map__tiles" role="status">
+          Подложка карты не загружается. Точку можно поставить щелчком или ввести координаты вручную.
+        </p>
+      )}
+    </>
+  );
 }
 
 // --- поиск адреса ----------------------------------------------------------------

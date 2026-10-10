@@ -7,12 +7,15 @@
  * без радиуса — настроен.
  */
 
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter, useNavigate } from 'react-router-dom';
 import { describe, expect, test } from 'vitest';
 
 import { geofenceLabel, geofenceReady } from '../src/api/crm';
 import { rejectionTitle } from '../src/pages/AttendancePage';
 import { needsSetup } from '../src/pages/OfficesPage';
+import { App } from '../src/app/App';
+import { SessionProvider } from '../src/features/auth/session';
 import { USER, type Call, crm, fakeNetwork, json, renderApp } from './helpers';
 
 /** Огороженная территория южнее ул. Махтумкули (OSM, way 406552826). */
@@ -288,5 +291,85 @@ describe('отказ по месту в журнале', () => {
     expect(rejectionTitle('OUTSIDE_GEOFENCE')).toBe('Отклонено · вне геозоны');
     expect(rejectionTitle('ЧТО-ТО_НОВОЕ')).toBe('Отклонено');
     expect(rejectionTitle(null)).toBe('Отклонено');
+  });
+});
+
+// --- надёжность редактора места ---------------------------------------------------
+
+describe('редактор места: отправка и состояния', () => {
+  test('двойное нажатие «Сохранить» — одно сохранение', async () => {
+    let release: (value: Response) => void = () => undefined;
+    const calls = openGeo(FENCED, () => new Promise<Response>((resolve) => { release = resolve; }) as unknown as Response);
+    await screen.findByText(/13 углов/);
+    fireEvent.click(screen.getByRole('button', { name: 'Отменить точку' }));
+    const save = screen.getByRole('button', { name: 'Сохранить' });
+    fireEvent.click(save);
+    fireEvent.click(save);
+    release(json(200, FENCED));
+    await waitFor(() => expect(patches(calls)).toHaveLength(1));
+  });
+
+  test('обрыв при сохранении: «неизвестно», офис перечитан, повтора нет', async () => {
+    const calls = openGeo(FENCED, () => { throw new TypeError('Failed to fetch'); });
+    await screen.findByText(/13 углов/);
+    fireEvent.click(screen.getByRole('button', { name: 'Отменить точку' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }));
+
+    expect(await screen.findByText(/неизвестно, сохранилось ли место/)).toBeTruthy();
+    expect(patches(calls)).toHaveLength(1);
+    await waitFor(() => expect(calls.filter((call) => call.method === 'GET' && /\/offices\/o-1\/?$/.test(call.url)).length)
+      .toBeGreaterThanOrEqual(2));
+    // Черновик на месте: двенадцать углов, а не снова тринадцать.
+    expect(screen.getByText(/12 углов/)).toBeTruthy();
+  });
+
+  test('пустые координаты — точки нет, а не 0,0', async () => {
+    openGeo({ ...OFFICE, latitude: '', longitude: '' });
+    const lat = await screen.findByLabelText('Широта');
+    expect((lat as HTMLInputElement).value).toBe('');
+    expect((screen.getByLabelText('Долгота') as HTMLInputElement).value).toBe('');
+  });
+
+  test('сбой поиска адреса — «недоступен», а не «ничего не нашлось»', async () => {
+    fakeNetwork((path) => {
+      if (path.includes('/auth/')) return json(200, { ...USER, permissions: ['offices.read', 'offices.manage'] });
+      if (path.includes('photon')) return json(503, {});
+      if (path.includes('/offices/o-1')) return json(200, OFFICE);
+      return crm(path) ?? json(200, { items: [], next_cursor: null, has_more: false });
+    });
+    renderApp('/offices/o-1/setup?tab=geo');
+    fireEvent.change(await screen.findByLabelText('Поиск адреса'), { target: { value: 'Махтумкули' } });
+    expect(await screen.findByText(/Поиск адреса сейчас недоступен/, undefined, { timeout: 3000 })).toBeTruthy();
+  });
+});
+
+describe('переход к другому офису', () => {
+  test('пока грузится новый, название и место прежнего не показываются', async () => {
+    fakeNetwork((path) => {
+      if (path.includes('/auth/')) return json(200, { ...USER, permissions: ['offices.read', 'offices.manage'] });
+      if (path.includes('/offices/o-2')) return new Promise<Response>(() => undefined);
+      if (path.includes('/offices/o-1')) return json(200, OFFICE);
+      return crm(path) ?? json(200, { items: [], next_cursor: null, has_more: false });
+    });
+    let go: (to: string) => void = () => undefined;
+    function Steer() {
+      go = useNavigate();
+      return null;
+    }
+    render(
+      <MemoryRouter initialEntries={['/offices/o-1/setup']}>
+        <SessionProvider>
+          <Steer />
+          <App />
+        </SessionProvider>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByRole('heading', { name: 'город Ташкент' })).toBeTruthy();
+
+    act(() => go('/offices/o-2/setup'));
+
+    expect(await screen.findByText('Загружаем офис…')).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'город Ташкент' })).toBeNull();
+    expect(screen.queryByText('Tashkent, Mahtumquli Street')).toBeNull();
   });
 });
