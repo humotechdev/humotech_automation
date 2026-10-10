@@ -14,7 +14,7 @@
  * запросом с точным `counts`, а не делением строк общего ответа.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 
 import * as api from '../api/crm';
@@ -83,7 +83,6 @@ export function OfficesPage() {
   const area = params.get('area') ?? '';
   const strip = params.get('strip') ?? 'all';
   const picked = params.get('office') ?? '';
-  const officePage = Math.max(1, Number(params.get('opage') ?? '1') || 1);
 
   const [draft, setDraft] = useState(search);
   const [updated, setUpdated] = useState<Date | null>(null);
@@ -109,7 +108,7 @@ export function OfficesPage() {
 
   useEffect(() => {
     if (draft === search) return;
-    const timer = setTimeout(() => patch({ search: draft || null, opage: null }), 350);
+    const timer = setTimeout(() => patch({ search: draft || null }), 350);
     return () => clearTimeout(timer);
   }, [draft, search, patch]);
 
@@ -258,7 +257,7 @@ export function OfficesPage() {
   const networkNow = metricOf(today,
     (data) => data.cards.find((card) => card.key === 'in_office')?.value ?? null);
 
-  const pickArea = useCallback((iso: string | null) => patch({ area: iso, office: null, opage: null }), [patch]);
+  const pickArea = useCallback((iso: string | null) => patch({ area: iso, office: null }), [patch]);
 
   const pickOfficeFromStrip = useCallback((id: string) => {
     // Только выбор. Прокрутки к карте здесь больше нет: нажатие на
@@ -339,7 +338,7 @@ export function OfficesPage() {
                   {AREA_NAMES[area] ?? area}
                   <button type="button" className="of-area__close"
                           aria-label="Показать все области"
-                          onClick={() => patch({ area: null, opage: null })}>
+                          onClick={() => patch({ area: null })}>
                     <AppIcon name="close" size={16} />
                   </button>
                 </span>
@@ -362,25 +361,24 @@ export function OfficesPage() {
               ) : area ? (
                 <RegionPanel name={AREA_NAMES[area] ?? area} rows={inArea}
                              canAdd={can('offices.manage')}
-                             onClose={() => patch({ area: null, office: null, opage: null })}
+                             onClose={() => patch({ area: null, office: null })}
                              onPick={(id) => patch({ office: id })}
                              onAdd={() => { setAddRegion(areaRegionId); setAdding(true); }} />
               ) : (
                 <RegionTable rows={rows} regions={regions}
-                             onPick={(iso) => patch({ area: iso, office: null, opage: null })} />
+                             onPick={(iso) => patch({ area: iso, office: null })} />
               )}
             </div>
           </div>
 
           <OfficeGrid rows={stripRows} total={inArea.length} block={list} strip={strip}
-                      page={officePage} picked={picked} hasAny={rows.length > 0}
+                      picked={picked} hasAny={rows.length > 0}
                       canAdd={can('offices.manage')}
-                      onStrip={(value) => patch({ strip: value === 'all' ? null : value, opage: null })}
-                      onPage={(next) => patch({ opage: next > 1 ? String(next) : null })}
+                      onStrip={(value) => patch({ strip: value === 'all' ? null : value })}
                       onPick={pickOfficeFromStrip} onAdd={() => setAdding(true)}
                       onReset={() => {
                         setDraft('');
-                        patch({ area: null, search: null, strip: null, office: null, opage: null });
+                        patch({ area: null, search: null, strip: null, office: null });
                       }} />
         </section>
       </div>
@@ -585,15 +583,11 @@ function RegionPanel({ name, rows, canAdd, onClose, onPick, onAdd }: {
  * открывают новое место. Офисы, чей регион в справочнике не найден,
  * собираются в строку «Без региона»: потерять их совсем нельзя.
  */
-/** Сколько регионов видно сразу; остальные — по «Все регионы». */
-const REGIONS_SHOWN = 5;
-
 function RegionTable({ rows, regions, onPick }: {
   rows: OfficeStats[];
   regions: Block<api.Items<api.Region>>;
   onPick: (iso: string) => void;
 }) {
-  const [all, setAll] = useState(false);
   const byName = useMemo(() => new Map(
     Object.entries(AREA_NAMES).map(([iso, name]) => [name.trim().toLowerCase(), iso]),
   ), []);
@@ -656,7 +650,7 @@ function RegionTable({ rows, regions, onPick }: {
                     : regions.state === 'error' ? 'Не удалось загрузить регионы.'
                       : 'Регионов пока нет.'}
               </td></tr>
-            ) : (all ? list : list.slice(0, REGIONS_SHOWN)).map((one) => (
+            ) : list.map((one) => (
               <tr key={one.id}>
                 <th scope="row">
                   {/* Без области на карте строка не нажимается:
@@ -681,13 +675,7 @@ function RegionTable({ rows, regions, onPick }: {
           </tbody>
         </table>
       </div>
-      {list.length > REGIONS_SHOWN && (
-        <button type="button" className="orp-regions__more" aria-expanded={all}
-                onClick={() => setAll((was) => !was)}>
-          {all ? 'Свернуть' : `Все регионы · ${list.length}`}
-          <AppIcon name={all ? 'chevron' : 'next'} size={16} />
-        </button>
-      )}
+      {list.length > 0 && <p className="orp-regions__count">Регионов: {list.length}</p>}
     </aside>
   );
 }
@@ -759,31 +747,44 @@ function OfficeBlank({ kind, strip, total, canAdd, onAdd, onStrip, onReset }: {
 
 // --- офисы: сетка карточек --------------------------------------------------------
 
-/** Карточек на странице: два ряда по четыре на широком экране. */
-const PAGE_SIZE = 8;
-
+/**
+ * Офисы — лентой карточек с прокруткой влево и вправо: на широком экране
+ * видно четыре, остальные — прокруткой (колесо с Shift, тачпад, полоса).
+ */
 function OfficeGrid({
-  rows, total, block, strip, page, picked, hasAny, canAdd, onStrip, onPage, onPick, onAdd, onReset,
+  rows, total, block, strip, picked, hasAny, canAdd, onStrip, onPick, onAdd, onReset,
 }: {
   rows: OfficeStats[];
   total: number;
   block: Block<unknown>;
   strip: string;
-  page: number;
   picked: string;
   /** Есть ли офисы вообще — не в этом отборе, а во всей сети. */
   hasAny: boolean;
   canAdd: boolean;
   onStrip: (value: string) => void;
-  onPage: (next: number) => void;
   onPick: (id: string) => void;
   onAdd: () => void;
   /** Снять область, поиск и отбор разом. */
   onReset: () => void;
 }) {
-  const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
-  const at = Math.min(Math.max(1, page), pages);
-  const shown = rows.slice((at - 1) * PAGE_SIZE, at * PAGE_SIZE);
+  const track = useRef<HTMLDivElement>(null);
+
+  // Выбранный офис (с карты, из таблицы, по ссылке) — в видимую часть
+  // ленты, если он за краем. Прокручивается только лента, не страница.
+  useEffect(() => {
+    const element = track.current;
+    if (!element || !picked) return;
+    const card = [...element.querySelectorAll<HTMLElement>('[data-office-id]')]
+      .find((one) => one.dataset.officeId === picked);
+    if (!card) return;
+    const box = element.getBoundingClientRect();
+    const at = card.getBoundingClientRect();
+    const behavior: ScrollBehavior = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+      ? 'auto' : 'smooth';
+    if (at.left < box.left) element.scrollBy({ left: at.left - box.left, behavior });
+    else if (at.right > box.right) element.scrollBy({ left: at.right - box.right, behavior });
+  }, [picked, rows]);
 
   return (
     <section className="orp-offices" aria-label="Офисы">
@@ -806,37 +807,15 @@ function OfficeGrid({
                        strip={strip} total={total} canAdd={canAdd}
                        onAdd={onAdd} onStrip={onStrip} onReset={onReset} />
         ) : (
-          <>
-            {/* Ключ — отбор и страница: новая подборка проявляется разом. */}
-            <div className="orp-cards" key={`${strip}:${at}`}>
-              {shown.map((row) => (
-                <OfficeTile key={row.office.id} row={row} on={row.office.id === picked} onPick={onPick} />
-              ))}
-            </div>
-            <footer className="orp-offices__foot">
-              <p>Показано {shown.length} из {rows.length} {officesWord(rows.length)}</p>
-              {pages > 1 && (
-                <nav className="orp-pages" aria-label="Страницы офисов">
-                  <button type="button" className="orp-pages__arrow" aria-label="Предыдущая"
-                          disabled={at <= 1} onClick={() => onPage(at - 1)}>
-                    <AppIcon name="back" size={16} />
-                  </button>
-                  {Array.from({ length: pages }, (_, n) => n + 1).map((n) => (
-                    <button key={n} type="button"
-                            className={n === at ? 'orp-pages__one orp-pages__one--on' : 'orp-pages__one'}
-                            aria-current={n === at ? 'page' : undefined}
-                            onClick={() => onPage(n)}>
-                      {n}
-                    </button>
-                  ))}
-                  <button type="button" className="orp-pages__arrow" aria-label="Следующая"
-                          disabled={at >= pages} onClick={() => onPage(at + 1)}>
-                    <AppIcon name="next" size={16} />
-                  </button>
-                </nav>
-              )}
-            </footer>
-          </>
+          /* Ключ — отбор: новая подборка проявляется разом и начинается
+             с начала ленты. */
+          <div className="orp-cards" ref={track} key={strip} role="list" aria-label="Карточки офисов">
+            {rows.map((row) => (
+              <div key={row.office.id} role="listitem" className="orp-cards__item">
+                <OfficeTile row={row} on={row.office.id === picked} onPick={onPick} />
+              </div>
+            ))}
+          </div>
         )}
       </Rows>
     </section>

@@ -431,7 +431,7 @@ describe('один лист: сводка и карточки', () => {
     expect(card.textContent).toContain('Сотрудники: —');
   });
 
-  test('регионов больше пяти — остальные по «Все регионы»', async () => {
+  test('все регионы видны сразу — список прокручивается, а не прячется', async () => {
     const many = Array.from({ length: 8 }, (_, n) => ({
       id: `r-${n + 1}`, code: `R${n}`, name: `Регион ${n + 1}`, status: 'ACTIVE',
     }));
@@ -440,10 +440,8 @@ describe('один лист: сводка и карточки', () => {
     renderApp('/offices');
 
     const table = await screen.findByRole('complementary', { name: 'Регионы сети' });
-    // Шапка и пять строк.
-    await waitFor(() => expect(within(table).getAllByRole('row').length).toBe(1 + 5));
-    fireEvent.click(within(table).getByRole('button', { name: /Все регионы/ }));
-    // Все восемь регионов (офис числится в «Регион 1» — строки «Без региона» нет).
-    expect(within(table).getAllByRole('row').length).toBe(1 + 8);
+    // Шапка и все восемь регионов, без кнопки «показать ещё».
+    await waitFor(() => expect(within(table).getAllByRole('row').length).toBe(1 + 8));
+    expect(within(table).queryByRole('button', { name: /Все регионы/ })).toBeNull();
   });
 });
