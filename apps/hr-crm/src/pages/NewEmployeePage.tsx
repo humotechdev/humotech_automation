@@ -47,7 +47,7 @@
  * сотрудника, а не заведёт второго.
  */
 
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 
 import * as api from '../api/crm';
@@ -322,12 +322,26 @@ export function NewEmployeePage() {
    * же ключом и возвращает того же человека.
    */
   const key = useRef<string>(makeKey());
+  /** Замок отправки: двойное нажатие быстрее перерисовки. */
+  const lock = useRef(false);
+  /** Экран ещё открыт: поздний ответ после ухода не уводит обратно на карточку. */
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
+  /** Поля правки заполнены данными человека: до этого форма не показывается. */
+  const [seeded, setSeeded] = useState(false);
+  const draftNow = useRef<Draft>(EMPTY);
+  const initialNow = useRef<Draft>(EMPTY);
 
   const [card] = useBlock(
     (signal) => api.employee(id, signal),
     `edit-employee|${id}`,
     editing,
   );
+  draftNow.current = draft;
+  initialNow.current = initial;
 
   /*
    * Данные человека в поля — один раз, при загрузке карточки.
@@ -338,9 +352,14 @@ export function NewEmployeePage() {
    */
   useEffect(() => {
     if (card.state !== 'ready') return;
+    // Сначала карточка может прийти из памяти вкладки, следом — свежая с
+    // сервера. Свежая обновляет поля, только пока человек их не трогал:
+    // введённое не затирается.
+    if (JSON.stringify(draftNow.current) !== JSON.stringify(initialNow.current)) return;
     const seeded = draftOf(card.data);
     setDraft(seeded);
     setInitial(seeded);
+    setSeeded(true);
     /*
      * Дата перевода — не раньше дня после начала действующего
      * назначения: сервер иначе откажет, и человек получил бы отказ на
@@ -729,7 +748,8 @@ export function NewEmployeePage() {
    * перевод «на тот же офис» создал бы лишний период в истории.
    */
   async function save() {
-    if (sending) return;
+    if (lock.current) return;
+    lock.current = true;
     setSending(true);
     setCommon(null);
     const done: string[] = [];
@@ -774,29 +794,38 @@ export function NewEmployeePage() {
         done.push('график');
       }
 
+      if (!alive.current) return;
       setAsking(false);
       navigate(`/employees/${id}`, { replace: true });
     } catch (error) {
+      if (!alive.current) return;
       setAsking(false);
       const field = error instanceof ApiFailure ? error.field : null;
       if (field && field in EMPTY) {
         setErrors((was) => ({ ...was, [field as keyof Draft]: reasonFor(field) }));
         setStep(stepOf(field as keyof Draft));
       }
+      // Обрыв связи: последний шаг мог и записаться. Повторять вслепую
+      // нельзя — второй перевод заведёт лишний период назначения.
+      const lost = error instanceof ApiFailure && error.kind === 'offline';
       // Что успело записаться — говорим прямо: иначе кадровик повторит
       // правку целиком и заведёт второй период назначения.
       setCommon(
-        done.length === 0
-          ? messageFor(error)
-          : `${done.join(' и ')} сохранены, дальше не прошло: ${messageFor(error)}`,
+        lost
+          ? `Связь прервалась — неизвестно, ${done.length ? `что сохранилось после «${done.join(', ')}»` : 'сохранились ли изменения'}. Откройте карточку и проверьте, прежде чем сохранять снова.`
+          : done.length === 0
+            ? messageFor(error)
+            : `${done.join(' и ')} сохранены, дальше не прошло: ${messageFor(error)}`,
       );
     } finally {
-      setSending(false);
+      lock.current = false;
+      if (alive.current) setSending(false);
     }
   }
 
   async function send() {
-    if (sending) return;
+    if (lock.current) return;
+    lock.current = true;
     setSending(true);
     setCommon(null);
     try {
@@ -834,6 +863,7 @@ export function NewEmployeePage() {
         })),
       };
       const result = await api.onboardEmployee(body);
+      if (!alive.current) return;
       setAsking(false);
       if (result.telegram.link) {
         setTelegramInvite({ employeeId: result.employee.id, link: result.telegram.link });
@@ -843,17 +873,23 @@ export function NewEmployeePage() {
         navigate(`/employees/${result.employee.id}`, { replace: true });
       }
     } catch (error) {
+      if (!alive.current) return;
       setAsking(false);
       const field = error instanceof ApiFailure ? error.field : null;
       if (field && field in EMPTY) {
         setErrors((was) => ({ ...was, [field as keyof Draft]: reasonFor(field) }));
         // Ошибка поля видна только на своём шаге — туда и возвращаем.
         setStep(stepOf(field as keyof Draft));
+      } else if (error instanceof ApiFailure && error.kind === 'offline') {
+        // Приём идёт с ключом повтора: повтор вернёт того же человека, а
+        // не заведёт второго. Сам не повторяем — решает кадровик.
+        setCommon('Связь прервалась — неизвестно, добавлен ли сотрудник. Отправьте ещё раз: повтор не создаст второго сотрудника.');
       } else {
         setCommon(messageFor(error));
       }
     } finally {
-      setSending(false);
+      lock.current = false;
+      if (alive.current) setSending(false);
     }
   }
 
@@ -879,6 +915,13 @@ export function NewEmployeePage() {
         {editing && card.state === 'error' && (
           <p className="nh-fail" role="alert">Не удалось открыть карточку сотрудника.</p>
         )}
+        {editing && card.state === 'denied' && (
+          <p className="nh-fail" role="alert">Нет прав на правку этой карточки или сессия закончилась.</p>
+        )}
+
+        {/* В правке форма — только с данными человека. Пустые поля до
+            их прихода сохранили бы «изменения» относительно пустоты. */}
+        {(!editing || seeded) && (<>
 
         <nav className="nh-steps" aria-label="Шаги формы">
           {steps.map((one, at) => (
@@ -1127,6 +1170,7 @@ export function NewEmployeePage() {
             )}
           </footer>
         </section>
+        </>)}
       </div>
 
       {asking && editing && (
@@ -1405,6 +1449,38 @@ function ExtraRow({ paper, onTitle, onPick, onDrop }: {
  * карточке сотрудника, а не в окне подтверждения и тем более не в
  * сообщении боту.
  */
+/**
+ * Поведение окна: Escape и щелчок по фону закрывают (не во время
+ * отправки), фокус уходит в окно и возвращается к кнопке, открывшей его,
+ * закрытие — короткое обратное движение; затемнение не остаётся.
+ */
+function useDialog(onBack: () => void, sending: boolean) {
+  const box = useRef<HTMLDivElement | null>(null);
+  const [leaving, setLeaving] = useState(false);
+  const left = useRef(false);
+  const [opener] = useState(() => document.activeElement as HTMLElement | null);
+  const close = useCallback(() => {
+    if (left.current || sending) return;
+    left.current = true;
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      onBack();
+      return;
+    }
+    setLeaving(true);
+    window.setTimeout(onBack, 160);
+  }, [onBack, sending]);
+  useEffect(() => {
+    box.current?.focus();
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') close(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [close]);
+  useEffect(() => () => {
+    if (opener && opener.isConnected) opener.focus();
+  }, [opener]);
+  return { box, leaving, close };
+}
+
 function Confirm({ name, office, region, department, position, date, schedule,
                    telegram, papers, sending, onBack, onConfirm }: {
   name: string;
@@ -1420,11 +1496,12 @@ function Confirm({ name, office, region, department, position, date, schedule,
   onBack: () => void;
   onConfirm: () => void;
 }) {
+  const { box, leaving, close } = useDialog(onBack, sending);
   return (
-    <div className="nh-modal" role="dialog" aria-modal="true"
+    <div className={leaving ? 'nh-modal nh-modal--leaving' : 'nh-modal'} role="dialog" aria-modal="true"
          aria-label="Создать сотрудника?"
-         onMouseDown={(event) => { if (event.target === event.currentTarget && !sending) onBack(); }}>
-      <div className="nh-modal__box">
+         onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
+      <div className="nh-modal__box" ref={box} tabIndex={-1}>
         <h2 className="nh-modal__title">Создать сотрудника?</h2>
         <p className="nh-modal__text">
           Проверьте данные. После создания сотруднику уйдёт приглашение
@@ -1452,7 +1529,7 @@ function Confirm({ name, office, region, department, position, date, schedule,
         </dl>
 
         <div className="nh-modal__foot">
-          <button type="button" className="nh-btn" onClick={onBack} disabled={sending}>
+          <button type="button" className="nh-btn" onClick={close} disabled={sending}>
             Назад и изменить
           </button>
           {/* Кнопка блокируется на время запроса: второе нажатие ушло бы
@@ -1539,11 +1616,12 @@ function ConfirmEdit({ name, rows, since, sending, onBack, onConfirm }: {
   onBack: () => void;
   onConfirm: () => void;
 }) {
+  const { box, leaving, close } = useDialog(onBack, sending);
   return (
-    <div className="nh-modal" role="dialog" aria-modal="true"
+    <div className={leaving ? 'nh-modal nh-modal--leaving' : 'nh-modal'} role="dialog" aria-modal="true"
          aria-label="Сохранить изменения?"
-         onMouseDown={(event) => { if (event.target === event.currentTarget && !sending) onBack(); }}>
-      <div className="nh-modal__box">
+         onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
+      <div className="nh-modal__box" ref={box} tabIndex={-1}>
         <h2 className="nh-modal__title">Сохранить изменения?</h2>
         <p className="nh-modal__text">
           {name}. Ниже — всё, что изменится.
@@ -1565,7 +1643,7 @@ function ConfirmEdit({ name, rows, since, sending, onBack, onConfirm }: {
         </ul>
 
         <div className="nh-modal__foot">
-          <button type="button" className="nh-btn" onClick={onBack} disabled={sending}>
+          <button type="button" className="nh-btn" onClick={close} disabled={sending}>
             Назад и изменить
           </button>
           <button type="button" className="nh-btn nh-btn--blue" onClick={onConfirm}

@@ -10,6 +10,12 @@
  *   ?case=error  — сервер отвечает ошибкой в отдельных секциях;
  *   ?case=long   — очень длинные имена, должности, офисы, файлы.
  *   ?open=1      — раскрыть первую строку (день, заявку, событие).
+ *   ?start=/employees — начать со списка сотрудников;
+ *   ?delay=700   — ответы с задержкой (отмена запроса её прерывает);
+ *   ?save=offline — сохранение правки обрывается связью.
+ *
+ * Сотрудники e-1…e-8: у каждого своё имя, правка карточки меняет данные
+ * так же, как сервер, — результат виден и в карточке, и в списке.
  */
 
 import { StrictMode } from 'react';
@@ -168,12 +174,69 @@ const reply = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 const fail = () => reply({ error: { code: 'server_error', message: 'Ошибка' } }, 500);
 
-window.fetch = async (input: RequestInfo | URL) => {
+const DELAY = Number(search.get('delay') ?? 0);
+const SAVE = search.get('save') ?? '';
+const NAMES = ['', 'Соколов Алексей Игоревич', 'Ахмедова Дилноза Рустамовна', 'Юсупов Бахтиёр Каримович',
+  'Ким Елена Викторовна', 'Рахимов Тимур Алишерович', 'Абдурахмонова-Сайфуллаева Гулчехра Абдукаххоровна',
+  'Петров Дмитрий Олегович', 'Назарова Мадина Шавкатовна'];
+type Someone = Record<string, unknown> & { full_name: string; last_name: unknown; first_name: unknown; middle_name: unknown };
+const people: Record<string, Someone> = {};
+for (let n = 1; n <= 8; n += 1) {
+  const full = n === 1 ? PERSON.full_name : NAMES[n]!;
+  const [last = '', first = '', middle = null] = full.split(' ');
+  people[`e-${n}`] = { ...PERSON, id: `e-${n}`, employee_number: `HT-01${String(n).padStart(2, '0')}`,
+    full_name: full, last_name: last, first_name: first, middle_name: middle };
+}
+const rowOf = (one: Someone) => ({
+  ...one, photo: false, telegram_username: null, telegram_state: null,
+});
+const calls: string[] = [];
+(window as unknown as { __calls: string[] }).__calls = calls;
+
+window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = new URL(String(input), 'http://x');
   const q = url.searchParams;
-  const path = url.pathname;
+  const method = init?.method ?? 'GET';
   const empty = CASE === 'empty';
-  if (path.includes('/auth/')) return reply(HR);
+  if (url.pathname.includes('/auth/')) return reply(HR);
+  calls.push(`${method} ${url.pathname}${url.search}`);
+  if (DELAY > 0) {
+    await new Promise<void>((resolve, reject) => {
+      const timer = window.setTimeout(resolve, DELAY);
+      init?.signal?.addEventListener('abort', () => {
+        window.clearTimeout(timer);
+        reject(new DOMException('aborted', 'AbortError'));
+      });
+    });
+  }
+  // Любой e-N отвечает так же, как e-1, но своими данными.
+  const who = url.pathname.match(/\/employees\/(e-\d+)/)?.[1] ?? 'e-1';
+  const path = url.pathname.replace(/\/employees\/e-\d+/, '/employees/e-1');
+  if (path === '/api/v1/employees/e-1/' || path === '/api/v1/employees/e-1') {
+    if (method === 'PATCH') {
+      if (SAVE === 'offline') throw new TypeError('Failed to fetch');
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, string>;
+      const was = people[who]!;
+      const next = { ...was, ...body };
+      next.full_name = [next.last_name, next.first_name, next.middle_name].filter(Boolean).join(' ');
+      people[who] = next;
+      return reply(next);
+    }
+    return reply(people[who] ?? PERSON);
+  }
+  if (/\/employees\/counts\/?$/.test(path)) return reply({ total: 8, statuses: { ACTIVE: 8 } });
+  if (/\/employees\/?$/.test(path)) {
+    const term = (q.get('search') ?? '').toLowerCase();
+    const all = Object.values(people).filter((one) => !term || one.full_name.toLowerCase().includes(term));
+    const offset = Number(q.get('offset') ?? 0);
+    const limit = Number(q.get('limit') ?? 15);
+    return reply({ items: all.slice(offset, offset + limit).map(rowOf), next_cursor: null, has_more: offset + limit < all.length, total: all.length });
+  }
+  if (path.includes('/presence')) return reply({ items: [] });
+  if (path.includes('/offices')) return reply({ items: [{ id: 'o-1', name: OFFICE, status: 'ACTIVE', region_id: 'r-1', region_name: 'Ташкент' }] });
+  if (path.includes('/regions')) return reply({ items: [{ id: 'r-1', name: 'Ташкент' }] });
+  if (path.includes('/departments')) return reply({ items: [{ id: 'dep-1', name: 'Отдел продаж' }] });
+  if (path.includes('/positions')) return reply({ items: [{ id: 'p-1', name: POSITION }] });
   if (path.includes('/employees/e-1/telegram')) {
     return reply(empty ? { state: 'NOT_LINKED', account: null, invitation: null }
       : { state: 'ACTIVE', account: { status: 'ACTIVE', telegram_username: 'sokolov_demo', connected_at: null }, invitation: null });
@@ -188,6 +251,7 @@ window.fetch = async (input: RequestInfo | URL) => {
     return reply({ items: empty ? [] : [{ id: 'sa-1', employee_id: 'e-1', schedule_id: 's-1', schedule_name: 'Пятидневка', valid_from: '2026-09-25', valid_to: null }] });
   }
   if (path.includes('/employees/e-1')) return reply(PERSON);
+  if (/\/work-schedules\/?$/.test(path)) return reply({ items: [SCHEDULE], next_cursor: null, has_more: false });
   if (path.includes('/work-schedules/')) return reply(SCHEDULE);
   if (path.includes('/attendance/daily')) {
     if (CASE === 'error') return fail();
@@ -225,7 +289,7 @@ window.fetch = async (input: RequestInfo | URL) => {
 const extra = OPEN
   ? (TAB === 'attendance' ? `&day=${shift(TODAY, -2)}` : TAB === 'requests' ? '&request=r-1' : '')
   : '';
-const start = `/employees/e-1?tab=${TAB}${extra}`;
+const start = search.get('start') ?? `/employees/e-1?tab=${TAB}${extra}`;
 const root = document.getElementById('root');
 if (root) {
   createRoot(root).render(

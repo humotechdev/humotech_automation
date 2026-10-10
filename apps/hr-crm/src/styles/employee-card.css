@@ -1104,3 +1104,73 @@ p.ec-diff { display: block; }
     width: 100%;
   }
 }
+
+/* --- движение карточки -------------------------------------------------------------- */
+
+/*
+ * Карточка пересоздаётся на каждого сотрудника, поэтому появление играет
+ * при открытии карточки и при переходе к другому человеку — и не играет
+ * при обновлении данных внутри неё. Прозрачность и сдвиг на 6 px;
+ * заливка `backwards`: после анимации у блоков нет `transform`, и окна
+ * с `position: fixed` внутри карточки встают по окну браузера.
+ */
+@keyframes ec-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes ec-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ec-reveal { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+@keyframes ec-pop { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
+
+.ec > :not(.ec-back) { animation: ec-rise 0.22s cubic-bezier(0.2, 0.7, 0.2, 1) backwards; }
+.ec > .ec-tabs { animation-delay: 0.04s; }
+/* Содержимое вкладки — только проявление: пересоздаётся при смене вкладки
+   (ключ — вкладка), а сдвиг у длинной вкладки на миг удлинял бы страницу. */
+.ec > .ec-body { animation: ec-fade 0.18s ease-out 0.06s backwards; }
+
+/* Раскрытие подробностей: день посещаемости, заявка, запись истории,
+   дополнительные секции, контакты. Без анимации высоты и без обрезки —
+   длинное содержимое показывается целиком. */
+.ec-row-more > td > *,
+.ec-more__body,
+.ec-diff,
+.ec-facts--more,
+.ec-day,
+.ec-bad[role='alert'] { animation: ec-reveal 0.16s ease-out backwards; }
+
+/* Окно выездной работы во вкладке посещаемости — только внутри карточки. */
+.ec .fw__overlay { animation: ec-fade 0.18s ease-out backwards; }
+.ec .fw__dialog { animation: ec-pop 0.22s cubic-bezier(0.2, 0.7, 0.2, 1) backwards; }
+
+/* Заглушка карточки — неподвижная, по форме шапки, вкладок и блоков. */
+.ec-sk { display: flex; flex-direction: column; gap: 18px; padding-top: 6px; }
+.ec-sk__block { display: block; border-radius: 8px; background: #eef3f9; }
+.ec-sk__head { display: flex; align-items: center; gap: 18px; }
+.ec-sk__photo { flex: 0 0 auto; width: 88px; height: 88px; border-radius: 16px; }
+.ec-sk__lines { display: flex; flex: 1 1 auto; flex-direction: column; gap: 10px; max-width: 420px; }
+.ec-sk__name { width: 60%; height: 22px; }
+.ec-sk__line { width: 80%; height: 11px; }
+.ec-sk__short { width: 45%; }
+.ec-sk__tabs { width: 100%; max-width: 620px; height: 32px; }
+.ec-sk__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 16px; }
+.ec-sk__panel { height: 180px; border-radius: 12px; }
+
+/* Реакции. */
+.ec-tab,
+.ec-link,
+.ec-more__head,
+.ec-reveal { transition: background-color 0.14s ease, border-color 0.14s ease, color 0.14s ease; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ec > :not(.ec-back),
+  .ec > .ec-body,
+  .ec-row-more > td > *,
+  .ec-more__body,
+  .ec-diff,
+  .ec-facts--more,
+  .ec-day,
+  .ec-bad[role='alert'],
+  .ec .fw__dialog { animation: ec-fade 0.12s linear backwards; animation-delay: 0s; }
+  .ec-tab,
+  .ec-link,
+  .ec-more__head,
+  .ec-reveal,
+  .ec-att { transition: none; }
+}

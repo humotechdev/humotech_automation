@@ -8,10 +8,13 @@
  * словами, файл документа открывает только кадровик.
  */
 
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter, useNavigate } from 'react-router-dom';
 import { describe, expect, test } from 'vitest';
 
+import { App } from '../src/app/App';
 import { monthStartOf, todayIn } from '../src/features/employee/card-model';
+import { SessionProvider } from '../src/features/auth/session';
 import { USER, type Call, crm, fakeNetwork, json, pick, renderApp } from './helpers';
 
 const ZONE = 'Asia/Tashkent';
@@ -245,5 +248,57 @@ describe('история', () => {
     expect(screen.getByText('Петрова Марина')).toBeTruthy();
     fireEvent.click(screen.getAllByRole('button', { name: 'Подробнее' })[0]!);
     expect(await screen.findByText('Действует с')).toBeTruthy();
+  });
+});
+
+describe('переход к другому сотруднику', () => {
+  /** Карточка e-1, затем переход на e-2 тем же маршрутом, без ухода со страницы. */
+  function steer(second: () => Response | Promise<Response>) {
+    fakeNetwork((url) => {
+      if (url.includes('/auth/')) return json(200, { ...USER, timezone: ZONE, permissions: ALL });
+      if (/\/employees\/e-2\/?$/.test(url)) return second();
+      if (url.includes('/employees/e-2/')) return new Promise<Response>(() => undefined);
+      if (url.includes('/employees/e-1/telegram')) {
+        return json(200, { state: 'NOT_LINKED', account: null, invitation: null });
+      }
+      if (url.includes('/employees/e-1/onboarding')) return json(404, {});
+      if (url.includes('/employees/e-1/')) return json(200, PERSON);
+      if (url.includes('/attendance/daily')) return json(200, REPORT);
+      return crm(url) ?? json(200, { items: [], next_cursor: null, has_more: false });
+    });
+    let go: (to: string) => void = () => undefined;
+    function Steer() {
+      go = useNavigate();
+      return null;
+    }
+    render(
+      <MemoryRouter initialEntries={['/employees/e-1']}>
+        <SessionProvider>
+          <Steer />
+          <App />
+        </SessionProvider>
+      </MemoryRouter>,
+    );
+    return (to: string) => act(() => go(to));
+  }
+
+  test('пока грузится новый, прошлого человека под его адресом нет', async () => {
+    const go = steer(() => new Promise<Response>(() => undefined));
+    expect(await screen.findByRole('heading', { name: 'Тестов Тест' })).toBeTruthy();
+
+    go('/employees/e-2');
+
+    expect(await screen.findByText('Открываем карточку…')).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Тестов Тест' })).toBeNull();
+  });
+
+  test('сбой загрузки нового — ошибка, а не карточка прошлого', async () => {
+    const go = steer(() => json(500, { error: { code: 'server_error', message: '…', details: null } }));
+    expect(await screen.findByRole('heading', { name: 'Тестов Тест' })).toBeTruthy();
+
+    go('/employees/e-2');
+
+    expect(await screen.findByText(/Не удалось открыть карточку/)).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Тестов Тест' })).toBeNull();
   });
 });

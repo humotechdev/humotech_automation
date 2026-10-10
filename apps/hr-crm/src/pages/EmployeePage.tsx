@@ -22,7 +22,7 @@
  *   история — GET /audit-logs?employee_id=.
  */
 
-import { type ReactNode, useCallback, useMemo, useState } from 'react';
+import { type ReactNode, useCallback, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 
 import * as api from '../api/crm';
@@ -82,6 +82,27 @@ const assignmentOf = (person: Person): Person | null => {
   return value && typeof value === 'object' ? (value as Person) : null;
 };
 
+/** Заглушка карточки по её форме: шапка с фото, вкладки, два блока. */
+function CardSkeleton() {
+  return (
+    <div className="ec-sk" aria-hidden="true">
+      <div className="ec-sk__head">
+        <i className="ec-sk__block ec-sk__photo" />
+        <span className="ec-sk__lines">
+          <i className="ec-sk__block ec-sk__name" />
+          <i className="ec-sk__block ec-sk__line" />
+          <i className="ec-sk__block ec-sk__line ec-sk__short" />
+        </span>
+      </div>
+      <i className="ec-sk__block ec-sk__tabs" />
+      <div className="ec-sk__grid">
+        <i className="ec-sk__block ec-sk__panel" />
+        <i className="ec-sk__block ec-sk__panel" />
+      </div>
+    </div>
+  );
+}
+
 /** Ответ «нет такого сотрудника или он вне вашей области». */
 const MISSING = Symbol('missing');
 
@@ -92,8 +113,22 @@ type Rights = {
   onboardingRead: boolean; onboardingManage: boolean; schedules: boolean;
 };
 
+/**
+ * Карточка пересоздаётся на каждого сотрудника.
+ *
+ * Маршрут `/employees/:id` при переходе к другому человеку страницу не
+ * размонтирует. Без ключа под именем нового оставались данные прошлого:
+ * блоки вкладок держали прежний ответ до прихода нового (а при сбое —
+ * навсегда), одноразовая ссылка Telegram, раскрытые подробности и поздние
+ * ответы прошлого запроса переезжали к другому человеку. С ключом всё
+ * состояние и все запросы карточки относятся только к текущему id.
+ */
 export function EmployeePage() {
   const { id = '' } = useParams();
+  return <EmployeeCard key={id} id={id} />;
+}
+
+function EmployeeCard({ id }: { id: string }) {
   const session = useSession();
   const mine = useMemo(
     () => new Set(session.status === 'authenticated' ? session.user.permissions : []),
@@ -173,7 +208,12 @@ export function EmployeePage() {
           Все сотрудники
         </Link>
 
-        {card.state === 'loading' && <p className="ec-empty" role="status">Открываем карточку…</p>}
+        {card.state === 'loading' && (
+          <>
+            <span className="visually-hidden" role="status">Открываем карточку…</span>
+            <CardSkeleton />
+          </>
+        )}
         {card.state === 'denied' && (
           <p className="ec-empty ec-bad">Сессия закончилась или прав на карточки нет. Войдите заново.</p>
         )}
@@ -205,7 +245,9 @@ export function EmployeePage() {
               ))}
             </div>
 
-            <div className="ec-body" role="tabpanel">
+            {/* Ключ — вкладка: при переключении содержимое проявляется,
+                а обновление данных внутри вкладки его не пересоздаёт. */}
+            <div className="ec-body" role="tabpanel" key={tab}>
               {tab === 'overview' && (
                 <Overview id={id} person={person} zone={zone} rights={rights}
                           version={version} onGo={open} onChanged={changed} />
@@ -514,6 +556,7 @@ function TelegramBlock({ id, rights, version, onChanged }: {
   id: string; rights: Rights; version: number; onChanged: () => void;
 }) {
   const [busy, setBusy] = useState(false);
+  const lock = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [issued, setIssued] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -548,7 +591,9 @@ function TelegramBlock({ id, rights, version, onChanged }: {
   const pill = state ? TELEGRAM_STATE[state] ?? { title: state, tone: 'grey' } : null;
 
   const run = async (action: () => Promise<unknown>, after?: (result: unknown) => void) => {
-    if (busy) return;
+    // Замок синхронный: двойное нажатие быстрее перерисовки.
+    if (lock.current) return;
+    lock.current = true;
     setBusy(true);
     setError(null);
     setNote(null);
@@ -566,6 +611,7 @@ function TelegramBlock({ id, rights, version, onChanged }: {
         reloadPlan();
       }
     } finally {
+      lock.current = false;
       setBusy(false);
     }
   };
@@ -1176,6 +1222,7 @@ function RequestDetails({ item, title, rights, zone, onDone }: {
 }) {
   const [comment, setComment] = useState('');
   const [busy, setBusy] = useState(false);
+  const lock = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
 
@@ -1188,7 +1235,9 @@ function RequestDetails({ item, title, rights, zone, onDone }: {
   const paper = absence ? certificateOf(item) : null;
 
   const decide = async (decision: 'approve' | 'reject') => {
-    if (busy) return;
+    // Замок синхронный: двойное нажатие не отправит второе решение.
+    if (lock.current) return;
+    lock.current = true;
     setBusy(true);
     setError(null);
     try {
@@ -1213,7 +1262,8 @@ function RequestDetails({ item, title, rights, zone, onDone }: {
       } else if (failure instanceof ApiFailure && failure.kind === 'offline') {
         setError('Связь прервалась. Список перечитан — проверьте состояние, прежде чем решать снова.');
         onDone();
-      } else if (failure instanceof ApiFailure && (failure.kind === 'conflict' || failure.status === 404)) {
+      } else if (failure instanceof ApiFailure
+        && (failure.kind === 'conflict' || failure.kind === 'session' || failure.status === 404)) {
         // Другой HR успел решить или запись исчезла — показываем свежее.
         setError(`${reasonFor(failure)} Список обновлён.`);
         onDone();
@@ -1222,6 +1272,7 @@ function RequestDetails({ item, title, rights, zone, onDone }: {
         setError(failure instanceof ApiFailure ? reasonFor(failure) : messageFor(failure));
       }
     } finally {
+      lock.current = false;
       setBusy(false);
     }
   };

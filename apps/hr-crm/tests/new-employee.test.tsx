@@ -362,7 +362,8 @@ describe('форма приёма', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Назад и изменить' }));
 
-    expect(screen.queryByRole('dialog')).toBeNull();
+    // Окно уходит коротким обратным движением — ждём, пока его не станет.
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(sent).toHaveLength(0);
     // Заполненное осталось на месте: окно закрывали, а не форму. Личные
     // данные — на первом шаге, туда и возвращаемся.
@@ -506,5 +507,81 @@ describe('после создания', () => {
     expect(calls.some((one) => one.url.includes('/employees/e-new'))).toBe(false);
     fireEvent.click(screen.getByRole('button', { name: 'Открыть карточку сотрудника' }));
     await waitFor(() => expect(calls.some((one) => one.url.includes('/employees/e-new'))).toBe(true));
+  });
+});
+
+describe('правка сотрудника', () => {
+  const PERSON = {
+    id: 'e-9', employee_number: 'HT-0009', full_name: 'Каримова Нигина', last_name: 'Каримова',
+    first_name: 'Нигина', middle_name: null, birth_date: '1995-03-14', phone: '+998901112233',
+    corporate_email: null, gender: null, marital_status: null, hire_date: '2026-09-01',
+    documents: [],
+    current_assignment: {
+      region_id: 'r1', office_id: 'o1', department_id: 'd1', position_id: 'p1',
+      manager_employee_id: null, employment_type: 'FULL_TIME', valid_from: '2026-09-01',
+    },
+    current_schedule: { schedule_id: 's1' },
+  };
+
+  function editing(card: () => Response | Promise<Response>, patch: () => Response | Promise<Response>) {
+    const patches: unknown[] = [];
+    fakeNetwork(async (path, call) => {
+      if (path.includes('/auth/')) return json(200, USER);
+      if (/\/employees\/e-9\/?$/.test(path)) {
+        if (call.method === 'PATCH') {
+          patches.push(call.body);
+          return patch();
+        }
+        return card();
+      }
+      if (path.includes('/regions')) return json(200, REGIONS);
+      if (path.includes('/offices')) return json(200, OFFICES);
+      if (path.includes('/departments')) return json(200, DEPARTMENTS);
+      if (path.includes('/positions')) return json(200, POSITIONS);
+      if (path.includes('/work-schedules')) return json(200, SCHEDULES);
+      if (path.includes('/employees')) return json(200, { items: [], next_cursor: null, has_more: false });
+      return crm(path) ?? json(200, { items: [] });
+    });
+    renderApp('/employees/e-9/edit');
+    return patches;
+  }
+
+  async function changeAndConfirm() {
+    await screen.findByRole('heading', { name: 'Каримова Нигина' });
+    type('Фамилия', 'Каримова-Алиева');
+    next();
+    await waitFor(() => expect(stepTitle()).not.toBe('Личные данные'));
+    next();
+    fireEvent.click(await screen.findByRole('button', { name: 'Сохранить изменения' }));
+    return screen.findByRole('button', { name: 'Сохранить' });
+  }
+
+  test('без данных человека формы нет: пустые поля нечего сохранять', async () => {
+    editing(() => json(500, { error: { code: 'server_error', message: '…', details: null } }), () => json(200, PERSON));
+    expect(await screen.findByText('Не удалось открыть карточку сотрудника.')).toBeTruthy();
+    expect(screen.queryByRole('navigation', { name: 'Шаги формы' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Сохранить/ })).toBeNull();
+  });
+
+  test('двойное нажатие «Сохранить» — одна правка', async () => {
+    let release: (value: Response) => void = () => undefined;
+    const patches = editing(() => json(200, PERSON),
+      () => new Promise<Response>((resolve) => { release = resolve; }));
+    const save = await changeAndConfirm();
+    fireEvent.click(save);
+    fireEvent.click(save);
+    release(json(200, { ...PERSON, last_name: 'Каримова-Алиева' }));
+    await waitFor(() => expect(patches).toHaveLength(1));
+  });
+
+  test('обрыв при сохранении: введённое на месте, повтора нет, объяснение — проверить карточку', async () => {
+    const patches = editing(() => json(200, PERSON), () => { throw new TypeError('Failed to fetch'); });
+    fireEvent.click(await changeAndConfirm());
+
+    expect((await screen.findByRole('alert')).textContent).toContain('неизвестно');
+    expect(patches).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: /Назад$/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Назад$/ }));
+    expect(field('Фамилия').value).toBe('Каримова-Алиева');
   });
 });

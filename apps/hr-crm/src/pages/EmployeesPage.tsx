@@ -21,7 +21,7 @@
  * запятую, их же понимает сервер.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 
 import * as api from '../api/crm';
@@ -146,7 +146,7 @@ export function EmployeesPage() {
   const key = [search, offices.join('+'), regions.join('+'), departments.join('+'),
                positions.join('+'), employment.join('+')].join('|');
 
-  const [list] = useBlock(
+  const [list, , listRefresh] = useBlock(
     (signal) =>
       api.employees(
         {
@@ -223,11 +223,14 @@ export function EmployeesPage() {
     if (list.state === 'ready') setUpdated(new Date());
   }, [list]);
 
-  // Выгрузка ставится в общую очередь отчётов.
+  // Выгрузка ставится в общую очередь отчётов. Замок синхронный: двойной
+  // клик быстрее перерисовки, и вторая выгрузка никому не нужна.
   const [ordering, setOrdering] = useState(false);
+  const orderLock = useRef(false);
   const [ordered, setOrdered] = useState<string | null>(null);
   async function order() {
-    if (ordering) return;
+    if (orderLock.current) return;
+    orderLock.current = true;
     setOrdering(true);
     setOrdered(null);
     try {
@@ -240,6 +243,7 @@ export function EmployeesPage() {
     } catch (error) {
       setOrdered(messageFor(error));
     } finally {
+      orderLock.current = false;
       setOrdering(false);
     }
   }
@@ -287,6 +291,14 @@ export function EmployeesPage() {
    * пришедших данных значило бы соврать на секунду.
    */
   const firstTime = !anything && list.state === 'ready' && items.length === 0;
+  /**
+   * Список обновляется поверх показанного: прежние карточки бледнеют и не
+   * нажимаются, в шапке — «обновляем…». Старые результаты не выдают себя
+   * за ответ на новый отбор.
+   */
+  const refreshing = list.state === 'ready' && listRefresh.busy;
+  /** Состав страницы: меняется — карточки проявляются разом. */
+  const shown = items.map((one) => one.id).join(',');
 
   return (
     <AppShell breadcrumb="Сотрудники" section="employees">
@@ -308,16 +320,18 @@ export function EmployeesPage() {
                   <span>{plural(books.offices.length, 'офис')}</span>
                 </>
               )}
-              {updated && (
+              {(updated || refreshing) && (
                 <>
                   <i className="emp-head__bar" />
-                  <span className="emp-head__when">{ago(updated)}</span>
+                  <span className="emp-head__when" role="status">
+                    {refreshing || !updated ? 'обновляем…' : ago(updated)}
+                  </span>
                 </>
               )}
             </p>
           </div>
           <div className="emp-head__actions">
-            <button type="button" className="emp-btn emp-btn--light"
+            <button type="button" className="emp-btn emp-btn--light" aria-busy={ordering}
                     onClick={() => void order()} disabled={ordering}>
               <AppIcon name="download" size={20} />
               {ordering ? 'В очереди…' : 'Экспорт'}
@@ -335,7 +349,8 @@ export function EmployeesPage() {
           </p>
         )}
 
-        <section className="emp-list" aria-label="Список сотрудников">
+        <section className={refreshing ? 'emp-list emp-list--busy' : 'emp-list'} aria-label="Список сотрудников"
+                 aria-busy={refreshing}>
           {/*
             * В пустой компании отборов нет вовсе. Фильтровать здесь
             * нечего, а пять пустых списков над приглашением завести
@@ -413,7 +428,7 @@ export function EmployeesPage() {
                   <Blank filtered={anything} onClear={clearAll}
                          onAdd={() => navigate('/employees/new')} />
                 ) : (
-                  <div className="emp-cards">
+                  <div className="emp-cards" key={shown}>
                     {data.items.map((person) => (
                       <PersonCard key={person.id} person={person} today={today.get(person.id)}
                                   plan={programme.get(person.id)}
@@ -742,13 +757,25 @@ function Photo({ id, name, has, className }: {
 
 /** Номера страниц: первые пять, соседи текущей и последняя. */
 function Pages({ page, pages, onGo }: { page: number; pages: number; onGo: (next: number) => void }) {
+  // Стрелка на краю списка становится недоступной, и браузер бросает фокус
+  // на body. Тогда фокус переходит на номер текущей страницы.
+  const box = useRef<HTMLElement | null>(null);
+  const inside = useRef(false);
+  useEffect(() => {
+    if (!inside.current || !box.current) return;
+    const active = document.activeElement as HTMLButtonElement | null;
+    if (active && active !== document.body && !active.disabled) return;
+    box.current.querySelector<HTMLButtonElement>('[aria-current="page"]')?.focus();
+  }, [page, pages]);
   const shown: (number | 'gap')[] = [];
   for (let at = 1; at <= pages; at += 1) {
     if (at <= 5 || at === pages || Math.abs(at - page) <= 1) shown.push(at);
     else if (shown[shown.length - 1] !== 'gap') shown.push('gap');
   }
   return (
-    <nav className="emp-pages" aria-label="Страницы списка">
+    <nav className="emp-pages" aria-label="Страницы списка" ref={box}
+         onFocus={() => { inside.current = true; }}
+         onBlur={(event) => { if (event.relatedTarget && !box.current?.contains(event.relatedTarget as Node)) inside.current = false; }}>
       <button type="button" className="emp-pages__arrow" aria-label="Предыдущая"
               disabled={page <= 1} onClick={() => onGo(page - 1)}>
         <AppIcon name="back" size={16} />
@@ -778,7 +805,33 @@ function Pages({ page, pages, onGo }: { page: number; pages: number; onGo: (next
 // --- мелочи ------------------------------------------------------------------
 
 function Rows<T>({ block, children }: { block: Block<T>; children: (data: T) => React.ReactNode }) {
-  if (block.state === 'loading') return <p className="emp-empty">Загружаем список…</p>;
+  if (block.state === 'loading') {
+    // Заглушки по форме карточек списка: фото, имя, строки, подвал.
+    return (
+      <>
+        <span className="visually-hidden" role="status">Загружаем список…</span>
+        <div className="emp-cards emp-cards--sk" aria-hidden="true">
+          {[0, 1, 2, 3, 4, 5].map((n) => (
+            <article key={n} className="emp-card emp-card--sk">
+              <div className="emp-card__top">
+                <i className="emp-sk emp-sk--photo" />
+                <div className="emp-card__body">
+                  <i className="emp-sk emp-sk--name" />
+                  <i className="emp-sk emp-sk--line" />
+                  <i className="emp-sk emp-sk--line emp-sk--short" />
+                  <i className="emp-sk emp-sk--line emp-sk--short" />
+                </div>
+              </div>
+              <footer className="emp-card__foot">
+                <i className="emp-sk emp-sk--chip" />
+                <i className="emp-sk emp-sk--chip" />
+              </footer>
+            </article>
+          ))}
+        </div>
+      </>
+    );
+  }
   if (block.state === 'denied') return <p className="emp-empty">Нет доступа к списку сотрудников.</p>;
   if (block.state === 'error') {
     return <p className="emp-empty emp-empty--bad">Не удалось загрузить список.</p>;
