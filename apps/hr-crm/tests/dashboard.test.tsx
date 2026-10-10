@@ -152,7 +152,8 @@ describe('строка «Сегодня»', () => {
     network();
     renderApp('/');
 
-    await screen.findByText('сейчас в офисе');
+    // Подписи стоят и в заглушке — ждём сам список с числами.
+    await screen.findByRole('list', { name: 'Сегодня' });
     const row = today_();
     expect(within(row).getByText('214')).toBeTruthy();
     expect(within(row).getByText('200')).toBeTruthy();
@@ -166,7 +167,7 @@ describe('строка «Сегодня»', () => {
     network((path) => (path.includes('/dashboard') ? json(200, dashboard({ not_come: 0 })) : null));
     renderApp('/');
 
-    await screen.findByText('без отметки');
+    await screen.findByRole('list', { name: 'Сегодня' });
     expect(within(today_()).getByText('без отметки').closest('a')).toBeNull();
   });
 
@@ -188,8 +189,9 @@ describe('строка «Сегодня»', () => {
     network((path) => (path.includes('/dashboard') ? json(200, dashboard({ came: 0, should_work_today: 1 })) : null));
     renderApp('/');
 
-    const note = await screen.findByText(/По графику/);
-    expect(note.textContent).toBe('По графику 1 сотрудник: в офис пришли 0, выездную работу подтвердили 0.');
+    // «По графику» есть и в шапке таблицы офисов — ищем саму фразу.
+    const note = (await screen.findByText(/в офис пришли/)).closest('p');
+    expect(note?.textContent).toBe('По графику 1 сотрудник: в офис пришли 0, выездную работу подтвердили 0.');
   });
 
   test('без людей по графику — объяснение, а не голые нули', async () => {
@@ -201,6 +203,26 @@ describe('строка «Сегодня»', () => {
 });
 
 describe('состояния блоков', () => {
+  test('пока показатели в пути — заглушка без чисел, затем настоящие числа', async () => {
+    let release: () => void = () => undefined;
+    const pause = new Promise<void>((resolve) => { release = resolve; });
+    network((path) => (path.includes('/dashboard')
+      ? pause.then(() => json(200, dashboard()))
+      : null));
+    renderApp('/');
+
+    expect(await screen.findByText('Загружаем показатели…')).toBeTruthy();
+    // Заглушка не выдаёт себя за данные: ни списка «Сегодня», ни чисел.
+    expect(screen.queryByRole('list', { name: 'Сегодня' })).toBeNull();
+    expect(screen.queryByText('214')).toBeNull();
+
+    release();
+    const row = await screen.findByRole('list', { name: 'Сегодня' });
+    expect(within(row).getByText('214')).toBeTruthy();
+    expect(screen.queryByText('Загружаем показатели…')).toBeNull();
+  });
+
+
   test('ошибка блока не превращается в ноль', async () => {
     network((path) => (path.includes('/dashboard') ? json(500, { error: {} }) : null));
     renderApp('/');

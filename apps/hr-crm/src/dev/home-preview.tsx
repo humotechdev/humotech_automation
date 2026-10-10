@@ -96,9 +96,40 @@ const FEED = {
 const answer = (body: unknown) =>
   new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
 
-window.fetch = async (input: RequestInfo | URL) => {
+/*
+ * Режимы для проверки состояний: `?delay=1500` — ответ с задержкой (отмена
+ * запроса её прерывает), `?fail=dashboard` — отказ этого адреса,
+ * `?zero=1` — нули и пустые списки. `window.__calls` — журнал запросов.
+ */
+const mode = new URLSearchParams(window.location.search);
+const delay = Number(mode.get('delay') ?? 0);
+const failing = mode.get('fail') ?? '';
+const zero = mode.get('zero') === '1';
+const calls: string[] = [];
+(window as unknown as { __calls: string[] }).__calls = calls;
+const EMPTY = { items: [], next_cursor: null, has_more: false };
+
+window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input);
   if (url.includes('/auth/')) return answer(HR);
+  calls.push(url);
+  if (delay > 0) {
+    await new Promise<void>((resolve, reject) => {
+      const timer = window.setTimeout(resolve, delay);
+      init?.signal?.addEventListener('abort', () => {
+        window.clearTimeout(timer);
+        reject(new DOMException('aborted', 'AbortError'));
+      });
+    });
+  }
+  if (failing && url.includes(failing)) {
+    return new Response('{"error":{"code":"server_error","message":"…","details":null}}', { status: 500, headers: { 'Content-Type': 'application/json' } });
+  }
+  if (zero) {
+    if (url.includes('/dashboard')) return answer({ ...DASHBOARD, cards: DASHBOARD.cards.map((one) => ({ ...one, value: 0 })) });
+    if (url.includes('/analytics')) return answer({ period: { first: SERIES[0]!.day, last: SERIES[6]!.day, timezone: 'Asia/Tashkent' }, headcount: 0, series: SERIES.map((one) => ({ ...one, attended: 0, expected: 0 })) });
+    if (url.includes('/requests') || url.includes('/notification-feed')) return answer(EMPTY);
+  }
   if (url.includes('/dashboard')) return answer(DASHBOARD);
   if (url.includes('/regions')) return answer({ items: [{ id: 'r-1', name: 'Ташкент' }, { id: 'r-2', name: 'Самарканд' }, { id: 'r-3', name: 'Бухара' }] });
   if (url.includes('/offices')) return answer({ items: OFFICES });

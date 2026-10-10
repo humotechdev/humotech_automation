@@ -467,3 +467,144 @@ body:has(.hm) .cal {
   .hm-head__tools { flex-wrap: wrap; }
   .hm-links { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* --- движение ------------------------------------------------------------------ */
+
+/*
+ * Только эта страница. Строго и коротко: прозрачность и сдвиг на 6 px,
+ * замедление к концу. Ни пружин, ни пульсации, ни постоянного движения.
+ *
+ * Появление секций играет один раз — когда страница открывается: секции
+ * не пересоздаются ни при смене фильтра, ни при новых данных. Заливка
+ * `backwards`, а не `both`: после конца анимации у секции не остаётся
+ * `transform`, и выпадающие списки внутри считают положение как раньше.
+ */
+@keyframes hm-rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes hm-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.hm-enter { animation: hm-rise 0.22s cubic-bezier(0.2, 0.7, 0.2, 1) backwards; }
+.hm-enter:nth-child(2) { animation-delay: 0.04s; }
+.hm-enter:nth-child(3) { animation-delay: 0.08s; }
+.hm-enter:nth-child(4) { animation-delay: 0.12s; }
+/* Нижняя полоса только проявляется: сдвиг вниз у последнего блока
+   на мгновение удлинял бы лист и показывал полосу прокрутки. */
+.hm-links.hm-enter { animation-name: hm-fade; animation-delay: 0.14s; }
+
+/* Данные на месте заглушки: проявляются, без сдвига. Обёртки не дают
+   своей коробки — график и таблица растягиваются, как и без них. */
+.hm-in,
+.hm-sk-wrap { display: contents; }
+.hm-in > * { animation: hm-fade 0.18s ease-out backwards; }
+
+/* Обновление поверх показанного: блок чуть бледнеет. С задержкой — быстрый
+   ответ проходит незаметно, без мигания; заголовок блока не трогаем. */
+.hm-part.hm-busy > :not(.hm-part__head),
+.hm-band.hm-busy > * {
+  opacity: 0.6;
+  transition: opacity 0.16s ease 0.2s;
+}
+
+.hm-part > :not(.hm-part__head),
+.hm-band > * { transition: opacity 0.16s ease; }
+
+.hm-icon[aria-busy='true'] svg { opacity: 0.45; }
+
+/* --- заглушки ------------------------------------------------------------------ */
+
+/* Спокойные серые полосы по форме будущего содержимого. Неподвижные:
+   мерцающая заглушка — то самое постоянное движение, которого не нужно. */
+.hm-sk {
+  display: inline-block;
+  vertical-align: middle;
+  border-radius: 6px;
+  background: #eef3f9;
+}
+
+.hm-sk--icon { width: 30px; height: 30px; border-radius: 8px; }
+.hm-sk--value { width: 34px; height: 24px; }
+.hm-sk--title { width: 92px; height: 12px; }
+.hm-sk--note { width: 140px; max-width: 100%; height: 10px; }
+.hm-sk--mark { flex: 0 0 auto; width: 40px; height: 40px; border-radius: 50%; }
+.hm-sk--note-line { width: 58%; height: 11px; }
+.hm-sk--dot { flex: 0 0 auto; width: 12px; height: 12px; border-radius: 50%; }
+.hm-sk--name { width: 60%; height: 11px; }
+.hm-sk--num { width: 22px; height: 11px; }
+.hm-sk--line { width: 62%; height: 12px; }
+.hm-sk--short { width: 38%; height: 10px; }
+
+.hm-sk-rows { pointer-events: none; }
+.hm-sk-rows::before,
+.hm-sk-rows li::before { display: none; }
+
+/* Высота строки — как у настоящей: «Фокус HR» 64 px, лента 54 px. */
+.hm-sk-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 64px;
+  padding: 12px 4px;
+}
+
+.hm-sk-row--small { min-height: 54px; gap: 12px; padding: 8px 4px; }
+
+/* Строка пояснения под графиком — высотой в строку текста со значком. */
+.hm-note:has(> .hm-sk) { min-height: 18px; }
+.hm-sk-row--small .hm-sk--mark { width: 30px; height: 30px; }
+
+.hm-sk-row__text { display: flex; flex: 1 1 auto; flex-direction: column; gap: 8px; min-width: 0; }
+
+/* Заглушка графика занимает ровно место графика. */
+.hm-sk-chart {
+  flex: 1 1 170px;
+  min-height: 170px;
+  border-radius: 10px;
+  background:
+    repeating-linear-gradient(to bottom, transparent 0 39px, #eef3f9 39px 40px),
+    #fbfcfe;
+}
+
+/* --- реакции элементов управления ------------------------------------------------ */
+
+.hm-icon,
+.hm-switch button,
+.hm-link,
+.hm-links a,
+.hm-stat--go,
+.hm-focus__row,
+.hm-table__row,
+.hm-events__row {
+  transition: background-color 0.14s ease, border-color 0.14s ease, color 0.14s ease;
+}
+
+.hm-icon:active { background: #eef4fb; }
+.hm-switch button:active:not(.hm-switch__on) { background: #edf3fa; }
+.hm-stat--go:active,
+.hm-focus__row:active,
+.hm-table__row:active,
+.hm-events__row:active { background: #eef4fb; }
+
+/* --- уменьшенное движение ------------------------------------------------------ */
+
+/* Без сдвигов: секции и данные только коротко проявляются, реакции —
+   мгновенно. */
+@media (prefers-reduced-motion: reduce) {
+  .hm-sheet > .hm-enter { animation: hm-fade 0.12s linear backwards; animation-delay: 0s; }
+  .hm-in > * { animation-duration: 0.12s; }
+  .hm-icon,
+  .hm-switch button,
+  .hm-link,
+  .hm-links a,
+  .hm-stat--go,
+  .hm-focus__row,
+  .hm-table__row,
+  .hm-events__row,
+  .hm-part > :not(.hm-part__head),
+  .hm-band > * { transition: none; }
+}
