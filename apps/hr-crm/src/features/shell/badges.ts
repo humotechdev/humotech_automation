@@ -93,6 +93,15 @@ function refreshSoon(): void {
   refresh(true);
 }
 
+/**
+ * Пересчитать числа меню сейчас — после того как действие на странице
+ * подтвердил сервер (решение по заявке). Тот же пересчёт, что и по
+ * живому сигналу: не больше одного лишнего запроса.
+ */
+export function refreshBadgesSoon(): void {
+  refreshSoon();
+}
+
 function bindLive(): void {
   if (liveBound) return;
   liveBound = true;

@@ -6,9 +6,12 @@
  * место для новой бумаги остаётся у сотрудника, а не у кадровика.
  */
 
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter, useNavigate } from 'react-router-dom';
 import { describe, expect, test } from 'vitest';
 
+import { App } from '../src/app/App';
+import { SessionProvider } from '../src/features/auth/session';
 import { USER, crm, fakeNetwork, json, renderApp } from './helpers';
 
 const EMPLOYEE = { id: 'p-1', full_name: 'Muradov Azizbek', employee_number: 'HT-002' };
@@ -240,5 +243,148 @@ describe('страница заявки', () => {
     expect(screen.getAllByText('В справке не видны даты периода.').length)
       .toBeGreaterThan(0);
     expect(screen.getByText('Справка загружена')).toBeTruthy();
+  });
+});
+
+// --- решение: замок, неизвестный исход, конфликт ----------------------------------
+
+const LEAVE = {
+  ...BASE,
+  absence_type: { code: 'ANNUAL_LEAVE', name: 'Ежегодный отпуск' },
+  stage: null,
+  requires_document: false,
+  missing_for_approval: [],
+  first_day: '2026-10-12',
+  last_day: '2026-10-16',
+};
+
+const APPROVED_LEAVE = { ...LEAVE, status: 'APPROVED' };
+
+/** Сеть, где ответ на заявку меняется после решения — как на сервере. */
+function deciding(after: unknown, decide: () => Response | Promise<Response>) {
+  let decided = false;
+  const calls = fakeNetwork((path, call) => {
+    if (path.includes('/auth/')) return json(200, USER);
+    if (call.method === 'POST' && path.includes('/approve')) {
+      decided = true;
+      return decide();
+    }
+    if (/\/absence-requests\/[^/?]+$/.test(path)) return json(200, decided ? after : LEAVE);
+    return crm(path) ?? json(200, { items: [] });
+  });
+  return calls;
+}
+
+describe('решение по заявке', () => {
+  test('двойной клик по «Одобрить» отправляет одно решение', async () => {
+    let release: () => void = () => undefined;
+    const pause = new Promise<void>((resolve) => { release = resolve; });
+    const calls = deciding(APPROVED_LEAVE, () => pause.then(() => json(200, {})));
+    renderApp('/requests/r-1');
+
+    const approve = await screen.findByRole('button', { name: 'Одобрить' });
+    fireEvent.click(approve);
+    fireEvent.click(approve);
+    release();
+
+    expect(await screen.findByText('Подтверждён')).toBeTruthy();
+    expect(calls.filter((c) => c.method === 'POST' && c.url.includes('/approve'))).toHaveLength(1);
+  });
+
+  test('статус меняется только после ответа сервера', async () => {
+    let release: () => void = () => undefined;
+    const pause = new Promise<void>((resolve) => { release = resolve; });
+    deciding(APPROVED_LEAVE, () => pause.then(() => json(200, {})));
+    renderApp('/requests/r-1');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Одобрить' }));
+    expect(await screen.findByRole('button', { name: 'Одобряем…' })).toBeTruthy();
+    expect(screen.queryByText('Подтверждён')).toBeNull();
+
+    release();
+    expect(await screen.findByText('Подтверждён')).toBeTruthy();
+  });
+
+  test('обрыв связи: без ложного успеха, без повтора, с проверкой состояния', async () => {
+    const calls = deciding(LEAVE, () => { throw new TypeError('Failed to fetch'); });
+    renderApp('/requests/r-1');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Одобрить' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('неизвестно, дошло ли действие');
+    expect(screen.queryByText('Подтверждён')).toBeNull();
+    expect(calls.filter((c) => c.method === 'POST' && c.url.includes('/approve'))).toHaveLength(1);
+    // Заявку спросили заново — второй GET после первого открытия.
+    await waitFor(() =>
+      expect(calls.filter((c) => c.method === 'GET' && /\/absence-requests\/r-1$/.test(c.url)).length)
+        .toBeGreaterThanOrEqual(2));
+  });
+
+  test('конфликт: понятное сообщение и актуальное решение другого HR', async () => {
+    deciding(APPROVED_LEAVE, () => json(409, {
+      error: { code: 'conflict', message: 'Заявку уже рассмотрел другой сотрудник HR.', details: null },
+    }));
+    renderApp('/requests/r-1');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Одобрить' }));
+
+    expect((await screen.findByRole('alert')).textContent).toContain('Заявку уже рассмотрел другой сотрудник HR.');
+    expect(await screen.findByText('Подтверждён')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Одобрить' })).toBeNull();
+  });
+
+  test('сбой перезапроса не стирает заявку с экрана', async () => {
+    let decided = false;
+    fakeNetwork((path, call) => {
+      if (path.includes('/auth/')) return json(200, USER);
+      if (call.method === 'POST' && path.includes('/approve')) { decided = true; return json(200, {}); }
+      if (/\/absence-requests\/[^/?]+$/.test(path)) {
+        return decided ? json(500, { error: { code: 'server_error', message: '…', details: null } }) : json(200, LEAVE);
+      }
+      return crm(path) ?? json(200, { items: [] });
+    });
+    renderApp('/requests/r-1');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Одобрить' }));
+
+    expect(await screen.findByText(/Не удалось обновить заявку/)).toBeTruthy();
+    expect(screen.getByText('Muradov Azizbek')).toBeTruthy();
+  });
+});
+
+describe('переход между заявками', () => {
+  test('под новой заявкой нет данных прошлого сотрудника', async () => {
+    fakeNetwork((path) => {
+      if (path.includes('/auth/')) return json(200, USER);
+      // Вторая заявка ещё в пути — ответа нет.
+      if (/\/absence-requests\/r-2$/.test(path)) return new Promise<Response>(() => undefined);
+      if (/\/absence-requests\/r-1$/.test(path)) return json(200, LEAVE);
+      if (path.includes('/employees/p-1')) {
+        return json(200, { current_assignment: { region_name: 'Самарканд', office_name: 'Офис Регистан' } });
+      }
+      return crm(path) ?? json(200, { items: [] });
+    });
+    let go: (to: string) => void = () => undefined;
+    function Steer() {
+      go = useNavigate();
+      return null;
+    }
+    render(
+      <MemoryRouter initialEntries={['/requests/r-1']}>
+        <SessionProvider>
+          <Steer />
+          <App />
+        </SessionProvider>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText('Muradov Azizbek')).toBeTruthy();
+    expect(await screen.findByText(/Офис Регистан/)).toBeTruthy();
+
+    act(() => go('/requests/r-2'));
+
+    expect(await screen.findByText('Загружаем заявку…')).toBeTruthy();
+    expect(screen.queryByText('Muradov Azizbek')).toBeNull();
+    expect(screen.queryByText(/Офис Регистан/)).toBeNull();
   });
 });

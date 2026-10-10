@@ -13,7 +13,7 @@
  * клиенте дала бы не очередь, а произвольную смесь её половин.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 
 import * as api from '../api/crm';
@@ -79,6 +79,17 @@ export function RequestsPage() {
   const [updated, setUpdated] = useState<Date | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [ordered, setOrdered] = useState<string | null>(null);
+  const [ordering, setOrdering] = useState(false);
+  const orderLock = useRef(false);
+  const rowsBox = useRef<HTMLDivElement>(null);
+  const firstBtn = useRef<HTMLButtonElement>(null);
+  const nextBtn = useRef<HTMLButtonElement>(null);
+  /**
+   * Фокус был на листалке: после смены страницы вернуть его на живую
+   * кнопку. Признак снимается, только когда человек сам увёл фокус, —
+   * не когда кнопка стала недоступной и браузер бросил фокус на body.
+   */
+  const pagerFocus = useRef(false);
   useEffect(() => setDraft(search), [search]);
 
   const patch = useCallback(
@@ -119,7 +130,7 @@ export function RequestsPage() {
   );
   const base = `${search}|${region}|${office}|${employee}|${from}|${to}|${attempt}`;
 
-  const [list] = useBlock(
+  const [list, , listRefresh] = useBlock(
     (signal) =>
       api.queue(
         { ...common, ...tab.params, ...(status ? { status } : {}), limit: PAGE, ...(cursor ? { cursor } : {}) },
@@ -148,6 +159,25 @@ export function RequestsPage() {
   }, [directory, region]);
 
   const items = list.state === 'ready' ? list.data.items : [];
+  /**
+   * Список обновляется поверх показанного: старые строки бледнеют и
+   * не нажимаются, в шапке — «обновляем…». Так прежний ответ не
+   * выдаёт себя за результат нового фильтра.
+   */
+  const refreshing = list.state === 'ready' && listRefresh.busy;
+  /** Состав страницы: меняется — строки проявляются и прокрутка уходит наверх. */
+  const page = items.map((item) => item.id).join(',');
+  useEffect(() => {
+    if (rowsBox.current) rowsBox.current.scrollTop = 0;
+  }, [page]);
+  // Недоступная кнопка листалки теряет фокус — переводим его на соседнюю.
+  useEffect(() => {
+    if (!pagerFocus.current) return;
+    const live = [firstBtn.current, nextBtn.current].find((one) => one && !one.disabled);
+    if (live && document.activeElement !== live && (document.activeElement === document.body || (document.activeElement as HTMLButtonElement | null)?.disabled)) {
+      live.focus();
+    }
+  }, [page, cursor]);
   // Шторка открывается ТОЛЬКО по выбору. Прежде без выбора открывалась
   // первая заявка очереди — это было верно для постоянной колонки
   // рядом со списком, но окно поверх страницы, которое появляется само,
@@ -161,6 +191,10 @@ export function RequestsPage() {
   const waiting = counts.state === 'ready' ? counts.data['open'] ?? 0 : null;
 
   async function order() {
+    // Вторая выгрузка от двойного клика никому не нужна.
+    if (orderLock.current) return;
+    orderLock.current = true;
+    setOrdering(true);
     setOrdered(null);
     try {
       await api.orderExport({
@@ -172,6 +206,9 @@ export function RequestsPage() {
       setOrdered('Выгрузка поставлена в очередь');
     } catch (error) {
       setOrdered(messageFor(error));
+    } finally {
+      orderLock.current = false;
+      setOrdering(false);
     }
   }
 
@@ -184,17 +221,19 @@ export function RequestsPage() {
             <p className="rq-head__sub">
               Отпуска, больничные и исправления отметок
               {waiting !== null && <> · {waiting} {waitingWord(waiting)} внимания</>}
-              {updated ? <> · обновлено в {formatTime(updated)}</> : <> · загружаем…</>}
+              {refreshing || !updated ? <> · обновляем…</> : <> · обновлено в {formatTime(updated)}</>}
             </p>
           </div>
           <div className="rq-head__actions">
-            <button type="button" className="rq-btn rq-btn--light" onClick={() => setAttempt((n) => n + 1)}>
+            <button type="button" className="rq-btn rq-btn--light" aria-busy={refreshing}
+                    onClick={() => setAttempt((n) => n + 1)}>
               <AppIcon name="refresh" size={20} />
               Обновить
             </button>
-            <button type="button" className="rq-btn rq-btn--light rq-btn--blue-text" onClick={() => void order()}>
+            <button type="button" className="rq-btn rq-btn--light rq-btn--blue-text" disabled={ordering}
+                    aria-busy={ordering} onClick={() => void order()}>
               <AppIcon name="download" size={20} />
-              Экспорт
+              {ordering ? 'Ставим в очередь…' : 'Экспорт'}
             </button>
           </div>
         </header>
@@ -206,7 +245,8 @@ export function RequestsPage() {
         )}
 
         <div className="rq-grid">
-          <section className="rq-list" aria-label="Очередь заявок">
+          <section className={refreshing ? 'rq-list rq-list--busy' : 'rq-list'} aria-label="Очередь заявок"
+                   aria-busy={refreshing}>
             {/* Вкладки подчёркиванием, а не заливкой: их шесть, и шесть
                 залитых кнопок в ряд спорят за внимание с самой
                 очередью, ради которой страницу открыли. */}
@@ -274,18 +314,32 @@ export function RequestsPage() {
                 неё есть человек, вид и состояние. Шапка колонок над
                 пустым телом — самое заметное, что было на этой
                 странице, и самое бесполезное. */}
-            <div className="rq-rows">
+            <div className="rq-rows" ref={rowsBox}>
               <Rows block={list}>
-                {(data) => data.items.length === 0 ? (
-                  <div className="rq-none">
-                    <p>По выбранным условиям заявок нет</p>
-                    <small>Измените фильтры или сбросьте поиск.</small>
+                {(data) => (
+                  /* Новый состав — строки проявляются разом, без очереди
+                     по одной. Фоновое обновление того же состава ничего
+                     не проигрывает. */
+                  <div key={page} className="rq-page">
+                    {data.items.length === 0 ? (
+                      dirty ? (
+                        <div className="rq-none">
+                          <p>По выбранным условиям заявок нет</p>
+                          <small>Измените фильтры или сбросьте поиск.</small>
+                        </div>
+                      ) : (
+                        <div className="rq-none">
+                          <p>{tab.key === 'open' ? 'Сейчас ничего не ждёт решения' : 'Заявок пока нет'}</p>
+                          <small>Новые заявки сотрудников появятся здесь.</small>
+                        </div>
+                      )
+                    ) : (
+                      data.items.map((item) => (
+                        <Row key={item.id} item={item} on={item.id === current?.id}
+                             onPick={() => patch({ request: item.id }, true)} />
+                      ))
+                    )}
                   </div>
-                ) : (
-                  data.items.map((item) => (
-                    <Row key={item.id} item={item} on={item.id === current?.id}
-                         onPick={() => patch({ request: item.id }, true)} />
-                  ))
                 )}
               </Rows>
             </div>
@@ -295,14 +349,18 @@ export function RequestsPage() {
                 страниц, которых нет. */}
             {list.state === 'ready' && (list.data.has_more || cursor) && (
               <footer className="rq-pager">
-                <button type="button" className="rq-pager__btn" disabled={!cursor}
-                        onClick={() => patch({ cursor: null })}>
+                <button type="button" className="rq-pager__btn" disabled={!cursor} ref={firstBtn}
+                        onFocus={() => { pagerFocus.current = true; }}
+                        onBlur={(event) => { if (event.relatedTarget) pagerFocus.current = false; }}
+                        onClick={() => { pagerFocus.current = true; patch({ cursor: null }); }}>
                   <AppIcon name="back" size={16} />
                   В начало
                 </button>
-                <button type="button" className="rq-pager__btn"
-                        disabled={!list.data.has_more}
-                        onClick={() => patch({ cursor: list.data.next_cursor }, true)}>
+                <button type="button" className="rq-pager__btn" ref={nextBtn}
+                        disabled={!list.data.has_more || refreshing}
+                        onFocus={() => { pagerFocus.current = true; }}
+                        onBlur={(event) => { if (event.relatedTarget) pagerFocus.current = false; }}
+                        onClick={() => { pagerFocus.current = true; patch({ cursor: list.data.next_cursor }, true); }}>
                   Далее
                   <AppIcon name="next" size={16} />
                 </button>
@@ -534,7 +592,26 @@ function Select({ label, empty, value, options, onChange }: {
 }
 
 function Rows<T>({ block, children }: { block: Block<T>; children: (data: T) => React.ReactNode }) {
-  if (block.state === 'loading') return <p className="rq-empty">Загружаем очередь…</p>;
+  if (block.state === 'loading') {
+    // Заглушка по форме строк очереди: лицо, имя, вид, дата, статус.
+    return (
+      <>
+        <span className="visually-hidden" role="status">Загружаем очередь…</span>
+        <div aria-hidden="true">
+          {[0, 1, 2, 3, 4, 5].map((n) => (
+            <div key={n} className="rq-row rq-row--sk">
+              <i className="rq-sk rq-sk--face" />
+              <span className="rq-sk-stack"><i className="rq-sk rq-sk--line" /><i className="rq-sk rq-sk--short" /></span>
+              <i className="rq-sk rq-sk--line" />
+              <span className="rq-sk-stack"><i className="rq-sk rq-sk--short" /><i className="rq-sk rq-sk--line" /></span>
+              <i className="rq-sk rq-sk--chip" />
+              <span />
+            </div>
+          ))}
+        </div>
+      </>
+    );
+  }
   if (block.state === 'denied') return <p className="rq-empty">Нет доступа к заявкам.</p>;
   if (block.state === 'error') {
     return <p className="rq-empty rq-empty--bad">Не удалось загрузить очередь. Это ошибка запроса, а не «заявок нет».</p>;
