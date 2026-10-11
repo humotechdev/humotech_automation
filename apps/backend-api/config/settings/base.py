@@ -209,6 +209,8 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     # CORS только для Mini App и только для его путей — см. модуль.
     "humotech.core.cors.ScopedCorsMiddleware",
+    # Ответы API — персональные данные: не кэшировать (аудит 11.10, M-10).
+    "humotech.core.nocache.PrivateApiResponseMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"

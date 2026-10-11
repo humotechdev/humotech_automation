@@ -800,3 +800,40 @@ class TestSharedRotatingCodeGoesToReview:
         zone = ZoneInfo("Asia/Dushanbe")
         assert reminders._already_marked(colleague.id, now.astimezone(zone).date(), zone)
 
+
+
+# =============================================================================
+# M-10. Ответы API с ПДн не кэшируются
+# =============================================================================
+
+
+class TestApiResponsesAreNotCached:
+
+    def test_legacy_export_is_no_store(self, organization, office):
+        _employee(organization, office, "M10-E")
+        user = create_actor(organization,
+                            permissions=("employees.read", "reports.export"))[0]
+        response = _client(user).get(f"{API}/reports/employees/export?fmt=csv")
+        assert response.status_code == 200
+        assert response["Cache-Control"] == "private, no-store"
+        assert response["X-Content-Type-Options"] == "nosniff"
+
+    def test_hr_application_pdf_is_no_store(self, organization, office, sick):
+        request, _ = sick
+        user = create_actor(organization, office=office,
+                            permissions=("absences.read", "absences.approve"))[0]
+        response = _client(user).get(f"{API}/absence-requests/{request.id}/application")
+        assert response.status_code == 200, response.content[:200]
+        assert response["Cache-Control"] == "private, no-store"
+
+    def test_json_api_is_no_store_but_views_keep_their_own(self, organization, office,
+                                                          sick):
+        request, document = sick
+        user = create_actor(organization, office=office,
+                            permissions=("employees.read", "absences.read",
+                                         "absences.documents"))[0]
+        client = _client(user)
+        card = client.get(f"{API}/employees/")
+        assert card["Cache-Control"] == "private, no-store"
+        # Свой заголовок выдачи файла не перетирается.
+        assert client.get(hr_url(request, document))["Cache-Control"] == "private, no-store"
