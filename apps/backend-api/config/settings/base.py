@@ -205,6 +205,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "humotech.accounts.session_age.AbsoluteSessionAgeMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     # CORS только для Mini App и только для его путей — см. модуль.
@@ -328,6 +329,9 @@ LOGIN_THROTTLE = {
 SESSION_ENGINE = "django.contrib.sessions.backends.db"
 SESSION_COOKIE_AGE = int(env("DJANGO_SESSION_COOKIE_AGE", str(12 * 60 * 60)))
 SESSION_SAVE_EVERY_REQUEST = True
+# Потолок от момента входа: скольжение не продлевает сессию дольше суток
+# (аудит 11.10, L-11). См. humotech/accounts/session_age.py.
+SESSION_ABSOLUTE_AGE = int(env("DJANGO_SESSION_ABSOLUTE_AGE", str(24 * 60 * 60)))
 SESSION_EXPIRE_AT_BROWSER_CLOSE = False
 SESSION_COOKIE_HTTPONLY = True
 # Lax, а не Strict: со Strict переход в CRM по ссылке из Telegram или

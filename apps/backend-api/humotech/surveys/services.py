@@ -749,8 +749,12 @@ class SurveyCampaignService(BaseService):
         Только тем, кому можно: опрос идёт, срок не вышел, приглашение
         дошло, и ответа ещё нет. Раз в сутки на человека: два
         напоминания в один день — уже давление, а не напоминание.
+
+        Как рассылка и отмена — только с доступом ко всей организации:
+        круг опроса не привязан к офису (аудит 11.10, L-5).
         """
         self.access.require(actor, "surveys.manage")
+        require_whole_organization(self.access, actor)
         moment = now or timezone.now()
         campaign = self._require(actor, campaign_id)
         if campaign.status != "ACTIVE":

@@ -188,9 +188,9 @@ class UserAdminService(BaseService):
         status: str | None = None,
         role_id: uuid.UUID | None = None,
     ):
-        queryset = User.objects.filter(
+        queryset = self._in_territory(actor, User.objects.filter(
             organization_id=actor.organization_id
-        ).select_related("employee")
+        ).select_related("employee"))
         if status:
             if status not in USER_STATUSES:
                 raise ValidationFailed(
@@ -468,9 +468,35 @@ class UserAdminService(BaseService):
             )
         return user
 
+    def _in_territory(self, actor: Actor, queryset):
+        """Учётки, все действующие и будущие назначения которых лежат внутри
+        области `users.manage` актора (и учётки без назначений).
+
+        Раньше список и поиск по `users.manage` отдавали все учётки
+        организации тому, кому выдана одна территория: почты, имена и
+        роли людей чужих регионов (аудит 11.10, L-8). Управлять ими
+        `_require_manageable` и так не даёт — теперь их и не видно.
+        """
+        scope = self.access.scope_for(actor, "users.manage")
+        if scope.all_offices:
+            return queryset
+        outside = (
+            Q(region_id__isnull=True, office_id__isnull=True)
+            | (Q(office_id__isnull=True, region_id__isnull=False)
+               & ~Q(region_id__in=scope.region_ids))
+            | (Q(office_id__isnull=False) & ~Q(office_id__in=scope.office_ids))
+        )
+        foreign = UserRoleScope.objects.filter(
+            organization_id=actor.organization_id,
+        ).filter(
+            Q(valid_to__isnull=True) | Q(valid_to__gte=timezone.now())
+        ).filter(outside).values("user_id")
+        # Себя актор видит всегда: своя учётка (пароль, профиль) — не чужая.
+        return queryset.exclude(Q(id__in=foreign) & ~Q(id=actor.user_id))
+
     def _require(self, actor: Actor, user_id: uuid.UUID) -> User:
         user = (
-            User.objects.select_related("employee")
+            self._in_territory(actor, User.objects.select_related("employee"))
             .filter(id=user_id, organization_id=actor.organization_id)
             .first()
         )

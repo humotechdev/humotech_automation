@@ -115,7 +115,7 @@ class ExportJobService(BaseService):
         # Чужие заказы видит только тот, кому положено видеть журнал.
         # Без права список молча остаётся своим: отказывать в ответ на
         # флаг, которого человек не выбирал, — плохая замена умолчанию.
-        if mine_only or not self.access.has(actor, "audit.read"):
+        if mine_only or not self._sees_others(actor):
             rows = rows.filter(requested_by_user_id=actor.user_id)
         if status:
             # Несколько состояний через запятую: вкладка «В работе» —
@@ -149,9 +149,17 @@ class ExportJobService(BaseService):
         self.access.require(actor, "reports.export")
         job = self._require(actor, job_id)
         if (job.requested_by_user_id != actor.user_id
-                and not self.access.has(actor, "audit.read")):
+                and not self._sees_others(actor)):
             raise NotFound("Выгрузка не найдена")
         return job
+
+    def _sees_others(self, actor: Actor) -> bool:
+        """Чужие заказы (фильтры, почта заказчика, имя файла) — только тому,
+        у кого журнал на всю организацию. Аудитор одного офиса видит журнал
+        лишь своей области, а заказ выгрузки к офису не привязан (аудит
+        11.10, L-8)."""
+        return (self.access.has(actor, "audit.read")
+                and self.access.scope_for(actor, "audit.read").all_offices)
 
     def create(
         self, actor: Actor, *, kind: str, fmt: str, filters: dict | None = None,

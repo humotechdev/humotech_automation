@@ -871,3 +871,141 @@ def test_admin_password_login_is_impossible(organization):
                               "password": "Админ-Вымышленный-2026"})
     assert response.status_code == 200  # форма вернулась с ошибкой, не 302
     assert "_auth_user_id" not in Client().session
+
+
+# =============================================================================
+# L-3, L-4, L-5, L-6, L-8, L-11
+# =============================================================================
+
+
+class TestLowFindings:
+
+    def test_l3_link_throttle_is_per_telegram_user(self):
+        from rest_framework.test import APIRequestFactory
+
+        from humotech.telegram.views import BotLinkView, PerTelegramUserThrottle
+
+        factory = APIRequestFactory()
+        throttle = PerTelegramUserThrottle()
+        view = BotLinkView()
+
+        def key(uid):
+            from rest_framework.request import Request
+            from rest_framework.parsers import JSONParser
+
+            raw = factory.post("/x", {"telegram_user_id": uid}, format="json")
+            request = Request(raw, parsers=[JSONParser()])
+            throttle.scope = "telegram_bot_link"
+            return throttle.get_cache_key(request, view)
+
+        assert key(1001) != key(1002)
+        assert key(1001) == key(1001)
+
+    def test_l4_cluster_actions_use_answer_scope(self, organization, region):
+        from humotech.ai_assistant.models import UnansweredQuestion
+        from humotech.core.errors import NotFound
+        from humotech.questions.service import QuestionService
+
+        office_a = make_office(organization, region, "L4-A")
+        office_b = make_office(organization, region, "L4-B")
+        user, actor = create_actor(organization, office=office_a,
+                                   permissions=("questions.read", "questions.answer"),
+                                   role_code="L4_ANSWER_A")
+        _add_grant(organization, user, permissions=("questions.read",),
+                   office=office_b, role_code="L4_READ_B")
+        cluster_b = UnansweredQuestion.objects.create(
+            organization=organization, normalized_hash="4" * 64,
+            question_text="Вопрос из B", language="ru", status="NEW", office=office_b)
+        # Читать можно (B виден на чтение)…
+        QuestionService().get_unanswered(actor, cluster_b.id)
+        # …а распоряжаться — нет.
+        with pytest.raises(NotFound):
+            QuestionService().close_unanswered(actor, cluster_b.id, as_answered=False)
+
+    def test_l5_survey_remind_requires_whole_org(self, organization, office):
+        from humotech.surveys.services import SurveyCampaignService
+
+        _, scoped = create_actor(organization, office=office,
+                                 permissions=("surveys.read", "surveys.manage"))
+        import uuid as _uuid
+        with pytest.raises(PermissionDenied):
+            SurveyCampaignService().remind(scoped, _uuid.uuid4())
+
+    def test_l6_office_in_region_needs_whole_region(self, organization, region,
+                                                    other_region):
+        from django_tests.test_hr_org_structure import PLACE
+        from humotech.offices.services import OfficeService
+
+        office_a = make_office(organization, region, "L6-A")
+        _, scoped = create_actor(organization, office=office_a,
+                                 permissions=("offices.read", "offices.manage"))
+        with pytest.raises(PermissionDenied):
+            OfficeService().create(scoped, region_id=region.id, name="Новый", **PLACE)
+        with pytest.raises(PermissionDenied):
+            OfficeService().update(scoped, office_a.id, region_id=other_region.id)
+        _, regional = create_actor(organization, region=region,
+                                   permissions=("offices.read", "offices.manage"))
+        created = OfficeService().create(regional, region_id=region.id, name="Новый",
+                                         **PLACE)
+        assert created.region_id == region.id
+
+    def test_l8_remind_many_hides_foreign_state(self, organization, region):
+        from humotech.onboarding.services import OnboardingService
+
+        office_a = make_office(organization, region, "L8-A")
+        office_b = make_office(organization, region, "L8-B")
+        emp_b = _employee(organization, office_b, "L8-EB")
+        _, actor = create_actor(organization, office=office_a,
+                                permissions=("onboarding.read", "onboarding.manage"))
+        result = OnboardingService().remind_many(actor, [emp_b.id])
+        assert result == [{"employee_id": str(emp_b.id), "outcome": "not_enrolled"}]
+
+    def test_l8_foreign_export_jobs_need_org_wide_audit(self, organization, office):
+        from humotech.core.errors import NotFound
+        from humotech.reports.models import ExportJob
+        from humotech.reports.service import ExportJobService
+
+        author = create_actor(organization, permissions=("reports.export",))[0]
+        job = ExportJob.objects.create(organization=organization,
+                                       requested_by_user=author, kind="employees",
+                                       fmt="csv", status="QUEUED", filters={})
+        _, scoped = create_actor(organization, office=office,
+                                 permissions=("reports.export", "audit.read"))
+        with pytest.raises(NotFound):
+            ExportJobService().get(scoped, job.id)
+        _, wide = create_actor(organization, permissions=("reports.export", "audit.read"))
+        assert ExportJobService().get(wide, job.id).id == job.id
+
+    def test_l8_user_list_limited_to_users_manage_territory(self, organization, region,
+                                                           other_region):
+        from humotech.accounts.rbac_service import UserAdminService
+
+        office_a = make_office(organization, region, "L8U-A")
+        office_b = make_office(organization, other_region, "L8U-B")
+        _, actor = create_actor(organization, office=office_a,
+                                permissions=("users.manage",))
+        in_a = create_actor(organization, office=office_a, permissions=("employees.read",))[0]
+        in_b = create_actor(organization, office=office_b, permissions=("employees.read",))[0]
+        org_wide = create_actor(organization, permissions=("employees.read",))[0]
+        seen = {user.id for user in UserAdminService().list(actor, limit=100).items}
+        assert in_a.id in seen and actor.user_id in seen
+        assert in_b.id not in seen and org_wide.id not in seen
+
+    def test_l11_session_has_absolute_age(self, organization, make_user, settings):
+        import time as _time
+
+        from humotech.accounts.session_age import AUTH_AT_KEY
+
+        password = "Вымышленный-Пароль-2026"
+        user = make_user(organization, permissions=("employees.read",),
+                         raw_password=password)
+        client = APIClient()
+        assert client.post(f"{API}/auth/login",
+                           {"organization_code": organization.code,
+                            "email": user.email, "password": password},
+                           format="json", REMOTE_ADDR="198.51.100.40").status_code == 200
+        assert client.get(f"{API}/auth/me").status_code == 200
+        session = client.session
+        session[AUTH_AT_KEY] = int(_time.time()) - settings.SESSION_ABSOLUTE_AGE - 5
+        session.save()
+        assert client.get(f"{API}/auth/me").status_code in (401, 403)

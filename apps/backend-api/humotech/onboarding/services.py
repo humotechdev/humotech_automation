@@ -28,7 +28,7 @@ from django.conf import settings
 from django.db.models import Q
 from django.utils import timezone
 
-from humotech.core.errors import Conflict, NotFound, ValidationFailed
+from humotech.core.errors import Conflict, NotFound, PermissionDenied, ValidationFailed
 from humotech.core.pagination import Page, normalize_limit, paginate
 from humotech.core.rbac import Actor, snapshot
 from humotech.core.service import BaseService
@@ -683,6 +683,17 @@ class OnboardingService(BaseService):
         moment = now or timezone.now()
         results = []
         for employee_id in dict.fromkeys(employee_ids):
+            # Область — ДО любых сведений о человеке: иначе «уже напомнили
+            # сегодня» выдавало бы, что у сотрудника чужого офиса идёт
+            # ознакомление (аудит 11.10, L-8). Вне области — тот же ответ,
+            # что «не на ознакомлении»: ни существования, ни состояния.
+            try:
+                require_visible_employee(self.access, actor, employee_id,
+                                         "onboarding.manage")
+            except (NotFound, PermissionDenied):
+                results.append({"employee_id": str(employee_id),
+                                "outcome": "not_enrolled"})
+                continue
             row = EmployeeOnboarding.objects.filter(
                 employee_id=employee_id, organization_id=actor.organization_id
             ).first()

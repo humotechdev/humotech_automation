@@ -284,13 +284,35 @@ def _onboarding_required(employee_id) -> bool:
     return state is not None and not state.completed
 
 
+class PerTelegramUserThrottle(ScopedRateThrottle):
+    """Предел привязки — на человека в Telegram, а не на адрес.
+
+    Все запросы приходят от одного бота с одного адреса: счётчик по адресу
+    был общим на всех, и один пользователь, нажимающий /start быстрее
+    предела, закрывал привязку остальным (аудит 11.10, L-3). Ключ —
+    `telegram_user_id` из тела; без него — прежний ключ по адресу.
+    Тело принимается только от бота с общим секретом (`IsTelegramBot`
+    проверяется раньше), так что чужой id сюда не подставить.
+    """
+
+    def get_cache_key(self, request, view):
+        raw = request.data.get("telegram_user_id") if hasattr(request, "data") else None
+        try:
+            ident = f"tg:{int(raw)}" if raw is not None else None
+        except (TypeError, ValueError):
+            ident = None
+        if ident is None:
+            return super().get_cache_key(request, view)
+        return self.cache_format % {"scope": self.scope, "ident": ident}
+
+
 class BotLinkView(APIView):
     """Погашение ссылки. Вызывает только бот, пользователя за запросом нет."""
 
     authentication_classes: list = []
     permission_classes = [IsTelegramBot]
     throttle_scope = "telegram_bot_link"
-    throttle_classes = [ScopedRateThrottle]
+    throttle_classes = [PerTelegramUserThrottle]
 
     @extend_schema(
         operation_id="telegram_bot_link",
@@ -353,7 +375,7 @@ class BotRecognizeView(APIView):
     authentication_classes: list = []
     permission_classes = [IsTelegramBot]
     throttle_scope = "telegram_bot_link"
-    throttle_classes = [ScopedRateThrottle]
+    throttle_classes = [PerTelegramUserThrottle]
 
     @extend_schema(
         operation_id="telegram_bot_recognize",
