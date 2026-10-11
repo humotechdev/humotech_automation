@@ -700,3 +700,46 @@ class TestAdminOrganizationScope:
         page = client.get(f"/admin/rbac/role/{system.id}/change/")
         assert page.status_code == 200
         assert 'name="_save"' not in page.content.decode()
+
+
+# =============================================================================
+# M-8. Блокировка учётки не выбивает владельца со знакомого адреса
+# =============================================================================
+
+
+class TestAccountLockDoesNotLockOwnerOut:
+    PASSWORD = "Вымышленный-Пароль-2026"
+
+    def _login(self, organization, email, password, ip):
+        return APIClient().post(
+            f"{API}/auth/login",
+            {"organization_code": organization.code, "email": email,
+             "password": password},
+            format="json", REMOTE_ADDR=ip)
+
+    def test_owner_on_known_address_survives_distributed_lock(self, organization,
+                                                             make_user):
+        owner = make_user(organization, permissions=("employees.read",),
+                          raw_password=self.PASSWORD)
+        office_ip = "198.51.100.10"
+        assert self._login(organization, owner.email, self.PASSWORD,
+                           office_ip).status_code == 200
+        # Злоумышленник с разных адресов выбивает общий счётчик учётки.
+        for n in range(21):
+            self._login(organization, owner.email, "не тот", f"192.0.2.{n + 1}")
+        # С нового адреса — заблокировано (перебор так и остаётся закрыт)…
+        assert self._login(organization, owner.email, self.PASSWORD,
+                           "203.0.113.200").status_code == 429
+        # …а владелец со знакомого адреса входит.
+        assert self._login(organization, owner.email, self.PASSWORD,
+                           office_ip).status_code == 200
+
+    def test_known_address_still_limited_per_pair(self, organization, make_user):
+        """Знакомый адрес — не лазейка для перебора: пара «логин + адрес»."""
+        owner = make_user(organization, permissions=("employees.read",),
+                          raw_password=self.PASSWORD)
+        ip = "198.51.100.11"
+        assert self._login(organization, owner.email, self.PASSWORD, ip).status_code == 200
+        codes = [self._login(organization, owner.email, "не тот", ip).status_code
+                 for _ in range(6)]
+        assert codes[-1] == 429

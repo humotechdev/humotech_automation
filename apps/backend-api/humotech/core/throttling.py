@@ -115,6 +115,28 @@ def peek(key: str, *, now: datetime | None = None) -> int:
     return _seconds(locked_until - now) if locked_until else 0
 
 
+def remember(key: str, seconds: int, *, now: datetime | None = None) -> None:
+    """Запомнить факт на `seconds` секунд (например, «с этого адреса уже входили»).
+
+    Хранится той же строкой счётчика: срок — в `locked_until`, поэтому
+    чистка устаревших строк его не снимет раньше времени. Читается
+    `remembered`. Никаких попыток не засчитывает.
+    """
+    from humotech.accounts.models import AuthRateCounter
+
+    now = now or timezone.now()
+    until = now + timedelta(seconds=seconds)
+    AuthRateCounter.objects.update_or_create(
+        key=key,
+        defaults={"hits": 0, "window_started_at": now, "updated_at": now,
+                  "locked_until": until},
+    )
+
+
+def remembered(key: str, *, now: datetime | None = None) -> bool:
+    return peek(key, now=now) > 0
+
+
 def release(key: str) -> None:
     """Вернуть одну попытку: она оказалась законной."""
     from humotech.accounts.models import AuthRateCounter

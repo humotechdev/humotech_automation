@@ -41,6 +41,9 @@ from humotech.core.rbac import Actor, AuditTrail
 
 log = logging.getLogger("humotech.auth")
 
+#: Сколько адрес считается «знакомым» после удачного входа с него.
+KNOWN_ADDRESS_SECONDS = 30 * 24 * 3600
+
 _DEFAULTS = {
     "ACCOUNT_IP": (5, 900, 900),
     "ACCOUNT": (20, 3600, 900),
@@ -71,12 +74,22 @@ class LoginGuard:
             "ACCOUNT_IP": throttling.counter_key("login:account-ip", org, who, self.ip),
             "ACCOUNT": throttling.counter_key("login:account", org, who),
             "IP": throttling.counter_key("login:ip", self.ip),
+            "KNOWN": throttling.counter_key("login:known", org, who, self.ip),
         }
         self._counted: list[str] = []
 
     def admit(self) -> int:
-        """0 — можно проверять пароль; иначе через сколько секунд повторить."""
-        for name in ("ACCOUNT_IP", "ACCOUNT", "IP"):
+        """0 — можно проверять пароль; иначе через сколько секунд повторить.
+
+        Общий счётчик учётки («с любого адреса») не применяется к адресу,
+        с которого этот логин уже успешно входил. Иначе злоумышленник,
+        знающий код организации и почту, с нескольких адресов держал бы
+        HR или администратора вне системы, даже с верным паролем (аудит
+        11.10, M-8). Перебор со знакомого адреса по-прежнему режет пара
+        «логин + адрес» и счётчик адреса; с чужих адресов — общий счётчик.
+        """
+        buckets = ("ACCOUNT_IP", "IP") if throttling.remembered(self.keys["KNOWN"])             else ("ACCOUNT_IP", "ACCOUNT", "IP")
+        for name in buckets:
             verdict = throttling.hit(self.keys[name], _limit(name))
             if not verdict.allowed:
                 if verdict.just_locked:
@@ -91,6 +104,7 @@ class LoginGuard:
         # иначе злоумышленник со своей учёткой сбрасывал бы его входом
         # между попытками. Ему возвращается только эта, законная, попытка.
         throttling.reset(self.keys["ACCOUNT_IP"], self.keys["ACCOUNT"])
+        throttling.remember(self.keys["KNOWN"], KNOWN_ADDRESS_SECONDS)
         if "IP" in self._counted:
             throttling.release(self.keys["IP"])
         _record(
