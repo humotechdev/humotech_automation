@@ -850,6 +850,15 @@ class TelegramLinkService(BaseService):
         человеку, что доступ откроет отдел кадров.
         """
         with transaction.atomic():
+            # Тот же порядок блокировок, что в `confirm`/`reject`/`disconnect`:
+            # сначала приглашения сотрудника, затем привязка. В обратном
+            # порядке одновременные «согласен» и подтверждение HR ловили
+            # deadlock (аудит 12.10, A-25).
+            employee_id = TelegramAccount.objects.filter(
+                telegram_user_id=telegram_user_id, status="PENDING"
+            ).values_list("employee_id", flat=True).first()
+            if employee_id is not None:
+                self._lock_employee_link(employee_id)
             account = TelegramAccount.objects.select_for_update().filter(
                 telegram_user_id=telegram_user_id, status="PENDING"
             ).first()

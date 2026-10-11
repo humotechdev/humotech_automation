@@ -79,3 +79,68 @@ def test_confirm_does_not_resurrect_concurrently_disconnected_link(
 def _named(name, fn):
     threading.current_thread().name = name
     return fn()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_accept_terms_and_confirm_take_locks_in_one_order(
+    make_actor, organization, employee, telegram_settings, monkeypatch
+):
+    """Согласие сотрудника и подтверждение HR в одну секунду — без deadlock.
+
+    `confirm` блокирует приглашения, затем привязку. Если `accept_terms`
+    берёт их в обратном порядке, Postgres обрывает одну из транзакций
+    (DeadlockDetected → 500 у HR или у сотрудника).
+    """
+    from django.db.models.query import QuerySet
+
+    from humotech.telegram.services import TelegramLinkError
+
+    hr = make_actor(organization, permissions=TELEGRAM_FULL)
+    issued = TelegramLinkService().create_invitation(hr, employee.id)
+    TelegramLinkService().consume(token=issued.token, telegram_user_id=5_102,
+                                  telegram_chat_id=5_102)
+    invitation = TelegramLinkInvitation.objects.get(employee=employee,
+                                                    status="PENDING_CONFIRMATION")
+
+    paused = threading.Event()
+    original_first = QuerySet.first
+
+    def slow_first(self):
+        result = original_first(self)
+        # Поток согласия задерживается сразу после блокировки привязки.
+        if (threading.current_thread().name == "accept"
+                and self.model is TelegramAccount and self.query.select_for_update):
+            paused.set()
+            threading.Event().wait(1.5)
+        return result
+
+    monkeypatch.setattr(QuerySet, "first", slow_first)
+
+    def accept():
+        try:
+            TelegramLinkService().accept_terms(telegram_user_id=5_102)
+            return "accepted"
+        except TelegramLinkError as error:
+            return error.reason
+        except Exception as error:  # noqa: BLE001
+            return type(error).__name__
+        finally:
+            connection.close()
+
+    def confirm():
+        paused.wait(timeout=10)
+        try:
+            TelegramLinkService().confirm(hr, invitation.id)
+            return "confirmed"
+        except Exception as error:  # noqa: BLE001
+            return type(error).__name__
+        finally:
+            connection.close()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(lambda: _named("accept", accept))
+        second = pool.submit(lambda: _named("confirm", confirm))
+        outcomes = (first.result(timeout=30), second.result(timeout=30))
+
+    assert paused.is_set(), "контроль: поток согласия не дошёл до блокировки"
+    assert outcomes == ("hr_confirmation_required", "confirmed"), outcomes
