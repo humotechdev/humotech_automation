@@ -1467,15 +1467,32 @@ class AbsenceService(BaseService):
                 related_entity_id=request.id,
             )
 
-    def open_document(self, actor: Actor, request_id, document_id):
-        """Файл справки к заявке — тем, кто видит саму заявку.
+    #: Кто открывает ФАЙЛ справки: тот, кто проверяет бумаги, и тот, кто
+    #: решает по заявке. Наблюдатель, бухгалтер и администратор офиса
+    #: видят в заявке только факт, что справка есть (решение владельца
+    #: 11.10.2026 по противоречию в матрице ролей, аудит M-5).
+    DOCUMENT_FILE_PERMISSIONS = ("absences.documents", "absences.approve")
 
-        Право то же, что на очередь, и область та же: справка чужого офиса
-        не открывается по угаданному адресу. Отказ по области отвечает «не
-        найдено», а не «запрещено»: иначе по ответу можно было бы
-        перебирать, какие заявки существуют.
+    def open_document(self, actor: Actor, request_id, document_id):
+        """Файл справки к заявке — тому, кто проверяет или решает.
+
+        Справка — медицинские данные. `absences.read` мало: его несут
+        VIEWER, ACCOUNTANT и OFFICE_ADMIN. Нужно `absences.documents` или
+        `absences.approve`, и сотрудник должен быть в области ИМЕННО того
+        назначения, что несёт это право, — «HR на офис A + наблюдатель на
+        офис B» справку из B не открывает. Область — по текущему
+        назначению сотрудника, у уволенного — по последнему: так HR его
+        офиса не теряет справки уволенного (аудит L-10).
+
+        Отказ по области отвечает «не найдено», а не «запрещено»: иначе по
+        ответу можно было бы перебирать, какие заявки существуют.
         """
-        self.access.require(actor, "absences.read")
+        held = [code for code in self.DOCUMENT_FILE_PERMISSIONS
+                if self.access.has(actor, code)]
+        if not held:
+            raise PermissionDenied(
+                "Файл справки открывает тот, кто проверяет бумаги или решает по заявке"
+            )
         document = (
             AbsenceDocument.objects.filter(
                 id=document_id,
@@ -1487,12 +1504,21 @@ class AbsenceService(BaseService):
         )
         if document is None:
             raise NotFound("Документ не найден")
-        visible = self._scope_ids(actor)
-        if visible is not None and not visible.filter(
-            employee_id=document.absence_request.employee_id
-        ).exists():
+        if not any(
+            self._covers_employee(actor, document.absence_request.employee_id, code)
+            for code in held
+        ):
             raise NotFound("Документ не найден")
         return open_stored(document.file), document.file
+
+    def _covers_employee(self, actor: Actor, employee_id, permission: str) -> bool:
+        from humotech.employees.selectors import require_visible_employee
+
+        try:
+            require_visible_employee(self.access, actor, employee_id, permission)
+        except (NotFound, PermissionDenied):
+            return False
+        return True
 
     def verify_document(
         self,

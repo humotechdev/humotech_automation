@@ -292,3 +292,61 @@ class TestWriteScopeFollowsCurrentAssignment:
         # Читать карточку уволенного может и HR прежнего офиса.
         require_visible_employee(access, hr_a, emp.id, "employees.read")
         require_visible_employee(access, hr_a, emp.id)
+
+
+# =============================================================================
+# M-5 / L-10. Файл медицинской справки
+# =============================================================================
+
+from django_tests.test_security_files import (  # noqa: E402  фикстуры больничного
+    context, hr_url, sick, sick_leave,
+)
+
+
+class TestCertificateFile:
+    """Файл справки открывают `absences.documents` или `absences.approve`
+    в области этого права (решение владельца 11.10.2026)."""
+
+    @pytest.mark.parametrize("perms", [
+        ("employees.read", "absences.read"),                       # VIEWER
+        ("employees.read", "absences.read", "reports.export"),     # ACCOUNTANT
+        ("employees.read", "absences.read", "attendance.manual"),  # OFFICE_ADMIN
+    ])
+    def test_readers_without_decision_rights_get_403(self, organization, office,
+                                                      sick, perms):
+        request, document = sick
+        user = create_actor(organization, permissions=perms, office=office)[0]
+        refused = _client(user).get(hr_url(request, document))
+        assert refused.status_code == 403
+        assert b"%PDF" not in b"".join(getattr(refused, "streaming_content", [refused.content]))
+
+    @pytest.mark.parametrize("perms", [
+        ("absences.read", "absences.approve"),     # MANAGER
+        ("absences.read", "absences.documents"),   # HR
+    ])
+    def test_decision_rights_in_scope_open_file(self, organization, office, sick, perms):
+        request, document = sick
+        user = create_actor(organization, permissions=perms, office=office)[0]
+        assert _client(user).get(hr_url(request, document)).status_code == 200
+
+    def test_approve_in_a_does_not_open_file_seen_via_viewer_in_b(
+            self, organization, region, office, sick):
+        """Комбо: решает в офисе A, просто видит офис B (где больной)."""
+        request, document = sick
+        office_a = make_office(organization, region, "M5-A")
+        user, _ = create_actor(organization, office=office_a,
+                               permissions=("absences.read", "absences.approve"))
+        _add_grant(organization, user, permissions=("absences.read",),
+                   office=office, role_code="M5_VIEW_B")
+        assert _client(user).get(hr_url(request, document)).status_code == 404
+
+    def test_dismissed_employee_file_stays_with_last_office_hr(
+            self, organization, office, sick, employee):
+        """L-10: увольнение закрывает назначения — HR его офиса справку не теряет."""
+        request, document = sick
+        EmployeeAssignment.objects.filter(employee=employee).update(
+            valid_to=date.today() - timedelta(days=1))
+        Employee.objects.filter(id=employee.id).update(employment_status="TERMINATED")
+        hr = create_actor(organization, office=office,
+                          permissions=("absences.read", "absences.documents"))[0]
+        assert _client(hr).get(hr_url(request, document)).status_code == 200

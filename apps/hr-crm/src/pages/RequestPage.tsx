@@ -24,6 +24,7 @@ import { ApiFailure, reasonFor } from '../api/errors';
 import { AppShell } from '../components/AppShell';
 import { AppIcon } from '../components/AppIcon';
 import { DatePicker } from '../components/DatePicker';
+import { useSession } from '../features/auth/session';
 import { todayIso } from '../features/employee/model';
 import { refreshBadgesSoon } from '../features/shell/badges';
 import { placeOf } from '../features/shell/places';
@@ -352,6 +353,11 @@ function RequestSkeleton() {
 
 function Materials({ item }: { item: api.QueueItem }) {
   const paper = certificateOf(item);
+  // Файл справки — медицинские данные: его открывают `absences.documents`
+  // и `absences.approve`. Остальным виден только факт, что справка есть.
+  const session = useSession();
+  const mine = session.status === 'authenticated' ? session.user.permissions : [];
+  const canOpenPaper = mine.includes('absences.documents') || mine.includes('absences.approve');
   const closed = isClosed(item);
   const steps = item.absence?.history ?? [];
 
@@ -383,7 +389,7 @@ function Materials({ item }: { item: api.QueueItem }) {
                 tone={paper.verification_status === 'REJECTED' ? 'red' : 'blue'}
                 title={paper.file.name}
                 note={`${size(paper.file.size_bytes)} · ${dateTime(paper.file.uploaded_at)}`}
-                href={api.absenceDocumentUrl(item.id, paper.id)}
+                href={canOpenPaper ? api.absenceDocumentUrl(item.id, paper.id) : undefined}
                 download={paper.file.name}
                 action="Скачать"
               />

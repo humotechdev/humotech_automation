@@ -109,6 +109,8 @@ const MISSING = Symbol('missing');
 type Rights = {
   read: boolean; attendance: boolean; absences: boolean; audit: boolean;
   manage: boolean; manual: boolean; correct: boolean; decide: boolean;
+  /** Открыть файл справки: `absences.documents` или `absences.approve`. */
+  papers: boolean;
   export: boolean; telegramRead: boolean; telegramManage: boolean;
   onboardingRead: boolean; onboardingManage: boolean; schedules: boolean;
 };
@@ -143,6 +145,7 @@ function EmployeeCard({ id }: { id: string }) {
     manual: mine.has('attendance.manual'),
     correct: mine.has('attendance.correct'),
     decide: mine.has('absences.approve'),
+    papers: mine.has('absences.documents') || mine.has('absences.approve'),
     export: mine.has('reports.export'),
     telegramRead: mine.has('telegram.read'),
     telegramManage: mine.has('telegram.manage'),
@@ -1293,7 +1296,7 @@ function RequestDetails({ item, title, rights, zone, onDone }: {
           <p className="ec-muted">До подтверждения не хватает: {missingText(missing)}.</p>
         )}
         {absence?.review_comment && <p className="ec-muted">Комментарий к решению: {absence.review_comment}</p>}
-        {paper && (
+        {paper && rights.papers && (
           <a className="ec-link" href={api.absenceDocumentUrl(item.id, paper.id)} target="_blank"
              rel="noreferrer" title={paper.file.name}>
             Открыть справку
