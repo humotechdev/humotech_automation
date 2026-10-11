@@ -350,3 +350,82 @@ class TestCertificateFile:
         hr = create_actor(organization, office=office,
                           permissions=("absences.read", "absences.documents"))[0]
         assert _client(hr).get(hr_url(request, document)).status_code == 200
+
+
+# =============================================================================
+# M-3. Правка набора прав уже выданной роли
+# =============================================================================
+
+
+class TestRoleEditCoversGrants:
+
+    def _service(self):
+        from humotech.accounts.rbac_service import RoleAdminService
+
+        return RoleAdminService()
+
+    def _setup(self, organization, region):
+        office_a = make_office(organization, region, "M3-A")
+        office_b = make_office(organization, region, "M3-B")
+        user, actor = create_actor(organization, office=office_a,
+                                   permissions=("roles.manage", "employees.read"),
+                                   role_code="M3_ROLES_A")
+        _add_grant(organization, user, permissions=("employees.manage",),
+                   office=office_b, role_code="M3_MANAGE_B")
+        bob = create_actor(organization, permissions=())[0]
+        custom = Role.objects.create(organization=organization, code="M3_CUSTOM",
+                                     name="Своя")
+        perm, _ = Permission.objects.get_or_create(
+            code="employees.read", defaults={"name": "r", "description": "r"})
+        RolePermission.objects.create(role=custom, permission=perm)
+        return actor, office_a, office_b, bob, custom
+
+    def test_cannot_add_permission_to_org_wide_grant(self, organization, region):
+        from humotech.core.errors import PermissionDenied
+
+        actor, _, _, bob, custom = self._setup(organization, region)
+        UserRoleScope.objects.create(organization=organization, user=bob, role=custom,
+                                     valid_from=datetime.now(tz=dt_timezone.utc))
+        with pytest.raises(PermissionDenied):
+            self._service().update_role(
+                actor, custom.id, permissions=["employees.read", "employees.manage"])
+        assert set(RolePermission.objects.filter(role=custom).values_list(
+            "permission__code", flat=True)) == {"employees.read"}
+
+    def test_cannot_strip_role_granted_outside_scope(self, organization, region):
+        from humotech.core.errors import PermissionDenied
+
+        actor, _, office_b, bob, custom = self._setup(organization, region)
+        UserRoleScope.objects.create(organization=organization, user=bob, role=custom,
+                                     office=office_b,
+                                     valid_from=datetime.now(tz=dt_timezone.utc))
+        with pytest.raises(PermissionDenied):
+            self._service().update_role(actor, custom.id, permissions=[])
+
+    def test_edit_role_granted_inside_own_scope(self, organization, region):
+        actor, office_a, _, bob, custom = self._setup(organization, region)
+        UserRoleScope.objects.create(organization=organization, user=bob, role=custom,
+                                     office=office_a,
+                                     valid_from=datetime.now(tz=dt_timezone.utc))
+        # Снять право в своей области можно.
+        self._service().update_role(actor, custom.id, permissions=[])
+        assert not RolePermission.objects.filter(role=custom).exists()
+        # А добавить employees.manage в A — нет: оно у актора только в B.
+        from humotech.core.errors import PermissionDenied
+
+        with pytest.raises(PermissionDenied):
+            self._service().update_role(actor, custom.id,
+                                        permissions=["employees.manage"])
+
+    def test_org_wide_admin_unchanged(self, organization, region):
+        _, admin = create_actor(organization,
+                                permissions=("roles.manage", "employees.read",
+                                             "employees.manage"))
+        bob = create_actor(organization, permissions=())[0]
+        custom = Role.objects.create(organization=organization, code="M3_ORG",
+                                     name="Своя")
+        UserRoleScope.objects.create(organization=organization, user=bob, role=custom,
+                                     valid_from=datetime.now(tz=dt_timezone.utc))
+        self._service().update_role(admin, custom.id,
+                                    permissions=["employees.read", "employees.manage"])
+        assert RolePermission.objects.filter(role=custom).count() == 2

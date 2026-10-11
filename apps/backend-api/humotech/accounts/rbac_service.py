@@ -700,6 +700,9 @@ class RoleAdminService(BaseService):
                 # которых у тебя нет, а потом выдать её себе — это тот же
                 # обход, только в два шага.
                 after_codes = self._grantable_codes(actor, permissions)
+                if after_codes != before_codes:
+                    self._require_covers_grants(
+                        actor, role, added=after_codes - before_codes)
                 self._replace_permissions(role, after_codes)
             if fields or after_codes != before_codes:
                 # `updated_at` двигается и когда менялись только права.
@@ -719,6 +722,50 @@ class RoleAdminService(BaseService):
                 )
         self.access.invalidate()
         return self._describe(actor, role)
+
+    def _require_covers_grants(self, actor: Actor, role: Role, *,
+                               added: set[str]) -> None:
+        """Правка набора прав роли действует везде, где роль уже выдана.
+
+        `_grantable_codes` сверяет права с объединением всех назначений
+        актора и о территории не знает. Тогда актор с `roles.manage` на
+        офис A и `employees.manage` на офис B добавлял `employees.manage`
+        в роль, выданную кому-то на всю организацию, — и тот получал право
+        по всей организации; или снимал права с роли администратора
+        организации (аудит 11.10, M-3).
+
+        Поэтому для КАЖДОЙ действующей и будущей выдачи роли:
+        - территория выдачи внутри области `roles.manage` актора — менять
+          чужие выдачи, в том числе урезать, нельзя;
+        - каждое ДОБАВЛЯЕМОЕ право у актора есть на этой территории —
+          та же проверка, что `_require_grantable` при выдаче.
+        """
+        now = timezone.now()
+        grants = UserRoleScope.objects.filter(role=role).filter(
+            Q(valid_to__isnull=True) | Q(valid_to__gt=now)
+        ).values_list("region_id", "office_id").distinct()
+        manage = self.access.scope_for(actor, "roles.manage")
+        outside, missing = [], set()
+        for region_id, office_id in grants:
+            if not _scope_covers(manage, region_id=region_id, office_id=office_id):
+                outside.append({"region_id": str(region_id) if region_id else None,
+                                "office_id": str(office_id) if office_id else None})
+                continue
+            missing.update(
+                code for code in added
+                if not _scope_covers(self.access.scope_for(actor, code),
+                                     region_id=region_id, office_id=office_id)
+            )
+        if outside:
+            raise PermissionDenied(
+                "Роль выдана вне вашей области: менять её права нельзя",
+                details={"role": role.code, "grants_outside": outside},
+            )
+        if missing:
+            raise PermissionDenied(
+                "Роль выдана там, где у вас нет добавляемых прав",
+                details={"role": role.code, "missing_permissions": sorted(missing)},
+            )
 
     def _grantable_codes(self, actor: Actor, codes: list[str]) -> set[str]:
         """Права, которые актор действительно может вложить в роль."""
