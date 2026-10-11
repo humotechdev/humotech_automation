@@ -69,22 +69,35 @@ class EmployeeAttachmentService(BaseService):
         return stored.file
 
     def take(self, actor: Actor, file_ids: list[uuid.UUID]) -> dict[uuid.UUID, File]:
-        """Проверить, что файлы существуют и принадлежат этой организации.
+        """Проверить, что файлы — свежие загрузки этого же кадровика.
 
-        Идентификатор приходит от клиента, и без этой проверки чужой файл
-        привязался бы к своему сотруднику по одному только UUID.
+        Идентификатор приходит от клиента, а карточка отдаёт `file_id`
+        документов и фото каждому, кто её видит. Поэтому мало, чтобы файл
+        был из этой организации: иначе паспорт сотрудника из чужой области
+        привязывался бы к «своему» сотруднику и скачивался бы мимо
+        `employees.manage` в области того сотрудника (аудит 11.10, H-1).
+        Принимается только файл, который загрузил сам актор и который ещё
+        ни к кому не привязан: так файл попадает в карточку ровно одним
+        путём — `upload` → привязка тем же человеком.
         """
         if not file_ids:
             return {}
-        rows = File.objects.filter(
-            id__in=file_ids,
-            organization_id=actor.organization_id,
-            deleted_at__isnull=True,
-            # Только кадровые загрузки (`upload` выше кладёт их под
-            # `employees/`). Иначе по UUID к «документам» сотрудника
-            # привязывалась бы чужая справка больничного или файл
-            # обращения — и скачивалась бы мимо `absences.read`.
-            storage_key__startswith="employees/",
+        rows = (
+            File.objects.filter(
+                id__in=file_ids,
+                organization_id=actor.organization_id,
+                uploaded_by_user_id=actor.user_id,
+                deleted_at__isnull=True,
+                # Только кадровые загрузки (`upload` выше кладёт их под
+                # `employees/`). Иначе по UUID к «документам» сотрудника
+                # привязывалась бы чужая справка больничного или файл
+                # обращения — и скачивалась бы мимо `absences.read`.
+                storage_key__startswith="employees/",
+            )
+            .exclude(id__in=EmployeeDocument.objects.filter(
+                file_id__isnull=False).values("file_id"))
+            .exclude(id__in=Employee.objects.filter(
+                photo_id__isnull=False).values("photo_id"))
         )
         found = {row.id: row for row in rows}
         missing = [str(one) for one in file_ids if one not in found]
