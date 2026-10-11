@@ -93,8 +93,30 @@ class OrganizationScopedAdmin(admin.ModelAdmin):
                 organization_id=self._organization_id(request))
         return super().formfield_for_manytomany(db_field, request, **kwargs)
 
+    def get_list_filter(self, request):
+        """Фильтр по связи строит варианты по всей таблице и показал бы
+        названия чужих организаций, регионов и ролей. RelatedOnly берёт
+        только значения из видимых строк (независимая проверка 11.10, F-4)."""
+        result = []
+        for item in super().get_list_filter(request):
+            if isinstance(item, str):
+                try:
+                    field = self.model._meta.get_field(item)
+                except Exception:
+                    field = None
+                if field is not None and getattr(field, "is_relation", False):
+                    result.append((item, admin.RelatedOnlyFieldListFilter))
+                    continue
+            result.append(item)
+        return result
+
     def has_change_permission(self, request, obj=None) -> bool:
-        if obj is not None and _has_field(type(obj), "organization")                 and getattr(obj, "organization_id", None) is None:
+        system_row = (
+            obj is not None
+            and _has_field(type(obj), "organization")
+            and getattr(obj, "organization_id", None) is None
+        )
+        if system_row:
             return False
         return super().has_change_permission(request, obj)
 

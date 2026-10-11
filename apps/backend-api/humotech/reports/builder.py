@@ -1041,7 +1041,7 @@ class ReportBuilderService(BaseService):
         # Область отчёта — пересечение области данных с областью
         # `reports.export`: офисы, отделы и сотрудники берутся только там,
         # где у заказчика есть сама выгрузка (аудит 11.10, M-4).
-        actor = actor.confined("reports.export")
+        actor = actor.confined("reports.export", KIND_PERMISSIONS[spec.kind])
         return REPORTS[spec.kind](self, actor, spec, author=author)
 
     def check(self, actor: Actor, spec: ReportSpec) -> None:

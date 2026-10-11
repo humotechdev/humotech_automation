@@ -6,6 +6,13 @@
 UPDATE и DELETE на все таблицы. При компрометации приложения журнал можно
 было бы подчистить (наблюдение инвентаризации 11.10, §11.7).
 
+Чего триггер НЕ даёт (независимая проверка 11.10, F-1): код под ролью
+приложения может сам выставить `humotech.audit_purge` и удалить записи.
+Это защита от ошибок кода и обходов модели, а не от компрометации роли
+приложения. От неё — отдельная мера на рабочем сервере: REVOKE UPDATE,
+DELETE ON audit_logs FROM humotech_app (сидеры стендов там не запускаются)
+и выгрузка журнала во внешнее хранилище — docs/security/audit-log-integrity.md.
+
 Триггер:
   * UPDATE запрещён — кроме обнуления `actor_user_id` при удалении учётки
     (ON DELETE SET NULL), где остальная строка не меняется;
@@ -26,7 +33,10 @@ BEGIN
         -- Единственное допустимое изменение — ON DELETE SET NULL внешнего
         -- ключа на учётку: строка остаётся той же, теряется лишь ссылка
         -- на удалённого пользователя.
-        IF OLD.actor_user_id IS NOT NULL AND NEW.actor_user_id IS NULL
+        -- pg_trigger_depth() > 1: изменение пришло из внутреннего триггера
+        -- ссылочной целостности (ON DELETE SET NULL), а не прямым UPDATE.
+        IF pg_trigger_depth() > 1
+           AND OLD.actor_user_id IS NOT NULL AND NEW.actor_user_id IS NULL
            AND (to_jsonb(NEW) - 'actor_user_id') = (to_jsonb(OLD) - 'actor_user_id') THEN
             RETURN NEW;
         END IF;

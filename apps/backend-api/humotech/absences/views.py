@@ -147,7 +147,7 @@ class PendingAbsenceRequestsSerializer(serializers.Serializer):
     requests = HrAbsenceRequestSerializer(many=True)
 
 
-def hr_request_json(request, tz=None, *, deep: bool = False) -> dict:
+def hr_request_json(request, tz=None, *, deep: bool = False, actor=None) -> dict:
     """Заявка глазами кадровика.
 
     Комментарий сотрудника здесь есть: тот, кто принимает решение, должен
@@ -162,6 +162,7 @@ def hr_request_json(request, tz=None, *, deep: bool = False) -> dict:
     принимают решение; в очереди их не показывают, и платить за них
     обходом графиков на каждую строку незачем.
     """
+    papers = actor is None or AbsenceService().can_open_papers(actor, request.employee_id)
     zone = tz or organization_zone(request.organization_id)
     extra: dict = {}
     if deep:
@@ -229,6 +230,10 @@ def hr_request_json(request, tz=None, *, deep: bool = False) -> dict:
         # Документы отдельно от самой заявки: «справка загружена» и
         # «справка проверена» — разные состояния, и слить их значило бы
         # считать документ проверенным по факту загрузки.
+        # Имя файла и комментарий проверки — только тому, кто может открыть
+        # сам файл справки (absences.documents / absences.approve в области
+        # права): имя вводит сотрудник, и в нём бывает диагноз. Остальным —
+        # факт и состояние (решение владельца 11.10, независимая проверка F-9).
         "documents": [
             {
                 "id": str(document.id),
@@ -240,10 +245,11 @@ def hr_request_json(request, tz=None, *, deep: bool = False) -> dict:
                 # Что кадровик сказал о бумаге. Без этого «нужна новая
                 # версия» на странице заявки означает «что-то не так,
                 # догадайся сам» — и следующий раз приносят то же самое.
-                "verification_comment": document.verification_comment,
+                "verification_comment": (
+                    document.verification_comment if papers else None),
                 "file": {
                     "id": str(document.file_id),
-                    "name": document.file.original_filename,
+                    "name": document.file.original_filename if papers else None,
                     "mime_type": document.file.mime_type,
                     "size_bytes": document.file.size_bytes,
                     "uploaded_at": document.file.created_at.isoformat(),
@@ -330,7 +336,7 @@ class PendingAbsenceRequestsView(APIView):
         actor = Actor.from_user(request.user)
         rows = AbsenceService().pending(actor)
         zone = organization_zone(actor.organization_id)
-        return Response({"requests": [hr_request_json(row, zone) for row in rows]})
+        return Response({"requests": [hr_request_json(row, zone, actor=actor) for row in rows]})
 
 
 @extend_schema(tags=["Отсутствия"])
@@ -355,7 +361,7 @@ class AbsenceRequestView(APIView):
     )
     def get(self, request, request_id):
         row = AbsenceService().for_hr(Actor.from_user(request.user), request_id)
-        return Response(hr_request_json(row, deep=True))
+        return Response(hr_request_json(row, deep=True, actor=Actor.from_user(request.user)))
 
 
 @extend_schema(tags=["Отсутствия"])
@@ -410,7 +416,7 @@ class AbsenceDecisionView(APIView):
                 actor, request_id, approve=decision == "approve",
                 comment=comment, override_marks=bool(data.get("override_marks"))
             )
-        return Response(hr_request_json(row, deep=True))
+        return Response(hr_request_json(row, deep=True, actor=Actor.from_user(request.user)))
 
 
 class PeriodSerializer(serializers.Serializer):
@@ -455,7 +461,7 @@ class AbsencePeriodView(APIView):
             last_day=data["last_day"],
             comment=data.get("comment") or None,
         )
-        return Response(hr_request_json(row, deep=True))
+        return Response(hr_request_json(row, deep=True, actor=Actor.from_user(request.user)))
 
 
 @extend_schema(tags=["Отсутствия"])
@@ -491,7 +497,7 @@ class AbsenceApplicationReceivedView(APIView):
             request_id,
             received=received not in ("false", "0"),
         )
-        return Response(hr_request_json(row, deep=True))
+        return Response(hr_request_json(row, deep=True, actor=Actor.from_user(request.user)))
 
 
 @extend_schema(tags=["Отсутствия"])

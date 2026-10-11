@@ -1238,3 +1238,98 @@ class TestAntivirusScan:
     def test_scanner_off_keeps_unscanned(self, organization, office):
         _, hr = create_actor(organization, permissions=("employees.read", "employees.manage"))
         assert self._upload(organization, office, hr).scan_status == "UNSCANNED"
+
+
+# =============================================================================
+# Независимая проверка 11.10 (F-2, F-4, F-6, F-8, F-9, F-1)
+# =============================================================================
+
+
+class TestReviewFollowUps:
+
+    def test_f2_export_rows_are_intersection_with_data_permission(self, organization,
+                                                                  region):
+        """reports.export на всю организацию + employees.read только в A:
+        выгрузка сотрудников — только из A."""
+        office_a = make_office(organization, region, "F2-A")
+        office_b = make_office(organization, region, "F2-B")
+        _employee(organization, office_a, "F2-EA")
+        _employee(organization, office_b, "F2-EB")
+        user, _ = create_actor(organization, permissions=("reports.export",),
+                               role_code="F2_EXPORT_ORG")
+        _add_grant(organization, user, permissions=("employees.read",),
+                   office=office_a, role_code="F2_READ_A")
+        response = _client(user).get(f"{API}/reports/employees/export?fmt=csv")
+        assert response.status_code == 200
+        text = b"".join(response.streaming_content).decode("utf-8-sig") \
+            if hasattr(response, "streaming_content") else response.content.decode("utf-8-sig")
+        assert "F2-EA" in text and "F2-EB" not in text
+
+    def test_f1_direct_null_of_actor_is_refused(self, organization):
+        from django.db import DatabaseError, transaction
+
+        from humotech.audit.models import AuditLog
+
+        user = create_actor(organization, permissions=())[0]
+        row = AuditLog.objects.create(organization=organization, action="x.f1",
+                                      entity_type="tests", entity_id=organization.id,
+                                      actor_user=user)
+        with pytest.raises(DatabaseError), transaction.atomic():
+            AuditLog.objects.filter(id=row.id).update(actor_user=None)
+        row.refresh_from_db()
+        assert row.actor_user_id == user.id
+
+    def test_f4_admin_filters_show_only_own_organization(self, organization,
+                                                         other_organization):
+        from django.test import Client
+
+        admin_user = create_actor(organization, role_code="SUPER_ADMIN")[0]
+        Role.objects.create(organization=other_organization, code="F4_FOREIGN",
+                            name="Чужая роль F4")
+        client = Client()
+        client.force_login(admin_user)
+        html = client.get("/admin/accounts/user/").content.decode()
+        assert other_organization.name not in html
+        html = client.get("/admin/accounts/userrolescope/").content.decode()
+        assert "Чужая роль F4" not in html
+
+    def test_f6_review_duplicates_blocked_by_database(self, organization, office,
+                                                      employee, qr_point, now):
+        from django.db import IntegrityError, transaction
+
+        from humotech.attendance.models import AttendanceEvent
+
+        common = dict(organization=organization, employee=employee, office=office,
+                      qr_point=qr_point, event_type="ENTRY", occurred_at=now,
+                      received_at=now, source="QR", qr_nonce_hash="f6-nonce")
+        AttendanceEvent.objects.create(verification_status="REVIEW", **common)
+        with pytest.raises(IntegrityError), transaction.atomic():
+            AttendanceEvent.objects.create(verification_status="REVIEW", **common)
+        with pytest.raises(IntegrityError), transaction.atomic():
+            AttendanceEvent.objects.create(verification_status="ACCEPTED", **common)
+        # Отклонённая попытка nonce не занимает.
+        AttendanceEvent.objects.create(verification_status="REJECTED", **common)
+
+    def test_f8_region_change_needs_whole_region(self, organization, region):
+        from humotech.regions.services import RegionService
+
+        office = make_office(organization, region, "F8-A")
+        _, scoped = create_actor(organization, office=office,
+                                 permissions=("regions.read", "regions.manage"))
+        with pytest.raises(PermissionDenied):
+            RegionService().update(scoped, region.id, name="Взлом")
+        _, regional = create_actor(organization, region=region,
+                                   permissions=("regions.read", "regions.manage"))
+        RegionService().update(regional, region.id, name="Свой регион")
+
+    def test_f9_certificate_name_only_for_who_can_open(self, organization, office, sick):
+        request, _ = sick
+        viewer = create_actor(organization, office=office,
+                              permissions=("absences.read", "employees.read"))[0]
+        hr = create_actor(organization, office=office,
+                          permissions=("absences.read", "absences.documents"))[0]
+        url = f"{API}/absence-requests/{request.id}"
+        seen = _client(viewer).get(url).json()["documents"][0]
+        assert seen["file"]["name"] is None and seen["verification_comment"] is None
+        assert seen["verification_status"]  # факт и состояние — видны
+        assert _client(hr).get(url).json()["documents"][0]["file"]["name"] == "spravka.pdf"

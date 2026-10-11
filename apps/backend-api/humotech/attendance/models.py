@@ -144,8 +144,10 @@ class AttendanceEvent(UUIDPrimaryKeyModel, OrganizationScopedModel, CreatedAtMod
             # не должна навсегда занимать nonce.
             models.UniqueConstraint(
                 fields=["employee", "qr_nonce_hash", "event_type"],
+                # Засчитанные отметки — ACCEPTED и REVIEW (аудит M-9): второй
+                # рубеж против дубля должен держать и те, и другие.
                 condition=Q(qr_nonce_hash__isnull=False,
-                            verification_status="ACCEPTED"),
+                            verification_status__in=("ACCEPTED", "REVIEW")),
                 name="uq_attendance_events_nonce",
             ),
             models.UniqueConstraint(

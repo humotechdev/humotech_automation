@@ -1511,6 +1511,15 @@ class AbsenceService(BaseService):
             raise NotFound("Документ не найден")
         return open_stored(document.file), document.file
 
+    def can_open_papers(self, actor: Actor, employee_id) -> bool:
+        """Может ли актор открыть файл справки этого сотрудника — то же
+        правило, что в `open_document` (без поиска документа)."""
+        return any(
+            self.access.has(actor, code)
+            and self._covers_employee(actor, employee_id, code)
+            for code in self.DOCUMENT_FILE_PERMISSIONS
+        )
+
     def _covers_employee(self, actor: Actor, employee_id, permission: str) -> bool:
         from humotech.employees.selectors import require_visible_employee
 

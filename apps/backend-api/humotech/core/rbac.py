@@ -42,16 +42,21 @@ class Actor:
     #: Нужно действиям, которые читают данные чужими сервисами от своего
     #: права: выгрузка обязана брать строки в области `reports.export`,
     #: а не в объединённой области всех назначений (аудит 11.10, M-4).
-    confine: str | None = None
+    #: Несколько прав — пересечение их областей: выгрузка берёт строки
+    #: только там, где у заказчика есть И сама выгрузка, И право читать
+    #: эти данные (независимая проверка 11.10, F-2).
+    confine: tuple[str, ...] | None = None
 
     @classmethod
     def from_user(cls, user) -> "Actor":
         return cls(user_id=user.id, organization_id=user.organization_id)
 
-    def confined(self, permission: str) -> "Actor":
-        """Тот же пользователь, но с областью, суженной до `permission`."""
+    def confined(self, *permissions: str) -> "Actor":
+        """Тот же пользователь, но с областью, суженной до пересечения
+        областей `permissions` (и уже заданного сужения, если оно есть)."""
+        wanted = tuple(dict.fromkeys((*(self.confine or ()), *permissions)))
         return Actor(user_id=self.user_id, organization_id=self.organization_id,
-                     confine=permission)
+                     confine=wanted)
 
 
 @dataclass(frozen=True)
@@ -178,8 +183,8 @@ class AccessControl:
 
     def scope(self, actor: Actor, at: datetime | None = None) -> Scope:
         confine = getattr(actor, "confine", None)
-        if confine is not None:
-            return self.scope_for(actor, confine, at)
+        if confine:
+            return self._confined_scope(actor, confine, at)
         key = (actor.user_id, at)
         if key in self._scopes:
             return self._scopes[key]
@@ -205,10 +210,8 @@ class AccessControl:
         сужаются.
         """
         confine = getattr(actor, "confine", None)
-        if confine is not None and confine != permission:
-            plain = Actor(user_id=actor.user_id, organization_id=actor.organization_id)
-            return _intersect(self.scope_for(plain, permission, at),
-                              self.scope_for(plain, confine, at))
+        if confine:
+            return self._confined_scope(actor, (*confine, permission), at)
         key = (actor.user_id, at, permission)
         if key in self._scoped:
             return self._scoped[key]
@@ -231,6 +234,15 @@ class AccessControl:
         scope = self._build_scope(rows)
         self._scoped[key] = scope
         return scope
+
+    def _confined_scope(self, actor: Actor, permissions, at=None) -> Scope:
+        """Пересечение областей нескольких прав одного пользователя."""
+        plain = Actor(user_id=actor.user_id, organization_id=actor.organization_id)
+        result = None
+        for code in dict.fromkeys(permissions):
+            part = self.scope_for(plain, code, at)
+            result = part if result is None else _intersect(result, part)
+        return result
 
     def _scope_for_check(self, actor: Actor, permission: str | None) -> Scope:
         """Область для проверки объекта: общая (`permission=None`, прежнее

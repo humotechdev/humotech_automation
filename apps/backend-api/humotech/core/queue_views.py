@@ -189,7 +189,7 @@ class RequestQueueView(APIView):
         # организацию, а запрос за ним — не бесплатный.
         zone = organization_zone(actor.organization_id)
         return [
-            _Row(row.created_at, row.id, "absence", hr_request_json(row, zone))
+            _Row(row.created_at, row.id, "absence", hr_request_json(row, zone, actor=actor))
             for row in rows
         ]
 
