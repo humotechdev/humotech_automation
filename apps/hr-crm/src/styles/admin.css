@@ -1182,3 +1182,994 @@
 .adm-rows {
   max-height: 380px;
 }
+
+
+/* ============================================================================
+   Вкладки, таблицы и движение — префикс `adp-`.
+
+   Та же палитра и те же радиусы, что выше: синий действия, тёмно-синие
+   заголовки, светлые серо-голубые подложки и тонкие рамки. Без теней
+   «из воздуха», стекла и градиентов — только смена фона и цвета.
+
+   Движение задаётся переменными ниже и повторяет `features/admin/motion.ts`:
+   одна кривая и один темп на весь раздел. Двигаются только `transform`,
+   `opacity` и раскрывающаяся строка сетки — ничто не меняет ширину
+   соседей. При `prefers-reduced-motion` всё переключается сразу.
+   ========================================================================== */
+
+.adp {
+  --adp-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --adp-tab: 300ms;
+  --adp-row: 260ms;
+  --adp-fast: 160ms;
+  --adp-ink: #13295a;
+  --adp-muted: #6b7c98;
+  --adp-line: #e6edf5;
+  --adp-soft: #f5f8fc;
+  --adp-softer: #f8fafd;
+  --adp-blue: #1b6ef3;
+  --adp-blue-hover: #185fc4;
+  --adp-blue-press: #1452ab;
+  --adp-blue-soft: #e8f1ff;
+  --adp-ring: 0 0 0 3px rgb(27 110 243 / 16%);
+
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+  font-family: 'Segoe UI', 'Open Sans', system-ui, sans-serif;
+}
+
+.adp .adm-top {
+  max-width: none;
+  margin: 0 0 18px;
+}
+
+/* --- лист и вкладки ------------------------------------------------------- */
+
+.adp-sheet {
+  padding: 8px 24px 20px;
+  border: 1px solid var(--adp-line);
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgb(16 42 90 / 4%);
+  /* Сдвиг вкладок по горизонтали не должен давать прокрутку страницы. */
+  overflow-x: clip;
+}
+
+.adp-tabs {
+  position: relative;
+  display: flex;
+  gap: 4px;
+  margin: 0 -4px;
+  padding: 0 4px;
+  border-bottom: 1px solid var(--adp-line);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.adp-tabs::-webkit-scrollbar { display: none; }
+
+.adp-tab {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  height: 52px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 10px 10px 0 0;
+  background: none;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--adp-muted);
+  cursor: pointer;
+  transition: color var(--adp-fast) ease, background-color var(--adp-fast) ease;
+}
+
+.adp-tab:hover { color: var(--adp-ink); background: var(--adp-softer); }
+
+.adp-tab:focus-visible {
+  outline: 0;
+  box-shadow: inset var(--adp-ring);
+}
+
+.adp-tab--on,
+.adp-tab--on:hover {
+  color: var(--adp-blue);
+  background: none;
+}
+
+.adp-tab__count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 26px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: #eef2f7;
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: #4a5c78;
+  transition: background-color var(--adp-fast) ease, color var(--adp-fast) ease;
+}
+
+.adp-tab--on .adp-tab__count {
+  background: var(--adp-blue-soft);
+  color: var(--adp-blue);
+}
+
+/* Одна линия под выбранной вкладкой переезжает и меняет ширину. */
+.adp-tabs__ink {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--adp-blue);
+  pointer-events: none;
+}
+
+.adp-tabs__ink--move {
+  transition: transform var(--adp-tab) var(--adp-ease), width var(--adp-tab) var(--adp-ease);
+}
+
+/* --- сцена переходов -------------------------------------------------------- */
+
+.adp-stage {
+  position: relative;
+  overflow-x: clip;
+}
+
+/* На время перехода сцена обрезает и по вертикали: уходящая панель
+   выше новой и иначе выступала бы под нижней кромкой. */
+.adp-stage--moving { overflow: clip; }
+
+.adp-stage--moving .adp-pane { will-change: transform, opacity; }
+
+.adp-pane--leaving {
+  position: absolute;
+  inset: 0 0 auto;
+  pointer-events: none;
+}
+
+/* --- шапка вкладки ---------------------------------------------------------- */
+
+.adp-panel { padding-top: 22px; }
+
+.adp-panel__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px 20px;
+  margin-bottom: 16px;
+}
+
+.adp-panel__title {
+  margin: 0;
+  font-size: 22px;
+  line-height: 28px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--adp-ink);
+}
+
+.adp-panel__about {
+  margin: 4px 0 0;
+  font-size: 14px;
+  color: var(--adp-muted);
+}
+
+.adp-panel__tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.adp-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: 280px;
+  height: 42px;
+  padding: 0 12px;
+  border: 1px solid #d9e3ee;
+  border-radius: 9px;
+  background: #ffffff;
+  color: var(--adp-muted);
+  transition: border-color var(--adp-fast) ease, box-shadow var(--adp-fast) ease;
+}
+
+.adp-search:hover { border-color: #b9cde3; }
+
+.adp-search:focus-within {
+  border-color: var(--adp-blue);
+  box-shadow: var(--adp-ring);
+}
+
+.adp-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  color: var(--adp-ink);
+}
+
+.adp-search input::placeholder { color: #8c9bb2; }
+
+/* --- кнопки ------------------------------------------------------------------ */
+
+.adp .btn {
+  transition: background-color var(--adp-fast) ease, border-color var(--adp-fast) ease,
+    color var(--adp-fast) ease, transform 120ms ease, box-shadow var(--adp-fast) ease;
+}
+
+.adp .btn:focus-visible,
+.adm-modal .btn:focus-visible,
+.adm-ask .btn:focus-visible {
+  outline: 0;
+  box-shadow: var(--adp-ring);
+}
+
+/* Нажатие — едва заметное «вдавливание»; ширина и высота не меняются. */
+.adp .btn:active:not(:disabled),
+.adm-modal .btn:active:not(:disabled),
+.adm-ask .btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.adp-add,
+.adp .btn--primary {
+  height: 42px;
+  padding: 0 18px;
+  border: 1px solid var(--adp-blue);
+  border-radius: 9px;
+  background: var(--adp-blue);
+  font-size: 14.5px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.adp-add:hover:not(:disabled),
+.adp .btn--primary:hover:not(:disabled) {
+  border-color: var(--adp-blue-hover);
+  background: var(--adp-blue-hover);
+}
+
+.adp-add:active:not(:disabled),
+.adp .btn--primary:active:not(:disabled) {
+  border-color: var(--adp-blue-press);
+  background: var(--adp-blue-press);
+}
+
+.adp .btn--primary:disabled,
+.adm-modal .btn--primary:disabled {
+  opacity: 0.72;
+  cursor: progress;
+}
+
+/* Подпись и «Сохраняем…» в одной ячейке: ширина — по большей. */
+.adp-btn {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.adp-btn__label,
+.adp-btn::after {
+  grid-area: 1 / 1;
+  white-space: nowrap;
+}
+
+.adp-btn::after {
+  content: attr(data-alt);
+  visibility: hidden;
+}
+
+/* Сохранение — бегущая полоса по нижнему краю, а не смена размера. */
+.adp-btn--busy::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 85%), transparent);
+  animation: adp-busy 1.1s linear infinite;
+}
+
+@keyframes adp-busy {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+
+/* --- таблица ------------------------------------------------------------------ */
+
+.adp-table {
+  border: 1px solid var(--adp-line);
+  border-radius: 12px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.adp-table__head,
+.adp-row__line {
+  display: grid;
+  align-items: center;
+  column-gap: 16px;
+  padding: 0 16px 0 12px;
+}
+
+.adp-table__head {
+  min-height: 42px;
+  border-bottom: 1px solid var(--adp-line);
+  background: var(--adp-soft);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--adp-muted);
+}
+
+/* Подписи колонок начинаются там же, где названия, — за стрелкой. */
+.adp-table__head > span:first-child { padding-left: 36px; }
+
+.adp-table__actions { justify-self: end; padding-right: 12px; }
+
+.adp-table--admins .adp-table__head,
+.adp-table--admins .adp-row__line {
+  grid-template-columns: minmax(220px, 1.5fr) minmax(120px, 1fr) minmax(120px, 1fr) 120px 96px;
+}
+
+.adp-table--schedules .adp-table__head,
+.adp-table--schedules .adp-row__line {
+  grid-template-columns: minmax(180px, 1.4fr) minmax(110px, 1fr) minmax(130px, 1fr) minmax(100px, 0.8fr) 96px;
+}
+
+.adp-table--departments .adp-table__head,
+.adp-table--departments .adp-row__line,
+.adp-table--positions .adp-table__head,
+.adp-table--positions .adp-row__line {
+  grid-template-columns: minmax(0, 1fr) 96px;
+}
+
+.adp-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.adp-row + .adp-row { border-top: 1px solid var(--adp-line); }
+
+.adp-row__line {
+  position: relative;
+  min-height: 52px;
+  transition: background-color var(--adp-fast) ease;
+}
+
+.adp-row__line:hover { background: var(--adp-softer); }
+
+.adp-row--open > .adp-row__line { background: #fbfcfe; }
+
+.adp-row--off .adp-row__title { color: #8c9bb2; }
+
+.adp-row__toggle {
+  display: inline-flex;
+  grid-column: 1;
+  grid-row: 1;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  min-height: 52px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+
+.adp-row__toggle:focus-visible { outline: 0; }
+
+.adp-row__toggle:focus-visible .adp-chevron { box-shadow: var(--adp-ring); }
+
+.adp-row__title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--adp-ink);
+}
+
+/* Подпись под названием стоит в той же колонке, что название. */
+.adp-row__sub {
+  grid-column: 1;
+  grid-row: 2;
+  margin: -12px 0 10px 36px;
+  font-size: 12.5px;
+  color: var(--adp-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.adp-table--admins .adp-row__sub { margin-left: 84px; }
+
+.adp-row__line > .adp-cell,
+.adp-row__line > .adp-row__tools { grid-row: 1; }
+
+.adp-row__line > .adp-row__tools { grid-column: -2; }
+
+.adp-cell {
+  min-width: 0;
+  font-size: 14px;
+  color: #22355c;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.adp-chevron {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  color: var(--adp-muted);
+  transition: background-color var(--adp-fast) ease, color var(--adp-fast) ease;
+}
+
+.adp-chevron svg {
+  transform: rotate(-90deg);
+  transition: transform var(--adp-row) var(--adp-ease);
+}
+
+.adp-row--open .adp-chevron svg { transform: rotate(0deg); }
+
+.adp-row__toggle:hover .adp-chevron { background: #eef4fb; color: var(--adp-blue); }
+
+.adp-row__tools {
+  display: inline-flex;
+  justify-self: end;
+  gap: 4px;
+}
+
+.adp-tool {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--adp-muted);
+  cursor: pointer;
+  transition: background-color var(--adp-fast) ease, color var(--adp-fast) ease, transform 120ms ease;
+}
+
+.adp-tool:hover:not(:disabled) { background: #eef4fb; color: var(--adp-blue); }
+
+.adp-tool--bad:hover:not(:disabled) { background: #fdf1ef; color: #b42318; }
+
+.adp-tool:active:not(:disabled) { transform: scale(0.94); }
+
+.adp-tool:focus-visible { outline: 0; box-shadow: var(--adp-ring); }
+
+.adp-tool:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.adp-avatar {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--adp-blue-soft);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--adp-blue);
+}
+
+.adp-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #eef2f7;
+  font-size: 13px;
+  font-weight: 600;
+  color: #4a5c78;
+}
+
+.adp-status::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.adp-status--on { background: #e3f6ee; color: #00805f; }
+
+.adp-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: #eef2ff;
+  font-size: 11.5px;
+  font-weight: 600;
+  vertical-align: 1px;
+  color: #3f51b5;
+}
+
+/* --- раскрывающаяся часть строки ------------------------------------------- */
+
+.adp-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--adp-row) var(--adp-ease);
+}
+
+.adp-collapse--open { grid-template-rows: 1fr; }
+
+.adp-collapse__inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.adp-collapse__content {
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 180ms ease, transform var(--adp-row) var(--adp-ease);
+}
+
+.adp-collapse--open .adp-collapse__content {
+  opacity: 1;
+  transform: none;
+  transition-delay: 50ms;
+}
+
+.adp-row__more {
+  border-top: 1px solid var(--adp-line);
+  background: var(--adp-soft);
+}
+
+.adp-more {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px 28px;
+  padding: 16px 20px 18px 48px;
+}
+
+.adp-more__title {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--adp-muted);
+}
+
+.adp-more__group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.adp-more__group .adp-more__title { flex-basis: auto; }
+
+.adp-more__action {
+  margin-left: auto;
+  height: 40px;
+  border-color: var(--adp-blue);
+  border-radius: 9px;
+  background: #ffffff;
+  font-weight: 600;
+  color: var(--adp-blue);
+}
+
+.adp-more__action:hover:not(:disabled) { background: var(--adp-blue-soft); }
+
+.adp-more__note {
+  display: flex;
+  flex-basis: 100%;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 13px;
+  color: #a15c00;
+}
+
+.adp-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 0;
+}
+
+.adp-fact {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 140px;
+  padding: 0 24px;
+  border-left: 1px solid #dfe7f1;
+}
+
+.adp-fact:first-child { padding-left: 0; border-left: 0; }
+
+.adp-fact__label { font-size: 12.5px; color: var(--adp-muted); }
+
+.adp-fact__value { font-size: 14.5px; color: var(--adp-ink); }
+
+.adp-facts--boxed .adp-fact { min-width: 120px; }
+
+.adp-facts--boxed .adp-fact__value {
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid #dfe7f1;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+/* Дни недели в раскрытом графике — только показ: правка в окне. */
+.adp-weekdays {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.adp-weekday {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 38px;
+  border-radius: 8px;
+  background: #eef1f5;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #8c9bb2;
+}
+
+.adp-weekday--on { background: var(--adp-blue-soft); color: var(--adp-blue); }
+
+/* --- переименование в строке ---------------------------------------------- */
+
+.adp-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 560px) auto;
+  align-items: start;
+  gap: 6px 14px;
+  padding: 14px 20px 16px 48px;
+}
+
+.adp-editor__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.adp-editor__field .input { min-height: 42px; background: #ffffff; }
+
+.adp-editor__field.adm-field--bad .input { border-color: var(--danger, #b42318); }
+
+/* Место под ошибку есть всегда: её появление не сдвигает кнопки. */
+.adp-editor__error {
+  min-height: 16px;
+  font-size: 12px;
+  color: var(--danger, #b42318);
+}
+
+.adp-editor__tools {
+  display: flex;
+  gap: 10px;
+  padding-top: 23px;
+}
+
+.adp-editor__tools .btn { height: 42px; padding: 0 20px; border-radius: 9px; font-weight: 600; }
+
+.adp-editor__refusal {
+  grid-column: 1 / -1;
+  animation: adp-fade-in var(--adp-fast) ease both;
+}
+
+/* --- состояния, подвал, листание ------------------------------------------ */
+
+.adp-state {
+  margin: 0;
+  padding: 22px 20px;
+  font-size: 14px;
+  color: var(--adp-muted);
+}
+
+.adp-state--bad { color: #b42318; }
+
+.adp-skeleton {
+  display: flex;
+  flex-direction: column;
+}
+
+.adp-skeleton__row {
+  height: 52px;
+  border-bottom: 1px solid var(--adp-line);
+  background:
+    linear-gradient(90deg, transparent 0, rgb(255 255 255 / 70%) 50%, transparent 100%) 0 0 / 40% 100% no-repeat,
+    linear-gradient(#eef2f7, #eef2f7) 48px 50% / 38% 12px no-repeat;
+  animation: adp-shimmer 1.3s ease-in-out infinite;
+}
+
+@keyframes adp-shimmer {
+  from { background-position: -40% 0, 48px 50%; }
+  to { background-position: 140% 0, 48px 50%; }
+}
+
+.adp-panel__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  min-height: 40px;
+  margin-top: 12px;
+  font-size: 13.5px;
+  color: var(--adp-muted);
+}
+
+.adp-panel__hint { font-size: 13px; }
+
+/* Новая страница списка проявляется целиком, без задержки по строкам. */
+.adp-rows--page { animation: adp-fade-in var(--adp-fast) var(--adp-ease) both; }
+
+@keyframes adp-fade-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: none; }
+}
+
+.adp-pager {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.adp-pager__page,
+.adp-pager__step {
+  display: grid;
+  place-items: center;
+  min-width: 34px;
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid #dfe7f1;
+  border-radius: 8px;
+  background: #ffffff;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: #4a5c78;
+  cursor: pointer;
+  transition: background-color var(--adp-fast) ease, border-color var(--adp-fast) ease,
+    color var(--adp-fast) ease, transform 120ms ease;
+}
+
+.adp-pager__page:hover:not(.adp-pager__page--on),
+.adp-pager__step:hover:not(:disabled) { border-color: #b9cde3; color: var(--adp-ink); }
+
+.adp-pager__page:active,
+.adp-pager__step:active:not(:disabled) { transform: scale(0.95); }
+
+.adp-pager__page:focus-visible,
+.adp-pager__step:focus-visible { outline: 0; box-shadow: var(--adp-ring); }
+
+.adp-pager__page--on { border-color: var(--adp-blue); background: var(--adp-blue); color: #ffffff; }
+
+.adp-pager__step:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.adp-pager__gap { padding: 0 2px; color: var(--adp-muted); }
+
+.adp-foot {
+  max-width: none;
+  margin: 16px 0 0;
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: var(--adp-soft);
+}
+
+.adp-foot__link { color: var(--adp-blue); text-decoration: underline; text-underline-offset: 2px; }
+
+/* --- подтверждение после ответа сервера ------------------------------------ */
+
+.adp-notice-slot {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 60;
+  pointer-events: none;
+}
+
+.adp-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 11px 16px;
+  border: 1px solid #bfe5d5;
+  border-radius: 10px;
+  background: #f1fbf6;
+  box-shadow: 0 8px 24px rgb(16 42 90 / 10%);
+  font-size: 14px;
+  font-weight: 600;
+  color: #00684d;
+  animation: adp-notice-in 240ms var(--adp-ease) both;
+}
+
+@keyframes adp-notice-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* --- окна и формы графика: тот же темп ------------------------------------ */
+
+.adm-modal { animation: adp-fade 180ms ease both; }
+
+.adm-modal__box { animation: adp-rise 240ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+.adm-ask { animation: adp-fade 180ms ease both; }
+
+.adm-ask__box { animation: adp-rise 240ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+@keyframes adp-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes adp-rise {
+  from { opacity: 0; transform: translateY(8px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Кнопка окна в состоянии сохранения той же ширины (см. `.adp-btn`). */
+.adm-modal__tools .adp-btn {
+  height: 44px;
+  padding: 0 22px;
+  border: 1px solid #1b6ef3;
+  border-radius: 8px;
+  background: #1b6ef3;
+  font-size: 15px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.adm-modal__tools .adp-btn:hover:not(:disabled) { border-color: #185fc4; background: #185fc4; }
+
+/* Дни недели в окне графика: мягкая смена цвета, отклик на нажатие,
+   размер не меняется — рамка есть и у выбранного, и у пустого. */
+.adm-week .adm-day {
+  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease,
+    transform 120ms ease, box-shadow 160ms ease;
+}
+
+.adm-week .adm-day:hover:not(.adm-day--on) { border-color: #9fc0ea; background: #f2f7ff; color: #1466d8; }
+
+.adm-week .adm-day:active { transform: scale(0.95); }
+
+.adm-week .adm-day:focus-visible { outline: 0; box-shadow: 0 0 0 3px rgb(27 110 243 / 18%); }
+
+.adm-week .adm-day--on:hover { border-color: #185fc4; background: #185fc4; }
+
+/* Время: рамка и кольцо фокуса меняются плавно, соседи не сдвигаются
+   (кольцо — тень, а не рамка толще). */
+.adm-times .input--time {
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+/* Ошибка поля появляется мягко и не толкает форму рывком. */
+.adm-modal .adm-field__error,
+.adm-modal .adm-refusal {
+  animation: adp-fade-in 160ms ease both;
+}
+
+/* --- узкий экран ------------------------------------------------------------ */
+
+@media (max-width: 900px) {
+  .adp-sheet { padding: 4px 14px 16px; }
+
+  .adp-panel__tools { width: 100%; }
+
+  .adp-search { flex: 1; width: auto; min-width: 180px; }
+
+  .adp-table__head { display: none; }
+
+  /* Строка становится карточкой: название и действия сверху, ячейки —
+     подписанными строками ниже. */
+  .adp-table .adp-row__line {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: 2px;
+    padding: 6px 10px 10px 8px;
+  }
+
+  .adp-row__line > .adp-row__toggle { grid-column: 1; grid-row: 1; }
+
+  .adp-row__line > .adp-row__tools { grid-column: 2; grid-row: 1; }
+
+  .adp-row__line > .adp-row__sub { grid-column: 1 / -1; grid-row: auto; margin: -6px 0 4px 36px; }
+
+  .adp-row__line > .adp-cell {
+    grid-column: 1 / -1;
+    grid-row: auto;
+    padding-left: 36px;
+    font-size: 13.5px;
+    white-space: normal;
+  }
+
+  .adp-row__line > .adp-cell::before {
+    content: attr(data-label) ': ';
+    color: var(--adp-muted);
+  }
+
+  .adp-table--admins .adp-row__line > .adp-cell,
+  .adp-table--admins .adp-row__line > .adp-row__sub { padding-left: 48px; margin-left: 0; }
+
+  .adp-more { padding: 14px 14px 16px; }
+
+  .adp-more__action { margin-left: 0; }
+
+  .adp-fact { padding: 0 14px; min-width: 0; }
+
+  .adp-editor {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 12px 14px 14px;
+  }
+
+  .adp-editor__tools { padding-top: 0; }
+
+  .adp-notice-slot { left: 16px; right: 16px; bottom: 16px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .adp *,
+  .adp *::before,
+  .adp *::after,
+  .adm-modal,
+  .adm-modal__box,
+  .adm-ask,
+  .adm-ask__box,
+  .adm-modal *,
+  .adm-ask * {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    transition-delay: 0ms !important;
+  }
+
+  .adp-btn--busy::before { animation: none; opacity: 0.6; }
+}
+
+/* Приписка к названию в той же строке: все строки одной высоты. */
+.adp-row__meta {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  color: var(--adp-muted);
+}
