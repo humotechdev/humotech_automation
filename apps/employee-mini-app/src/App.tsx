@@ -47,6 +47,7 @@ import {
 } from './telegram';
 import { useSection } from './sections';
 import { BottomNavigation, type Tab } from './ui/BottomNavigation';
+import { TabTransition } from './ui/TabTransition';
 import { TopBar } from './ui/TopBar';
 import { PageContainer, SecondaryButton } from './ui/primitives';
 import {
@@ -513,79 +514,88 @@ function Cabinet({ onSignOut }: { onSignOut: () => void }) {
       )}
 
       <div className="app-scroll">
-        {/* Разрядка 12 px — только на главной: остальные экраны свою
-            не меняют. */}
-        <PageContainer className={tab === 'home' ? 'page-home' : ''}>
-          {tab === 'home' && (
-            <Home
-              fullName={me.employee.full_name}
-              office={me.office.name}
-              today={today}
-              week={week}
-              requests={requests}
-              notes={notes}
-              onScan={() => setTab('scan')}
-              onHistory={() => setTab('history')}
-              onRequests={() => setTab('requests')}
-              onNewRequest={(kind) => {
-                setAbsenceForm(kind);
-                setTab('requests');
-              }}
-              onCorrection={() => setTab('history')}
-              onQuestion={() => setTab('profile')}
-              onNote={(note) => {
-                markRead(note);
-                setTab('notes');
-              }}
-              onWeek={() => setTab('stats')}
-            />
+        {/* Смена вкладок нижней панели — горизонтальным переходом
+            (ui/TabTransition.tsx). Что показать на вкладке, решается
+            здесь же, как и раньше; обёртка только двигает слои. */}
+        <TabTransition
+          tab={tab}
+          render={(page) => (
+            // Разрядка 12 px — только на главной: остальные экраны
+            // свою не меняют. Класс считается от вкладки слоя, а не от
+            // текущей: уезжающая главная не должна терять отступы.
+            <PageContainer className={page === 'home' ? 'page-home' : ''}>
+              {page === 'home' && (
+                <Home
+                  fullName={me.employee.full_name}
+                  office={me.office.name}
+                  today={today}
+                  week={week}
+                  requests={requests}
+                  notes={notes}
+                  onScan={() => setTab('scan')}
+                  onHistory={() => setTab('history')}
+                  onRequests={() => setTab('requests')}
+                  onNewRequest={(kind) => {
+                    setAbsenceForm(kind);
+                    setTab('requests');
+                  }}
+                  onCorrection={() => setTab('history')}
+                  onQuestion={() => setTab('profile')}
+                  onNote={(note) => {
+                    markRead(note);
+                    setTab('notes');
+                  }}
+                  onWeek={() => setTab('stats')}
+                />
+              )}
+
+              {/* Пояс берётся из профиля, а не из статуса: сканер обязан
+                  открываться и тогда, когда статус не загрузился. Ждать его
+                  значило бы не дать отметиться из-за упавшего запроса,
+                  который к отметке отношения не имеет. */}
+              {page === 'notes' && (
+                <Notes
+                  section={notes}
+                  timeZone={me.office.timezone}
+                  onRead={markRead}
+                />
+              )}
+
+              {page === 'stats' && <Stats />}
+
+              {page === 'scan' && (
+                <Scan
+                  timeZone={me.office.timezone}
+                  wide={wide}
+                  onDone={afterScan}
+                  onHome={() => setTab('home')}
+                />
+              )}
+
+              {page === 'history' && <History />}
+
+              {/* ФИО отдаётся форме, а не запрашивается ею: заявка
+                  оформляется на того, кто вошёл, и показать это надо
+                  прямо в форме — человек должен видеть, за кого
+                  расписывается. Второй запрос за тем же именем был бы
+                  лишним: оно уже в профиле. */}
+              {page === 'requests' && (
+                <Requests openForm={absenceForm} fullName={me.employee.full_name} />
+              )}
+
+              {/* Профиль не ждёт статуса: без него он просто не покажет
+                  строку «сегодня», а не останется пустым экраном. */}
+              {page === 'profile' && (
+                <Profile
+                  profile={me}
+                  status={today.data?.status ?? null}
+                  version={VERSION}
+                  onSignOut={onSignOut}
+                />
+              )}
+            </PageContainer>
           )}
-
-          {/* Пояс берётся из профиля, а не из статуса: сканер обязан
-              открываться и тогда, когда статус не загрузился. Ждать его
-              значило бы не дать отметиться из-за упавшего запроса,
-              который к отметке отношения не имеет. */}
-          {tab === 'notes' && (
-            <Notes
-              section={notes}
-              timeZone={me.office.timezone}
-              onRead={markRead}
-            />
-          )}
-
-          {tab === 'stats' && <Stats />}
-
-          {tab === 'scan' && (
-            <Scan
-              timeZone={me.office.timezone}
-              wide={wide}
-              onDone={afterScan}
-              onHome={() => setTab('home')}
-            />
-          )}
-
-          {tab === 'history' && <History />}
-
-          {/* ФИО отдаётся форме, а не запрашивается ею: заявка
-              оформляется на того, кто вошёл, и показать это надо
-              прямо в форме — человек должен видеть, за кого
-              расписывается. Второй запрос за тем же именем был бы
-              лишним: оно уже в профиле. */}
-          {tab === 'requests' && (
-            <Requests openForm={absenceForm} fullName={me.employee.full_name} />
-          )}
-
-          {/* Профиль не ждёт статуса: без него он просто не покажет
-              строку «сегодня», а не останется пустым экраном. */}
-          {tab === 'profile' && (
-            <Profile
-              profile={me}
-              status={today.data?.status ?? null}
-              version={VERSION}
-              onSignOut={onSignOut}
-            />
-          )}
-        </PageContainer>
+        />
       </div>
 
       {/* В полноэкранном режиме панели нет вовсе: она стояла бы поверх

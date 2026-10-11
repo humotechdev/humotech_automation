@@ -140,7 +140,31 @@ dd {
   flex: 1;
   /* Именно здесь прокрутка: панель внизу остаётся на месте. */
   overflow-y: auto;
+  /* Раздел, въезжающий сбоку при смене вкладки, не должен давать
+     горизонтальную прокрутку. Скрываем здесь, а не на обёртке вкладок:
+     `overflow-x: hidden` на обёртке сделал бы её второй прокручиваемой
+     областью. */
+  overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
+}
+
+/* Смена вкладок (ui/TabTransition.tsx). Уходящий раздел остаётся в
+   потоке и держит высоту страницы, входящий лежит поверх него, пока
+   едет. Сдвигаются оба только через transform. */
+.tab-stage {
+  position: relative;
+}
+
+.tab-layer-entering {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1;
+}
+
+.tab-layer-leaving {
+  pointer-events: none;
 }
 
 .page {
