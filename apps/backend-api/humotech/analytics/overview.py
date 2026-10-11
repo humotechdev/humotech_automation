@@ -1,8 +1,8 @@
 """Обзор аналитики одним ответом: всё, что показывает страница «Аналитика».
 
 Правила те же, что у `metrics.py`, и взяты оттуда же, а не повторены:
-план дня (`_plan_for`), допуск опоздания (`_grace_for`), виды отсутствий,
-область видимости. Второй реализации «посещаемости для страницы» нет —
+план дня (`schedules.day_plan`: офис, версия графика, календарь, норма и
+допуск на эту дату), виды отсутствий, область видимости. Второй реализации «посещаемости для страницы» нет —
 иначе цифра на странице однажды разошлась бы с отчётом.
 
 Что добавлено сверх `metrics.py` и почему:
@@ -36,8 +36,6 @@ from django.utils import timezone as django_timezone
 from humotech.absences.models import EmployeeAbsence
 from humotech.analytics.metrics import (
     AnalyticsService,
-    _grace_for,
-    _plan_for,
     _validate_period,
 )
 from humotech.attendance.models import AttendanceSession, FieldWorkRequest
@@ -50,9 +48,8 @@ from humotech.core.errors import ValidationFailed
 from humotech.core.rbac import Actor
 from humotech.core.timeframes import days_in, local_date, office_zone, range_bounds
 from humotech.employees.models import EmployeeAssignment
-from humotech.employees.services import roster_assignment_filter
 from humotech.offices.models import Office
-from humotech.schedules.models import CalendarException
+from humotech.schedules.day_plan import plans_for
 
 #: Ширина столбца гистограммы прихода, минуты.
 BUCKET_MINUTES = 10
@@ -203,20 +200,28 @@ class OverviewService(AnalyticsService):
             return state
 
         zones = {office.id: office_zone(office) for office in offices}
+        # Состав — все, кто хоть один день периода числился в офисах выборки
+        # и был трудоустроен: уволенный и переведённый остаются в своих днях
+        # (аудит 12.10, B-04 / D-08). Офис каждого дня — из плана дня.
         people = EmployeeAssignment.objects.filter(
-            roster_assignment_filter(last),
+            is_primary=True,
             office_id__in=list(zones),
+            valid_from__lte=last,
             employee__organization_id=actor.organization_id,
-        )
+            employee__employment_status__in=("ACTIVE", "TERMINATED"),
+        ).filter(Q(valid_to__isnull=True) | Q(valid_to__gte=first))
         if department_id is not None:
             people = people.filter(department_id=department_id)
         if employee_id is not None:
             people = people.filter(employee_id=employee_id)
-        places = list(people.values_list("employee_id", "office_id", "department_id", "position_id"))
+        places = list(people.order_by("valid_from").values_list(
+            "employee_id", "office_id", "department_id", "position_id"))
         roster = {one[0]: one[1] for one in places}
         state["person_department"] = {one[0]: one[2] for one in places}
         state["person_position"] = {one[0]: one[3] for one in places}
         employee_ids = list(roster)
+        plans = plans_for(employee_ids, first, last) if employee_ids else {}
+        employed = AnalyticsService._employment(employee_ids) if employee_ids else {}
 
         # Границы периода — самые широкие по всем поясам выборки; день
         # каждой сессии дальше определяется в поясе её офиса.
@@ -234,9 +239,9 @@ class OverviewService(AnalyticsService):
                     employee_id__in=employee_ids, started_at__gte=start, started_at__lt=end
                 )
                 .exclude(status="INVALID")
-                .only("employee_id", "started_at", "ended_at", "duration_seconds")
+                .only("employee_id", "office_id", "started_at", "ended_at", "duration_seconds")
             ):
-                tz = zones[roster[row.employee_id]]
+                tz = zones.get(row.office_id) or zones[roster[row.employee_id]]
                 day = local_date(row.started_at, tz)
                 if first <= day <= last:
                     sessions.setdefault((row.employee_id, day), []).append(row)
@@ -258,23 +263,29 @@ class OverviewService(AnalyticsService):
                 for day in days_in(from_day, to_day):
                     absences.setdefault((row.employee_id, day), code)
 
-            schedules = self._schedules(employee_ids, first, last)
             field_work = self._field_work(employee_ids, first, last)
 
-        exceptions = _exceptions(actor, list(zones), first, last)
         today = {office_id: local_date(moment, tz) for office_id, tz in zones.items()}
 
         by_day: dict[date, dict] = {}
-        for employee_id, office_id in roster.items():
-            tz = zones[office_id]
+        for employee_id in roster:
+            hired, terminated = employed.get(employee_id, (None, None))
             for day in days_in(first, last):
+                plan = plans.get((employee_id, day))
+                if plan is None or plan.office_id not in zones:
+                    continue  # в этот день человек числился не в этой выборке
+                if (hired and day < hired) or (terminated and day > terminated):
+                    continue
+                office_id = plan.office_id
+                tz = zones[office_id]
                 if day > today[office_id]:
                     continue  # день ещё не наступил — это не неявка
                 if weekday is not None and day.isoweekday() != weekday:
                     continue
-                counts = by_day.setdefault(day, _day_counts())
                 key = (employee_id, day)
                 day_sessions = sessions.get(key, [])
+                settled = plan.is_settled(moment)
+                counts = by_day.setdefault(day, _day_counts())
 
                 code = absences.get(key)
                 if code is not None:
@@ -290,11 +301,10 @@ class OverviewService(AnalyticsService):
                     state["person_office"][employee_id] = office_id
                     continue
 
-                plan = _plan_for(schedules.get(employee_id), day, exceptions.get(office_id, {}))
-                if plan is None or plan[0] is None:
+                if not plan.is_working:
                     continue  # нет графика или нерабочий день — не неявка
 
-                start_time = plan[0]
+                start_time = plan.start
                 counts["expected"] += 1
                 state["expected"] += 1
                 state["office_expected"][office_id] += 1
@@ -317,9 +327,12 @@ class OverviewService(AnalyticsService):
                         state["person_field_work_seconds"][employee_id] += field_work[key]
                         week["attended"] += 1
                         continue
-                    counts["missed"] += 1
-                    state["missed"] += 1
-                    state["person_missed_dates"].setdefault(employee_id, []).append(day)
+                    if settled:
+                        counts["missed"] += 1
+                        state["missed"] += 1
+                        state["person_missed_dates"].setdefault(employee_id, []).append(day)
+                    # Сегодня, смена ещё идёт: в знаменателе (П-1), но не
+                    # неявка — пропуском день станет после конца смены (D-01).
                     continue
 
                 counts["attended"] += 1
@@ -331,11 +344,20 @@ class OverviewService(AnalyticsService):
                 week["arrivals"] += 1
 
                 entry = min(one.started_at for one in day_sessions).astimezone(tz)
+                state["entries"].append(entry.hour * 60 + entry.minute)
+                if start_time is None:
+                    # Рабочий выходной по переносу: времени смены график не
+                    # задаёт (П-11) — опоздание считать не от чего.
+                    counts["on_time"] += 1
+                    state["on_time"] += 1
+                    week["on_time"] += 1
+                    open_count = sum(1 for one in day_sessions if one.ended_at is None)
+                    state["open_sessions"] += open_count
+                    continue
                 planned = datetime.combine(day, start_time, tzinfo=tz)
                 delta = int((entry - planned).total_seconds() // 60)
-                grace = _grace_for(schedules.get(employee_id), day)
+                grace = plan.late_grace_minutes
                 state["starts"][start_time.strftime("%H:%M")] += 1
-                state["entries"].append(entry.hour * 60 + entry.minute)
 
                 index = (min(max(delta, EARLIEST), LATEST - 1) - EARLIEST) // BUCKET_MINUTES
                 column = state["histogram"][index]
@@ -583,7 +605,12 @@ class OverviewService(AnalyticsService):
     @staticmethod
     def _weekdays(state: dict) -> dict:
         rows = []
-        for weekday in range(1, 6):
+        # Дни недели — те, в которые были ожидаемые дни: у шестидневки в
+        # разрез и в «лучший день» попадает суббота (аудит 12.10, D-13).
+        # Будни показываются всегда — пустой будний столбец тоже ответ.
+        weekdays = sorted(set(range(1, 6)) | {
+            day for day, week in state["weekdays"].items() if week["expected"]})
+        for weekday in weekdays:
             week = state["weekdays"].get(weekday, _week_counts())
             rows.append({
                 "weekday": weekday,
@@ -725,23 +752,6 @@ def _day_row(day: date, counts: dict, weekday: int | None, *, future: bool) -> d
             round(counts["closed_seconds"] / counts["closed_days"]) if counts["closed_days"] else None
         ),
     }
-
-
-def _exceptions(actor: Actor, office_ids: list, first: date, last: date) -> dict:
-    """Праздники и переносы по офисам: общие, поверх — свои у офиса."""
-    result: dict = {office_id: {} for office_id in office_ids}
-    rows = CalendarException.objects.filter(
-        Q(office_id__in=office_ids) | Q(office__isnull=True),
-        organization_id=actor.organization_id,
-        date__gte=first,
-        date__lte=last,
-        is_active=True,
-    )
-    for row in sorted(rows, key=lambda one: one.office_id is not None):
-        targets = office_ids if row.office_id is None else [row.office_id]
-        for office_id in targets:
-            result.setdefault(office_id, {})[row.date] = row.is_working_day
-    return result
 
 
 __all__ = ["BUCKET_MINUTES", "EARLIEST", "LATEST", "OverviewService"]

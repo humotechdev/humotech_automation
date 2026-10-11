@@ -51,6 +51,7 @@ from humotech.core.errors import Conflict, NotFound, PermissionDenied, Validatio
 from humotech.core.pagination import Page, paginate
 from humotech.core.rbac import Actor
 from humotech.core.service import BaseService
+from humotech.schedules.day_plan import plans_for
 from humotech.core.timeframes import day_bounds, office_zone, range_bounds
 from humotech.employees.models import Employee, EmployeeAssignment
 from humotech.employees.services import (
@@ -300,14 +301,22 @@ class AttendanceHrService(BaseService):
             return PresenceReport(day=day, timezone=str(tz), rows=[])
 
         employee_ids = list(rows.keys())
-        sessions = self._sessions_of_day(employee_ids, start, end)
-        absences = self._absences_of_day(employee_ids, start, end)
-        scheduled, calendar = self._scheduled_starts(
-            employee_ids,
-            day,
-            organization_id=actor.organization_id,
-            office_ids=[office.id for office in offices],
-        )
+        # Сутки и опоздание — в поясе офиса КАЖДОГО сотрудника, а не первого
+        # офиса выборки: в региональном отчёте офисы бывают в разных поясах
+        # (аудит 12.10, C-06). План дня — из `day_plan`, одного на систему.
+        plans = plans_for(employee_ids, day, day)
+        zones = {
+            employee_id: (plans[(employee_id, day)].timezone
+                          if (employee_id, day) in plans else tz)
+            for employee_id in employee_ids
+        }
+        sessions: dict = {}
+        absences: dict = {}
+        for zone_name in {str(one) for one in zones.values()}:
+            group = [e for e in employee_ids if str(zones[e]) == zone_name]
+            group_start, group_end = day_bounds(day, zones[group[0]])
+            sessions.update(self._sessions_of_day(group, group_start, group_end))
+            absences.update(self._absences_of_day(group, group_start, group_end))
 
         notices = notices_of_day(employee_ids, day)
         field_work = self._field_work_of_day(employee_ids, day)
@@ -316,11 +325,11 @@ class AttendanceHrService(BaseService):
             self._presence_row(
                 assignment=assignment,
                 day=day,
-                tz=tz,
+                tz=zones[employee_id],
                 sessions=sessions.get(employee_id, []),
                 absence=absences.get(employee_id),
-                schedule=scheduled.get(employee_id),
-                calendar=calendar,
+                schedule=_schedule_tuple(plans.get((employee_id, day))),
+                calendar={},
                 notice=notices.get(employee_id),
                 field_work=field_work.get(employee_id),
             )
@@ -422,6 +431,7 @@ class AttendanceHrService(BaseService):
         rows: list[dict] = []
         totals = _empty_totals()
         shown_zone = None
+        plans = plans_for([employee_id], first, last)
 
         for offset in range(span):
             day = first + timedelta(days=offset)
@@ -439,20 +449,15 @@ class AttendanceHrService(BaseService):
             absence = self._absences_of_day([employee_id], start, end).get(
                 employee_id
             )
-            scheduled, calendar = self._scheduled_starts(
-                [employee_id],
-                day,
-                organization_id=actor.organization_id,
-                office_ids=[assignment.office_id] if assignment.office_id else [],
-            )
+            plan = plans.get((employee_id, day))
             row = self._presence_row(
                 assignment=assignment,
                 day=day,
                 tz=tz,
                 sessions=sessions,
                 absence=absence,
-                schedule=scheduled.get(employee_id),
-                calendar=calendar,
+                schedule=_schedule_tuple(plan),
+                calendar={},
                 notice=notices_of_day([employee_id], day).get(employee_id),
                 field_work=self._field_work_of_day([employee_id], day).get(employee_id),
             )
@@ -472,6 +477,11 @@ class AttendanceHrService(BaseService):
                     "late_minutes": row.late_minutes,
                     "scheduled_start": row.scheduled_start,
                     "scheduled_end": row.scheduled_end,
+                    # Норма дня — из `day_plan`, одна на систему (D-03).
+                    # None — графика нет или норма не определена правилом
+                    # (рабочий выходной по переносу, вопрос П-11).
+                    "norm_seconds": plan.norm_seconds if plan is not None else None,
+                    "is_working_day": plan.is_working if plan is not None else None,
                     "absence_code": row.absence_code,
                     "absence_name": row.absence_name,
                     # Отметки в день подтверждённого отсутствия — не норма,
@@ -486,8 +496,12 @@ class AttendanceHrService(BaseService):
                 totals["days_with_marks"] += 1
             if open_session:
                 totals["open_sessions"] += 1
-            if row.scheduled_start is not None:
+            if plan is not None and plan.is_working:
+                # Рабочий выходной по переносу — тоже рабочий день, хотя
+                # времени смены у него нет (D-06).
                 totals["working_days"] += 1
+            if plan is not None and plan.norm_seconds:
+                totals["norm_seconds"] += plan.norm_seconds
             if row.late_minutes:
                 totals["late_days"] += 1
                 totals["late_minutes"] += row.late_minutes
@@ -1129,56 +1143,22 @@ class AttendanceHrService(BaseService):
         employee_ids: list[uuid.UUID],
         day: date,
         *,
-        organization_id: uuid.UUID,
-        office_ids: list[uuid.UUID],
+        organization_id: uuid.UUID | None = None,
+        office_ids: list[uuid.UUID] | None = None,
     ) -> tuple[dict[uuid.UUID, tuple[time | None, time | None, bool, int]], dict]:
-        """Границы смены, признак рабочего дня и допустимое опоздание — по одному запросу на всех.
+        """Границы смены, признак рабочего дня и допуск — из `day_plan`.
 
-        Значение `(None, False)` означает «график есть, день нерабочий»;
-        отсутствие ключа — «графика нет вовсе». Это разные вещи: во втором
-        случае про опоздание сказать нечего, а в первом — есть что: человек
-        и не должен был приходить.
+        Оставлено для вызывающих снаружи (выгрузки). Календарь уже учтён в
+        плане дня, поэтому второй элемент — пустой словарь исключений.
+        Отсутствие ключа — «графика нет вовсе».
         """
-        weekday = day.isoweekday()
-        rows = (
-            EmployeeScheduleAssignment.objects.filter(
-                employee_id__in=employee_ids,
-                valid_from__lte=day,
-            )
-            .filter(Q(valid_to__isnull=True) | Q(valid_to__gte=day))
-            .select_related("schedule")
-            .prefetch_related("schedule__days")
-            .order_by("employee_id", "-valid_from")
-        )
-
-        # Праздники и переносы. Исключение офиса перекрывает общее по
-        # организации — тем же правилом, что и в `statistics.py`.
-        exceptions: dict[uuid.UUID | None, bool] = {}
-        calendar = CalendarException.objects.filter(
-            Q(office_id__in=office_ids) | Q(office__isnull=True),
-            organization_id=organization_id,
-            date=day,
-            is_active=True,
-        )
-        for row in sorted(calendar, key=lambda r: r.office_id is not None):
-            exceptions[row.office_id] = row.is_working_day
-
-        result: dict[uuid.UUID, tuple[time | None, time | None, bool, int]] = {}
-        for row in rows:
-            if row.employee_id in result:
-                continue  # берём самое позднее действующее назначение
-            match = next(
-                (d for d in row.schedule.days.all() if d.weekday == weekday),
-                None,
-            )
-            working = bool(match and match.is_working_day)
-            result[row.employee_id] = (
-                match.start_time if match and working else None,
-                match.end_time if match and working else None,
-                working,
-                row.schedule.late_grace_minutes or 0,
-            )
-        return result, exceptions
+        plans = plans_for(employee_ids, day, day)
+        result = {}
+        for employee_id in employee_ids:
+            value = _schedule_tuple(plans.get((employee_id, day)))
+            if value is not None:
+                result[employee_id] = value
+        return result, {}
 
     @staticmethod
     def _presence_row(
@@ -1361,6 +1341,7 @@ def _empty_totals() -> dict:
         "late_days": 0,
         "late_minutes": 0,
         "open_sessions": 0,
+        "norm_seconds": 0,
     }
 
 
@@ -1428,3 +1409,19 @@ def _now() -> datetime:
     from django.utils import timezone as django_timezone
 
     return django_timezone.now()
+
+
+def _schedule_tuple(plan):
+    """План дня -> `(начало, конец, рабочий, допуск)` для `_presence_row`.
+
+    None — графика на этот день нет. Рабочий выходной по переносу —
+    рабочий день без времени смены: опоздание у него не считается.
+    """
+    if plan is None or not plan.has_schedule:
+        return None
+    return (
+        plan.start if plan.is_working else None,
+        plan.end if plan.is_working else None,
+        bool(plan.is_working),
+        plan.late_grace_minutes,
+    )

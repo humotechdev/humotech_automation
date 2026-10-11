@@ -53,6 +53,7 @@ from django.utils import timezone
 from humotech.absences.models import EmployeeAbsence
 from humotech.attendance.models import AttendanceSession, FieldWorkRequest
 from humotech.core.timeframes import (
+    day_bounds,
     days_in,
     local_date,
     month_range,
@@ -60,7 +61,7 @@ from humotech.core.timeframes import (
     today as today_in,
     week_range,
 )
-from humotech.schedules.models import CalendarException, EmployeeScheduleAssignment
+from humotech.schedules.day_plan import plans_for
 
 # Как вид отсутствия ложится в колонки статистики.
 #
@@ -104,15 +105,16 @@ class DayRecord:
     is_working_day: bool | None
     absence_code: str | None
     absence_name: str | None
-    # Норма дня в секундах. None — графика на этот день нет, 0 — выходной.
-    #
-    # Не «конец смены минус начало»: в эту разницу входит обед, которого
-    # в графике нет ни минутой. Норма берётся из `weekly_minutes` —
-    # договорного недельного времени — и делится на число рабочих дней
-    # графика, ровно как это уже делает `_daily_norm_minutes`
-    # в ассистенте. Одно правило на весь проект, а не два похожих.
+    # Норма дня в секундах. 0 — выходной. None — графика на этот день нет
+    # или норма правилом не определена (рабочий выходной по переносу,
+    # вопрос П-11). Считает `schedules.day_plan` — одна формула на всю
+    # систему: бот, Mini App, CRM, выгрузки (аудит 12.10, D-03).
     norm_seconds: int | None
     field_work: bool = False
+    #: День уже прошёл: рабочий — после конца смены по графику, иначе —
+    #: после конца суток в поясе офиса. Будущий день и сегодняшний до
+    #: конца смены пропуском не бывают (аудит 12.10, D-01).
+    settled: bool = True
 
     @property
     def attended(self) -> bool:
@@ -120,9 +122,10 @@ class DayRecord:
 
     @property
     def missed(self) -> bool:
-        """Рабочий день, в который не пришли и отсутствие не оформлено."""
+        """Прошедший рабочий день, в который не пришли и отсутствие не оформлено."""
         return (
             self.is_working_day is True
+            and self.settled
             and not self.attended
             and self.absence_code is None
         )
@@ -211,7 +214,12 @@ def for_period(
     employee_id = context.employee.id
 
     sessions_by_day = _sessions_by_day(employee_id, first, last, tz, moment)
-    plans = _day_plans(context, first, last)
+    # План каждого дня — офис, версия графика и календарь именно этого дня
+    # (D-02, C-10), норма — одна формула (D-03).
+    plans = {
+        day: plan for (_, day), plan in plans_for([employee_id], first, last).items()
+        if plan.has_schedule
+    }
     absences = _absence_days(context, first, last, tz)
     field_work = {r.date: r for r in FieldWorkRequest.objects.filter(
         employee_id=employee_id, date__gte=first, date__lte=last,
@@ -231,6 +239,8 @@ def for_period(
             norm_seconds=plans[day].norm_seconds if day in plans else None,
             field_work=(day in field_work and not sessions_by_day.get(day)
                         and day not in absences),
+            settled=(plans[day].is_settled(moment) if day in plans
+                     else moment >= day_bounds(day, tz)[1]),
         )
         for day in days_in(first, last)
     )
@@ -292,7 +302,9 @@ def current_status(context, *, now: datetime | None = None) -> CurrentStatus:
     absences = _absence_days(context, day, day, tz)
     absence_code, absence_name = absences.get(day, (None, None))
 
-    scheduled_start, scheduled_end = _scheduled_times(context, day)
+    plan = plans_for([context.employee.id], day, day).get((context.employee.id, day))
+    scheduled_start = plan.start if plan is not None else None
+    scheduled_end = plan.end if plan is not None else None
     last_entry, last_exit = _last_marks(context.employee.id)
 
     return CurrentStatus(
@@ -302,10 +314,7 @@ def current_status(context, *, now: datetime | None = None) -> CurrentStatus:
             is_working_day=record.is_working_day,
             attended=record.attended,
             field_work=record.field_work,
-            scheduled_end=scheduled_end,
-            day=day,
-            tz=tz,
-            now=moment,
+            settled=record.settled,
         ),
         day=day,
         timezone=str(tz),
@@ -320,8 +329,7 @@ def current_status(context, *, now: datetime | None = None) -> CurrentStatus:
 
 
 def _presence(
-    *, open_session, absence_code, is_working_day, attended, field_work, scheduled_end,
-    day, tz, now,
+    *, open_session, absence_code, is_working_day, attended, field_work, settled,
 ) -> str:
     # Порядок разбора — это и есть правило. Человек в офисе считается
     # находящимся в офисе, даже если на этот день оформлен отпуск: факт
@@ -339,15 +347,10 @@ def _presence(
     if is_working_day is False:
         return Presence.DAY_OFF
     if is_working_day and not attended:
-        # «Не пришёл» — только когда день уже кончился. В десять утра
-        # человек ещё может быть в дороге, и объявлять прогул рано.
-        if scheduled_end is None:
-            return Presence.OUTSIDE
-        finished = datetime.combine(day, scheduled_end, tzinfo=tz)
-        return (
-            Presence.WORKDAY_MISSED if now > finished.astimezone(tz)
-            else Presence.OUTSIDE
-        )
+        # «Не пришёл» — только когда день уже кончился (конец смены, а у
+        # дня без времени смены — конец суток). В десять утра человек ещё
+        # может быть в дороге, и объявлять прогул рано.
+        return Presence.WORKDAY_MISSED if settled else Presence.OUTSIDE
     return Presence.OUTSIDE
 
 
@@ -400,107 +403,18 @@ def _point_name(event) -> str | None:
     return event.qr_point.name
 
 
-@dataclass(frozen=True)
-class DayPlan:
-    """Что график говорит про один день: рабочий ли он и какова норма."""
-
-    is_working: bool
-    # 0 у выходного: график про этот день знает и отвечает «нисколько».
-    # Отсутствие дня в словаре — другое: графика нет вовсе.
-    norm_seconds: int
-
-
-def _day_plans(context, first: date, last: date) -> dict[date, DayPlan]:
-    """Какие дни периода рабочие и сколько в каждом нормы.
-
-    График читается на каждый день отдельно, а не один раз «текущий»:
-    в месяце, внутри которого график поменяли, одна выборка дала бы
-    неверное число рабочих дней ровно на половину периода.
-    """
-    assignments = list(
-        EmployeeScheduleAssignment.objects.filter(
-            Q(valid_to__isnull=True) | Q(valid_to__gte=first),
-            employee_id=context.employee.id,
-            valid_from__lte=last,
-        )
-        .select_related("schedule")
-        .prefetch_related("schedule__days")
-        .order_by("valid_from")
-    )
-    if not assignments:
-        return {}
-
-    exceptions = _calendar_exceptions(context, first, last)
-
-    result: dict[date, DayPlan] = {}
-    for day in days_in(first, last):
-        schedule = _schedule_on(assignments, day)
-        if schedule is None:
-            continue
-        norm = _daily_norm_seconds(schedule)
-        override = exceptions.get(day)
-        if override is not None:
-            # Перенос делает день рабочим или выходным, но своей нормы
-            # не приносит: в календарном исключении её просто нет. Значит,
-            # у рабочего дня по переносу норма та же, что у остальных.
-            result[day] = DayPlan(override, norm if override else 0)
-            continue
-        # `ScheduleDay.weekday` — ISO-8601: 1 = понедельник.
-        # `date.weekday()` считает с нуля, отсюда `isoweekday()`.
-        match = next(
-            (d for d in schedule.days.all() if d.weekday == day.isoweekday()), None
-        )
-        working = bool(match and match.is_working_day)
-        result[day] = DayPlan(working, norm if working else 0)
-    return result
-
-
 def _daily_norm_seconds(schedule) -> int:
-    """Норма одного рабочего дня графика.
+    """Норма типового рабочего дня графика — для совместимости.
 
-    Недельное договорное время, делённое на число рабочих дней недели.
-    Ни «восемь часов по умолчанию», ни разница между концом и началом
-    смены: в первом случае число взято с потолка, во втором в него
-    попадает обед, которого график не описывает.
-
-    Ноль, если рабочих дней в графике нет вовсе, — делить не на что,
-    а выдумывать знаменатель здесь нечем.
+    Расчёты берут норму из `schedules.day_plan`; здесь — норма первого
+    рабочего дня графика по той же формуле (смена минус неоплачиваемые
+    перерывы), если вызывающему нужен график без даты.
     """
-    working = sum(1 for day in schedule.days.all() if day.is_working_day)
-    if not working or not schedule.weekly_minutes:
-        return 0
-    return int(schedule.weekly_minutes // working) * 60
+    from humotech.schedules.day_plan import norm_of_day
 
-
-def _schedule_on(assignments, day: date):
-    for assignment in assignments:
-        if assignment.valid_from <= day and (
-            assignment.valid_to is None or assignment.valid_to >= day
-        ):
-            return assignment.schedule
-    return None
-
-
-def _calendar_exceptions(context, first: date, last: date) -> dict[date, bool]:
-    """Праздники и переносы. Исключение офиса перекрывает общее.
-
-    Одна дата может иметь и строку офиса, и строку на всю организацию —
-    уникальные ключи это разрешают. Побеждает офис: он конкретнее.
-    """
-    rows = CalendarException.objects.filter(
-        Q(office_id=context.office.id) | Q(office__isnull=True),
-        organization_id=context.organization_id,
-        date__gte=first,
-        date__lte=last,
-        is_active=True,
-    )
-    # Сначала общие по организации, затем офисные поверх них: сортировка
-    # по `office_id` с NULL впереди делает перезапись правильной без
-    # разбора случаев.
-    result: dict[date, bool] = {}
-    for row in sorted(rows, key=lambda r: r.office_id is not None):
-        result[row.date] = row.is_working_day
-    return result
+    working = sorted((d for d in schedule.days.all() if d.is_working_day),
+                     key=lambda d: d.weekday)
+    return norm_of_day(working[0], schedule) if working else 0
 
 
 def _absence_days(
@@ -558,32 +472,6 @@ def _open_session(context, now: datetime) -> SessionRecord | None:
         entry_point_name=_point_name(row.entry_event),
         exit_point_name=None,
     )
-
-
-def _scheduled_times(context, day: date) -> tuple[time | None, time | None]:
-    assignment = (
-        EmployeeScheduleAssignment.objects.filter(
-            Q(valid_to__isnull=True) | Q(valid_to__gte=day),
-            employee_id=context.employee.id,
-            valid_from__lte=day,
-        )
-        .select_related("schedule")
-        .prefetch_related("schedule__days")
-        .first()
-    )
-    if assignment is None:
-        return None, None
-    match = next(
-        (
-            d
-            for d in assignment.schedule.days.all()
-            if d.weekday == day.isoweekday()
-        ),
-        None,
-    )
-    if match is None or not match.is_working_day:
-        return None, None
-    return match.start_time, match.end_time
 
 
 def _last_marks(employee_id) -> tuple[datetime | None, datetime | None]:

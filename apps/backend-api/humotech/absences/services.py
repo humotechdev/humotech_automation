@@ -2247,56 +2247,23 @@ class AbsenceService(BaseService):
         Отпуск считается рабочими днями: суббота, попавшая в отпуск,
         не тратит остаток. Без этого две недели отпуска стоили бы
         четырнадцать дней вместо десяти.
+
+        Каждый день — по единому плану дня (`schedules.day_plan`): версия
+        графика на эту дату и календарь офиса, где человек числился в этот
+        день, а не текущий офис (аудит 12.10, D-02, C-10). День без
+        графика считается рабочим: заниженный отпуск списал бы меньше,
+        чем человек отгулял.
         """
-        assignments = list(
-            EmployeeScheduleAssignment.objects.filter(
-                employee_id=context.employee.id, valid_from__lte=last_day
-            )
-            .select_related("schedule")
-            .prefetch_related("schedule__days")
-            .order_by("valid_from")
-        )
-        exceptions = {
-            row.date: (row.is_working_day, row.office_id)
-            for row in sorted(
-                CalendarException.objects.filter(
-                    organization_id=context.organization_id,
-                    date__gte=first_day,
-                    date__lte=last_day,
-                    is_active=True,
-                ),
-                key=lambda r: r.office_id is not None,
-            )
-            if row.office_id in (None, getattr(context.office, "id", None))
-        }
+        from humotech.schedules.day_plan import plans_for
 
-        if not assignments:
-            # Графика нет — считаем все дни периода. Занижать нельзя:
-            # заниженный отпуск списал бы меньше, чем человек отгулял.
-            return (last_day - first_day).days + 1
-
+        plans = plans_for([context.employee.id], first_day, last_day)
         total = 0
         for day in days_in(first_day, last_day):
-            schedule = next(
-                (
-                    a.schedule for a in assignments
-                    if a.valid_from <= day
-                    and (a.valid_to is None or a.valid_to >= day)
-                ),
-                None,
-            )
-            if schedule is None:
+            plan = plans.get((context.employee.id, day))
+            if plan is None or not plan.has_schedule:
                 total += 1
                 continue
-            override = exceptions.get(day)
-            if override is not None:
-                total += 1 if override[0] else 0
-                continue
-            match = next(
-                (d for d in schedule.days.all() if d.weekday == day.isoweekday()),
-                None,
-            )
-            total += 1 if (match and match.is_working_day) else 0
+            total += 1 if plan.is_working else 0
         return total
 
     def _check_balance(

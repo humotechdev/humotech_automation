@@ -709,15 +709,18 @@ class TestQueryCount:
             return person
 
         # Тринадцатый запрос — запросы выездной работы дня: один на всю
-        # смену, а не на человека.
+        # смену, а не на человека. Ещё четыре — единый план дня
+        # (`schedules.day_plan`, аудит 12.10): сотрудники, назначения,
+        # версии графика с днями и перерывами, календарь — тоже по одному
+        # на всю смену.
         hire(1)
-        with django_assert_max_num_queries(13):
+        with django_assert_max_num_queries(17):
             service.presence(attendance_actor, day=DAY, office_id=office.id)
 
         for number in range(2, 12):
             hire(number)
         # Тот же бюджет на вдесятеро большем составе.
-        with django_assert_max_num_queries(13):
+        with django_assert_max_num_queries(17):
             report = service.presence(attendance_actor, day=DAY, office_id=office.id)
         assert len(report.rows) == 11
 

@@ -52,7 +52,7 @@ from humotech.employees.services import (
     roster_assignment_filter,
 )
 from humotech.offices.models import Office
-from humotech.schedules.models import CalendarException, EmployeeScheduleAssignment
+from humotech.schedules.day_plan import plans_for
 
 # Больше года за один запрос не считается: это не ограничение расчёта,
 # а защита от случайного «с 1970 года» в параметрах.
@@ -367,26 +367,27 @@ class AnalyticsService(BaseService):
             )
 
         office_ids = [office.id for office in offices]
-        start, end = range_bounds(first, last, tz)
+        now = django_timezone.now()
 
-        roster = self._roster(actor, office_ids, at=last, only=only_employee)
+        # Состав — все, кто хоть один день периода числился в офисах выборки
+        # и был трудоустроен, а не только те, кто числится в последний день.
+        # Уволенный 15-го и переведённый 16-го остаются в своих днях (аудит
+        # 12.10, B-04 / D-08). Каждый день человека относится к офису его
+        # назначения в ЭТОТ день (`day_plan`).
+        roster = self._roster(actor, office_ids, first=first, last=last, only=only_employee)
         employee_ids = list(roster)
         if not employee_ids:
-            return _empty_report(
-                scope_kind, scope_id, scope_name, first, last, tz,
-                django_timezone.now(),
-            )
+            return _empty_report(scope_kind, scope_id, scope_name, first, last, tz, now)
 
-        # Пять запросов на весь период любой длины: помесячный отчёт стоит
-        # столько же, сколько дневной. Наивный расчёт «день за днём» дал бы
-        # тридцать раз по пять.
-        sessions = self._sessions(employee_ids, start, end, tz)
+        plans = plans_for(employee_ids, first, last)
+        employed = self._employment(employee_ids)
+        # Окно сессий с запасом в сутки: офисы выборки бывают в разных
+        # поясах, а день сессии определяет пояс её офиса (C-06).
+        start, end = range_bounds(first - timedelta(days=1), last + timedelta(days=1), tz)
+        sessions = self._sessions(employee_ids, start, end, first, last)
         field_work = self._field_work(employee_ids, first, last)
-        absences = self._absences(employee_ids, first, last, tz)
-        schedules = self._schedules(employee_ids, first, last)
-        exceptions = self._exceptions(actor, office_ids, first, last)
-        places = self._places(employee_ids, first, last)
-        rejected = self._rejected_scans(office_ids, start, end)
+        absences = self._absences(employee_ids, first, last, plans)
+        rejected = self._rejected_scans(office_ids, *range_bounds(first, last, tz))
 
         return self._compute(
             scope_kind=scope_kind,
@@ -395,14 +396,14 @@ class AnalyticsService(BaseService):
             first=first,
             last=last,
             tz=tz,
-            generated_at=django_timezone.now(),
+            generated_at=now,
             employee_ids=employee_ids,
             sessions=sessions,
             field_work=field_work,
             absences=absences,
-            schedules=schedules,
-            exceptions=exceptions,
-            places=places,
+            plans=plans,
+            office_ids=set(office_ids),
+            employed=employed,
             rejected=rejected,
         )
 
@@ -411,20 +412,39 @@ class AnalyticsService(BaseService):
         actor: Actor,
         office_ids: list[uuid.UUID],
         *,
-        at: date,
+        first: date,
+        last: date,
         only: uuid.UUID | None,
     ) -> set[uuid.UUID]:
+        """Кто хоть один день периода числился в офисах выборки.
+
+        Уволенные в периоде — входят (их дни до увольнения — их дни).
+        Приостановленные и архивные по-прежнему не входят: истории статуса
+        нет, а как учитывать приостановку — вопрос владельцу (П-9, П-14).
+        """
         queryset = EmployeeAssignment.objects.filter(
-            roster_assignment_filter(at),
+            is_primary=True,
             office_id__in=office_ids,
+            valid_from__lte=last,
             employee__organization_id=actor.organization_id,
-        )
+            employee__employment_status__in=("ACTIVE", "TERMINATED"),
+        ).filter(Q(valid_to__isnull=True) | Q(valid_to__gte=first))
         if only:
             queryset = queryset.filter(employee_id=only)
         return set(queryset.values_list("employee_id", flat=True))
 
     @staticmethod
-    def _sessions(employee_ids, start, end, tz) -> dict:
+    def _employment(employee_ids) -> dict:
+        """Период трудоустройства: `(дата приёма, дата увольнения | None)`."""
+        return {
+            row[0]: (row[1], row[2])
+            for row in Employee.objects.filter(id__in=employee_ids).values_list(
+                "id", "hire_date", "termination_date")
+        }
+
+    @staticmethod
+    def _sessions(employee_ids, start, end, first, last) -> dict:
+        """Сессии по дням. День — по поясу офиса сессии (C-06)."""
         grouped: dict[tuple[uuid.UUID, date], list[AttendanceSession]] = {}
         rows = (
             AttendanceSession.objects.filter(
@@ -433,11 +453,14 @@ class AnalyticsService(BaseService):
                 started_at__lt=end,
             )
             .exclude(status="INVALID")
-            .only("employee_id", "started_at", "ended_at", "duration_seconds")
+            .select_related("office", "office__organization")
+            .only("employee_id", "started_at", "ended_at", "duration_seconds", "status",
+                  "office__timezone", "office__organization__default_timezone")
         )
         for row in rows:
-            day = local_date(row.started_at, tz)
-            grouped.setdefault((row.employee_id, day), []).append(row)
+            day = local_date(row.started_at, office_zone(row.office))
+            if first <= day <= last:
+                grouped.setdefault((row.employee_id, day), []).append(row)
         return grouped
 
     @staticmethod
@@ -452,9 +475,14 @@ class AnalyticsService(BaseService):
         }
 
     @staticmethod
-    def _absences(employee_ids, first, last, tz) -> dict:
+    def _absences(employee_ids, first, last, plans) -> dict:
         result: dict[tuple[uuid.UUID, date], str] = {}
-        start, end = range_bounds(first, last, tz)
+        zones = {
+            employee_id: plans[(employee_id, first)].timezone
+            for employee_id in employee_ids if (employee_id, first) in plans
+        }
+        start, end = range_bounds(first - timedelta(days=1), last + timedelta(days=1),
+                                  next(iter(zones.values()), office_zone(None)))
         rows = (
             EmployeeAbsence.objects.filter(
                 employee_id__in=employee_ids,
@@ -467,72 +495,11 @@ class AnalyticsService(BaseService):
         )
         for row in rows:
             code = row.absence_type.code if row.absence_type_id else ""
+            tz = zones.get(row.employee_id, office_zone(None))
             from_day = max(local_date(row.start_at, tz), first)
             to_day = min(local_date(row.end_at, tz), last)
             for day in days_in(from_day, to_day):
                 result.setdefault((row.employee_id, day), code)
-        return result
-
-    @staticmethod
-    def _schedules(employee_ids, first, last) -> dict:
-        """Действующие графики с днями — одним запросом на весь период."""
-        rows = (
-            EmployeeScheduleAssignment.objects.filter(
-                employee_id__in=employee_ids, valid_from__lte=last
-            )
-            .filter(Q(valid_to__isnull=True) | Q(valid_to__gte=first))
-            .select_related("schedule")
-            .prefetch_related("schedule__days")
-            .order_by("employee_id", "valid_from")
-        )
-        result: dict[uuid.UUID, list] = {}
-        for row in rows:
-            result.setdefault(row.employee_id, []).append(row)
-        return result
-
-    def _exceptions(self, actor, office_ids, first, last) -> dict:
-        """Исключения календаря по офисам: `{office_id: {день: рабочий?}}`.
-
-        Ключ `None` — общие исключения организации. Исключение офиса сильнее
-        общего, но действует ТОЛЬКО в своём офисе. Раньше словарь был общим
-        на всю выборку, и праздник одного офиса отменял рабочий день всем
-        офисам региона или организации (аудит 12.10, C-13). Так же правило
-        уже устроено в `analytics/overview.py`, `statistics.py`, `hr.py`.
-        """
-        rows = CalendarException.objects.filter(
-            Q(office_id__in=office_ids) | Q(office__isnull=True),
-            organization_id=actor.organization_id,
-            date__gte=first,
-            date__lte=last,
-            is_active=True,
-        )
-        common: dict[date, bool] = {}
-        own: dict[uuid.UUID, dict[date, bool]] = {}
-        for row in rows:
-            if row.office_id is None:
-                common[row.date] = row.is_working_day
-            else:
-                own.setdefault(row.office_id, {})[row.date] = row.is_working_day
-        result: dict = {None: common}
-        for office_id in office_ids:
-            result[office_id] = {**common, **own.get(office_id, {})}
-        return result
-
-    @staticmethod
-    def _places(employee_ids, first, last) -> dict:
-        """Основные назначения сотрудников, пересекающие период: где человек
-        числится в каждый день (для исключений календаря его офиса)."""
-        rows = (
-            EmployeeAssignment.objects.filter(
-                employee_id__in=employee_ids, is_primary=True, valid_from__lte=last,
-            )
-            .filter(Q(valid_to__isnull=True) | Q(valid_to__gte=first))
-            .values_list("employee_id", "office_id", "valid_from", "valid_to")
-            .order_by("employee_id", "valid_from")
-        )
-        result: dict = {}
-        for employee_id, office_id, valid_from, valid_to in rows:
-            result.setdefault(employee_id, []).append((office_id, valid_from, valid_to))
         return result
 
     @staticmethod
@@ -558,12 +525,22 @@ class AnalyticsService(BaseService):
         sessions,
         field_work,
         absences,
-        schedules,
-        exceptions,
+        plans,
+        office_ids,
+        employed,
         rejected,
-        places=None,
     ) -> Report:
-        with_schedule = {eid for eid in employee_ids if schedules.get(eid)}
+        """Показатели по дням: каждый день человека — по плану ЭТОГО дня.
+
+        * День считается, только если человек в этот день числился в офисе
+          выборки и был трудоустроен (B-04 / D-08).
+        * Будущий день и сегодняшний до конца смены — ещё не ожидаемый и
+          не пропущенный; если человек уже пришёл, день засчитан (D-01).
+        * Норма, начало смены и допуск — из `day_plan` (D-03, C-10).
+        * Опоздание — в поясе офиса этого дня (C-06).
+        """
+        with_schedule: set = set()
+        counted: set = set()
 
         expected_days = 0
         expected_seconds = 0
@@ -581,6 +558,9 @@ class AnalyticsService(BaseService):
         late_count = 0
         late_minutes_total = 0
         open_sessions = 0
+        overtime_seconds = 0
+        undertime_seconds = 0
+        days_without_norm = 0
         series: list[DayPoint] = []
 
         for day in days_in(first, last):
@@ -590,18 +570,24 @@ class AnalyticsService(BaseService):
             day_late = 0
 
             for employee_id in employee_ids:
+                plan = plans.get((employee_id, day))
+                if plan is None or plan.office_id not in office_ids:
+                    continue
+                hired, terminated = employed.get(employee_id, (None, None))
+                if (hired and day < hired) or (terminated and day > terminated):
+                    continue
+                counted.add(employee_id)
                 key = (employee_id, day)
                 day_sessions = sessions.get(key, [])
                 absence_code = absences.get(key)
 
+                seconds = 0
                 if day_sessions:
                     seconds = sum(s.duration_seconds or 0 for s in day_sessions)
                     worked_seconds += seconds
                     office_seconds += seconds
                     day_worked += seconds
-                    open_sessions += sum(
-                        1 for s in day_sessions if s.ended_at is None
-                    )
+                    open_sessions += sum(1 for s in day_sessions if s.ended_at is None)
 
                 if absence_code is not None:
                     if absence_code in SICK_CODES:
@@ -614,52 +600,68 @@ class AnalyticsService(BaseService):
                     # человек законно не должен был приходить.
                     continue
 
-                office_today = _office_on((places or {}).get(employee_id), day)
-                plan = _plan_for(schedules.get(employee_id), day,
-                                 exceptions.get(office_today, exceptions.get(None, {})))
-                if plan is None:
+                if not plan.has_schedule:
                     # Графика нет — норму посчитать нечем. Такой человек
                     # не попадает ни в числитель, ни в знаменатель, и
                     # `coverage` говорит, сколько таких.
                     continue
+                with_schedule.add(employee_id)
 
-                start_time, seconds_norm = plan
-                if start_time is None:
-                    continue  # нерабочий день по графику или праздник
+                credited = 0
+                if not day_sessions and key in field_work:
+                    credited = field_work[key]
+
+                settled = plan.is_settled(generated_at)
+                if settled and plan.norm_seconds is not None:
+                    deviation = seconds + credited - plan.norm_seconds
+                    if deviation > 0:
+                        overtime_seconds += deviation
+                    elif deviation < 0:
+                        undertime_seconds -= deviation
+
+                if not plan.is_working:
+                    continue  # выходной по графику или праздник
+                future = day > local_date(generated_at, plan.timezone)
+                if future and not day_sessions and not credited:
+                    continue  # будущий день — не ожидаемый и не пропуск (D-01)
 
                 expected_days += 1
-                expected_seconds += seconds_norm
                 day_expected += 1
+                if plan.norm_seconds is None:
+                    days_without_norm += 1
+                else:
+                    expected_seconds += plan.norm_seconds
 
                 if day_sessions:
                     attended_days += 1
                     day_attended += 1
                     arrivals += 1
-                    entry = min(s.started_at for s in day_sessions)
-                    planned = datetime.combine(day, start_time, tzinfo=tz)
-                    delta = int(
-                        (entry.astimezone(tz) - planned).total_seconds() // 60
-                    )
-                    grace = _grace_for(schedules.get(employee_id), day)
-                    late = max(delta - grace, 0)
-                    if late > 0:
-                        late_count += 1
-                        late_minutes_total += late
-                        day_late += 1
+                    if plan.starts_at is not None:
+                        entry = min(s.started_at for s in day_sessions)
+                        delta = int((entry - plan.starts_at).total_seconds() // 60)
+                        late = max(delta - plan.late_grace_minutes, 0)
+                        if late > 0:
+                            late_count += 1
+                            late_minutes_total += late
+                            day_late += 1
+                        else:
+                            on_time += 1
                     else:
                         on_time += 1
-                elif key in field_work:
+                elif credited:
                     # One confirmed request credits exactly its approved daily
                     # norm; it is never an office arrival or QR session.
-                    credited = field_work[key]
                     field_work_days += 1
                     field_work_seconds += credited
                     worked_seconds += credited
                     day_worked += credited
                     attended_days += 1
                     day_attended += 1
-                else:
+                elif settled:
                     missed_days += 1
+                # Сегодня, смена ещё идёт: день ожидаемый (знаменатель явки
+                # прежний — вопрос П-1), но пропуском он станет только после
+                # конца смены (D-01).
 
             series.append(
                 DayPoint(
@@ -670,6 +672,8 @@ class AnalyticsService(BaseService):
                     late=day_late,
                 )
             )
+
+        employee_ids = [e for e in employee_ids if e in counted]
 
         totals = {
             "employees": len(employee_ids),
@@ -688,10 +692,22 @@ class AnalyticsService(BaseService):
             "late_minutes_total": late_minutes_total,
             "open_sessions": open_sessions,
             "rejected_scans": rejected,
-            # Переработка и недоработка — две стороны одной разницы, и
-            # обе положительные: «-12 часов переработки» читать неудобно.
-            "overtime_seconds": max(worked_seconds - expected_seconds, 0),
-            "undertime_seconds": max(expected_seconds - worked_seconds, 0),
+            # Отклонение от нормы — по каждому человеку и дню, а не разница
+            # сумм по области: переработка одного не гасит недоработку
+            # другого, люди без графика не участвуют (аудит 12.10, D-04).
+            # Так же считает выгрузка «Рабочее время». Свёртка внутри
+            # человека за период (суммированный учёт) — вопрос П-4.
+            "overtime_seconds": overtime_seconds,
+            "undertime_seconds": undertime_seconds,
+            "deviation_rule": (
+                "по каждому сотруднику и дню: факт минус норма графика; "
+                "сверх нормы и недоработка суммируются отдельно; "
+                "сотрудники без графика не участвуют"
+            ),
+            # Утверждённой переработки как процесса нет: положительное
+            # отклонение — не утверждённая переработка (D-04).
+            "approved_overtime_seconds": None,
+            "days_without_norm": days_without_norm,
             "average_seconds_per_attended_day": (
                 round(worked_seconds / attended_days) if attended_days else None
             ),
@@ -756,61 +772,6 @@ class AnalyticsService(BaseService):
 
 
 # --- вспомогательное ---------------------------------------------------------
-
-
-def _office_on(places, day: date):
-    """Офис основного назначения сотрудника на этот день (или None)."""
-    for office_id, valid_from, valid_to in places or ():
-        if valid_from <= day and (valid_to is None or valid_to >= day):
-            return office_id
-    return None
-
-
-def _plan_for(assignments, day: date, exceptions: dict) -> tuple | None:
-    """Начало смены и норма секунд на день. `None` — графика нет вовсе."""
-    if not assignments:
-        return None
-    schedule = None
-    for assignment in assignments:
-        if assignment.valid_from <= day and (
-            assignment.valid_to is None or assignment.valid_to >= day
-        ):
-            schedule = assignment.schedule
-    if schedule is None:
-        return None
-
-    weekday = day.isoweekday()
-    match = next((d for d in schedule.days.all() if d.weekday == weekday), None)
-    working = bool(match and match.is_working_day)
-    if day in exceptions:
-        working = exceptions[day]
-    if not working or match is None or match.start_time is None:
-        return (None, 0)
-
-    end = match.end_time or match.start_time
-    norm = _seconds_between(match.start_time, end)
-    return (match.start_time, norm)
-
-
-def _grace_for(assignments, day: date) -> int:
-    if not assignments:
-        return 0
-    for assignment in assignments:
-        if assignment.valid_from <= day and (
-            assignment.valid_to is None or assignment.valid_to >= day
-        ):
-            return assignment.schedule.late_grace_minutes or 0
-    return 0
-
-
-def _seconds_between(start: time, end: time) -> int:
-    """Длина смены; переход через полночь считается как ночная смена."""
-    base = date(2000, 1, 1)
-    first = datetime.combine(base, start)
-    second = datetime.combine(base, end)
-    if second <= first:
-        second += timedelta(days=1)
-    return int((second - first).total_seconds())
 
 
 def _differences(left: Report, right: Report) -> list[dict]:

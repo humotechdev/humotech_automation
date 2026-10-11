@@ -5,6 +5,7 @@ from __future__ import annotations
 from django.contrib.postgres.constraints import ExclusionConstraint
 from django.contrib.postgres.fields import RangeOperators
 from django.db import models
+from django.db.models.functions import Coalesce
 
 from humotech.core.constraints import raw_check
 from humotech.core.enums import (
@@ -46,11 +47,73 @@ class WorkSchedule(
         blank=True,
     )
 
+    # --- версии графика «с даты» (решение владельца Р-5, аудит C-10) -------
+    #
+    # Правка назначенного графика не переписывает прошлое: она создаёт
+    # ВЕРСИЮ — строку этой же таблицы со ссылкой на исходный график
+    # (`version_of`) и периодом действия. Дни и перерывы живут у своей
+    # версии, назначения сотрудникам по-прежнему ссылаются на исходный
+    # график. Исходная строка — тоже версия: первая, с открытым началом
+    # (`valid_from IS NULL`). На любую дату у графика ровно одна версия,
+    # это держит EXCLUDE-ограничение. Какая версия действует на день,
+    # решает `humotech.schedules.day_plan`.
+    version_of = models.ForeignKey(
+        "self",
+        on_delete=models.CASCADE,
+        db_column="version_of_id",
+        related_name="versions",
+        null=True,
+        blank=True,
+    )
+    valid_from = models.DateField(null=True, blank=True)
+    valid_to = models.DateField(null=True, blank=True)
+    #: Почему график изменили — обязательна для правки задним числом.
+    change_reason = models.TextField(null=True, blank=True)
+    #: Версия создана задним числом (отдельная операция с отдельным правом).
+    is_retroactive = models.BooleanField(db_default=False)
+    changed_by_user = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,
+        db_column="changed_by_user_id",
+        db_index=False,
+        related_name="+",
+        null=True,
+        blank=True,
+    )
+
+    @property
+    def root_id(self):
+        """Идентификатор графика, которому принадлежит версия."""
+        return self.version_of_id or self.id
+
     class Meta:
         db_table = "work_schedules"
         verbose_name = "рабочий график"
         verbose_name_plural = "рабочие графики"
         constraints = [
+            raw_check(
+                "valid_to IS NULL OR valid_from IS NULL OR valid_to >= valid_from",
+                "ck_work_schedules_version_period",
+            ),
+            # Начало открыто только у исходной строки: у версии оно есть всегда.
+            raw_check(
+                "version_of_id IS NULL OR valid_from IS NOT NULL",
+                "ck_work_schedules_version_has_start",
+            ),
+            # Версия ссылается на исходный график, а не на другую версию.
+            raw_check(
+                "version_of_id IS NULL OR version_of_id <> id",
+                "ck_work_schedules_version_not_self",
+            ),
+            # На любую дату у графика одна версия.
+            ExclusionConstraint(
+                name="ex_work_schedules_version_overlap",
+                expressions=[
+                    (Coalesce("version_of", "id"), RangeOperators.EQUAL),
+                    (validity_daterange(), RangeOperators.OVERLAPS),
+                ],
+                index_type="GIST",
+            ),
             status_check("status", SCHEDULE_STATUSES, "ck_work_schedules_status"),
             raw_check(
                 "weekly_minutes > 0", "ck_work_schedules_weekly_minutes_positive"
@@ -69,6 +132,7 @@ class WorkSchedule(
                 fields=["organization"], name="ix_work_schedules_organization_id"
             ),
             models.Index(fields=["region"], name="ix_work_schedules_region_id"),
+            models.Index(fields=["version_of"], name="ix_work_schedules_version_of_id"),
         ]
 
     def __str__(self) -> str:

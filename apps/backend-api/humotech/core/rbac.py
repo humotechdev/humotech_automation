@@ -383,7 +383,10 @@ class AccessControl:
         from humotech.schedules.models import WorkSchedule
 
         schedule = WorkSchedule.objects.filter(
-            id=schedule_id, organization_id=actor.organization_id
+            id=schedule_id, organization_id=actor.organization_id,
+            # Версия графика — часть его истории, а не самостоятельный
+            # график: действовать с ней по её id нельзя.
+            version_of__isnull=True,
         ).first()
         if schedule is None:
             # чужой график отвечает так же, как несуществующий: иначе перебором

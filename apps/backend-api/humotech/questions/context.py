@@ -138,7 +138,7 @@ def _username(employee_id) -> str | None:
 
 def _schedule(employee_id) -> dict | None:
     """Действующий график и его рабочие дни одной строкой: «Пн–Пт · 09:00–18:00»."""
-    from humotech.schedules.models import EmployeeScheduleAssignment, ScheduleDay
+    from humotech.schedules.models import EmployeeScheduleAssignment
 
     today = timezone.localdate()
     row = (
@@ -150,11 +150,15 @@ def _schedule(employee_id) -> dict | None:
     )
     if row is None:
         return None
-    days = list(
-        ScheduleDay.objects.filter(schedule_id=row.schedule_id, is_working_day=True)
-        .order_by("weekday")
-        .values("weekday", "start_time", "end_time")
-    )
+    # Расписание версии графика, действующей сегодня (Р-5).
+    from humotech.schedules.day_plan import show_versions_on
+
+    show_versions_on([row.schedule], today)
+    days = [
+        {"weekday": one.weekday, "start_time": one.start_time, "end_time": one.end_time}
+        for one in sorted(row.schedule.display_days, key=lambda one: one.weekday)
+        if one.is_working_day
+    ]
     return {
         "name": row.schedule.name,
         "flexible": row.schedule.is_flexible,

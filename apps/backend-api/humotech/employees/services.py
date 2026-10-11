@@ -429,6 +429,10 @@ class EmployeeService(BaseService):
                 employee_id__in=[e.id for e in page.items]
             ).values_list("employee_id", "status", "telegram_username")
         }
+        # Показать расписание версии, действующей на дату списка (Р-5).
+        from humotech.schedules.day_plan import show_versions_on
+
+        show_versions_on(schedules.values(), at)
         for employee in page.items:
             employee.current_assignment = assignments.get(employee.id)
             employee.current_schedule = schedules.get(employee.id)
@@ -589,6 +593,10 @@ class EmployeeService(BaseService):
             connected_at=account.connected_at if account else None,
         )
 
+        if schedule is not None:
+            from humotech.schedules.day_plan import show_versions_on
+
+            show_versions_on([schedule.schedule], date.today())
         return EmployeeCard(
             employee=employee,
             current_assignment=current,

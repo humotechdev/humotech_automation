@@ -13,7 +13,7 @@ from django.utils import timezone
 
 from humotech.absences.models import EmployeeAbsence
 from humotech.attendance.models import AttendanceEvent, AttendanceSession, FieldWorkRequest
-from humotech.attendance.statistics import COUNTED_ABSENCE_STATUSES, _daily_norm_seconds
+from humotech.attendance.statistics import COUNTED_ABSENCE_STATUSES
 from humotech.core.errors import Conflict, NotFound, ValidationFailed
 from humotech.core.rbac import Actor
 from humotech.core.service import BaseService
@@ -134,19 +134,19 @@ class FieldWorkService(BaseService):
         ).order_by("-valid_from").first()
         if assignment is None:
             raise Conflict("У сотрудника нет графика на этот день")
-        match = next((d for d in assignment.schedule.days.all() if d.weekday == day.isoweekday()), None)
-        exceptions = CalendarException.objects.filter(
-            organization_id=office.organization_id, date=day, is_active=True,
-        ).filter(Q(office_id=office.id) | Q(office__isnull=True))
-        exception = exceptions.filter(office_id=office.id).first() or exceptions.filter(office__isnull=True).first()
-        working = exception.is_working_day if exception else bool(match and match.is_working_day)
+        # Строка графика заблокирована выше (тот же порядок, что у правки
+        # графика). Смена и норма — из единого плана дня: версия графика
+        # на эту дату, календарь офиса, норма по одной формуле (D-03).
+        from humotech.schedules.day_plan import plan_for
+
+        plan = plan_for(employee_id, day)
         # Перенесённый выходной без часов смены не допускает фиктивной нормы.
-        if not working or match is None or not match.start_time or not match.end_time:
+        if not plan.is_working or plan.start is None or plan.end is None:
             raise Conflict("На этот день нет полной рабочей смены")
-        norm = _daily_norm_seconds(assignment.schedule)
+        norm = plan.norm_seconds or 0
         if norm <= 0:
             raise Conflict("Для графика не определена норма рабочего дня")
-        return match.start_time, match.end_time, norm
+        return plan.start, plan.end, norm
 
     @staticmethod
     def _no_conflicts(employee_id, day, tz):

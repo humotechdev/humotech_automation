@@ -44,6 +44,30 @@ AUDITED_FIELDS = (
     "name", "timezone", "weekly_minutes", "late_grace_minutes",
     "early_leave_grace_minutes", "is_flexible", "status",
 )
+#: Поля, которые принадлежат ВЕРСИИ графика: их правка меняет расчёт дней.
+#: Остальные (название, пояс, статус, регион) — шапка графика, без истории.
+VERSIONED_FIELDS = (
+    "weekly_minutes", "late_grace_minutes", "early_leave_grace_minutes", "is_flexible",
+)
+
+
+def days_snapshot(days) -> list[dict]:
+    """Дни и перерывы версии для журнала аудита: раньше они в него не
+    попадали, и прежнее расписание нельзя было восстановить."""
+    return [
+        {
+            "weekday": day.weekday,
+            "is_working_day": day.is_working_day,
+            "start_time": str(day.start_time) if day.start_time else None,
+            "end_time": str(day.end_time) if day.end_time else None,
+            "breaks": [
+                {"name": item.name, "start_time": str(item.start_time),
+                 "end_time": str(item.end_time), "is_paid": item.is_paid}
+                for item in day.breaks.all()
+            ],
+        }
+        for day in sorted(days, key=lambda one: one.weekday)
+    ]
 
 
 @dataclass(frozen=True)
@@ -85,7 +109,9 @@ class WorkScheduleService(BaseService):
         self.access.require(actor, "schedules.read")
 
         queryset = WorkSchedule.objects.filter(
-            organization_id=actor.organization_id
+            organization_id=actor.organization_id,
+            # версии графика — его история, а не отдельные графики
+            version_of__isnull=True,
         )
         # Графики организации видны всем с правом чтения; графики региона —
         # тем, кому виден этот регион (целиком или офисом в нём).
@@ -103,7 +129,37 @@ class WorkScheduleService(BaseService):
             queryset = queryset.filter(name__icontains=search.strip())
         page = paginate(queryset.select_related("region"), limit=limit, cursor=cursor)
         self.mark_rights(actor, page.items)
+        self.show_current_versions(actor, page.items)
         return page
+
+    def show_current_versions(self, actor: Actor, schedules) -> None:
+        """Показать у графика поля и дни версии, действующей СЕГОДНЯ.
+
+        Назначения и права работают с исходной строкой графика, а читатель
+        видит действующее расписание. Будущая версия («с понедельника»)
+        видна в списке `versions` карточки.
+        """
+        from humotech.schedules.day_plan import version_on
+
+        schedules = list(schedules)
+        if not schedules:
+            return
+        day = self._today(actor)
+        roots = {schedule.id for schedule in schedules}
+        family: dict = {}
+        for version in (
+            WorkSchedule.objects.filter(Q(id__in=roots) | Q(version_of_id__in=roots))
+            .prefetch_related("days__breaks")
+        ):
+            family.setdefault(version.root_id, []).append(version)
+        for schedule in schedules:
+            versions = family.get(schedule.id, [])
+            current = version_on(versions, day) or schedule
+            for field_name in VERSIONED_FIELDS:
+                setattr(schedule, field_name, getattr(current, field_name))
+            schedule.current_version = current
+            schedule.version_list = sorted(
+                versions, key=lambda one: (one.valid_from is not None, one.valid_from))
 
     def mark_rights(self, actor: Actor, schedules) -> None:
         """Проставить `can_manage` — может ли актор менять этот график.
@@ -142,10 +198,13 @@ class WorkScheduleService(BaseService):
                                              region_id=schedule.region_id).exists()):
                 raise NotFound("График работы не найден")
         self.mark_rights(actor, [schedule])
+        self.show_current_versions(actor, [schedule])
         return schedule
 
     def days_of(self, schedule: WorkSchedule) -> list[ScheduleDay]:
-        return sorted(schedule.days.all(), key=lambda day: day.weekday)
+        """Дни версии, действующей сегодня (у карточки) или самой строки."""
+        current = getattr(schedule, "current_version", None) or schedule
+        return sorted(current.days.all(), key=lambda day: day.weekday)
 
     # --------------------------------------------------------------- изменение
 
@@ -188,14 +247,54 @@ class WorkScheduleService(BaseService):
 
     def update(
         self, actor: Actor, schedule_id: uuid.UUID, *,
-        days: list[DaySpec] | None = None, **changes,
+        days: list[DaySpec] | None = None,
+        effective_from: date | None = None,
+        reason: str | None = None,
+        **changes,
     ) -> WorkSchedule:
-        """Переданный список дней заменяет расписание ЦЕЛИКОМ.
+        """Правка графика. Переданный список дней заменяет расписание ЦЕЛИКОМ.
 
-        Частичная правка отдельных дней ввела бы неочевидную семантику
-        слияния: непонятно, что означает отсутствие дня в списке.
+        Название и пояс — шапка графика, меняются сразу. Дни, перерывы,
+        норма и допуски — расчёт: их правка у назначенного графика
+        действует С ДАТЫ (`effective_from`, по умолчанию сегодня по поясу
+        организации) и создаёт новую версию, а прошлые дни считаются по
+        прежней (решение владельца Р-5, аудит C-10). Дата в прошлом здесь
+        не принимается: правка задним числом — `change_history`.
         """
         self.access.require(actor, "schedules.manage")
+        today = self._today(actor)
+        start = effective_from or today
+        if start < today:
+            raise ValidationFailed(
+                "Изменить график с прошедшей даты можно только отдельной "
+                "операцией «Изменение задним числом» с причиной",
+                details={"effective_from": str(start), "today": str(today),
+                         "reason": "retroactive_requires_separate_operation"},
+            )
+        return self._change(actor, schedule_id, days=days, start=start,
+                            reason=reason, retroactive=False, changes=changes)
+
+    def change_history(
+        self, actor: Actor, schedule_id: uuid.UUID, *,
+        effective_from: date, reason: str,
+        days: list[DaySpec] | None = None, **changes,
+    ) -> WorkSchedule:
+        """Правка графика задним числом — отдельная контролируемая операция.
+
+        Меняет расчёт уже прошедших дней (опоздания, нормы, пропуски),
+        поэтому требует отдельного права `schedules.change_history` и
+        причины; версия помечается `is_retroactive`, всё — в журнал.
+        """
+        self.access.require(actor, "schedules.manage")
+        self.access.require(actor, "schedules.change_history")
+        reason = clean_text(reason, field="reason", required=True)
+        if len(reason) < 5:
+            raise ValidationFailed("Укажите причину изменения задним числом",
+                                   details={"field": "reason"})
+        return self._change(actor, schedule_id, days=days, start=effective_from,
+                            reason=reason, retroactive=True, changes=changes)
+
+    def _change(self, actor, schedule_id, *, days, start, reason, retroactive, changes):
         schedule = self.access.require_schedule(actor, schedule_id)
         self._require_editable(actor, schedule)
 
@@ -204,60 +303,166 @@ class WorkScheduleService(BaseService):
             schedule.name = clean_text(changes["name"], field="name", required=True)
         if changes.get("timezone") is not None:
             schedule.timezone = validate_timezone(changes["timezone"])
-        for field_name in ("weekly_minutes", "late_grace_minutes",
-                           "early_leave_grace_minutes", "is_flexible"):
-            if changes.get(field_name) is not None:
-                setattr(schedule, field_name, changes[field_name])
-
+        versioned = {
+            name: changes[name] for name in VERSIONED_FIELDS
+            if changes.get(name) is not None
+        }
         if days is not None:
             self._validate_days(days)
+        touches_days = days is not None or bool(versioned)
 
         with self.atomic():
-            if days is not None or changes.get("weekly_minutes") is not None or changes.get("timezone") is not None:
-                from humotech.attendance.field_work import (
-                    blocking_field_work, require_no_field_work,
+            if touches_days:
+                self._lock_holders(schedule_id, start)
+            version = None
+            before_days = after_days = None
+            if touches_days:
+                version, before_days, after_days = self._apply_version(
+                    actor, schedule, start=start, days=days, versioned=versioned,
+                    reason=reason, retroactive=retroactive,
                 )
-                from humotech.absences.services import lock_employee
-                # Lock assigned employees before the shared schedule row.
-                # Field-work creation takes the locks in the same order.
-                #
-                # Locking is needed only for those who can get a NEW request
-                # concurrently: a request is created only for today and only
-                # for an assignment in force today. Anyone whose assignment on
-                # this schedule ended earlier cannot gain one, so locking every
-                # employee who EVER held the schedule would serialize a routine
-                # edit on an ever-growing set. (A day of slack covers offices
-                # whose "today" is still yesterday in UTC.)
-                today = date.today()
-                assigned = EmployeeScheduleAssignment.objects.filter(schedule_id=schedule_id)
-                ids = list(assigned.filter(
-                    Q(valid_to__isnull=True) | Q(valid_to__gte=today - timedelta(days=1)),
-                ).values_list("employee_id", flat=True).distinct().order_by("employee_id"))
-                for employee_id in ids:
-                    lock_employee(employee_id)
-                    Employee.objects.select_for_update().get(id=employee_id)
-                WorkSchedule.objects.select_for_update().get(id=schedule_id)
-                # Existing requests still protect their days for everyone who
-                # held the schedule then, including those no longer on it.
-                protected = blocking_field_work().filter(
-                    employee_id__in=assigned.values("employee_id"))
-                for protected_day in protected:
-                    active_assignment = EmployeeScheduleAssignment.objects.filter(
-                        employee_id=protected_day.employee_id, schedule_id=schedule_id,
-                        valid_from__lte=protected_day.date,
-                    ).filter(Q(valid_to__isnull=True) | Q(valid_to__gte=protected_day.date)).exists()
-                    if active_assignment:
-                        require_no_field_work(protected_day.employee_id,
-                                              protected_day.date, protected_day.date)
             schedule.save()
-            if days is not None:
-                self._replace_days(schedule, days)
+            after = snapshot(schedule, AUDITED_FIELDS)
+            if version is not None:
+                after = {
+                    **after,
+                    **{name: getattr(version, name) for name in VERSIONED_FIELDS},
+                    "version_id": str(version.id),
+                    "valid_from": str(version.valid_from) if version.valid_from else None,
+                    "is_retroactive": retroactive,
+                    "reason": reason,
+                    "days": after_days,
+                }
+                before = {**before, "days": before_days}
             self.audit.record(
-                actor, action="schedule.update", entity_type="work_schedules",
-                entity_id=schedule.id, before=before,
-                after=snapshot(schedule, AUDITED_FIELDS),
+                actor,
+                action="schedule.change_history" if retroactive else "schedule.update",
+                entity_type="work_schedules", entity_id=schedule.id,
+                before=before, after=after,
             )
         return self._detail(actor, schedule.id)
+
+    def _today(self, actor: Actor) -> date:
+        from humotech.core.timeframes import organization_zone, today as local_today
+
+        return local_today(organization_zone(actor.organization_id))
+
+    def _lock_holders(self, schedule_id, start: date) -> None:
+        """Блокировки перед правкой расписания и проверка выездной работы.
+
+        Порядок как при создании запроса выездной работы: сначала
+        сотрудники, потом строка графика. Запрос выездной работы хранит
+        снимок смены; правка, затрагивающая его день, ждёт его решения.
+        Затронуты только дни начиная с `start`: прошлое версия не меняет.
+        """
+        from humotech.absences.services import lock_employee
+        from humotech.attendance.field_work import (
+            blocking_field_work, require_no_field_work,
+        )
+
+        # Блокировать нужно тех, кто может получить НОВЫЙ запрос выездной
+        # работы одновременно с правкой: запрос создаётся только на сегодня
+        # и только по действующему назначению. День запаса — офисы, у
+        # которых «сегодня» по UTC ещё вчера.
+        floor = min(start, date.today()) - timedelta(days=1)
+        assigned = EmployeeScheduleAssignment.objects.filter(schedule_id=schedule_id)
+        ids = list(assigned.filter(
+            Q(valid_to__isnull=True) | Q(valid_to__gte=floor),
+        ).values_list("employee_id", flat=True).distinct().order_by("employee_id"))
+        for employee_id in ids:
+            lock_employee(employee_id)
+            Employee.objects.select_for_update().get(id=employee_id)
+        WorkSchedule.objects.select_for_update().get(id=schedule_id)
+        protected = blocking_field_work().filter(
+            employee_id__in=assigned.values("employee_id"), date__gte=start)
+        for protected_day in protected:
+            active_assignment = EmployeeScheduleAssignment.objects.filter(
+                employee_id=protected_day.employee_id, schedule_id=schedule_id,
+                valid_from__lte=protected_day.date,
+            ).filter(Q(valid_to__isnull=True) | Q(valid_to__gte=protected_day.date)).exists()
+            if active_assignment:
+                require_no_field_work(protected_day.employee_id,
+                                      protected_day.date, protected_day.date)
+
+    def _apply_version(self, actor, schedule, *, start, days, versioned, reason, retroactive):
+        """Записать изменение расписания как версию с даты `start`.
+
+        * График никому не назначали — истории, которую надо беречь, нет:
+          правится сама строка, как раньше.
+        * Версия, действующая на `start`, начинается ровно с `start` —
+          правится она (вторая правка в тот же день не плодит версий).
+        * Иначе версия делится: прежняя заканчивается накануне `start`,
+          новая действует с `start` до конца прежней. Более поздние версии
+          («с понедельника») не трогаются.
+        """
+        from humotech.schedules.day_plan import version_on
+
+        family = list(
+            WorkSchedule.objects.select_for_update()
+            .filter(Q(id=schedule.id) | Q(version_of_id=schedule.id))
+        )
+        current = version_on(family, start)
+        if current is None:
+            raise Conflict("На эту дату у графика нет действующей версии",
+                           details={"effective_from": str(start)})
+        before_days = days_snapshot(current.days.prefetch_related("breaks"))
+        used = EmployeeScheduleAssignment.objects.filter(schedule_id=schedule.id).exists()
+
+        if not used or current.valid_from == start:
+            target = schedule if current.id == schedule.id else current
+            for name, value in versioned.items():
+                setattr(target, name, value)
+            target.save()
+            if days is not None:
+                self._replace_days(target, days)
+        else:
+            source_days = list(current.days.prefetch_related("breaks"))
+            old_end = current.valid_to
+            current.valid_to = start - timedelta(days=1)
+            # Закрытие обязано дойти до базы ДО вставки новой версии:
+            # EXCLUDE проверяется в момент выполнения оператора.
+            current.save(update_fields=["valid_to", "updated_at"])
+            if current.id == schedule.id:
+                schedule.valid_to = current.valid_to
+            target = WorkSchedule.objects.create(
+                organization_id=schedule.organization_id,
+                region_id=schedule.region_id,
+                name=schedule.name,
+                timezone=schedule.timezone,
+                status=schedule.status,
+                weekly_minutes=versioned.get("weekly_minutes", current.weekly_minutes),
+                late_grace_minutes=versioned.get("late_grace_minutes",
+                                                 current.late_grace_minutes),
+                early_leave_grace_minutes=versioned.get(
+                    "early_leave_grace_minutes", current.early_leave_grace_minutes),
+                is_flexible=versioned.get("is_flexible", current.is_flexible),
+                version_of_id=schedule.id,
+                valid_from=start,
+                valid_to=old_end,
+                change_reason=reason,
+                is_retroactive=retroactive,
+                changed_by_user_id=actor.user_id,
+            )
+            if days is not None:
+                self._replace_days(target, days)
+            else:
+                self._copy_days(target, source_days)
+        after_days = days_snapshot(target.days.prefetch_related("breaks"))
+        return target, before_days, after_days
+
+    @staticmethod
+    def _copy_days(target: WorkSchedule, source_days) -> None:
+        for day in source_days:
+            row = ScheduleDay.objects.create(
+                schedule=target, weekday=day.weekday,
+                is_working_day=day.is_working_day, start_time=day.start_time,
+                end_time=day.end_time, crosses_midnight=day.crosses_midnight,
+            )
+            for item in day.breaks.all():
+                ScheduleBreak.objects.create(
+                    schedule_day=row, name=item.name, start_time=item.start_time,
+                    end_time=item.end_time, is_paid=item.is_paid,
+                )
 
     def deactivate(self, actor: Actor, schedule_id: uuid.UUID) -> WorkSchedule:
         """Выключенный график перестаёт назначаться, но уже назначенные периоды
@@ -592,6 +797,20 @@ class WorkScheduleService(BaseService):
                 raise ValidationFailed(
                     "День недели задаётся числом от 1 (понедельник) до 7",
                     details={"weekday": day.weekday},
+                )
+            if day.is_working_day and (
+                day.crosses_midnight
+                or (day.start_time is not None and day.end_time is not None
+                    and day.end_time <= day.start_time)
+            ):
+                # Ночные смены через полночь система пока считать не умеет:
+                # опоздание после полуночи терялось, день смены путался
+                # (C-07). Пока их нельзя создать, а не считать неверно
+                # (решение владельца Р-9).
+                raise ValidationFailed(
+                    "Ночные смены через полночь пока не поддерживаются: "
+                    "конец смены должен быть позже начала в тот же день",
+                    details={"weekday": day.weekday, "reason": "night_shift_unsupported"},
                 )
             validate_day_interval(
                 start=day.start_time, end=day.end_time,

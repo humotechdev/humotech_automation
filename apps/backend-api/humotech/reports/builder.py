@@ -359,64 +359,41 @@ class Scope:
 
 
 class Schedules:
-    """Действующие графики сотрудников за период. Один запрос на пачку людей."""
+    """План дней сотрудников за период — из единого `schedules.day_plan`.
+
+    Раньше выгрузка читала дни графика сама и считала «план» третьей
+    формулой нормы (аудит 12.10, D-03). Теперь норма, время смены, допуск
+    и версия графика на дату — те же, что в CRM, боте и Mini App.
+    """
 
     def __init__(self, first: date, last: date) -> None:
         self.first = first
         self.last = last
-        self._rows: dict[uuid.UUID, list] = {}
+        self._plans: dict = {}
+        self._loaded: set = set()
 
     def load(self, employee_ids) -> None:
-        from humotech.schedules.models import EmployeeScheduleAssignment
+        from humotech.schedules.day_plan import plans_for
 
-        missing = [key for key in employee_ids if key not in self._rows]
+        missing = [key for key in dict.fromkeys(employee_ids) if key not in self._loaded]
         if not missing:
             return
-        for key in missing:
-            self._rows[key] = []
-        rows = (
-            EmployeeScheduleAssignment.objects.filter(
-                employee_id__in=missing, valid_from__lte=self.last
-            )
-            .filter(Q(valid_to__isnull=True) | Q(valid_to__gte=self.first))
-            .select_related("schedule")
-            .prefetch_related("schedule__days__breaks")
-            .order_by("employee_id", "-valid_from")
-        )
-        for row in rows:
-            self._rows[row.employee_id].append(row)
+        self._loaded.update(missing)
+        self._plans.update(plans_for(missing, self.first, self.last))
 
     def on(self, employee_id: uuid.UUID, day: date):
-        """График на день — то же правило, что у `presence()`: самый поздний."""
-        for row in self._rows.get(employee_id, ()):
-            if row.valid_from <= day and (row.valid_to is None or row.valid_to >= day):
-                return row.schedule
-        return None
+        """План дня, если у сотрудника в этот день есть график, иначе None."""
+        plan = self._plans.get((employee_id, day))
+        return plan if plan is not None and plan.has_schedule else None
 
 
-def planned_seconds(row, schedule, day: date) -> int:
-    """Плановое время дня: смена по графику минус неоплачиваемые перерывы."""
-    if schedule is None or row.scheduled_start is None or row.scheduled_end is None:
+def planned_seconds(row, plan, day: date) -> int:
+    """Плановое время дня — норма из `day_plan`; 0 в выходной, праздник и
+    дни подтверждённого отсутствия. Рабочий выходной по переносу без
+    времени смены — тоже 0: норма правилом не определена (П-11)."""
+    if plan is None or row.state in ABSENCE_STATES:
         return 0
-    if row.state in ABSENCE_STATES:
-        return 0
-    start = datetime.combine(day, row.scheduled_start)
-    end = datetime.combine(day, row.scheduled_end)
-    if end <= start:
-        end += timedelta(days=1)
-    seconds = (end - start).total_seconds()
-    weekday = day.isoweekday()
-    schedule_day = next((d for d in schedule.days.all() if d.weekday == weekday), None)
-    if schedule_day is not None:
-        for pause in schedule_day.breaks.all():
-            if pause.is_paid:
-                continue
-            a = datetime.combine(day, pause.start_time)
-            b = datetime.combine(day, pause.end_time)
-            if b <= a:
-                b += timedelta(days=1)
-            seconds -= (b - a).total_seconds()
-    return max(int(seconds), 0)
+    return plan.norm_seconds or 0
 
 
 # --- отчёты -------------------------------------------------------------------
@@ -1007,7 +984,7 @@ class EmployeesReport(Report):
                 "position": assignment.position.name if assignment.position else None,
                 "manager": _full_name(assignment.manager_employee)
                 if assignment.manager_employee else None,
-                "schedule": schedule.name if schedule else None,
+                "schedule": schedule.schedule_name if schedule else None,
                 "hire_date": employee.hire_date,
                 "telegram": telegram,
             }

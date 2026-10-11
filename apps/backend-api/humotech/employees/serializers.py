@@ -140,8 +140,10 @@ class EmployeeListItemSerializer(serializers.ModelSerializer):
         # не собирается, а в названии графика дней нет. Дни уже
         # прочитаны вместе со страницей (`prefetch_related`), лишнего
         # запроса это не стоит.
+        source = getattr(schedule, "display_days", None)
         days = sorted(
-            (one for one in schedule.days.all() if one.is_working_day),
+            (one for one in (source if source is not None else schedule.days.all())
+             if one.is_working_day),
             key=lambda one: one.weekday,
         )
         return {
@@ -267,7 +269,9 @@ class EmployeeCardSerializer(serializers.Serializer):
         row = card.current_schedule
         if row is None:
             return None
-        days = [one for one in row.schedule.days.all() if one.is_working_day]
+        source = getattr(row.schedule, "display_days", None)
+        days = [one for one in (source if source is not None else row.schedule.days.all())
+                if one.is_working_day]
         days.sort(key=lambda one: one.weekday)
         return CurrentScheduleSerializer(
             {

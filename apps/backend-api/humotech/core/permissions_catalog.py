@@ -63,6 +63,11 @@ PERMISSIONS: tuple[tuple[str, str, str], ...] = (
     ("schedules.read", "Просмотр графиков", "Видеть графики работы"),
     ("schedules.manage", "Управление графиками", "Создавать графики и назначать сотрудникам"),
     ("calendar.manage", "Управление календарём", "Праздники и переносы рабочих дней"),
+    # Правка графика задним числом меняет уже посчитанные опоздания и нормы
+    # прошлых дней. Это отдельное решение, а не обычная правка: обычная
+    # действует только с сегодняшнего дня (решение владельца Р-5).
+    ("schedules.change_history", "Изменение графика задним числом",
+     "Создавать версию графика с прошедшей даты, с обязательной причиной"),
     # отсутствия
     ("absences.read", "Просмотр отсутствий", "Видеть заявки и подтверждённые периоды"),
     ("absences.approve", "Согласование отсутствий", "Одобрять и отклонять заявки"),
@@ -135,7 +140,7 @@ _HR_FULL = (
     "onboarding.read", "onboarding.manage", "policies.publish",
     "attendance.read", "attendance.correct", "attendance.manual",
     "qr_points.read", "qr_points.manage",
-    "schedules.read", "schedules.manage", "calendar.manage",
+    "schedules.read", "schedules.manage", "schedules.change_history", "calendar.manage",
     "absences.read", "absences.approve", "absences.manage_types",
     "absences.documents", "leave_balances.manage",
     "knowledge.read", "knowledge.write", "knowledge.publish", "knowledge.index",
