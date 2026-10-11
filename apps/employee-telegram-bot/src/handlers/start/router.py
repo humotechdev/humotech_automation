@@ -20,6 +20,7 @@ import logging
 import re
 
 from aiogram import F, Router
+from aiogram.enums import ChatType
 from aiogram.filters import CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
@@ -76,7 +77,9 @@ def is_onboarding_link(payload: str | None) -> bool:
     return bool(payload) and payload.strip().startswith(ONBOARDING_PREFIX)
 
 
-@router.message(CommandStart(deep_link=True))
+# Привязка и узнавание — только в личном чате: в группе `chat.id` — id
+# группы, и личные уведомления ушли бы туда (аудит 11.10, L-2).
+@router.message(CommandStart(deep_link=True), F.chat.type == ChatType.PRIVATE)
 async def start_with_link(
     message: Message,
     command: CommandObject,
@@ -174,7 +177,7 @@ async def accept_link_terms(callback: CallbackQuery, client: SelfServiceClient) 
         await callback.message.answer(text.LINK_NEEDS_HR)
 
 
-@router.message(CommandStart(deep_link=False))
+@router.message(CommandStart(deep_link=False), F.chat.type == ChatType.PRIVATE)
 async def start_plain(
     message: Message, employee, denial, client: SelfServiceClient
 ) -> None:

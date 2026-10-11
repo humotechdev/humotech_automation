@@ -615,10 +615,10 @@ class TestRecognize:
         # Привязка ещё не рабочая: узнавание доводит до того же окна
         # подтверждения, что и ссылка.
         assert body["status"] == "PENDING"
-        # Только имя для приветствия. Персональные данные карточки (офис,
-        # график, руководитель, должность) до подтверждения HR не
-        # раскрываются: имя в Telegram можно занять чужое.
-        assert body["first_name"] == "Иван"
+        # До подтверждения HR — даже без имени: имя в Telegram можно занять
+        # чужое или HR ошибся в нике (решение владельца 11.10, аудит L-1).
+        # Персональные данные карточки тем более не раскрываются.
+        assert body["first_name"] is None
         assert "office_name" not in body
         assert "schedule_name" not in body
         assert "manager_name" not in body

@@ -837,3 +837,37 @@ class TestApiResponsesAreNotCached:
         assert card["Cache-Control"] == "private, no-store"
         # Свой заголовок выдачи файла не перетирается.
         assert client.get(hr_url(request, document))["Cache-Control"] == "private, no-store"
+
+
+# =============================================================================
+# L-1, L-2, L-12. Telegram-привязка и вход в админку
+# =============================================================================
+
+
+class TestTelegramLinkHardening:
+
+    def test_link_from_group_chat_is_refused(self):
+        from humotech.telegram.serializers import BotConsumeSerializer, BotRecognizeSerializer
+
+        group = {"token": "t" * 43, "telegram_user_id": 5_101,
+                 "telegram_chat_id": -100_123_456}
+        assert not BotConsumeSerializer(data=group).is_valid()
+        assert not BotRecognizeSerializer(data={k: v for k, v in group.items()
+                                                if k != "token"}).is_valid()
+        private = {**group, "telegram_chat_id": 5_101}
+        assert BotConsumeSerializer(data=private).is_valid(), \
+            BotConsumeSerializer(data=private).errors
+
+
+def test_admin_password_login_is_impossible(organization):
+    """L-12 не подтвердился: форма админки не передаёт код организации, а
+    вход без него невозможен — перебирать пароль в админке нечем."""
+    from django.test import Client
+
+    user = create_actor(organization, role_code="SUPER_ADMIN",
+                        raw_password="Админ-Вымышленный-2026")[0]
+    response = Client().post("/admin/login/?next=/admin/",
+                             {"username": user.email,
+                              "password": "Админ-Вымышленный-2026"})
+    assert response.status_code == 200  # форма вернулась с ошибкой, не 302
+    assert "_auth_user_id" not in Client().session

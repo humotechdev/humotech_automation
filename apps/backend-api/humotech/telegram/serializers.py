@@ -119,7 +119,25 @@ def telegram_chat_id_field(**extra) -> serializers.IntegerField:
     )
 
 
-class BotRecognizeSerializer(serializers.Serializer):
+class PrivateChatMixin:
+    """Привязка — только из личного чата с ботом.
+
+    В Telegram идентификатор личного чата совпадает с идентификатором
+    пользователя; у группы он отрицательный. Если ссылку открыли в группе,
+    в `telegram_chat_id` уходил id группы, и личные уведомления сотрудника
+    (в том числе вложения) рассылались бы туда (аудит 11.10, L-2).
+    """
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        if attrs.get("telegram_chat_id") != attrs.get("telegram_user_id"):
+            raise serializers.ValidationError(
+                {"telegram_chat_id": ["Привязка выполняется только в личном чате с ботом."]}
+            )
+        return attrs
+
+
+class BotRecognizeSerializer(PrivateChatMixin, serializers.Serializer):
     """Что бот сообщает о человеке, открывшем его без ссылки."""
 
     telegram_user_id = telegram_user_id_field()
@@ -145,7 +163,7 @@ class WelcomeSerializer(serializers.Serializer):
     status = serializers.CharField(help_text="Состояние привязки: PENDING")
     first_name = serializers.CharField(allow_null=True)
 
-class BotConsumeSerializer(serializers.Serializer):
+class BotConsumeSerializer(PrivateChatMixin, serializers.Serializer):
     """Что бот сообщает backend о переходе по ссылке.
 
     `employee_id` и `organization_id` здесь отсутствуют намеренно: бот их

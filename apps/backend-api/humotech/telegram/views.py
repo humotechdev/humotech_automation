@@ -376,8 +376,14 @@ class BotRecognizeView(APIView):
             telegram_chat_id=payload["telegram_chat_id"],
             language_code=payload.get("language_code") or None,
         )
+        # До подтверждения кадровиком — без имени. Узнавание по `@username`
+        # слабее ссылки: при опечатке HR в нике или занятом чужом имени
+        # посторонний узнал бы, как зовут сотрудника (решение владельца
+        # 11.10.2026, аудит L-1). Бот здоровается нейтрально («коллега»).
+        facts = (welcome_facts(account.employee) if account.status == "ACTIVE"
+                 else {"first_name": None})
         return Response(
-            {"status": account.status, **welcome_facts(account.employee)},
+            {"status": account.status, **facts},
             status=status.HTTP_201_CREATED,
         )
 
