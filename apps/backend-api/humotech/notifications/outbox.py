@@ -64,6 +64,18 @@ logger = logging.getLogger("humotech.notifications")
 # запроса. Дойти до постороннего сообщению неоткуда.
 BINDING_NOTIFICATION_PREFIX = "telegram.link."
 
+#: Сообщения, которые ждут доступа к боту, а не снимаются сразу. Приветствие
+#: ставится при приёме, когда привязки Telegram ещё нет (ссылку человек
+#: откроет позже, привязку подтвердит HR) или первый рабочий день впереди.
+#: Раньше `claim` снимал его в ту же секунду (`not_linked`), и до сотрудника
+#: оно не доходило никогда (аудит 12.10, B-02). Теперь оно откладывается и
+#: уходит, как только доступ открыт; окончательные отказы (уволен, отключён)
+#: и истечение срока по-прежнему снимают его.
+WAITS_FOR_ACCESS = frozenset({"employee.hired"})
+WAITABLE_REASONS = frozenset({"not_linked", "pending_confirmation", "no_assignment"})
+WELCOME_WAIT = timedelta(days=30)
+WELCOME_RECHECK = timedelta(hours=1)
+
 
 def _log_attempt(
     row: Notification, *, outcome: str, reason: str | None, moment: datetime
@@ -228,6 +240,18 @@ def claim(*, limit: int = 20, now: datetime | None = None) -> list[Outgoing]:
             if account is not None and is_demo_chat_id(account.telegram_chat_id):
                 blocked = True
                 resolved = AccessDenied("demo_account")
+            reason = (resolved.reason if isinstance(resolved, AccessDenied)
+                      else "not_linked" if account is None else None)
+            if (
+                blocked
+                and row.notification_type in WAITS_FOR_ACCESS
+                and reason in WAITABLE_REASONS
+                and row.created_at + WELCOME_WAIT > moment
+            ):
+                # Доступ ещё не открыт, но откроется: подождать, а не снять.
+                row.next_attempt_at = moment + WELCOME_RECHECK
+                row.save(update_fields=["next_attempt_at", "updated_at"])
+                continue
             if blocked:
                 # Адресата нет или доступ закрыт. Это не ошибка отправки:
                 # повторять нечего, и держать строку в очереди вечно

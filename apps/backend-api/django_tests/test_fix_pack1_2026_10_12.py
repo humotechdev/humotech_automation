@@ -263,3 +263,57 @@ def test_onboarding_office_filter_uses_current_assignment(organization, region):
     service = OnboardingService()
     assert not service._scoped(hr, office_id=office_a.id).filter(employee=emp).exists()
     assert service._scoped(hr, office_id=office_b.id).filter(employee=emp).exists()
+
+
+# =============================================================================
+# 4. Приветствие при приёме не снимается до привязки (B-02)
+# =============================================================================
+
+
+class TestWelcomeWaitsForBinding:
+
+    def _welcome(self, employee):
+        from humotech.notifications.outbox import enqueue
+
+        return enqueue(organization_id=employee.organization_id, employee_id=employee.id,
+                       notification_type="employee.hired", body="Добро пожаловать")
+
+    def test_welcome_is_deferred_not_cancelled_until_linked(self, organization, employee,
+                                                            telegram_settings):
+        from django_tests.conftest import link_telegram
+        from humotech.notifications.models import Notification
+        from humotech.notifications.outbox import claim
+
+        row = self._welcome(employee)
+        now = datetime.now(tz=UTC)
+        assert claim(now=now) == []
+        row.refresh_from_db()
+        assert row.status == "PENDING", f"приветствие снято: {row.status} {row.error_message}"
+        assert row.next_attempt_at is not None and row.next_attempt_at > now
+
+        link_telegram(employee)  # HR подтвердил привязку
+        later = row.next_attempt_at + timedelta(seconds=1)
+        sent = claim(now=later)
+        assert [one.id for one in sent] == [str(row.id)]
+        assert Notification.objects.get(id=row.id).status == "RUNNING"
+
+    def test_welcome_cancelled_for_final_reasons_and_after_horizon(self, organization,
+                                                                   employee,
+                                                                   telegram_settings):
+        from humotech.notifications.outbox import WELCOME_WAIT, claim
+
+        row = self._welcome(employee)
+        claim(now=datetime.now(tz=UTC) + WELCOME_WAIT + timedelta(minutes=1))
+        row.refresh_from_db()
+        assert row.status == "CANCELLED"
+
+    def test_other_notifications_still_cancelled_when_not_linked(self, organization,
+                                                                 employee,
+                                                                 telegram_settings):
+        from humotech.notifications.outbox import claim, enqueue
+
+        row = enqueue(organization_id=employee.organization_id, employee_id=employee.id,
+                      notification_type="absence.approved", body="Одобрено")
+        claim(now=datetime.now(tz=UTC))
+        row.refresh_from_db()
+        assert row.status == "CANCELLED" and row.error_message == "not_linked"
