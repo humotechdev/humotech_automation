@@ -53,8 +53,13 @@ class OrganizationEmailBackend(BaseBackend):
         «не пускать завтра», а сегодняшняя сессия жила бы до своего срока.
         """
         user = (
-            User.objects.filter(pk=user_id).select_related("organization").first()
+            User.objects.filter(pk=user_id).select_related("organization", "employee").first()
         )
         if user is None or not user.is_active:
+            return None
+        # Учётка, привязанная к уволенному сотруднику, не работает и по уже
+        # выданной cookie (решения В2, В3). Техническая учётка без карточки
+        # сотрудника этим не затрагивается.
+        if user.employee_id and user.employee.employment_status in ("TERMINATED", "ARCHIVED"):
             return None
         return user

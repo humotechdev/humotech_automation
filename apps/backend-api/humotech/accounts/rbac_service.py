@@ -1333,8 +1333,14 @@ def _refuse_if_last_super_admin(
         organization_id=actor.organization_id,
         role__code=SUPER_ADMIN,
         user__status="ACTIVE",
+        # Архивная учётка, уволенный сотрудник и администратор с областью
+        # на один регион или офис организацию не держат (аудит 12.10, В8).
+        user__archived_at__isnull=True,
+        region__isnull=True,
+        office__isnull=True,
         valid_from__lte=moment,
-    ).filter(Q(valid_to__isnull=True) | Q(valid_to__gte=moment))
+    ).filter(Q(valid_to__isnull=True) | Q(valid_to__gte=moment)).exclude(
+        user__employee__employment_status__in=("TERMINATED", "ARCHIVED"))
 
     queryset = live
     if without_user is not None:

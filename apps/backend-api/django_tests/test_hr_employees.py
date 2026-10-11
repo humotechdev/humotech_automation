@@ -279,7 +279,7 @@ def test_employee_search_filters_and_pagination(
     assert service.list(hr_actor, at=at, office_id=office.id).size == 3
     assert service.list(hr_actor, at=at, region_id=other_region.id).size == 3
 
-    service.deactivate(hr_actor, service.list(hr_actor, at=at).items[0].id)
+    service.deactivate(hr_actor, service.list(hr_actor, at=at).items[0].id, kind="UNPAID_LEAVE")
     assert service.list(hr_actor, at=at, status="SUSPENDED").size == 1
     assert service.list(hr_actor, at=at, status="ACTIVE").size == 5
 
@@ -493,7 +493,7 @@ def test_deactivation_keeps_employee_and_history(
         hr_actor, employee_id=employee.id, schedule_id=work_schedule.id,
         valid_from=date(2025, 1, 1))
 
-    card = service.deactivate(hr_actor, employee.id)
+    card = service.deactivate(hr_actor, employee.id, kind="UNPAID_LEAVE")
     assert card.employee.employment_status == "SUSPENDED"
     assert card.employee.termination_date is None
     assert len(card.assignment_history) == 1
@@ -594,7 +594,7 @@ def test_readonly_user_cannot_change_employees(employee, office, readonly_actor)
     with pytest.raises(PermissionDenied, match="employees.manage"):
         service.update(readonly_actor, employee.id, first_name="Новое")
     with pytest.raises(PermissionDenied, match="employees.manage"):
-        service.deactivate(readonly_actor, employee.id)
+        service.deactivate(readonly_actor, employee.id, kind="UNPAID_LEAVE")
     with pytest.raises(PermissionDenied, match="employees.archive"):
         service.terminate(readonly_actor, employee.id,
                           termination_date=date(2025, 7, 31))
@@ -625,7 +625,7 @@ def test_manage_without_read_permission_still_returns_the_card(
         actor, card.employee.id, first_name="Пётр"
     ).employee.id == card.employee.id
     assert service.deactivate(
-        actor, card.employee.id
+        actor, card.employee.id, kind="REMOVED_FROM_WORK"
     ).employee.employment_status == "SUSPENDED"
     assert service.reactivate(
         actor, card.employee.id
@@ -730,7 +730,7 @@ def test_all_hr_actions_are_audited(
     WorkScheduleService().assign_to_employee(
         hr_actor, employee_id=employee_id, schedule_id=work_schedule.id,
         valid_from=date(2025, 3, 1))
-    service.deactivate(hr_actor, employee_id)
+    service.deactivate(hr_actor, employee_id, kind="UNPAID_LEAVE")
     service.reactivate(hr_actor, employee_id)
     service.terminate(hr_actor, employee_id, termination_date=date(2025, 8, 31))
 

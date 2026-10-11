@@ -900,22 +900,40 @@ class EmployeeService(BaseService):
 
     # --------------------------------------------------------------- статусы
 
-    def deactivate(self, actor: Actor, employee_id: uuid.UUID) -> EmployeeCard:
-        """Временная приостановка. Назначения и история остаются как есть."""
+    def deactivate(self, actor: Actor, employee_id: uuid.UUID, *,
+                   kind: str | None = None) -> EmployeeCard:
+        """Временная приостановка. Назначения и история остаются как есть.
+
+        Вид обязателен (решение владельца Р-10): отстранение и отпуск без
+        содержания — разные основания, и неразличимым статусом они быть не
+        должны. Чем виды отличаются в доступе и учёте — ещё не утверждено.
+        """
         return self._set_status(
-            actor, employee_id, "SUSPENDED", "employee.deactivate"
+            actor, employee_id, "SUSPENDED", "employee.deactivate", kind=kind
         )
 
     def reactivate(self, actor: Actor, employee_id: uuid.UUID) -> EmployeeCard:
         return self._set_status(actor, employee_id, "ACTIVE", "employee.reactivate")
 
     def _set_status(
-        self, actor: Actor, employee_id: uuid.UUID, status: str, action: str
+        self, actor: Actor, employee_id: uuid.UUID, status: str, action: str,
+        *, kind: str | None = None,
     ) -> EmployeeCard:
         self.access.require(actor, "employees.manage")
         employee = self._require_visible_employee(
             actor, employee_id, permission="employees.manage"
         )
+        # Вид приостановки проверяется ПОСЛЕ прав и области: иначе чужой
+        # сотрудник отвечал бы «укажите вид», а не «не найден», и перебором
+        # можно было бы узнать, кто существует.
+        if status == "SUSPENDED":
+            from humotech.core.enums import SUSPENSION_KINDS
+
+            if kind not in SUSPENSION_KINDS:
+                raise ValidationFailed(
+                    "Укажите вид приостановки: отстранение или отпуск без содержания",
+                    details={"field": "kind", "allowed": list(SUSPENSION_KINDS)},
+                )
 
         if employee.employment_status == status:
             raise Conflict(f"Сотрудник уже в статусе {status}",
@@ -927,14 +945,15 @@ class EmployeeService(BaseService):
                 details={"employment_status": employee.employment_status},
             )
 
-        before = snapshot(employee, CARD_FIELDS)
+        before = snapshot(employee, CARD_FIELDS) | {"suspension_kind": employee.suspension_kind}
         employee.employment_status = status
+        employee.suspension_kind = kind if status == "SUSPENDED" else None
         with self.atomic():
             employee.save()
             self.audit.record(
                 actor, action=action, entity_type="employees",
                 entity_id=employee.id, before=before,
-                after=snapshot(employee, CARD_FIELDS),
+                after=snapshot(employee, CARD_FIELDS) | {"suspension_kind": employee.suspension_kind},
             )
         return self._card(actor, employee_id)
 
@@ -959,6 +978,11 @@ class EmployeeService(BaseService):
                 "Сотрудник уже уволен",
                 details={"termination_date": str(employee.termination_date)},
             )
+        if employee.termination_date is not None:
+            raise Conflict(
+                "Увольнение уже назначено",
+                details={"termination_date": str(employee.termination_date)},
+            )
         require_order(
             employee.hire_date, termination_date,
             message="Дата увольнения не может быть раньше даты приёма",
@@ -966,9 +990,22 @@ class EmployeeService(BaseService):
                      "termination_date": str(termination_date)},
         )
 
+        from humotech.core.timeframes import organization_zone, today as local_today
+        from humotech.employees import offboarding
+
         before = snapshot(employee, CARD_FIELDS)
+        conflict = offboarding.timezone_conflict(employee)
+        # Последний день сегодня или позже — сотрудник действует до конца
+        # этого дня, статус сменит ежедневная задача (решение В1, граница
+        # В10 — по поясу организации). Прошедшая дата — увольнение сейчас.
+        immediate = termination_date < local_today(organization_zone(employee.organization_id))
         with self.atomic():
-            employee.employment_status = "TERMINATED"
+            from humotech.absences.services import lock_employee
+
+            lock_employee(employee.id)
+            offboarding.refuse_if_last_super_admin(employee)
+            if immediate:
+                employee.employment_status = "TERMINATED"
             employee.termination_date = termination_date
             if reason:
                 employee.termination_reason = clean_text(
@@ -992,12 +1029,21 @@ class EmployeeService(BaseService):
                 schedule.valid_to = termination_date
                 schedule.save(update_fields=["valid_to", "updated_at"])
 
+            access = (offboarding.close_access(employee, _utc_now())
+                      if immediate else None)
             self.audit.record(
                 actor, action="employee.terminate", entity_type="employees",
                 entity_id=employee.id, before=before,
                 after=snapshot(employee, CARD_FIELDS) | (
                     {"reason": reason} if reason else {}
-                ),
+                ) | {
+                    "takes_effect": ("now" if immediate else str(
+                        offboarding.boundary(employee.organization_id, termination_date))),
+                    "access": access,
+                    # Пояс офиса не совпадает с поясом организации: граница
+                    # взята по организации, вопрос вынесен владельцу (В10).
+                    "timezone_conflict": conflict,
+                },
             )
         return self._card(actor, employee_id)
 
@@ -1136,3 +1182,9 @@ class EmployeeService(BaseService):
         if manager is None:
             raise NotFound("Руководитель не найден")
         return manager.id
+
+
+def _utc_now():
+    from django.utils import timezone
+
+    return timezone.now()

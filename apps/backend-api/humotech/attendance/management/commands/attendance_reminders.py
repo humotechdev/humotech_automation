@@ -42,8 +42,12 @@ def _pass() -> int:
     Р-1), затем напоминания. Автовыход живёт в этой же службе, чтобы не
     заводить ещё один контейнер: она и так просыпается каждые пять минут."""
     from humotech.attendance.auto_close import close_overdue_sessions
+    from humotech.employees.offboarding import apply_due_terminations
 
     close_overdue_sessions()
+    # Увольнения, чей последний день кончился (решение В1): та же служба,
+    # чтобы не заводить ещё один контейнер.
+    apply_due_terminations()
     return run_once()
 
 

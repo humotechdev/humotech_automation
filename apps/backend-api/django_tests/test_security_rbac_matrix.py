@@ -98,6 +98,8 @@ ROUTES = {
     "work-schedule-assign-department": (
         _pk("schedule"),
         {"post": lambda w: {"department_id": str(w["department"].id), "valid_from": D}}),
+    "work-schedule-change-history": (
+        _pk("schedule"), {"post": {"effective_from": D, "reason": "Взлом графика задним числом"}}),
     "work-schedule-deactivate": (_pk("schedule"), {"post": {}}),
     "work-schedule-reactivate": (_pk("schedule"), {"post": {}}),
     "qr-point-detail": (_pk("qr_point"), {"get": None, "patch": {"name": "Взлом"}, "delete": None}),
@@ -153,6 +155,12 @@ SKIPPED = {
         "проверяется в FieldWorkService.decide, межорганизационный отказ по HTTP — "
         "в test_field_work.py"),
     "attendance-correction-decision": _OTHER_ZONE + " (attendance)",
+    "attendance-session-*": (
+        "ручные операции HR с сессиями: чужой офис и чужая организация отвечают "
+        "«не найдено» — test_master_attendance_sessions.py::TestHrSessionTools"),
+    "attendance-event-review": (
+        "решение по отметке «на проверке»: область и самообслуживание проверяет "
+        "AttendanceSessionService.review_event — test_master_attendance_sessions.py"),
     "absence-request-application*": _OTHER_ZONE + " (absences)",
     "absence-request-period": _OTHER_ZONE + " (absences)",
     "absence-request-document-*": _OTHER_ZONE + " (absences)",

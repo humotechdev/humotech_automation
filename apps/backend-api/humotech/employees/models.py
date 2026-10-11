@@ -12,6 +12,7 @@ from humotech.core.enums import (
     EMPLOYEE_DOCUMENT_KINDS,
     EMPLOYEE_DOCUMENT_STATUSES,
     EMPLOYMENT_STATUSES,
+    SUSPENSION_KINDS,
     EMPLOYMENT_TYPES,
     GENDERS,
     MARITAL_STATUSES,
@@ -92,6 +93,11 @@ class Employee(
     employment_status = models.CharField(
         max_length=30, choices=choices(EMPLOYMENT_STATUSES)
     )
+    #: Вид приостановки, пока статус SUSPENDED (решение владельца Р-10).
+    #: У старых приостановок пусто — вид тогда не спрашивали.
+    suspension_kind = models.CharField(
+        max_length=30, choices=choices(SUSPENSION_KINDS), null=True, blank=True
+    )
     # денормализованный флаг для быстрых выборок; источник правды — telegram_accounts
     telegram_connected = models.BooleanField(db_default=False)
 
@@ -117,6 +123,10 @@ class Employee(
             status_check(
                 "employment_status", EMPLOYMENT_STATUSES,
                 "ck_employees_employment_status",
+            ),
+            status_check(
+                "suspension_kind", SUSPENSION_KINDS,
+                "ck_employees_suspension_kind", nullable=True,
             ),
             status_check("gender", GENDERS, "ck_employees_gender", nullable=True),
             status_check(

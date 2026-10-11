@@ -148,7 +148,11 @@ class AccessControl:
             user_id=actor.user_id, valid_from__lte=moment,
             user__status="ACTIVE", user__archived_at__isnull=True,
             organization_id=actor.organization_id,
-        ).filter(Q(valid_to__isnull=True) | Q(valid_to__gte=moment))
+        ).filter(Q(valid_to__isnull=True) | Q(valid_to__gte=moment)).exclude(
+            # Кадровые права уволенного не переживают увольнение (В2):
+            # даже если роль ещё не закрыта, учётка уволенного прав не даёт.
+            user__employee__employment_status__in=("TERMINATED", "ARCHIVED"),
+        )
 
     def _build_scope(self, rows) -> Scope:
         """Собрать `Scope` из строк `(region_id, office_id)` назначений."""

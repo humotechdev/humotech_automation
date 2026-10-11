@@ -345,7 +345,9 @@ class EmployeeViewSet(ServiceViewSet):
 
     @action(detail=True, methods=["post"])
     def deactivate(self, request, pk=None):
-        return self.item_response(self.service.deactivate(self.actor, pk))
+        # Вид приостановки обязателен (решение Р-10).
+        kind = (request.data or {}).get("kind")
+        return self.item_response(self.service.deactivate(self.actor, pk, kind=kind))
 
     @action(detail=True, methods=["post"])
     def reactivate(self, request, pk=None):
