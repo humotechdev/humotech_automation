@@ -414,15 +414,16 @@ describe('один экран', () => {
     expect(await screen.findByLabelText('Справочники')).toBeTruthy();
   });
 
-  test('число стоит в закрытом блоке, список — только в раскрытом', async () => {
+  test('число стоит на вкладке, список — только на открытой', async () => {
     catalog();
     renderApp('/administration');
 
-    expect(await screen.findByText('1 отдел')).toBeTruthy();
-    // Закрытый блок списка не показывает.
+    // Число на вкладке озвучено целиком: «1 отдел», а не голое «1».
+    expect(await screen.findByLabelText('1 отдел')).toBeTruthy();
+    // Чужая вкладка списка не показывает.
     expect(screen.queryByText('Продажи')).toBeNull();
 
-    fireEvent.click(screen.getByText('Отделы'));
+    fireEvent.click(screen.getByRole('tab', { name: /Отделы/ }));
     expect(await screen.findByText('Продажи')).toBeTruthy();
   });
 
@@ -436,7 +437,7 @@ describe('один экран', () => {
     renderApp('/administration');
 
     const sheet = await screen.findByLabelText('Справочники');
-    const block = within(sheet).getByText('Отделы').closest('article');
+    const block = within(sheet).getByText('Отделы').closest('[role="tab"]');
     expect(within(block as HTMLElement).getByText('—')).toBeTruthy();
   });
 });
@@ -444,7 +445,7 @@ describe('один экран', () => {
 describe('добавление', () => {
   test('у отдела одно поле и ничего больше', async () => {
     catalog();
-    renderApp('/administration');
+    renderApp('/administration?open=departments');
 
     fireEvent.click(await screen.findByRole('button', { name: /Добавить отдел/ }));
     const box = await screen.findByRole('dialog', { name: 'Новый отдел' });
@@ -462,7 +463,7 @@ describe('добавление', () => {
         ? json(201, DEPARTMENT)
         : null,
     );
-    renderApp('/administration');
+    renderApp('/administration?open=departments');
 
     fireEvent.click(await screen.findByRole('button', { name: /Добавить отдел/ }));
     fireEvent.change(await screen.findByLabelText('Название отдела'), {
@@ -482,7 +483,7 @@ describe('добавление', () => {
 
   test('пустое название на сервер не уходит', async () => {
     const calls = catalog();
-    renderApp('/administration');
+    renderApp('/administration?open=positions');
 
     fireEvent.click(await screen.findByRole('button', { name: /Добавить должность/ }));
     const box = await screen.findByRole('dialog', { name: 'Новая должность' });
@@ -562,7 +563,7 @@ describe('добавление', () => {
     });
     renderApp('/administration');
 
-    fireEvent.click(await screen.findByText('Администраторы'));
+    fireEvent.click(await screen.findByRole('tab', { name: /Администраторы/ }));
     fireEvent.click(
       await screen.findByRole('button', { name: /Изменить «bezprav@humotech.tj»/ }),
     );
@@ -657,5 +658,321 @@ describe('вспомогательное', () => {
     expect(counted(5, unit)).toBe('5 отделов');
     expect(counted(11, unit)).toBe('11 отделов');
     expect(counted(21, unit)).toBe('21 отдел');
+  });
+});
+
+// --- вкладки, строки и сохранение -------------------------------------------
+
+/** Ответ, который тест отпускает сам: проверка «до ответа сервера». */
+function deferred() {
+  let release: (value: Response) => void = () => undefined;
+  const promise = new Promise<Response>((resolve) => { release = resolve; });
+  return { promise, release };
+}
+
+describe('строки раскрываются', () => {
+  test('кнопка строки сообщает состояние, закрытая строка полей не держит', async () => {
+    catalog();
+    renderApp('/administration?open=departments');
+
+    const toggle = await screen.findByRole('button', { name: 'Продажи' });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByText('Сотрудников')).toBeNull();
+
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    const panel = document.getElementById(toggle.getAttribute('aria-controls') ?? '');
+    expect(panel).toBeTruthy();
+    expect(within(panel as HTMLElement).getByText('Сотрудников')).toBeTruthy();
+
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    await waitFor(() => expect(screen.queryByText('Сотрудников')).toBeNull());
+  });
+
+  test('открыта одна строка: вторая закрывает первую', async () => {
+    catalog(() => null, { departments: [DEPARTMENT, USED_DEPARTMENT] });
+    renderApp('/administration?open=departments');
+
+    const first = await screen.findByRole('button', { name: 'Продажи' });
+    const second = screen.getByRole('button', { name: 'Финансы' });
+    fireEvent.click(first);
+    fireEvent.click(second);
+    expect(first.getAttribute('aria-expanded')).toBe('false');
+    expect(second.getAttribute('aria-expanded')).toBe('true');
+  });
+});
+
+describe('переименование в строке', () => {
+  test('поле получает фокус, «Сохранено» — только после ответа сервера', async () => {
+    const answer = deferred();
+    let name = 'Продажи';
+    const calls = catalog((url, method) => {
+      const bare = clean(url);
+      if (bare.endsWith('/departments/d-1/') && method === 'PATCH') {
+        return answer.promise.then((reply) => {
+          name = 'Логистика';
+          return reply;
+        });
+      }
+      if (bare.endsWith('/departments/') && method === 'GET') {
+        return json(200, { items: [{ ...DEPARTMENT, name }], next_cursor: null, has_more: false });
+      }
+      return null;
+    });
+    renderApp('/administration?open=departments');
+
+    fireEvent.click(await screen.findByLabelText('Изменить «Продажи»'));
+    const field = await screen.findByLabelText('Новое название отдела');
+    expect(document.activeElement).toBe(field);
+    expect((field as HTMLInputElement).value).toBe('Продажи');
+
+    fireEvent.change(field, { target: { value: 'Логистика' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }));
+
+    // Запрос ушёл, ответа нет: кнопка занята, подтверждения нет,
+    // строка показывает прежнее название.
+    await waitFor(() => {
+      expect(calls.some((one) => one.method === 'PATCH')).toBe(true);
+    });
+    const busy = screen.getByRole('button', { name: 'Сохраняем…' }) as HTMLButtonElement;
+    expect(busy.disabled).toBe(true);
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Продажи' })).toBeTruthy();
+    expect(calls.find((one) => one.method === 'PATCH')?.body).toEqual({ name: 'Логистика' });
+
+    answer.release(json(200, { ...DEPARTMENT, name: 'Логистика' }));
+
+    expect(await screen.findByRole('status')).toBeTruthy();
+    expect(screen.getByRole('status').textContent).toContain('Логистика');
+    expect(await screen.findByRole('button', { name: 'Логистика' })).toBeTruthy();
+    await waitFor(() => expect(screen.queryByLabelText('Новое название отдела')).toBeNull());
+  });
+
+  test('отказ сервера оставляет форму открытой с введённым текстом', async () => {
+    catalog((url, method) =>
+      clean(url).endsWith('/departments/d-1/') && method === 'PATCH'
+        ? json(409, { error: { code: 'conflict', message: 'Отдел с таким названием уже есть' } })
+        : null);
+    renderApp('/administration?open=departments');
+
+    fireEvent.click(await screen.findByLabelText('Изменить «Продажи»'));
+    const field = await screen.findByLabelText('Новое название отдела');
+    fireEvent.change(field, { target: { value: 'Финансы' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }));
+
+    expect(await screen.findByText(/Отдел с таким названием уже есть/)).toBeTruthy();
+    expect((screen.getByLabelText('Новое название отдела') as HTMLInputElement).value)
+      .toBe('Финансы');
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  test('«Отмена» закрывает форму без запроса; пустое имя не уходит', async () => {
+    const calls = catalog();
+    renderApp('/administration?open=departments');
+
+    fireEvent.click(await screen.findByLabelText('Изменить «Продажи»'));
+    const field = await screen.findByLabelText('Новое название отдела');
+    fireEvent.change(field, { target: { value: ' ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }));
+    expect(await screen.findByText('Название обязательно')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Отмена' }));
+    await waitFor(() => expect(screen.queryByLabelText('Новое название отдела')).toBeNull());
+    expect(calls.some((one) => one.method === 'PATCH')).toBe(false);
+  });
+});
+
+describe('поиск и листание', () => {
+  const many = (prefix: string, count: number, from = 1) =>
+    Array.from({ length: count }, (_, index) => ({
+      ...POSITION, id: `${prefix}-${index + from}`, name: `${prefix} ${index + from}`,
+    }));
+
+  test('поиск не теряет фокус и отбирает строки', async () => {
+    catalog(() => null, { departments: [DEPARTMENT, USED_DEPARTMENT] });
+    renderApp('/administration?open=departments');
+
+    await screen.findByRole('button', { name: 'Продажи' });
+    const search = screen.getByLabelText('Поиск отдела') as HTMLInputElement;
+    search.focus();
+    for (const value of ['ф', 'фи', 'фин']) {
+      fireEvent.change(search, { target: { value } });
+      expect(document.activeElement).toBe(search);
+    }
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Продажи' })).toBeNull());
+    expect(screen.getByRole('button', { name: 'Финансы' })).toBeTruthy();
+  });
+
+  test('должности листаются, поиск переживает смену страницы', async () => {
+    catalog(() => null, {
+      positions: [...many('Инженер', 12), ...many('Бухгалтер', 8)],
+    });
+    renderApp('/administration?open=positions');
+
+    expect(await screen.findByText('Показано 8 из 20 должностей')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Инженер 1' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Инженер 9' })).toBeNull();
+
+    fireEvent.change(screen.getByLabelText('Поиск должности'), { target: { value: 'Инженер' } });
+    expect(await screen.findByText('Показано 8 из 12 должностей')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Страница 2' }));
+    expect(await screen.findByRole('button', { name: 'Инженер 9' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Бухгалтер 1' })).toBeNull();
+    expect((screen.getByLabelText('Поиск должности') as HTMLInputElement).value).toBe('Инженер');
+    expect(screen.getByRole('button', { name: 'Страница 2' }).getAttribute('aria-current'))
+      .toBe('page');
+
+    // Новый запрос — снова с первой страницы.
+    fireEvent.change(screen.getByLabelText('Поиск должности'), { target: { value: 'Инженер 1' } });
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Страница 2' })).toBeNull());
+    expect(screen.getByRole('button', { name: 'Инженер 1' })).toBeTruthy();
+  });
+});
+
+describe('графики', () => {
+  const NIGHT = { id: 's-9', name: 'Ночная смена', timezone: 'Asia/Tashkent', status: 'ACTIVE' };
+  const MAIN = { id: 's-1', name: 'Основной график', timezone: 'Asia/Tashkent', status: 'ACTIVE' };
+  const day = (weekday: number, start: string | null, end: string | null) => ({
+    weekday,
+    is_working_day: start !== null,
+    start_time: start,
+    end_time: end,
+    breaks: start === null
+      ? []
+      : start === '18:00:00'
+        ? [{ id: `b-${weekday}`, name: 'Перерыв', start_time: '23:30:00',
+             end_time: '00:30:00', is_paid: false }]
+        : [{ id: `b-${weekday}`, name: 'Перерыв', start_time: '13:00:00',
+             end_time: '14:00:00', is_paid: false }],
+  });
+  const card = (row: typeof MAIN, start: string, end: string) => ({
+    ...row,
+    weekly_minutes: 2400,
+    late_grace_minutes: null,
+    early_leave_grace_minutes: null,
+    is_flexible: false,
+    days: [1, 2, 3, 4, 5].map((n) => day(n, start, end))
+      .concat([6, 7].map((n) => day(n, null, null))),
+  });
+
+  function schedules(
+    own: (url: string, method: string) => Response | Promise<Response> | null = () => null,
+  ) {
+    return catalog((url, method) => {
+      const mine = own(url, method);
+      if (mine) return mine;
+      const bare = clean(url);
+      if (bare.endsWith('/work-schedules/s-9/') && method === 'GET') {
+        return json(200, card(NIGHT, '18:00:00', '03:00:00'));
+      }
+      if (bare.endsWith('/work-schedules/s-1/') && method === 'GET') {
+        return json(200, card(MAIN, '09:00:00', '18:00:00'));
+      }
+      return null;
+    }, { schedules: [MAIN, NIGHT] });
+  }
+
+  test('ночная смена показывается как есть: через полночь, с перерывом', async () => {
+    schedules();
+    renderApp('/administration?open=schedules');
+
+    const night = (await screen.findByRole('button', { name: 'Ночная смена' })).closest('li')!;
+    expect(await within(night).findByText(/18:00 – 03:00/)).toBeTruthy();
+    expect(within(night).getByText('+1')).toBeTruthy();
+    // Перерыв 23:30–00:30 тоже через полночь: час, а не минус двадцать три.
+    expect(within(night).getByText('1 ч')).toBeTruthy();
+    expect(within(night).getByText('Пн–Пт')).toBeTruthy();
+
+    const main = screen.getByRole('button', { name: 'Основной график' }).closest('li')!;
+    expect(await within(main).findByText('09:00 – 18:00')).toBeTruthy();
+    expect(within(main).queryByText('+1')).toBeNull();
+  });
+
+  test('раскрытый график показывает дни; правка — в окне, «Сохранено» после ответа', async () => {
+    const answer = deferred();
+    const calls = schedules((url, method) =>
+      clean(url).endsWith('/work-schedules/s-1/') && method === 'PATCH' ? answer.promise : null);
+    renderApp('/administration?open=schedules');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Основной график' }));
+    expect(await screen.findByLabelText('понедельник: рабочий')).toBeTruthy();
+    expect(screen.getByLabelText('суббота: выходной')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Редактировать график «Основной график»' }));
+    const box = await screen.findByRole('dialog', { name: 'График работы' });
+    await waitFor(() =>
+      expect((within(box).getByLabelText('Название') as HTMLInputElement).value)
+        .toBe('Основной график'));
+
+    const saturday = within(box).getByRole('button', { name: 'суббота' });
+    expect(saturday.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(saturday);
+    expect(saturday.getAttribute('aria-pressed')).toBe('true');
+
+    fireEvent.click(within(box).getByRole('button', { name: 'Сохранить' }));
+    await waitFor(() => expect(calls.some((one) => one.method === 'PATCH')).toBe(true));
+    // Второе нажатие во время сохранения второго запроса не даёт.
+    fireEvent.click(within(box).getByRole('button', { name: 'Сохраняем…' }));
+    expect(calls.filter((one) => one.method === 'PATCH')).toHaveLength(1);
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.getByRole('dialog', { name: 'График работы' })).toBeTruthy();
+
+    answer.release(json(200, card(MAIN, '09:00:00', '18:00:00')));
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'График работы' })).toBeNull());
+    expect((await screen.findByRole('status')).textContent).toContain('Изменения сохранены');
+  });
+
+  test('отказ при сохранении графика оставляет окно и введённое', async () => {
+    schedules((url, method) =>
+      clean(url).endsWith('/work-schedules/s-1/') && method === 'PATCH'
+        ? json(409, { error: { code: 'conflict', message: 'График уже назначен' } })
+        : null);
+    renderApp('/administration?open=schedules');
+
+    fireEvent.click(await screen.findByLabelText('Изменить «Основной график»'));
+    const box = await screen.findByRole('dialog', { name: 'График работы' });
+    const name = within(box).getByLabelText('Название') as HTMLInputElement;
+    await waitFor(() => expect(name.value).toBe('Основной график'));
+    fireEvent.change(name, { target: { value: 'Основной график 2' } });
+    fireEvent.click(within(box).getByRole('button', { name: 'Сохранить' }));
+
+    expect(await within(box).findByText(/График уже назначен/)).toBeTruthy();
+    expect((within(box).getByLabelText('Название') as HTMLInputElement).value)
+      .toBe('Основной график 2');
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+});
+
+describe('вкладки на странице', () => {
+  test('повторное нажатие на выбранную вкладку ничего не меняет', async () => {
+    catalog();
+    renderApp('/administration?open=departments');
+
+    const tab = await screen.findByRole('tab', { name: /Отделы/ });
+    fireEvent.click(await screen.findByRole('button', { name: 'Продажи' }));
+    fireEvent.click(tab);
+    // Раскрытая строка осталась раскрытой: панель не пересоздавалась.
+    expect(screen.getByRole('button', { name: 'Продажи' }).getAttribute('aria-expanded'))
+      .toBe('true');
+    expect(screen.getAllByRole('tabpanel')).toHaveLength(1);
+  });
+
+  test('быстрые переключения заканчиваются на последней вкладке', async () => {
+    catalog();
+    renderApp('/administration');
+
+    await screen.findByRole('tab', { name: /Должности/ });
+    for (const name of [/Отделы/, /Графики работы/, /Должности/]) {
+      fireEvent.click(screen.getByRole('tab', { name }));
+    }
+    const panel = screen.getByRole('tabpanel');
+    expect(panel.getAttribute('aria-label')).toBe('Должности');
+    expect(await within(panel).findByRole('button', { name: 'Инженер' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /Должности/ }).getAttribute('aria-selected'))
+      .toBe('true');
   });
 });

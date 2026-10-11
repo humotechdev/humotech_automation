@@ -1,29 +1,49 @@
 /**
- * Администрирование: один экран, четыре справочника.
+ * Администрирование: один экран, четыре справочника на вкладках.
  *
- * Раньше это было оглавление с переходом на шесть отдельных страниц.
- * Справочник из трёх строк не стоит отдельной страницы: человек заводит
- * отдел и должность подряд, и два перехода между ними — это два
- * ожидания загрузки ради двух полей.
+ * Раньше это было оглавление с переходом на шесть отдельных страниц, а
+ * потом — четыре раскрывающихся блока. Справочник из трёх строк не стоит
+ * отдельной страницы: человек заводит отдел и должность подряд, и два
+ * перехода между ними — это два ожидания загрузки ради двух полей.
  *
- * Поэтому всё здесь: блок раскрывается на месте, список листается
- * внутри себя, добавление открывает небольшое окно по центру. Со
- * страницы никуда не уходят.
+ * Поэтому всё здесь: вкладки переключают список на месте, строка
+ * раскрывается внутри таблицы, отдел и должность переименовываются
+ * прямо в строке, добавление и правка доступа открывают небольшое окно
+ * по центру. Со страницы никуда не уходят.
  *
- * Офисов среди блоков нет. Адрес, карта, геозона и QR-точки — это
+ * Выбранная вкладка живёт в адресе (`?open=…`): ссылка «открыть отделы»
+ * и возврат назад приводят туда же, где человек был.
+ *
+ * Офисов среди вкладок нет. Адрес, карта, геозона и QR-точки — это
  * настройка места, и она живёт в «Офисах и регионах»; два места, где
  * правят один и тот же офис, дают два разных ответа на один вопрос.
+ *
+ * Движение (переход вкладок, раскрытие строк) только сопровождает
+ * действие: ни загрузка, ни сохранение его не ждут, и «Сохранено»
+ * появляется только после ответа сервера.
  */
 
-import { useCallback, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 
 import * as api from '../api/crm';
 import { AppShell } from '../components/AppShell';
 import { AppIcon } from '../components/AppIcon';
 import { AppSelectField } from '../components/AppSelect';
+import { SlideTabs } from '../components/SlideTabs';
+import { AnimatedCollapse } from '../components/admin/AnimatedCollapse';
+import { AnimatedTabContent } from '../components/admin/AnimatedTabContent';
 import { Confirm, Refusal, useSaving } from '../components/admin/Parts';
-import { Modal, ModalField, ModalTools } from '../components/admin/Modal';
+import { Modal, ModalField } from '../components/admin/Modal';
 import { useBlock } from '../features/dashboard/data';
 import { useSession } from '../features/auth/session';
 import {
@@ -33,9 +53,17 @@ import {
   counted,
   roleTitle,
   scheduleLine,
+  scheduleSummary,
 } from '../features/admin/catalog';
 import type { SectionKey } from '../features/admin/catalog';
-import { demoMode } from '../features/admin/model';
+import {
+  STATUS,
+  accessNote,
+  demoMode,
+  initials,
+  scopeSummary,
+  scopeTitle,
+} from '../features/admin/model';
 import '../styles/admin.css';
 
 /** Одна строка любого справочника, приведённая к общему виду. */
@@ -51,19 +79,27 @@ type Row = {
   locked?: boolean;
 };
 
+const ORDER = SECTIONS.map((one) => one.key);
+
+const isSection = (value: string | null): value is SectionKey =>
+  value !== null && (ORDER as string[]).includes(value);
+
+/** Сколько должностей на одной странице списка. */
+const POSITIONS_PAGE = 8;
+
 export function AdministrationPage() {
   const session = useSession();
   const me = session.status === 'authenticated' ? session.user.id : '';
 
   const [params, setParams] = useSearchParams();
-  const open = (params.get('open') as SectionKey | null) ?? null;
-  const setOpen = useCallback(
-    (key: SectionKey | null) => {
+  const asked = params.get('open');
+  const tab: SectionKey = isSection(asked) ? asked : 'admins';
+  const setTab = useCallback(
+    (key: SectionKey) => {
       setParams(
         (was) => {
           const copy = new URLSearchParams(was);
-          if (key) copy.set('open', key);
-          else copy.delete('open');
+          copy.set('open', key);
           return copy;
         },
         { replace: true },
@@ -78,9 +114,11 @@ export function AdministrationPage() {
   const [editing, setEditing] = useState<{ key: SectionKey; id: string } | null>(null);
   const [removing, setRemoving] = useState<{ key: SectionKey; row: Row } | null>(null);
   const act = useSaving();
+  const [notice, announce] = useNotice();
 
-  // Все четыре справочника грузятся сразу: числа стоят в закрытых блоках,
-  // и «—» вместо количества до раскрытия ничего не сообщает.
+  // Все четыре справочника грузятся сразу: числа стоят на вкладках, и
+  // «—» вместо количества до открытия ничего не сообщает. Переключение
+  // вкладок поэтому ничего не перезапрашивает.
   const [admins, reloadAdmins] = useBlock(
     (signal) => api.crmUsers({ limit: '100' }, signal),
     `adm-admins|${attempt}`,
@@ -98,7 +136,7 @@ export function AdministrationPage() {
     `adm-schedules|${attempt}`,
   );
 
-  const done = useCallback(() => {
+  const done = useCallback((message?: string) => {
     setAdding(null);
     setEditing(null);
     setRemoving(null);
@@ -107,7 +145,8 @@ export function AdministrationPage() {
     reloadDepartments();
     reloadPositions();
     reloadSchedules();
-  }, [again, reloadAdmins, reloadDepartments, reloadPositions, reloadSchedules]);
+    if (message) announce(message);
+  }, [again, announce, reloadAdmins, reloadDepartments, reloadPositions, reloadSchedules]);
 
   const rows: Record<SectionKey, Row[] | null> = useMemo(() => ({
     admins: admins.state === 'ready'
@@ -161,42 +200,135 @@ export function AdministrationPage() {
       : null,
   }), [admins, departments, positions, schedules, me]);
 
+  const failed: Record<SectionKey, boolean> = {
+    admins: admins.state === 'error' || admins.state === 'denied',
+    departments: departments.state === 'error' || departments.state === 'denied',
+    positions: positions.state === 'error' || positions.state === 'denied',
+    schedules: schedules.state === 'error' || schedules.state === 'denied',
+  };
+  const retry: Record<SectionKey, () => void> = {
+    admins: reloadAdmins,
+    departments: reloadDepartments,
+    positions: reloadPositions,
+    schedules: reloadSchedules,
+  };
+
+  const common = (key: SectionKey) => ({
+    section: SECTIONS.find((one) => one.key === key)!,
+    rows: rows[key],
+    failed: failed[key],
+    onRetry: retry[key],
+    onAdd: () => setAdding(key),
+    onEdit: (id: string) => setEditing({ key, id }),
+    onRemove: (row: Row) => setRemoving({ key, row }),
+  });
+
+  const pane = (key: SectionKey): ReactNode => {
+    switch (key) {
+      case 'admins':
+        return (
+          <AdminsPane {...common('admins')}
+                      users={admins.state === 'ready' ? admins.data.items : null} />
+        );
+      case 'departments':
+        return (
+          <NamesPane {...common('departments')}
+                     which="departments"
+                     details={departments.state === 'ready' ? departments.data.items : null}
+                     onRenamed={(name) => {
+                       reloadDepartments();
+                       announce(`Отдел переименован: «${name}»`);
+                     }} />
+        );
+      case 'positions':
+        return (
+          <NamesPane {...common('positions')}
+                     which="positions"
+                     pageSize={POSITIONS_PAGE}
+                     details={positions.state === 'ready' ? positions.data.items : null}
+                     onRenamed={(name) => {
+                       reloadPositions();
+                       announce(`Должность переименована: «${name}»`);
+                     }} />
+        );
+      default:
+        return <SchedulesPane {...common('schedules')} version={attempt} />;
+    }
+  };
+
   return (
     <AppShell breadcrumb="Администрирование" section="admin">
-      <header className="adm-top">
-        <h1 className="adm-top__title">
-          Администрирование
-          {demoMode() && <span className="chip chip--demo">Демо-данные</span>}
-        </h1>
-        <p className="adm-top__sub">
-          Настройте списки, которые используются при добавлении сотрудников.
-        </p>
-      </header>
+      <div className="adp">
+        <header className="adm-top adp-top">
+          <h1 className="adm-top__title">
+            Администрирование
+            {demoMode() && <span className="chip chip--demo">Демо-данные</span>}
+          </h1>
+          <p className="adm-top__sub">
+            Доступ к CRM и справочники, которые используются при добавлении
+            сотрудников.
+          </p>
+        </header>
 
-      <section className="adm-sheet" aria-label="Справочники">
-        {SECTIONS.map((section) => (
-          <Block
-            key={section.key}
-            section={section}
-            rows={rows[section.key]}
-            open={open === section.key}
-            onToggle={() => setOpen(open === section.key ? null : section.key)}
-            onAdd={() => setAdding(section.key)}
-            onEdit={(id) => setEditing({ key: section.key, id })}
-            onRemove={(row) => setRemoving({ key: section.key, row })}
+        <section className="adp-sheet">
+          <SlideTabs
+            label="Справочники"
+            value={tab}
+            onPick={(key) => setTab(key as SectionKey)}
+            classes={{ list: 'adp-tabs', tab: 'adp-tab', on: 'adp-tab--on', ink: 'adp-tabs__ink' }}
+            items={SECTIONS.map((section) => {
+              const alive = rows[section.key]?.filter((one) => !one.archived) ?? null;
+              return {
+                key: section.key,
+                title: (
+                  <>
+                    <span className="adp-tab__title">{section.title}</span>
+                    {/* Пока ответ не пришёл — прочерк: ноль означал бы,
+                        что записей нет, а мы этого ещё не знаем. */}
+                    <span className="adp-tab__count"
+                          aria-label={alive === null
+                            ? 'загружается'
+                            : counted(alive.length, section.unit)}>
+                      {alive === null ? '—' : alive.length}
+                    </span>
+                  </>
+                ),
+              };
+            })}
           />
-        ))}
-      </section>
 
-      <p className="adm-foot">
-        <AppIcon name="alert" size={16} />
-        Офисы, карта и QR-точки настраиваются в разделе «Офисы и регионы».
-      </p>
+          <AnimatedTabContent
+            activeKey={tab}
+            order={ORDER}
+            label={(key) => SECTIONS.find((one) => one.key === key)?.title ?? key}
+            render={(key) => pane(key as SectionKey)}
+          />
+
+          <p className="adm-foot adp-foot">
+            <AppIcon name="info" size={16} />
+            <span>
+              Офисы, карта и QR-точки настраиваются в разделе{' '}
+              <Link to="/offices" className="adp-foot__link">«Офисы и регионы»</Link>.
+            </span>
+          </p>
+        </section>
+
+        {/* Подтверждение — только после ответа сервера: сообщение ставит
+            `done` и `onRenamed`, которые вызываются из удачного запроса. */}
+        <div className="adp-notice-slot" aria-live="polite">
+          {notice && (
+            <p key={notice.n} className="adp-notice" role="status">
+              <AppIcon name="check" size={16} /> {notice.text}
+            </p>
+          )}
+        </div>
+      </div>
 
       <Refusal text={act.refusal} />
 
       {adding && (
-        <AddForm which={adding} onClose={() => setAdding(null)} onSaved={done} />
+        <AddForm which={adding} onClose={() => setAdding(null)}
+                 onSaved={() => done(ADDED[adding])} />
       )}
 
       {editing && (
@@ -204,7 +336,7 @@ export function AdministrationPage() {
           which={editing.key}
           id={editing.id}
           onClose={() => setEditing(null)}
-          onSaved={done}
+          onSaved={() => done(editing.key === 'admins' ? 'Доступ сохранён' : 'Изменения сохранены')}
         />
       )}
 
@@ -226,15 +358,50 @@ export function AdministrationPage() {
           busy={act.busy}
           onCancel={() => setRemoving(null)}
           onConfirm={() => {
+            const what = removing;
             void act.run(
-              () => remove(removing.key, removing.row),
-              done,
+              () => remove(what.key, what.row),
+              () => done(
+                what.key === 'admins'
+                  ? `Доступ «${what.row.title}» закрыт`
+                  : what.row.used
+                    ? `«${what.row.title}» перенесено в архив`
+                    : `«${what.row.title}» удалено`,
+              ),
             );
           }}
         />
       )}
     </AppShell>
   );
+}
+
+const ADDED: Record<SectionKey, string> = {
+  admins: 'Администратор добавлен',
+  departments: 'Отдел добавлен',
+  positions: 'Должность добавлена',
+  schedules: 'График добавлен',
+};
+
+/**
+ * Короткое подтверждение после удачного запроса.
+ *
+ * Своей системы уведомлений у CRM нет — у разделов свои строки статуса,
+ * и вторую общую здесь не заводим. Сообщение ставится только из
+ * обработчика успешного ответа; таймер его лишь убирает.
+ */
+function useNotice(): [{ text: string; n: number } | null, (text: string) => void] {
+  const [notice, setNotice] = useState<{ text: string; n: number } | null>(null);
+  const announce = useCallback(
+    (text: string) => setNotice((was) => ({ text, n: (was?.n ?? 0) + 1 })),
+    [],
+  );
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(null), 4000);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+  return [notice, announce];
 }
 
 /** Убрать значение: совсем, если им не пользовались, иначе — в архив. */
@@ -262,94 +429,753 @@ function remove(which: SectionKey, row: Row): Promise<unknown> {
   }
 }
 
-// --- блок -------------------------------------------------------------------
+// --- общая рамка вкладки -----------------------------------------------------
 
-function Block({ section, rows, open, onToggle, onAdd, onEdit, onRemove }: {
+type PaneProps = {
   section: (typeof SECTIONS)[number];
   rows: Row[] | null;
-  open: boolean;
-  onToggle: () => void;
+  failed: boolean;
+  onRetry: () => void;
   onAdd: () => void;
   onEdit: (id: string) => void;
   onRemove: (row: Row) => void;
+};
+
+const SEARCH_LABEL: Record<SectionKey, string> = {
+  admins: 'Поиск пользователя',
+  departments: 'Поиск отдела',
+  positions: 'Поиск должности',
+  schedules: 'Поиск графика',
+};
+
+/** Шапка вкладки, поиск и кнопка добавления; ниже — таблица. */
+function PaneFrame({ section, search, onSearch, onAdd, head, children, foot }: {
+  section: (typeof SECTIONS)[number];
+  search: string;
+  onSearch: (value: string) => void;
+  onAdd: () => void;
+  /** Подписи колонок; на узком экране скрываются. */
+  head: ReactNode;
+  children: ReactNode;
+  foot?: ReactNode;
 }) {
-  const alive = rows?.filter((one) => !one.archived) ?? null;
-
   return (
-    <article className={open ? 'adm-block adm-block--open' : 'adm-block'}>
-      <div className="adm-block__head">
-        <span className={`adm-block__icon adm-block__icon--${section.key}`}
-              aria-hidden="true">
-          <AppIcon name={section.icon} size={20} />
-        </span>
-
-        <button type="button" className="adm-block__hit" onClick={onToggle}
-                aria-expanded={open}>
-          <span className="adm-block__title">{section.title}</span>
-          <span className="adm-block__about">{section.about}</span>
-          <span className="adm-block__count">
-            {/* Пока ответ не пришёл — прочерк: ноль означал бы, что
-                записей нет, а мы этого ещё не знаем. */}
-            {alive === null ? '—' : counted(alive.length, section.unit)}
-          </span>
-        </button>
-
-        <button type="button" className="btn btn--primary adm-block__add"
-                onClick={onAdd}>
-          <AppIcon name="plus" size={16} /> {section.add}
-        </button>
-
-        <button type="button" className="adm-block__chevron" onClick={onToggle}
-                aria-label={open ? 'Свернуть' : 'Развернуть'} aria-expanded={open}>
-          <AppIcon name="chevron" size={18} />
-        </button>
+    <div className={`adp-panel adp-panel--${section.key}`}>
+      <div className="adp-panel__head">
+        <div className="adp-panel__text">
+          <h2 className="adp-panel__title">{section.title}</h2>
+          <p className="adp-panel__about">{section.about}</p>
+        </div>
+        <div className="adp-panel__tools">
+          <label className="adp-search">
+            <AppIcon name="search" size={16} />
+            <input type="search" value={search}
+                   placeholder={SEARCH_LABEL[section.key]}
+                   aria-label={SEARCH_LABEL[section.key]}
+                   onChange={(event) => onSearch(event.target.value)} />
+          </label>
+          <button type="button" className="btn btn--primary adp-add" onClick={onAdd}>
+            <AppIcon name="plus" size={16} /> {section.add}
+          </button>
+        </div>
       </div>
 
-      {open && (
-        <div className="adm-block__body">
-          {alive === null && <p className="adm-block__empty">Загружаем…</p>}
-          {alive !== null && rows!.length === 0 && (
-            <p className="adm-block__empty">{section.empty}</p>
-          )}
-          {alive !== null && rows!.length > 0 && (
-            <ul className="adm-rows">
-              {rows!.map((row) => (
-                <li key={row.id}
-                    className={row.archived ? 'adm-row adm-row--off' : 'adm-row'}>
-                  <span className="adm-row__text">
-                    <span className="adm-row__title">{row.title}</span>
-                    {(row.note || row.archived) && (
-                      <span className="adm-row__note">
-                        {[row.note, row.archived ? 'в архиве' : null]
-                          .filter(Boolean).join(' · ')}
-                      </span>
-                    )}
-                  </span>
-                  <span className="adm-row__tools">
-                    <button type="button" className="adm-row__tool"
-                            aria-label={`Изменить «${row.title}»`}
-                            onClick={() => onEdit(row.id)}>
-                      <AppIcon name="pencil" size={16} />
-                    </button>
-                    <button type="button" className="adm-row__tool adm-row__tool--bad"
-                            aria-label={
-                              row.locked
-                                ? `«${row.title}» — это вы: убрать нельзя`
-                                : `${row.used ? 'Архивировать' : 'Удалить'} «${row.title}»`
-                            }
-                            disabled={row.locked}
-                            title={row.locked ? 'Это вы: убрать себя нельзя' : undefined}
-                            onClick={() => onRemove(row)}>
-                      <AppIcon name={row.used ? 'archive' : 'cross'} size={16} />
-                    </button>
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+      <div className={`adp-table adp-table--${section.key}`}>
+        <div className="adp-table__head" aria-hidden="true">{head}</div>
+        {children}
+      </div>
+
+      {foot && <div className="adp-panel__foot">{foot}</div>}
+    </div>
+  );
+}
+
+/** Загрузка, сбой и пустой список — одинаково на всех вкладках. */
+function PaneState({ rows, failed, onRetry, empty, found, columns }: {
+  rows: unknown[] | null;
+  failed: boolean;
+  onRetry: () => void;
+  empty: string;
+  /** Сколько строк осталось после поиска. */
+  found: number;
+  columns: number;
+}) {
+  if (rows === null && failed) {
+    return (
+      <p className="adp-state adp-state--bad" role="alert">
+        Не удалось загрузить список. Это ошибка запроса, а не пустой список.{' '}
+        <button type="button" className="link" onClick={onRetry}>Повторить</button>
+      </p>
+    );
+  }
+  if (rows === null) {
+    return (
+      <div className="adp-skeleton" aria-busy="true" aria-label="Загружаем…">
+        {[0, 1, 2].map((n) => (
+          <span key={n} className="adp-skeleton__row"
+                style={{ ['--adp-cols' as string]: columns }} />
+        ))}
+      </div>
+    );
+  }
+  if (rows.length === 0) return <p className="adp-state">{empty}</p>;
+  if (found === 0) return <p className="adp-state">По этому запросу ничего не нашлось.</p>;
+  return null;
+}
+
+/** Совпадает ли строка с поиском. Регистр и лишние пробелы не важны. */
+const matches = (query: string, ...values: Array<string | null | undefined>): boolean => {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return true;
+  return values.some((one) => one?.toLowerCase().includes(needle));
+};
+
+/**
+ * Строка таблицы, которая раскрывается.
+ *
+ * Раскрывает её кнопка с названием и стрелкой — с `aria-expanded` и
+ * ссылкой на раскрываемую часть. Кнопки действий стоят отдельно и
+ * строку не раскрывают: «Удалить» не должно попутно что-то открывать.
+ */
+function TableRow({ title, open, onToggle, off, cells, tools, children, lead, meta }: {
+  title: string;
+  open: boolean;
+  onToggle: () => void;
+  off?: boolean;
+  /** Ячейка перед названием внутри кнопки — например, инициалы. */
+  lead?: ReactNode;
+  /** Короткая приписка в той же строке: «3 чел.», «в архиве». Строки
+      остаются одной высоты — приписка не уходит второй строкой. */
+  meta?: ReactNode;
+  /** Остальные ячейки строки. */
+  cells: ReactNode;
+  tools: ReactNode;
+  children: ReactNode;
+}) {
+  const id = useId();
+  const classes = ['adp-row'];
+  if (open) classes.push('adp-row--open');
+  if (off) classes.push('adp-row--off');
+  return (
+    <li className={classes.join(' ')}>
+      <div className="adp-row__line">
+        <button type="button" className="adp-row__toggle" aria-expanded={open}
+                aria-controls={`${id}-more`} onClick={onToggle}>
+          <span className="adp-chevron" aria-hidden="true">
+            <AppIcon name="chevron" size={16} />
+          </span>
+          {lead}
+          <span className="adp-row__title">{title}</span>
+          {meta && <span className="adp-row__meta">{meta}</span>}
+        </button>
+        {cells}
+        <span className="adp-row__tools">{tools}</span>
+      </div>
+      <AnimatedCollapse open={open} id={`${id}-more`}>
+        <div className="adp-row__more">{children}</div>
+      </AnimatedCollapse>
+    </li>
+  );
+}
+
+/** Карандаш и корзина/архив — те же подписи, что и раньше. */
+function RowTools({ row, onEdit, onRemove }: {
+  row: Row;
+  onEdit: () => void;
+  onRemove: () => void;
+}) {
+  return (
+    <>
+      <button type="button" className="adp-tool"
+              aria-label={`Изменить «${row.title}»`}
+              onClick={onEdit}>
+        <AppIcon name="pencil" size={16} />
+      </button>
+      <button type="button" className="adp-tool adp-tool--bad"
+              aria-label={
+                row.locked
+                  ? `«${row.title}» — это вы: убрать нельзя`
+                  : `${row.used ? 'Архивировать' : 'Удалить'} «${row.title}»`
+              }
+              disabled={row.locked}
+              title={row.locked ? 'Это вы: убрать себя нельзя' : undefined}
+              onClick={onRemove}>
+        <AppIcon name={row.used ? 'archive' : 'cross'} size={16} />
+      </button>
+    </>
+  );
+}
+
+/** Подпись и значение в раскрытой строке. */
+function Fact({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="adp-fact">
+      <span className="adp-fact__label">{label}</span>
+      <span className="adp-fact__value">{children}</span>
+    </div>
+  );
+}
+
+/**
+ * Кнопка сохранения, которая не меняет ширину.
+ *
+ * «Сохраняем…» короче или длиннее подписи — и кнопка прыгала бы под
+ * курсором. Вторая подпись лежит в той же ячейке невидимой (через
+ * `data-alt`), и ширина всегда по большей из двух.
+ */
+function SubmitButton({ busy, label, busyLabel = 'Сохраняем…', type = 'submit', onClick }: {
+  busy: boolean;
+  label: string;
+  busyLabel?: string;
+  type?: 'submit' | 'button';
+  onClick?: () => void;
+}) {
+  return (
+    <button type={type} className={busy ? 'btn btn--primary adp-btn adp-btn--busy' : 'btn btn--primary adp-btn'}
+            disabled={busy} aria-busy={busy || undefined}
+            data-alt={busy ? label : busyLabel}
+            onClick={onClick}>
+      <span className="adp-btn__label">{busy ? busyLabel : label}</span>
+    </button>
+  );
+}
+
+// --- администраторы ----------------------------------------------------------
+
+function AdminsPane({ section, rows, failed, onRetry, onAdd, onEdit, onRemove, users }: PaneProps & {
+  users: api.CrmUser[] | null;
+}) {
+  const [search, setSearch] = useState('');
+  const query = useDeferredValue(search);
+  const [openId, setOpenId] = useState<string | null>(null);
+
+  const shown = useMemo(
+    () => (users ?? []).filter((one) => matches(query, one.full_name, one.email)),
+    [users, query],
+  );
+  const byId = useMemo(
+    () => new Map((rows ?? []).map((one) => [one.id, one])),
+    [rows],
+  );
+
+  return (
+    <PaneFrame
+      section={section}
+      search={search}
+      onSearch={setSearch}
+      onAdd={onAdd}
+      head={(
+        <>
+          <span>Пользователь</span>
+          <span>Роль</span>
+          <span>Область доступа</span>
+          <span>Статус</span>
+          <span className="adp-table__actions">Действия</span>
+        </>
       )}
-    </article>
+      foot={users && users.length > 0 ? (
+        <>
+          <span>{counted(users.length, ['учётная запись', 'учётные записи', 'учётных записей'])}</span>
+          <span className="adp-panel__hint">
+            Роль определяет действия, область — доступные данные.
+          </span>
+        </>
+      ) : null}
+    >
+      <PaneState rows={users} failed={failed} onRetry={onRetry} empty={section.empty}
+                 found={shown.length} columns={5} />
+      {shown.length > 0 && (
+        <ul className="adp-rows">
+          {shown.map((user) => {
+            const row = byId.get(user.id);
+            if (!row) return null;
+            const title = user.full_name ?? user.email;
+            const grants = user.active_grants;
+            const role = !user.grants_visible
+              ? '—'
+              : grants.length
+                ? roleTitle(grants[0]!.role_code, grants[0]!.role_name)
+                  + (grants.length > 1 ? ` +${grants.length - 1}` : '')
+                : 'Без роли';
+            const scope = user.grants_visible ? scopeSummary(grants) : '—';
+            const active = user.status === 'ACTIVE';
+            const note = accessNote(user);
+            const open = openId === user.id;
+            return (
+              <TableRow
+                key={user.id}
+                title={title}
+                open={open}
+                off={!active}
+                onToggle={() => setOpenId(open ? null : user.id)}
+                lead={<span className="adp-avatar" aria-hidden="true">{initials(title) || '•'}</span>}
+                cells={(
+                  <>
+                    {user.full_name && <span className="adp-row__sub">{user.email}</span>}
+                    <span className="adp-cell" data-label="Роль">{role}</span>
+                    <span className="adp-cell" data-label="Область">{scope}</span>
+                    <span className="adp-cell" data-label="Статус">
+                      <span className={active ? 'adp-status adp-status--on' : 'adp-status'}>
+                        {STATUS[user.status] ?? user.status}
+                      </span>
+                    </span>
+                  </>
+                )}
+                tools={(
+                  <RowTools row={row} onEdit={() => onEdit(user.id)}
+                            onRemove={() => onRemove(row)} />
+                )}
+              >
+                <div className="adp-more adp-more--admin">
+                  <p className="adp-more__title">Доступ пользователя</p>
+                  <div className="adp-facts">
+                    <Fact label="Логин">{user.email}</Fact>
+                    <Fact label="Роль">
+                      {!user.grants_visible
+                        ? 'Назначения не показаны: на это нужны права'
+                        : grants.length
+                          ? grants.map((one) => roleTitle(one.role_code, one.role_name)).join(', ')
+                          : 'Без роли'}
+                    </Fact>
+                    <Fact label="Область">
+                      {!user.grants_visible
+                        ? '—'
+                        : grants.length
+                          ? [...new Set(grants.map(scopeTitle))].join(', ')
+                          : '—'}
+                    </Fact>
+                  </div>
+                  <button type="button" className="btn adp-more__action"
+                          aria-label={`Редактировать доступ «${title}»`}
+                          onClick={() => onEdit(user.id)}>
+                    <AppIcon name="pencil" size={16} /> Редактировать доступ
+                  </button>
+                  {note && <p className="adp-more__note"><AppIcon name="alert" size={16} /> {note}</p>}
+                </div>
+              </TableRow>
+            );
+          })}
+        </ul>
+      )}
+    </PaneFrame>
+  );
+}
+
+// --- отделы и должности ------------------------------------------------------
+
+type NameDetail = { id: string; name: string; status: string; staff?: number;
+                    office_name?: string | null };
+
+function NamesPane({ section, rows, failed, onRetry, onAdd, onRemove, which, details,
+                     pageSize, onRenamed }: PaneProps & {
+  which: 'departments' | 'positions';
+  details: NameDetail[] | null;
+  pageSize?: number;
+  onRenamed: (name: string) => void;
+}) {
+  const department = which === 'departments';
+  const [search, setSearch] = useState('');
+  const query = useDeferredValue(search);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  /*
+   * Имя, которое подтвердил сервер, — пока список не перезагрузился.
+   * Без этого между закрытием формы и новым ответом в строке на миг
+   * снова стояло бы старое название. Привязано к тому ответу списка,
+   * поверх которого сохранили: пришёл новый — правда снова за ним.
+   */
+  const [renamed, setRenamed] = useState<{ id: string; name: string; base: unknown } | null>(null);
+
+  const list = useMemo(() => {
+    if (!rows) return null;
+    return rows.map((row) =>
+      renamed && renamed.base === details && renamed.id === row.id
+        ? { ...row, title: renamed.name }
+        : row);
+  }, [rows, renamed, details]);
+
+  const shown = useMemo(
+    () => (list ?? []).filter((one) => matches(query, one.title, one.note)),
+    [list, query],
+  );
+
+  // Поиск меняет набор — листание начинается сначала. Страница, которой
+  // после удаления уже нет, сдвигается на последнюю существующую.
+  const pages = pageSize ? Math.max(1, Math.ceil(shown.length / pageSize)) : 1;
+  const [lastQuery, setLastQuery] = useState(query);
+  if (query !== lastQuery) {
+    setLastQuery(query);
+    setPage(1);
+  }
+  const current = Math.min(page, pages);
+  const visible = pageSize ? shown.slice((current - 1) * pageSize, current * pageSize) : shown;
+  const byId = useMemo(() => new Map((details ?? []).map((one) => [one.id, one])), [details]);
+
+  const toggle = (id: string) => {
+    setEditId(null);
+    setOpenId(openId === id ? null : id);
+  };
+
+  return (
+    <PaneFrame
+      section={section}
+      search={search}
+      onSearch={setSearch}
+      onAdd={onAdd}
+      head={(
+        <>
+          <span>{department ? 'Название отдела' : 'Название должности'}</span>
+          <span className="adp-table__actions">Действия</span>
+        </>
+      )}
+      foot={list && list.length > 0 ? (
+        <>
+          <span>
+            {pageSize && shown.length > pageSize
+              ? `Показано ${visible.length} из ${counted(shown.length, section.unit)}`
+              : counted(shown.length, section.unit)}
+          </span>
+          {pageSize && pages > 1 && (
+            <Pager page={current} pages={pages} onPage={(n) => {
+              setOpenId(null);
+              setEditId(null);
+              setPage(n);
+            }} />
+          )}
+        </>
+      ) : null}
+    >
+      <PaneState rows={list} failed={failed} onRetry={onRetry} empty={section.empty}
+                 found={shown.length} columns={2} />
+      {visible.length > 0 && (
+        <ul className="adp-rows adp-rows--page" key={current}>
+          {visible.map((row) => {
+            const open = openId === row.id;
+            const editingRow = open && editId === row.id;
+            const detail = byId.get(row.id);
+            return (
+              <TableRow
+                key={row.id}
+                title={row.title}
+                open={open}
+                off={row.archived}
+                onToggle={() => toggle(row.id)}
+                meta={(row.note || row.archived)
+                  ? [row.note, row.archived ? 'в архиве' : null].filter(Boolean).join(' · ')
+                  : null}
+                cells={null}
+                tools={(
+                  <RowTools row={row}
+                            onEdit={() => {
+                              setOpenId(row.id);
+                              setEditId(row.id);
+                            }}
+                            onRemove={() => onRemove(row)} />
+                )}
+              >
+                {editingRow ? (
+                  <NameEditor
+                    which={which}
+                    row={row}
+                    onCancel={() => setEditId(null)}
+                    onSaved={(name) => {
+                      setRenamed({ id: row.id, name, base: details });
+                      setEditId(null);
+                      setOpenId(null);
+                      onRenamed(name);
+                    }}
+                  />
+                ) : (
+                  <div className="adp-more adp-more--names">
+                    <div className="adp-facts">
+                      {department && (
+                        <Fact label="Офис">{detail?.office_name ?? 'Общий для компании'}</Fact>
+                      )}
+                      <Fact label="Сотрудников">{detail?.staff ?? row.used}</Fact>
+                      <Fact label="Состояние">{row.archived ? 'В архиве' : 'Используется'}</Fact>
+                    </div>
+                    <button type="button" className="btn adp-more__action"
+                            onClick={() => setEditId(row.id)}>
+                      <AppIcon name="pencil" size={16} /> Изменить название
+                    </button>
+                  </div>
+                )}
+              </TableRow>
+            );
+          })}
+        </ul>
+      )}
+    </PaneFrame>
+  );
+}
+
+/** Название обязательно и не короче двух знаков — как в окне добавления. */
+function nameProblem(name: string): string | null {
+  if (name.trim().length >= 2) return null;
+  return name.trim() ? 'Слишком короткое название' : 'Название обязательно';
+}
+
+/**
+ * Переименование прямо в строке.
+ *
+ * Тот же запрос и та же проверка, что в окне; отличается только место.
+ * Поле получает фокус без прокрутки страницы. Строка закрывается только
+ * после ответа сервера; при отказе форма остаётся открытой с введённым
+ * текстом и причиной.
+ */
+function NameEditor({ which, row, onCancel, onSaved }: {
+  which: 'departments' | 'positions';
+  row: Row;
+  onCancel: () => void;
+  onSaved: (name: string) => void;
+}) {
+  const department = which === 'departments';
+  const [name, setName] = useState(row.title);
+  const [touched, setTouched] = useState(false);
+  const saving = useSaving();
+  const field = useRef<HTMLInputElement>(null);
+  const fieldId = useId();
+
+  useEffect(() => {
+    field.current?.focus({ preventScroll: true });
+    field.current?.select();
+  }, []);
+
+  const problem = nameProblem(name);
+
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault();
+    setTouched(true);
+    if (problem) return;
+    const value = name.trim();
+    let confirmed = value;
+    void saving.run(
+      async () => {
+        const answer = department
+          ? await api.updateDepartment(row.id, { name: value })
+          : await api.updatePosition(row.id, { name: value });
+        // Название берётся из ответа: сервер мог его нормализовать.
+        if (answer && typeof answer.name === 'string') confirmed = answer.name;
+      },
+      () => onSaved(confirmed),
+    );
+  };
+
+  const shownError = touched && problem ? problem : null;
+
+  return (
+    <form className="adp-editor" onSubmit={submit}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape' && !saving.busy) {
+              event.stopPropagation();
+              onCancel();
+            }
+          }}>
+      <div className={shownError ? 'adp-editor__field adm-field--bad' : 'adp-editor__field'}>
+        <label className="adm-field__label" htmlFor={fieldId}>
+          {department ? 'Новое название отдела' : 'Новое название должности'}
+        </label>
+        <input id={fieldId} ref={field} className="input" value={name} maxLength={255}
+               aria-invalid={shownError ? true : undefined}
+               onChange={(event) => setName(event.target.value)} />
+        <span className="adp-editor__error" role={shownError ? 'alert' : undefined}>
+          {shownError ?? ''}
+        </span>
+      </div>
+      <div className="adp-editor__tools">
+        <SubmitButton busy={saving.busy} label="Сохранить" />
+        <button type="button" className="btn adp-editor__cancel" disabled={saving.busy}
+                onClick={onCancel}>
+          Отмена
+        </button>
+      </div>
+      {saving.refusal && (
+        <div className="adp-editor__refusal"><Refusal text={saving.refusal} /></div>
+      )}
+    </form>
+  );
+}
+
+/** Номера страниц: соседние с текущей, первая и последняя. */
+function Pager({ page, pages, onPage }: {
+  page: number;
+  pages: number;
+  onPage: (n: number) => void;
+}) {
+  const numbers: Array<number | 'gap'> = [];
+  for (let n = 1; n <= pages; n += 1) {
+    if (n === 1 || n === pages || Math.abs(n - page) <= 1 || pages <= 7) numbers.push(n);
+    else if (numbers[numbers.length - 1] !== 'gap') numbers.push('gap');
+  }
+  return (
+    <nav className="adp-pager" aria-label="Страницы списка">
+      <button type="button" className="adp-pager__step" aria-label="Предыдущая страница"
+              disabled={page <= 1} onClick={() => onPage(page - 1)}>
+        <AppIcon name="back" size={16} />
+      </button>
+      {numbers.map((n, index) =>
+        n === 'gap'
+          ? <span key={`gap-${index}`} className="adp-pager__gap" aria-hidden="true">…</span>
+          : (
+            <button key={n} type="button"
+                    className={n === page ? 'adp-pager__page adp-pager__page--on' : 'adp-pager__page'}
+                    aria-label={`Страница ${n}`}
+                    aria-current={n === page ? 'page' : undefined}
+                    onClick={() => { if (n !== page) onPage(n); }}>
+              {n}
+            </button>
+          ))}
+      <button type="button" className="adp-pager__step" aria-label="Следующая страница"
+              disabled={page >= pages} onClick={() => onPage(page + 1)}>
+        <AppIcon name="next" size={16} />
+      </button>
+    </nav>
+  );
+}
+
+// --- графики -----------------------------------------------------------------
+
+function SchedulesPane({ section, rows, failed, onRetry, onAdd, onEdit, onRemove, version }: PaneProps & {
+  version: number;
+}) {
+  const [search, setSearch] = useState('');
+  const query = useDeferredValue(search);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const shown = useMemo(
+    () => (rows ?? []).filter((one) => matches(query, one.title)),
+    [rows, query],
+  );
+
+  return (
+    <PaneFrame
+      section={section}
+      search={search}
+      onSearch={setSearch}
+      onAdd={onAdd}
+      head={(
+        <>
+          <span>Название</span>
+          <span>Рабочие дни</span>
+          <span>Время</span>
+          <span>Перерыв</span>
+          <span className="adp-table__actions">Действия</span>
+        </>
+      )}
+      foot={rows && rows.length > 0 ? <span>{counted(shown.length, section.unit)}</span> : null}
+    >
+      <PaneState rows={rows} failed={failed} onRetry={onRetry} empty={section.empty}
+                 found={shown.length} columns={5} />
+      {shown.length > 0 && (
+        <ul className="adp-rows">
+          {shown.map((row) => (
+            <ScheduleLine key={row.id} row={row} version={version}
+                          open={openId === row.id}
+                          onToggle={() => setOpenId(openId === row.id ? null : row.id)}
+                          onEdit={() => onEdit(row.id)}
+                          onRemove={() => onRemove(row)} />
+          ))}
+        </ul>
+      )}
+    </PaneFrame>
+  );
+}
+
+/**
+ * Строка графика.
+ *
+ * Список графиков не отдаёт дни и перерывы — они есть только в
+ * карточке графика, поэтому каждая строка дочитывает свою. Пока ответа
+ * нет, в колонках прочерк, а не выдуманное «Пн–Пт».
+ *
+ * Раскрытая строка только показывает сохранённое. Правят график в окне
+ * «Редактировать график» — с той же проверкой и тем же запросом, что
+ * были; что можно сохранить, решает сервер.
+ */
+function ScheduleLine({ row, version, open, onToggle, onEdit, onRemove }: {
+  row: Row;
+  version: number;
+  open: boolean;
+  onToggle: () => void;
+  onEdit: () => void;
+  onRemove: () => void;
+}) {
+  const [card] = useBlock(
+    (signal) => api.workSchedule(row.id, signal),
+    `adm-schedule-line|${row.id}|${version}`,
+  );
+  const summary = card.state === 'ready' && Array.isArray(card.data?.days)
+    ? scheduleSummary(card.data.days)
+    : null;
+  const pending = card.state === 'loading';
+
+  return (
+    <TableRow
+      title={row.title}
+      open={open}
+      off={row.archived}
+      onToggle={onToggle}
+      meta={row.archived ? 'в архиве' : null}
+      cells={(
+        <>
+          <span className="adp-cell" data-label="Дни">{summary?.days ?? (pending ? '…' : '—')}</span>
+          <span className="adp-cell" data-label="Время">
+            {summary?.time ?? (pending ? '…' : '—')}
+            {summary?.night && <span className="adp-badge" title="Окончание — на следующий день">+1</span>}
+          </span>
+          <span className="adp-cell" data-label="Перерыв">{summary?.rest ?? (pending ? '…' : '—')}</span>
+        </>
+      )}
+      tools={<RowTools row={row} onEdit={onEdit} onRemove={onRemove} />}
+    >
+      <div className="adp-more adp-more--schedule">
+        <div className="adp-more__group">
+          <p className="adp-more__title">Параметры графика</p>
+          <ul className="adp-weekdays" aria-label="Рабочие дни">
+            {WEEKDAYS.map((day) => {
+              const on = summary?.working.includes(day.n) ?? false;
+              return (
+                <li key={day.n} className={on ? 'adp-weekday adp-weekday--on' : 'adp-weekday'}
+                    aria-label={`${day.full}: ${on ? 'рабочий' : 'выходной'}`}>
+                  {day.short}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+        <div className="adp-facts adp-facts--boxed">
+          <Fact label="Начало">{summary?.start ?? '—'}</Fact>
+          <Fact label="Окончание">
+            {summary?.end ?? '—'}
+            {summary?.night && <span className="adp-badge">след. день</span>}
+          </Fact>
+          <Fact label="Перерыв">
+            {summary ? (summary.restMinutes ? `${summary.restMinutes} мин` : 'Без перерыва') : '—'}
+          </Fact>
+        </div>
+        <button type="button" className="btn adp-more__action"
+                aria-label={`Редактировать график «${row.title}»`}
+                onClick={onEdit}>
+          <AppIcon name="pencil" size={16} /> Редактировать график
+        </button>
+      </div>
+    </TableRow>
+  );
+}
+
+/** Нижний ряд окна: те же кнопки, но без прыжка ширины при сохранении. */
+function AdmModalTools({ busy, submitLabel, onCancel }: {
+  busy: boolean;
+  submitLabel: string;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="adm-modal__tools">
+      <button type="button" className="btn" onClick={onCancel} disabled={busy}>
+        Отмена
+      </button>
+      <SubmitButton busy={busy} label={submitLabel} />
+    </div>
   );
 }
 
@@ -415,9 +1241,7 @@ function NameForm({ which, id, onClose, onSaved }: {
     if (loaded) setName(loaded);
   }
 
-  const problem = name.trim().length >= 2
-    ? null
-    : name.trim() ? 'Слишком короткое название' : 'Название обязательно';
+  const problem = nameProblem(name);
 
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
@@ -454,7 +1278,7 @@ function NameForm({ which, id, onClose, onSaved }: {
         </ModalField>
 
         <Refusal text={saving.refusal} />
-        <ModalTools busy={saving.busy} onCancel={onClose}
+        <AdmModalTools busy={saving.busy} onCancel={onClose}
                     submitLabel={
                       id ? 'Сохранить'
                         : department ? 'Добавить отдел' : 'Добавить должность'
@@ -595,7 +1419,7 @@ function AdminForm({ id, onClose, onSaved }: {
         </ModalField>
 
         <Refusal text={saving.refusal} />
-        <ModalTools busy={saving.busy} onCancel={onClose}
+        <AdmModalTools busy={saving.busy} onCancel={onClose}
                     submitLabel={id ? 'Сохранить' : 'Добавить администратора'} />
       </form>
     </Modal>
@@ -766,7 +1590,7 @@ function ScheduleForm({ id, onClose, onSaved }: {
         </div>
 
         <Refusal text={saving.refusal} />
-        <ModalTools busy={saving.busy} onCancel={onClose}
+        <AdmModalTools busy={saving.busy} onCancel={onClose}
                     submitLabel={id ? 'Сохранить' : 'Добавить график'} />
       </form>
     </Modal>
