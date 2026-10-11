@@ -400,6 +400,25 @@ describe('лента событий', () => {
     expect(rows[1]!.textContent).not.toContain('brand_new');
   });
 
+  test('ссылка ?id= на событие не с этой страницы открывает подробности', async () => {
+    const calls = feedServer({
+      own: (url, call) => (call.method === 'GET' && url.pathname.includes('/notification-feed/question')
+        ? json(200, {
+          ...event(77), id: 'question:x', type: 'question', group: 'questions',
+          employee: null, author: null, comment: 'Текст обращения', occurred_at: '2026-09-25T04:14:00Z',
+          question: { topic: 'Зарплата', channel: 'TELEGRAM', category: 'SALARY', priority: 'NORMAL',
+            last_message_at: '2026-09-25T04:14:00Z', assigned_to: null },
+        })
+        : null),
+    });
+    renderApp('/notifications?id=question:x');
+    const panel = await screen.findByRole('region', { name: 'Подробности события' });
+    expect(await within(panel).findByText('Текст обращения')).toBeTruthy();
+    expect(within(panel).getByText('Зарплата')).toBeTruthy();
+    // Чтение подробностей — это GET, отметки прочтения от него нет.
+    expect(calls.some((c) => c.method === 'POST')).toBe(false);
+  });
+
   test('пусто совсем и пусто по отбору — разные слова', async () => {
     feedServer({ items: () => [], counts: { all: 0, unread: 0, action: 0, requests: 0, documents: 0, questions: 0 } });
     renderApp('/notifications');

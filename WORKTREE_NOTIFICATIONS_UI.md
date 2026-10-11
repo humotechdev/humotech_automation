@@ -41,31 +41,28 @@ claude
    ```
 
 2. Взять свободный порт, например 5191, и поднять dev-сервер в одноразовом
-   контейнере (анонимный том для `node_modules` обязателен — иначе Linux-модули
-   попадут в папку Windows):
+   контейнере. Команды — для Git Bash (`MSYS_NO_PATHCONV` — его настройка).
+   Анонимный том для `node_modules` обязателен — иначе Linux-модули попадут
+   в папку Windows:
 
-   ```
-   MSYS_NO_PATHCONV=1 docker run --rm -it --name ntf-ui-dev --memory=1500m ^
-     -e NODE_OPTIONS=--max-old-space-size=1200 ^
-     -e VITE_BACKEND_ORIGIN=http://host.docker.internal:8000 ^
-     -p 5191:5191 ^
-     -v "D:/HUMO-notifications-ui/apps/hr-crm:/app" -v /app/node_modules -w /app ^
-     node:22-alpine sh -c "npm ci --no-audit --no-fund && npx vite --host 0.0.0.0 --port 5191"
+   ```bash
+   MSYS_NO_PATHCONV=1 docker run --rm -it --name ntf-ui-dev --memory=1500m      -e NODE_OPTIONS=--max-old-space-size=1200      -p 5191:5191      -v "D:/HUMO-notifications-ui/apps/hr-crm:/app" -v /app/node_modules -w /app      node:22-alpine sh -c "npm ci --no-audit --no-fund && npx vite --host 0.0.0.0 --port 5191"
    ```
 
-   - `http://localhost:5191/` — CRM (вход на стенд выполняет человек);
    - `http://localhost:5191/preview-notifications.html` — страница на подставных
-     данных без входа и без сервера; `?view=delivery` — вкладка очереди.
+     данных без входа и без сервера; `?view=delivery` — вкладка очереди;
+   - `http://localhost:5191/` — сама CRM. Для неё добавьте
+     `-e VITE_BACKEND_ORIGIN=<адрес backend стенда, доступный из контейнера>`
+     (по умолчанию прокси идёт на `http://127.0.0.1:8000` внутри контейнера, где
+     backend нет). Вход на стенд выполняет человек.
 
    Bind-mount с Windows не передаёт события изменения файлов: после правок
    перезапустите контейнер.
 
 3. Проверки (только связанные файлы, по одному контейнеру за раз):
 
-   ```
-   MSYS_NO_PATHCONV=1 docker run --rm --memory=1500m -e NODE_OPTIONS=--max-old-space-size=1200 ^
-     -v "D:/HUMO-notifications-ui/apps/hr-crm:/app" -v /app/node_modules -w /app node:22-alpine ^
-     sh -c "npm ci --no-audit --no-fund && npx tsc --noEmit -p . && npx vitest run tests/notifications-page.test.tsx tests/notifications.test.tsx tests/notification-feed.test.tsx --pool=forks --poolOptions.forks.singleFork=true"
+   ```bash
+   MSYS_NO_PATHCONV=1 docker run --rm --memory=1500m -e NODE_OPTIONS=--max-old-space-size=1200      -v "D:/HUMO-notifications-ui/apps/hr-crm:/app" -v /app/node_modules -w /app node:22-alpine      sh -c "npm ci --no-audit --no-fund && npx tsc --noEmit -p . && npx vitest run tests/notifications-page.test.tsx tests/notifications.test.tsx tests/notification-feed.test.tsx --pool=forks --poolOptions.forks.singleFork=true"
    ```
 
 ## Правило слияния

@@ -282,6 +282,17 @@ export function FeedBoard({
 
       {note && <p className="ntf-note ntf-note--bad" role="alert">{note}</p>}
 
+      {/* Пересланная ссылка `?id=` на событие, которого нет на этой
+          странице: подробности показываются над таблицей, а не теряются. */}
+      {opened && shown && status !== 'denied' && !shown.items.some((one) => one.id === opened) && (
+        <div className="ntf-detailTop">
+          <FeedDetailPanel id={opened} />
+          <button type="button" className="ntf-link" onClick={() => onOpenDetail('')}>
+            Скрыть подробности
+          </button>
+        </div>
+      )}
+
       {status === 'denied' && (
         <p className="ntf-empty ntf-empty--bad" role="alert">
           Сессия истекла или доступ к ленте закрыт. Войдите заново.

@@ -473,6 +473,9 @@
   overflow-wrap: anywhere;
 }
 
+.ntf-detailTop { margin-top: 14px; }
+.ntf-detailTop .ntf-detail { margin: 0 0 8px; }
+
 /* --- состояния ---------------------------------------------------------- */
 
 .ntf-empty {
