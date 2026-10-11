@@ -166,11 +166,27 @@ class CorrectionDecisionSerializer(serializers.Serializer):
     )
 
 
+class WallClockDateTimeField(serializers.DateTimeField):
+    """Время без смещения остаётся «наивным» — его пояс решает сервис.
+
+    CRM вводит отметку как «время офиса» и смещения не шлёт. Стандартное
+    поле DRF приписало бы наивному времени пояс сервера (UTC), и 09:00 по
+    Ташкенту сохранялось бы как 09:00 UTC (аудит 12.10, C-04). Время со
+    смещением (`Z`, `+05:00`) приводится к UTC как обычно.
+    """
+
+    def enforce_timezone(self, value):
+        if value.tzinfo is None:
+            return value
+        return super().enforce_timezone(value)
+
+
 class ManualEventSerializer(serializers.Serializer):
     employee_id = serializers.UUIDField()
     office_id = serializers.UUIDField()
     event_type = serializers.ChoiceField(choices=["ENTRY", "EXIT"])
-    occurred_at = serializers.DateTimeField()
+    # Без смещения — время офиса (см. WallClockDateTimeField).
+    occurred_at = WallClockDateTimeField()
     # Причина обязательна на уровне схемы, а не только сервиса: по этим
     # отметкам считают рабочее время, и запись без основания в системе
     # существовать не должна.

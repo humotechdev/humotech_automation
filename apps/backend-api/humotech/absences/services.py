@@ -1365,13 +1365,20 @@ class AbsenceService(BaseService):
                 | Q(employee__last_name__icontains=pattern)
                 | Q(employee__employee_number__icontains=pattern)
             )
+        # Границы суток — по поясу организации, а не UTC: начало заявки —
+        # местная полночь, по UTC это ещё вчера, и заявка с 20-го попадала
+        # в отбор «по 19-е» (аудит 12.10, C-26).
+        if date_from or date_to:
+            from humotech.core.timeframes import day_bounds, organization_zone
+
+            tz = organization_zone(actor.organization_id)
         if date_from:
             queryset = queryset.filter(
-                requested_end_at__date__gte=_parse_day(date_from, "date_from")
+                requested_end_at__gte=day_bounds(_parse_day(date_from, "date_from"), tz)[0]
             )
         if date_to:
             queryset = queryset.filter(
-                requested_start_at__date__lte=_parse_day(date_to, "date_to")
+                requested_start_at__lt=day_bounds(_parse_day(date_to, "date_to"), tz)[1]
             )
 
         visible = self._scope_ids(actor, office_id=office_id, region_id=region_id)
@@ -2587,8 +2594,14 @@ def hr_period_summary(request: AbsenceRequest) -> dict:
     и для поданной заявки, и для одобренной. У отклонённой и отменённой
     минуты уже возвращены, и «до» равно доступному.
     """
-    first = request.requested_start_at.date() if request.requested_start_at else None
-    last = request.requested_end_at.date() if request.requested_end_at else None
+    # Дни — по поясу офиса сотрудника: начало хранится как местная полночь
+    # (накануне по UTC), и `.date()` в UTC прибавлял лишний день (аудит
+    # 12.10, C-26).
+    tz = _zone_of(request.employee)
+    first = (request.requested_start_at.astimezone(tz).date()
+             if request.requested_start_at else None)
+    last = (request.requested_end_at.astimezone(tz).date()
+            if request.requested_end_at else None)
     if first is None or last is None:
         return {
             "calendar_days": None,

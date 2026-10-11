@@ -815,6 +815,11 @@ class AttendanceHrService(BaseService):
         self._require_employee_visible(actor, employee_id, "attendance.manual")
         self._forbid_self_attendance(actor, employee_id)
 
+        office = Office.objects.select_related("organization").get(id=office_id)
+        if occurred_at.tzinfo is None:
+            # Время без смещения — «время офиса», как его вводит CRM.
+            occurred_at = occurred_at.replace(tzinfo=office_zone(office))
+
         # Отметка — факт, а не план. Будущий момент или год 1 превратились
         # бы в рабочее время, которого не было, либо в 500 при расчёте суток.
         if occurred_at > _now() + MANUAL_FUTURE_GRACE:
@@ -829,8 +834,7 @@ class AttendanceHrService(BaseService):
             from humotech.absences.services import lock_employee
             lock_employee(employee_id)
             Employee.objects.select_for_update().get(id=employee_id)
-            manual_day = occurred_at.astimezone(office_zone(
-                Office.objects.select_related("organization").get(id=office_id))).date()
+            manual_day = occurred_at.astimezone(office_zone(office)).date()
             require_no_field_work(employee_id, manual_day, manual_day)
             event = AttendanceEvent.objects.create(
                 organization_id=actor.organization_id,

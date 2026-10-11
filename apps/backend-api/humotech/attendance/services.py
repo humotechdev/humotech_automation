@@ -116,8 +116,16 @@ def employee_may_use_office(
 
     Основание — либо действующее основное назначение в этот офис,
     либо явно выданный доступ в `employee_office_access`.
+
+    День — по поясу ОФИСА, а не UTC: в Ташкенте с 00:00 до 05:00 дата UTC
+    ещё вчерашняя, и в день перевода сотрудника не пускали в новый офис
+    (аудит 12.10, X-DAY-01 / A-08).
     """
-    day = at.date()
+    from humotech.core.timeframes import local_date
+    from humotech.offices.models import Office
+
+    office = Office.objects.select_related("organization").filter(id=office_id).first()
+    day = local_date(at, office_zone(office))
 
     assigned = EmployeeAssignment.objects.filter(
         Q(valid_to__isnull=True) | Q(valid_to__gte=day),
