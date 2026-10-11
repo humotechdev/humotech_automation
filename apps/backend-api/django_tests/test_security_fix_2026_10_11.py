@@ -429,3 +429,88 @@ class TestRoleEditCoversGrants:
         self._service().update_role(admin, custom.id,
                                     permissions=["employees.read", "employees.manage"])
         assert RolePermission.objects.filter(role=custom).count() == 2
+
+
+# =============================================================================
+# M-4. Выгрузка — в области reports.export
+# =============================================================================
+
+
+class TestExportConfinedToExportGrant:
+    """ACCOUNTANT на офис A (единственное место с reports.export) + VIEWER на
+    всю организацию не выгружает данные всей организации."""
+
+    READ = ("employees.read", "attendance.read", "absences.read", "analytics.read")
+
+    def _setup(self, organization, region):
+        office_a = make_office(organization, region, "M4-A")
+        office_b = make_office(organization, region, "M4-B")
+        user, actor = create_actor(organization, office=office_a,
+                                   permissions=(*self.READ, "reports.export"),
+                                   role_code="M4_ACC_A")
+        _add_grant(organization, user, permissions=self.READ,
+                   role_code="M4_VIEW_ORG")  # вся организация
+        emp_a = _employee(organization, office_a, "M4-EA")
+        emp_b = _employee(organization, office_b, "M4-EB")
+        return user, actor, office_a, office_b, emp_a, emp_b
+
+    def test_legacy_export_rows_only_from_export_grant(self, organization, region):
+        user, _, _, office_b, emp_a, emp_b = self._setup(organization, region)
+        client = _client(user)
+        response = client.get(f"{API}/reports/employees/export?fmt=csv")
+        assert response.status_code == 200
+        text = b"".join(response.streaming_content).decode("utf-8-sig") \
+            if hasattr(response, "streaming_content") else response.content.decode("utf-8-sig")
+        assert "M4-EA" in text
+        assert "M4-EB" not in text
+        # Чужой офис в фильтре — отказ, а не данные.
+        foreign = client.get(f"{API}/reports/employees/export?office_id={office_b.id}")
+        assert foreign.status_code in (403, 404)
+
+    def test_builder_preview_offices_only_from_export_grant(self, organization, region):
+        user, _, office_a, office_b, *_ = self._setup(organization, region)
+        client = _client(user)
+        today = date.today().isoformat()
+        base = {"kind": "employees", "date_from": today, "date_to": today}
+        assert client.post(f"{API}/reports/preview",
+                           {**base, "office_ids": [str(office_b.id)]},
+                           format="json").status_code in (403, 404)
+        own = client.post(f"{API}/reports/preview",
+                          {**base, "office_ids": [str(office_a.id)]}, format="json")
+        assert own.status_code == 200, own.content
+        whole = client.post(f"{API}/reports/preview", base, format="json")
+        assert whole.status_code == 200
+        assert "M4-EB" not in whole.content.decode()
+
+    def test_org_wide_accountant_still_exports_everything(self, organization, region):
+        office_a = make_office(organization, region, "M4W-A")
+        office_b = make_office(organization, region, "M4W-B")
+        _employee(organization, office_a, "M4W-EA")
+        _employee(organization, office_b, "M4W-EB")
+        user = create_actor(organization,
+                            permissions=(*self.READ, "reports.export"))[0]
+        response = _client(user).get(f"{API}/reports/employees/export?fmt=csv")
+        text = b"".join(response.streaming_content).decode("utf-8-sig") \
+            if hasattr(response, "streaming_content") else response.content.decode("utf-8-sig")
+        assert "M4W-EA" in text and "M4W-EB" in text
+
+    def test_download_any_covered_by_its_own_grant(self, organization, region):
+        from humotech.reports.models import ExportJob
+        from humotech.reports.service import ExportJobService
+
+        office_a = make_office(organization, region, "M4D-A")
+        office_b = make_office(organization, region, "M4D-B")
+        author = create_actor(organization, permissions=("reports.export",))[0]
+        job = ExportJob.objects.create(
+            organization=organization, requested_by_user=author, kind="employees",
+            fmt="csv", status="SUCCEEDED", filters={"office_id": str(office_b.id)},
+        )
+        user, actor = create_actor(organization, office=office_a,
+                                   permissions=("reports.export", "reports.download_any"),
+                                   role_code="M4D_ANY_A")
+        _add_grant(organization, user, permissions=("employees.read",),
+                   office=office_b, role_code="M4D_VIEW_B")
+        assert ExportJobService()._covers_report(actor, job) is False
+        _, wide = create_actor(organization,
+                               permissions=("reports.export", "reports.download_any"))
+        assert ExportJobService()._covers_report(wide, job) is True

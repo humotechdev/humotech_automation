@@ -36,10 +36,22 @@ class Actor:
 
     user_id: uuid.UUID
     organization_id: uuid.UUID
+    #: Сужение области до одного разрешения. Задано — любая проверка
+    #: области (`scope`, `scope_for`, `require_office`, списки сервисов)
+    #: не выходит за территории назначений, несущих это разрешение.
+    #: Нужно действиям, которые читают данные чужими сервисами от своего
+    #: права: выгрузка обязана брать строки в области `reports.export`,
+    #: а не в объединённой области всех назначений (аудит 11.10, M-4).
+    confine: str | None = None
 
     @classmethod
     def from_user(cls, user) -> "Actor":
         return cls(user_id=user.id, organization_id=user.organization_id)
+
+    def confined(self, permission: str) -> "Actor":
+        """Тот же пользователь, но с областью, суженной до `permission`."""
+        return Actor(user_id=self.user_id, organization_id=self.organization_id,
+                     confine=permission)
 
 
 @dataclass(frozen=True)
@@ -57,6 +69,19 @@ class Scope:
     @property
     def sees_nothing(self) -> bool:
         return not self.all_offices and not self.office_ids and not self.region_ids
+
+
+def _intersect(left: Scope, right: Scope) -> Scope:
+    """Пересечение двух областей: территории, видимые в обеих."""
+    if left.all_offices:
+        return right
+    if right.all_offices:
+        return left
+    return Scope(
+        all_offices=False,
+        office_ids=left.office_ids & right.office_ids,
+        region_ids=left.region_ids & right.region_ids,
+    )
 
 
 class AccessControl:
@@ -152,6 +177,9 @@ class AccessControl:
         )
 
     def scope(self, actor: Actor, at: datetime | None = None) -> Scope:
+        confine = getattr(actor, "confine", None)
+        if confine is not None:
+            return self.scope_for(actor, confine, at)
         key = (actor.user_id, at)
         if key in self._scopes:
             return self._scopes[key]
@@ -176,6 +204,11 @@ class AccessControl:
         региональный HR), ответ совпадает со `scope` — законные роли не
         сужаются.
         """
+        confine = getattr(actor, "confine", None)
+        if confine is not None and confine != permission:
+            plain = Actor(user_id=actor.user_id, organization_id=actor.organization_id)
+            return _intersect(self.scope_for(plain, permission, at),
+                              self.scope_for(plain, confine, at))
         key = (actor.user_id, at, permission)
         if key in self._scoped:
             return self._scoped[key]

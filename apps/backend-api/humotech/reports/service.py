@@ -447,7 +447,10 @@ class ExportJobService(BaseService):
         """
         from humotech.offices.models import Office
 
-        scope = self.access.scope(actor)
+        # Покрытие — областью самого права на чужие файлы, а не
+        # объединённой: «download_any на офис A + просмотр B» чужую
+        # выгрузку по офису B не скачивает (аудит 11.10, M-4).
+        scope = self.access.scope_for(actor, "reports.download_any")
         if scope.all_offices:
             return True
         filters = job.filters or {}

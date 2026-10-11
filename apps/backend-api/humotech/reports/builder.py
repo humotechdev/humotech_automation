@@ -1038,6 +1038,10 @@ class ReportBuilderService(BaseService):
 
     def open(self, actor: Actor, spec: ReportSpec, *, author: str) -> Report:
         self.require(actor, spec.kind)
+        # Область отчёта — пересечение области данных с областью
+        # `reports.export`: офисы, отделы и сотрудники берутся только там,
+        # где у заказчика есть сама выгрузка (аудит 11.10, M-4).
+        actor = actor.confined("reports.export")
         return REPORTS[spec.kind](self, actor, spec, author=author)
 
     def check(self, actor: Actor, spec: ReportSpec) -> None:

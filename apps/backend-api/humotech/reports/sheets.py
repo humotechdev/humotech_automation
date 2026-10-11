@@ -61,6 +61,10 @@ def build_sheet(
             "Неизвестный отчёт",
             details={"kind": kind, "allowed": list(EXPORT_KINDS)},
         )
+    # Строки — в области `reports.export`, а не в объединённой области:
+    # «выгрузка на офис A + просмотр всей организации» не уносит файл
+    # по всей организации (аудит 11.10, M-4).
+    actor = actor.confined("reports.export")
     _precheck(kind, actor, filters)
     return builder(actor, filters, author)
 
@@ -86,6 +90,8 @@ def _precheck(kind: str, actor: Actor, filters: dict) -> None:
     сборке проверят всё ещё раз: это не замена их проверок.
     """
     access = AccessControl()
+    if actor.confine is None:
+        actor = actor.confined("reports.export")
     access.require(actor, DATA_PERMISSIONS[kind])
     if filters.get("office_id"):
         access.require_office(actor, filters["office_id"])
