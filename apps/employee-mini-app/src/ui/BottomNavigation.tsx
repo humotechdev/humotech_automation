@@ -54,6 +54,12 @@ const TABS: Array<{
   { key: 'profile', label: 'Профиль', Icon: UserIcon },
 ];
 
+/**
+ * Порядок вкладок слева направо — тот же, что на панели. По нему
+ * `TabTransition` решает, с какой стороны въезжает новый раздел.
+ */
+export const NAV_TABS: readonly Tab[] = TABS.map(({ key }) => key);
+
 export function BottomNavigation({
   active,
   onChange,
