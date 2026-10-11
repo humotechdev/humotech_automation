@@ -1082,24 +1082,33 @@ def audience_employees(campaign: SurveyCampaign) -> list[Employee]:
     ids = [str(one) for one in (campaign.audience_ids or [])]
     if campaign.audience_kind == "EMPLOYEES":
         return list(people.filter(id__in=ids))
+    # Офис, регион, отдел, должность — по основному назначению, действующему
+    # СЕГОДНЯ (по поясу организации). Раньше бралось любое назначение за всё
+    # время, и переведённый получал опросы и прежнего подразделения, а
+    # запланированный перевод — нового раньше срока (аудит 12.10, A-10/B-03).
+    from humotech.core.timeframes import organization_zone, today as local_today
+    from humotech.employees.services import current_primary_assignment_filter
+
+    now_places = EmployeeAssignment.objects.filter(current_primary_assignment_filter(
+        local_today(organization_zone(campaign.organization_id))))
     if campaign.audience_kind == "REGION":
-        assigned = EmployeeAssignment.objects.filter(
-            office__region_id__in=ids, is_primary=True
+        assigned = now_places.filter(
+            office__region_id__in=ids
         ).values_list("employee_id", flat=True)
         return list(people.filter(id__in=list(assigned)))
     if campaign.audience_kind == "POSITION":
-        assigned = EmployeeAssignment.objects.filter(
-            position_id__in=ids, is_primary=True
+        assigned = now_places.filter(
+            position_id__in=ids
         ).values_list("employee_id", flat=True)
         return list(people.filter(id__in=list(assigned)))
     if campaign.audience_kind == "OFFICE":
-        assigned = EmployeeAssignment.objects.filter(
-            office_id__in=ids, is_primary=True
+        assigned = now_places.filter(
+            office_id__in=ids
         ).values_list("employee_id", flat=True)
         return list(people.filter(id__in=list(assigned)))
     if campaign.audience_kind == "DEPARTMENT":
-        assigned = EmployeeAssignment.objects.filter(
-            department_id__in=ids, is_primary=True
+        assigned = now_places.filter(
+            department_id__in=ids
         ).values_list("employee_id", flat=True)
         return list(people.filter(id__in=list(assigned)))
     return list(people)

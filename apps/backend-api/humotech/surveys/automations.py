@@ -661,7 +661,13 @@ def _scoped(automation: SurveyAutomation):
         # Офис, отдел и должность живут в назначении, а не в карточке:
         # людей переводят, и правило обязано смотреть на то, где человек
         # числится сейчас, а не где числился при найме.
-        places = EmployeeAssignment.objects.filter(is_primary=True)
+        # «Сейчас» — основное назначение, действующее сегодня по поясу
+        # организации, а не любое за всё время (аудит 12.10, A-10/B-03).
+        from humotech.core.timeframes import organization_zone, today as local_today
+        from humotech.employees.services import current_primary_assignment_filter
+
+        places = EmployeeAssignment.objects.filter(current_primary_assignment_filter(
+            local_today(organization_zone(automation.organization_id))))
         if offices:
             places = places.filter(office_id__in=offices)
         if departments:

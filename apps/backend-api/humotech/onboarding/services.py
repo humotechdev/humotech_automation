@@ -160,15 +160,24 @@ class OnboardingService(BaseService):
         return queryset.filter(id__in=allowed)
 
     def _scoped(self, actor: Actor, *, search=None, office_id=None, department_id=None):
-        """Участники программы, видимые кадровику, с поиском и местом."""
+        """Участники программы, видимые кадровику, с поиском и местом.
+
+        Место (офис, отдел) — по текущему основному назначению: переведённый
+        не числится в прежнем офисе (аудит 12.10, A-10/B-03).
+        """
+        from humotech.core.timeframes import organization_zone, today as local_today
+        from humotech.employees.services import current_primary_assignment_filter
+
+        now_places = EmployeeAssignment.objects.filter(current_primary_assignment_filter(
+            local_today(organization_zone(actor.organization_id))))
         rows = EmployeeOnboarding.objects.filter(
             organization_id=actor.organization_id,
             employee_id__in=self._visible_employees(actor).values_list("id", flat=True),
         ).select_related("employee", "program")
         if search:
             needle = search.strip()
-            in_department = EmployeeAssignment.objects.filter(
-                is_primary=True, department__name__icontains=needle
+            in_department = now_places.filter(
+                department__name__icontains=needle
             ).values_list("employee_id", flat=True)
             rows = rows.filter(
                 Q(employee__first_name__icontains=needle)
@@ -178,12 +187,12 @@ class OnboardingService(BaseService):
                 | Q(employee_id__in=in_department)
             )
         if office_id:
-            rows = rows.filter(employee_id__in=EmployeeAssignment.objects.filter(
-                office_id=office_id, is_primary=True
+            rows = rows.filter(employee_id__in=now_places.filter(
+                office_id=office_id
             ).values_list("employee_id", flat=True))
         if department_id:
-            rows = rows.filter(employee_id__in=EmployeeAssignment.objects.filter(
-                department_id=department_id, is_primary=True
+            rows = rows.filter(employee_id__in=now_places.filter(
+                department_id=department_id
             ).values_list("employee_id", flat=True))
         return rows
 

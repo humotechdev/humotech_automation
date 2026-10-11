@@ -204,3 +204,62 @@ def test_office_holiday_applies_only_to_its_office_in_analytics(organization, re
     # и 1 пропущенный (сотрудник B не пришёл), а не 0.
     assert report.totals["expected_working_days"] == 1, report.totals
     assert report.totals["missed_days"] == 1, report.totals
+
+
+# =============================================================================
+# 3. Аудитории опросов и фильтры ознакомления — по текущему назначению (A-10/B-03)
+# =============================================================================
+
+
+def _transferred(organization, region):
+    office_a = make_office(organization, region, "A10-A")
+    office_b = make_office(organization, region, "A10-B")
+    yesterday = date.today() - timedelta(days=1)
+    emp = _employee(organization, office_a, "A10-E", valid_to=yesterday)
+    EmployeeAssignment.objects.create(
+        organization=organization, employee=emp, office=office_b,
+        employment_type="FULL_TIME", work_mode="ONSITE", is_primary=True,
+        valid_from=date.today(),
+    )
+    return emp, office_a, office_b
+
+
+def test_survey_audience_by_office_uses_current_assignment(organization, region):
+    from humotech.surveys.models import SurveyCampaign
+    from humotech.surveys.services import audience_employees
+
+    emp, office_a, office_b = _transferred(organization, region)
+    old = SurveyCampaign(organization=organization, audience_kind="OFFICE",
+                         audience_ids=[str(office_a.id)])
+    new = SurveyCampaign(organization=organization, audience_kind="OFFICE",
+                         audience_ids=[str(office_b.id)])
+    assert emp not in audience_employees(old), "переведённый получил опрос прежнего офиса"
+    assert emp in audience_employees(new)
+
+
+def test_survey_automation_scope_uses_current_assignment(organization, region):
+    from humotech.surveys.automations import _scoped
+    from humotech.surveys.models import SurveyAutomation
+
+    emp, office_a, office_b = _transferred(organization, region)
+    old = SurveyAutomation(organization=organization, scope={"office_ids": [str(office_a.id)]})
+    assert emp.id not in set(_scoped(old).values_list("id", flat=True))
+    new = SurveyAutomation(organization=organization, scope={"office_ids": [str(office_b.id)]})
+    assert emp.id in set(_scoped(new).values_list("id", flat=True))
+
+
+def test_onboarding_office_filter_uses_current_assignment(organization, region):
+    from humotech.onboarding.models import EmployeeOnboarding
+    from humotech.onboarding.services import OnboardingService
+
+    emp, office_a, office_b = _transferred(organization, region)
+    from humotech.onboarding.models import OnboardingProgram
+
+    program = OnboardingProgram.objects.create(organization=organization, code="MAIN",
+                                               title="Ознакомление")
+    EmployeeOnboarding.objects.create(organization=organization, employee=emp, program=program,
+                                      status="IN_PROGRESS")
+    _, hr = create_actor(organization, permissions=("onboarding.read",))
+    service = OnboardingService()
+    assert not service._scoped(hr, office_id=office_a.id).filter(employee=emp).exists()
+    assert service._scoped(hr, office_id=office_b.id).filter(employee=emp).exists()
