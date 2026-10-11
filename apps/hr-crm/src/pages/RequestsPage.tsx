@@ -119,24 +119,6 @@ export function RequestsPage() {
   );
   const base = `${search}|${region}|${office}|${employee}|${from}|${to}|${attempt}`;
 
-  /*
-   * Выбранная вкладка всегда на виду.
-   *
-   * На узком экране ряд вкладок прокручивается вбок, и «Отмена», открытая
-   * по ссылке, могла оказаться за краем. Сдвигается только сам ряд —
-   * `scrollIntoView` прокрутил бы заодно и всю страницу по вертикали.
-   */
-  const tabStrip = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    const strip = tabStrip.current;
-    const active = strip?.querySelector<HTMLElement>('[aria-selected="true"]');
-    if (!strip || !active || strip.scrollWidth <= strip.clientWidth) return;
-    const left = active.offsetLeft - strip.offsetLeft;
-    const right = left + active.offsetWidth;
-    if (left < strip.scrollLeft) strip.scrollLeft = Math.max(0, left - 8);
-    else if (right > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = right - strip.clientWidth + 8;
-  }, [tab.key]);
-
   const [list] = useBlock(
     (signal) =>
       api.queue(
@@ -150,6 +132,25 @@ export function RequestsPage() {
   );
 
   const [counts] = useBlock((signal) => api.queueCounts(common, signal), `counts|${base}`);
+
+  /*
+   * Выбранная вкладка всегда на виду.
+   *
+   * На узком экране ряд вкладок прокручивается вбок, и «Отмена», открытая
+   * по ссылке, могла оказаться за краем. Сдвигается только сам ряд —
+   * `scrollIntoView` прокрутил бы заодно и всю страницу по вертикали.
+   * Числа у вкладок приходят позже и меняют их ширину — тогда пересчёт.
+   */
+  const tabStrip = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const strip = tabStrip.current;
+    const active = strip?.querySelector<HTMLElement>('[aria-selected="true"]');
+    if (!strip || !active || strip.scrollWidth <= strip.clientWidth) return;
+    const left = active.offsetLeft - strip.offsetLeft;
+    const right = left + active.offsetWidth;
+    if (left < strip.scrollLeft) strip.scrollLeft = Math.max(0, left - 8);
+    else if (right > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = right - strip.clientWidth + 8;
+  }, [tab.key, counts.state]);
 
   const [directory] = useBlock(
     (signal) =>
