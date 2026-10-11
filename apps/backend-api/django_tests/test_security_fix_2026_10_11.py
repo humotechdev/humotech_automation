@@ -178,3 +178,45 @@ class TestForeignFileId:
         download = client.get(
             f"{API}/employees/{emp_a.id}/documents/{attach.json()['id']}/download/")
         assert download.status_code == 200
+
+
+# =============================================================================
+# M-1. Контекст обращения
+# =============================================================================
+
+
+class TestQuestionContextScope:
+    """Блоки контекста — по области своего права для этого сотрудника."""
+
+    def _ask(self, employee):
+        from django_tests.test_questions_inbox import ask
+
+        return ask(employee, "Когда мой отпуск?")
+
+    def test_union_permission_does_not_reveal_foreign_absences(self, organization, region):
+        # questions.read на всю организацию + absences/employees.read только в A.
+        office_a = make_office(organization, region, "M1-A")
+        office_b = make_office(organization, region, "M1-B")
+        user, _ = create_actor(organization, permissions=("questions.read",),
+                               role_code="M1_Q_ORG")
+        _add_grant(organization, user,
+                   permissions=("absences.read", "employees.read",
+                                "attendance.read"),
+                   office=office_a, role_code="M1_READ_A")
+        emp_a = _employee(organization, office_a, "M1-EA")
+        emp_b = _employee(organization, office_b, "M1-EB")
+        client = _client(user)
+        url = f"{API}/knowledge/escalations"
+
+        foreign = client.get(f"{url}/{self._ask(emp_b).id}/context/")
+        assert foreign.status_code == 200, foreign.content
+        body = foreign.json()
+        for block in ("requests", "balance", "corrections", "documents", "today"):
+            assert body[block] is None, block
+        assert body["links"] == {"employee_card": False, "attendance": False,
+                                 "requests": False}
+
+        own = client.get(f"{url}/{self._ask(emp_a).id}/context/").json()
+        assert own["requests"] is not None
+        assert own["documents"] is not None
+        assert own["links"]["requests"] is True

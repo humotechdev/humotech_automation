@@ -34,9 +34,21 @@ OPEN_REQUESTS = ("SUBMITTED", "IN_REVIEW")
 
 def question_context(access: AccessControl, actor: Actor, question: EmployeeQuestion) -> dict:
     employee = question.employee
+    seen: dict[str, bool] = {}
 
     def has(code: str) -> bool:
-        return access.has(actor, code)
+        """Право `code` действует именно на ЭТОГО сотрудника.
+
+        Наличия права «где-то в организации» мало: кадровик с
+        `questions.read` на всю организацию и `absences.read` на один
+        офис иначе видел бы заявки и больничные сотрудника из чужого
+        офиса (аудит 11.10, M-1). Сотрудник должен попадать в область
+        того назначения, что несёт само право.
+        """
+        if code not in seen:
+            seen[code] = access.has(actor, code) and _visible(
+                access, actor, employee.id, code)
+        return seen[code]
 
     place = _places([employee.id]).get(employee.id) or {}
     telegram = _telegram(employee.id)
@@ -68,6 +80,17 @@ def question_context(access: AccessControl, actor: Actor, question: EmployeeQues
         "today": _today(access, actor, employee, place) if has("attendance.read") else None,
         "materials": _materials(question) if has("knowledge.read") else None,
     }
+
+
+def _visible(access: AccessControl, actor: Actor, employee_id, code: str) -> bool:
+    from humotech.core.errors import NotFound, PermissionDenied
+    from humotech.employees.selectors import require_visible_employee
+
+    try:
+        require_visible_employee(access, actor, employee_id, code)
+    except (NotFound, PermissionDenied):
+        return False
+    return True
 
 
 def _today(access, actor: Actor, employee, place: dict) -> dict:
