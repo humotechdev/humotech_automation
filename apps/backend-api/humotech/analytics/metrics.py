@@ -385,6 +385,7 @@ class AnalyticsService(BaseService):
         absences = self._absences(employee_ids, first, last, tz)
         schedules = self._schedules(employee_ids, first, last)
         exceptions = self._exceptions(actor, office_ids, first, last)
+        places = self._places(employee_ids, first, last)
         rejected = self._rejected_scans(office_ids, start, end)
 
         return self._compute(
@@ -401,6 +402,7 @@ class AnalyticsService(BaseService):
             absences=absences,
             schedules=schedules,
             exceptions=exceptions,
+            places=places,
             rejected=rejected,
         )
 
@@ -489,7 +491,14 @@ class AnalyticsService(BaseService):
         return result
 
     def _exceptions(self, actor, office_ids, first, last) -> dict:
-        result: dict[date, bool] = {}
+        """Исключения календаря по офисам: `{office_id: {день: рабочий?}}`.
+
+        Ключ `None` — общие исключения организации. Исключение офиса сильнее
+        общего, но действует ТОЛЬКО в своём офисе. Раньше словарь был общим
+        на всю выборку, и праздник одного офиса отменял рабочий день всем
+        офисам региона или организации (аудит 12.10, C-13). Так же правило
+        уже устроено в `analytics/overview.py`, `statistics.py`, `hr.py`.
+        """
         rows = CalendarException.objects.filter(
             Q(office_id__in=office_ids) | Q(office__isnull=True),
             organization_id=actor.organization_id,
@@ -497,8 +506,33 @@ class AnalyticsService(BaseService):
             date__lte=last,
             is_active=True,
         )
-        for row in sorted(rows, key=lambda r: r.office_id is not None):
-            result[row.date] = row.is_working_day
+        common: dict[date, bool] = {}
+        own: dict[uuid.UUID, dict[date, bool]] = {}
+        for row in rows:
+            if row.office_id is None:
+                common[row.date] = row.is_working_day
+            else:
+                own.setdefault(row.office_id, {})[row.date] = row.is_working_day
+        result: dict = {None: common}
+        for office_id in office_ids:
+            result[office_id] = {**common, **own.get(office_id, {})}
+        return result
+
+    @staticmethod
+    def _places(employee_ids, first, last) -> dict:
+        """Основные назначения сотрудников, пересекающие период: где человек
+        числится в каждый день (для исключений календаря его офиса)."""
+        rows = (
+            EmployeeAssignment.objects.filter(
+                employee_id__in=employee_ids, is_primary=True, valid_from__lte=last,
+            )
+            .filter(Q(valid_to__isnull=True) | Q(valid_to__gte=first))
+            .values_list("employee_id", "office_id", "valid_from", "valid_to")
+            .order_by("employee_id", "valid_from")
+        )
+        result: dict = {}
+        for employee_id, office_id, valid_from, valid_to in rows:
+            result.setdefault(employee_id, []).append((office_id, valid_from, valid_to))
         return result
 
     @staticmethod
@@ -527,6 +561,7 @@ class AnalyticsService(BaseService):
         schedules,
         exceptions,
         rejected,
+        places=None,
     ) -> Report:
         with_schedule = {eid for eid in employee_ids if schedules.get(eid)}
 
@@ -579,7 +614,9 @@ class AnalyticsService(BaseService):
                     # человек законно не должен был приходить.
                     continue
 
-                plan = _plan_for(schedules.get(employee_id), day, exceptions)
+                office_today = _office_on((places or {}).get(employee_id), day)
+                plan = _plan_for(schedules.get(employee_id), day,
+                                 exceptions.get(office_today, exceptions.get(None, {})))
                 if plan is None:
                     # Графика нет — норму посчитать нечем. Такой человек
                     # не попадает ни в числитель, ни в знаменатель, и
@@ -719,6 +756,14 @@ class AnalyticsService(BaseService):
 
 
 # --- вспомогательное ---------------------------------------------------------
+
+
+def _office_on(places, day: date):
+    """Офис основного назначения сотрудника на этот день (или None)."""
+    for office_id, valid_from, valid_to in places or ():
+        if valid_from <= day and (valid_to is None or valid_to >= day):
+            return office_id
+    return None
 
 
 def _plan_for(assignments, day: date, exceptions: dict) -> tuple | None:

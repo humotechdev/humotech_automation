@@ -167,3 +167,40 @@ def test_queue_date_filter_uses_local_days(organization, office):
     assert request.id in set(service.queue(hr, date_to="2026-10-20").values_list("id", flat=True))
     assert request.id not in set(service.queue(hr, date_from="2026-10-23").values_list("id", flat=True))
     assert request.id in set(service.queue(hr, date_from="2026-10-22").values_list("id", flat=True))
+
+
+# =============================================================================
+# 2. Праздник офиса — только для своего офиса (C-13)
+# =============================================================================
+
+
+def test_office_holiday_applies_only_to_its_office_in_analytics(organization, region):
+    from datetime import time
+
+    from humotech.analytics.metrics import AnalyticsService
+    from humotech.schedules.models import CalendarException, EmployeeScheduleAssignment
+    from humotech.schedules.services import DaySpec, WorkScheduleService
+
+    office_a = make_office(organization, region, "C13-A")
+    office_b = make_office(organization, region, "C13-B")
+    emp_a = _employee(organization, office_a, "C13-EA")
+    emp_b = _employee(organization, office_b, "C13-EB")
+    _, wide = create_actor(organization, permissions=("schedules.read", "schedules.manage",
+                                                      "analytics.read", "attendance.read",
+                                                      "employees.read"))
+    days = [DaySpec(weekday=d, is_working_day=d <= 5, start_time=time(9) if d <= 5 else None,
+                    end_time=time(18) if d <= 5 else None) for d in range(1, 8)]
+    schedule = WorkScheduleService().create(wide, name="5/2", timezone="Asia/Tashkent",
+                                            weekly_minutes=2700, days=days)
+    for emp in (emp_a, emp_b):
+        EmployeeScheduleAssignment.objects.create(organization=organization, employee=emp,
+                                                  schedule=schedule, valid_from=date(2026, 1, 1))
+    holiday = date(2026, 9, 9)  # среда
+    CalendarException.objects.create(organization=organization, office=office_a, date=holiday,
+                                     is_working_day=False, name="Праздник офиса A", exception_type="HOLIDAY",
+                                     is_active=True)
+    report = AnalyticsService().region(wide, region.id, first=holiday, last=holiday)
+    # В офисе A день нерабочий, в офисе B — рабочий: ожидается 1 запланированный
+    # и 1 пропущенный (сотрудник B не пришёл), а не 0.
+    assert report.totals["expected_working_days"] == 1, report.totals
+    assert report.totals["missed_days"] == 1, report.totals
