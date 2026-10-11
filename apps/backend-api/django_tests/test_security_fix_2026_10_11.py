@@ -220,3 +220,75 @@ class TestQuestionContextScope:
         assert own["requests"] is not None
         assert own["documents"] is not None
         assert own["links"]["requests"] is True
+
+
+# =============================================================================
+# M-6. Запись — по текущему назначению, чтение — по истории
+# =============================================================================
+
+
+class TestWriteScopeFollowsCurrentAssignment:
+
+    def _transferred(self, organization, region):
+        """Сотрудник был в A до вчера, теперь в B."""
+        office_a = make_office(organization, region, "M6-A")
+        office_b = make_office(organization, region, "M6-B")
+        yesterday = date.today() - timedelta(days=1)
+        emp = _employee(organization, office_a, "M6-E",
+                        valid_to=yesterday)
+        EmployeeAssignment.objects.create(
+            organization=organization, employee=emp, office=office_b,
+            employment_type="FULL_TIME", work_mode="ONSITE", is_primary=True,
+            valid_from=date.today(),
+        )
+        return emp, office_a, office_b
+
+    def test_previous_office_hr_cannot_edit_transferred(self, organization, region):
+        emp, office_a, office_b = self._transferred(organization, region)
+        hr_a = create_actor(organization, office=office_a,
+                            permissions=("employees.read", "employees.manage"))[0]
+        client = _client(hr_a)
+        # Чтение истории осталось: карточка открывается.
+        assert client.get(f"{API}/employees/{emp.id}/").status_code == 200
+        # Правка — отказ.
+        edit = client.patch(f"{API}/employees/{emp.id}/", {"phone": "+998901112233"},
+                            format="json")
+        assert edit.status_code == 403, edit.content
+        assert Employee.objects.get(id=emp.id).phone != "+998901112233"
+
+    def test_current_office_hr_still_edits(self, organization, region):
+        emp, _, office_b = self._transferred(organization, region)
+        hr_b = create_actor(organization, office=office_b,
+                            permissions=("employees.read", "employees.manage"))[0]
+        edit = _client(hr_b).patch(f"{API}/employees/{emp.id}/",
+                                   {"phone": "+998901112233"}, format="json")
+        assert edit.status_code == 200, edit.content
+
+    def test_dismissed_employee_stays_with_last_office(self, organization, region):
+        office_a = make_office(organization, region, "M6D-A")
+        office_b = make_office(organization, region, "M6D-B")
+        emp = _employee(organization, office_a, "M6D-E",
+                        valid_to=date.today() - timedelta(days=200))
+        EmployeeAssignment.objects.create(
+            organization=organization, employee=emp, office=office_b,
+            employment_type="FULL_TIME", work_mode="ONSITE", is_primary=True,
+            valid_from=date.today() - timedelta(days=199),
+            valid_to=date.today() - timedelta(days=10),
+        )
+        Employee.objects.filter(id=emp.id).update(employment_status="TERMINATED")
+        from humotech.core.rbac import AccessControl
+        from humotech.employees.selectors import require_visible_employee
+        from humotech.core.errors import PermissionDenied
+
+        _, hr_b = create_actor(organization, office=office_b,
+                               permissions=("employees.read", "employees.manage"))
+        _, hr_a = create_actor(organization, office=office_a,
+                               permissions=("employees.read", "employees.manage"))
+        access = AccessControl()
+        # Последний офис уволенного — B: его HR сохраняет документы.
+        require_visible_employee(access, hr_b, emp.id, "employees.manage")
+        with pytest.raises(PermissionDenied):
+            require_visible_employee(access, hr_a, emp.id, "employees.manage")
+        # Читать карточку уволенного может и HR прежнего офиса.
+        require_visible_employee(access, hr_a, emp.id, "employees.read")
+        require_visible_employee(access, hr_a, emp.id)

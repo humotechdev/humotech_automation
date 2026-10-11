@@ -12,6 +12,9 @@ from __future__ import annotations
 
 import uuid
 
+from django.db.models import Q
+from django.utils import timezone
+
 from humotech.core.errors import NotFound, PermissionDenied
 from humotech.core.rbac import AccessControl, Actor
 from humotech.employees.models import Employee, EmployeeAssignment
@@ -42,13 +45,33 @@ def require_visible_employee(
     if visible is None:
         return employee
 
-    # У сотрудника мог смениться офис, поэтому проверяется не только
-    # текущий период, но и любой, попадающий в область видимости.
-    # Сузить до текущего нельзя: увольнение закрывает все периоды,
-    # и HR своего же региона потерял бы доступ к карточкам своих уволенных.
-    allowed = EmployeeAssignment.objects.filter(
-        employee_id=employee_id, office_id__in=visible
-    ).exists()
-    if not allowed:
+    if not _covers(employee_id, visible, permission):
         raise PermissionDenied("Сотрудник вне вашей области видимости")
     return employee
+
+
+def _covers(employee_id: uuid.UUID, visible: set, permission: str | None) -> bool:
+    """Попадает ли сотрудник в область `visible` для этого права.
+
+    ЧТЕНИЕ (`permission` не задан или `*.read`) смотрит любой период: у
+    сотрудника мог смениться офис, а увольнение закрывает все периоды —
+    и HR своего региона потерял бы доступ к карточкам своих уволенных.
+
+    ЗАПИСЬ и документы — только по офисам, за которые сотрудник отвечает
+    сейчас: действующие и будущие назначения, а у кого их нет (уволен,
+    все периоды закрыты) — последнее. Иначе HR прежнего офиса навсегда
+    сохранял бы право править, увольнять и открывать паспорт
+    переведённого сотрудника (аудит 11.10, M-6).
+    """
+    rows = EmployeeAssignment.objects.filter(employee_id=employee_id)
+    if permission is None or permission.endswith(".read"):
+        return rows.filter(office_id__in=visible).exists()
+
+    today = timezone.localdate()
+    live = rows.filter(Q(valid_to__isnull=True) | Q(valid_to__gte=today))
+    offices = set(live.values_list("office_id", flat=True))
+    if not offices:
+        last = rows.order_by("-valid_from", "-created_at").values_list(
+            "office_id", flat=True).first()
+        offices = {last} if last else set()
+    return bool(offices & set(visible))
