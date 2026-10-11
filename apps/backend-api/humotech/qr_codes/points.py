@@ -154,8 +154,7 @@ class QrPointService(BaseService):
             self.access.require_office(actor, office_id)
             queryset = queryset.filter(office_id=office_id)
         elif region_id:
-            self.access.require_region(actor, region_id)
-            queryset = queryset.filter(office__region_id=region_id)
+            queryset = queryset.filter(self.access.region_condition(actor, region_id))
         else:
             visible = self.access.visible_office_ids(actor)
             if visible is not None:
@@ -210,7 +209,7 @@ class QrPointService(BaseService):
         списке точек нечитаема, а на печатном листе с кодом тем более.
         """
         self.access.require(actor, "qr_points.manage")
-        office = self.access.require_office(actor, office_id)
+        office = self.access.require_office(actor, office_id, "qr_points.manage")
 
         self._validate_mode(qr_mode, direction_mode, rotation_seconds)
 
@@ -276,7 +275,7 @@ class QrPointService(BaseService):
         незаметной правкой поля нельзя.
         """
         self.access.require(actor, "qr_points.manage")
-        point = self._require_point(actor, point_id)
+        point = self._require_point(actor, point_id, "qr_points.manage")
         before = snapshot(point, AUDITED_FIELDS)
 
         if name is not None:
@@ -332,7 +331,7 @@ class QrPointService(BaseService):
         пропуск» нельзя.
         """
         self.access.require(actor, "qr_points.manage")
-        point = self._require_point(actor, point_id)
+        point = self._require_point(actor, point_id, "qr_points.manage")
         if point.is_active == active:
             return point
 
@@ -360,7 +359,7 @@ class QrPointService(BaseService):
         нужно, когда наклейку сфотографировали.
         """
         self.access.require(actor, "qr_points.manage")
-        point = self._require_point(actor, point_id)
+        point = self._require_point(actor, point_id, "qr_points.manage")
         if point.qr_mode != "STATIC":
             raise Conflict(
                 "Секрет есть только у статической точки; поворотная выдаёт "
@@ -406,7 +405,7 @@ class QrPointService(BaseService):
         заменяют новым.
         """
         self.access.require(actor, "qr_points.manage")
-        point = self._require_point(actor, point_id)
+        point = self._require_point(actor, point_id, "qr_points.manage")
         if point.qr_mode != "STATIC":
             raise Conflict(
                 "Код наклейки есть только у статической точки; поворотная "
@@ -440,7 +439,7 @@ class QrPointService(BaseService):
         перестаёт работать, а прошлые отметки остаются объяснимыми.
         """
         self.access.require(actor, "qr_points.manage")
-        point = self._require_point(actor, point_id)
+        point = self._require_point(actor, point_id, "qr_points.manage")
 
         from humotech.attendance.models import AttendanceEvent
 
@@ -467,7 +466,8 @@ class QrPointService(BaseService):
 
     # ------------------------------------------------------------ внутреннее
 
-    def _require_point(self, actor: Actor, point_id: uuid.UUID) -> OfficeQrPoint:
+    def _require_point(self, actor: Actor, point_id: uuid.UUID,
+                       permission: str | None = None) -> OfficeQrPoint:
         point = (
             OfficeQrPoint.objects.select_related(
                 "office", "office__region", "created_by_user",
@@ -480,7 +480,7 @@ class QrPointService(BaseService):
             # Чужая организация отвечает так же, как отсутствие записи:
             # иначе перебором идентификаторов пересчитываются чужие двери.
             raise NotFound("Точка отметки не найдена")
-        self.access.require_office(actor, point.office_id)
+        self.access.require_office(actor, point.office_id, permission)
         return point
 
     @staticmethod

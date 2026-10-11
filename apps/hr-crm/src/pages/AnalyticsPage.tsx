@@ -1,6 +1,6 @@
 /**
- * «Аналитика»: один лист, семь вкладок — обзор, посещаемость, отсутствия
- * и заявки, команда, стажировки, опросы, ознакомления.
+ * «Аналитика»: один лист, шесть вкладок — обзор, посещаемость,
+ * отсутствия и заявки, команда, опросы, ознакомления.
  *
  * Лист, шапка, строка фильтров, вкладки и полоса показателей —
  * постоянные: при смене вкладки они не пересоздаются и не меняют высоту.
@@ -33,14 +33,13 @@ import { kindOf, statusOf } from '../features/requests/model';
 import { AUDIENCE } from '../features/surveys/model';
 import '../styles/analytics.css';
 
-type Tab = 'overview' | 'attendance' | 'absences' | 'team' | 'probation' | 'surveys' | 'onboarding';
+type Tab = 'overview' | 'attendance' | 'absences' | 'team' | 'surveys' | 'onboarding';
 
 const TABS: { key: Tab; title: string }[] = [
   { key: 'overview', title: 'Обзор' },
   { key: 'attendance', title: 'Посещаемость' },
   { key: 'absences', title: 'Отсутствия и заявки' },
   { key: 'team', title: 'Команда' },
-  { key: 'probation', title: 'Стажировки' },
   { key: 'surveys', title: 'Опросы' },
   { key: 'onboarding', title: 'Ознакомления' },
 ];
@@ -61,7 +60,6 @@ const EXPORTS: Record<Tab, api.ReportKindKey | null> = {
   attendance: 'attendance',
   absences: 'absences',
   team: 'employees',
-  probation: 'employees',
   surveys: null,
   onboarding: null,
 };
@@ -350,7 +348,6 @@ export function AnalyticsPage() {
     attendance: useAttendanceTab(tab === 'attendance', ctx),
     absences: useAbsencesTab(tab === 'absences', ctx),
     team: useTeamTab(tab === 'team', ctx),
-    probation: useProbationTab(tab === 'probation', ctx),
     surveys: useSurveysTab(tab === 'surveys', ctx),
     onboarding: useOnboardingTab(tab === 'onboarding', ctx),
   };
@@ -479,15 +476,6 @@ function useTeam(active: boolean, { scope }: Ctx) {
   return team;
 }
 
-function useProbation(active: boolean, { scope }: Ctx) {
-  const [probation] = useBlock(
-    (signal) => api.analyticsProbation({ date_from: scope.from, date_to: scope.to, ...scope.place, ...scope.narrow }, signal),
-    `probation|${scope.key}`,
-    active,
-  );
-  return probation;
-}
-
 function officeName(ctx: Ctx, id: string | null | undefined): string {
   return ctx.offices.find((one) => one.id === id)?.name ?? '—';
 }
@@ -508,7 +496,7 @@ function attendancePoints(data: api.Overview): LinePoint[] {
 
 type Attention = { key: string; icon: AppIconName; tone: Tone; title: string; who: string; date: string; badge: string; rank: number; to: string };
 
-/** Ход ознакомления — общий для обзора, команды и стажировок: один запрос на всех. */
+/** Ход ознакомления — общий для обзора и команды: один запрос на всех. */
 function useOnboardingRows(active: boolean, { scope }: Ctx) {
   const [rows] = useBlock(
     (signal) => pages((cursor) => api.onboardingProgress({ limit: '200', ...(scope.office ? { office_id: scope.office } : {}), ...(cursor ? { cursor } : {}) }, signal), 1000)
@@ -523,7 +511,6 @@ function useOverviewTab(active: boolean, ctx: Ctx): View {
   const { scope } = ctx;
   const [overview, previous] = useOverviewPair(active, ctx);
   const team = useTeam(active, ctx);
-  const probation = useProbation(active, ctx);
   const onboarding = useOnboardingRows(active, ctx);
   const [open] = useBlock(
     (signal) => pages((cursor) => api.queue({ status: OPEN, limit: '200', ...scope.place, ...(cursor ? { cursor } : {}) }, signal), 400),
@@ -540,9 +527,9 @@ function useOverviewTab(active: boolean, ctx: Ctx): View {
   const all = joined(overview, previous, team);
 
   // Одно правило «требует внимания» на список и на показатель над ним.
-  const attention = joined(overview, open, probation, onboarding);
+  const attention = joined(overview, open, onboarding);
   const items: Attention[] = attention.state === 'ready' ? (() => {
-    const [ov, queue, trial, rows] = attention.data;
+    const [ov, queue, rows] = attention.data;
     const list: Attention[] = [];
     for (const person of ov.employees) {
       if (person.missed_days <= 0) continue;
@@ -563,16 +550,6 @@ function useOverviewTab(active: boolean, ctx: Ctx): View {
         key: `q-${item.id}`, icon: 'doc', tone: 'amber', title: `Заявка ждёт решения: ${kindOf(item).title.toLowerCase()}`,
         who, date: submitted.slice(0, 10), badge: `${waited} ${plural(waited, 'день', 'дня', 'дней')} ждёт`, rank: 1,
         to: `/requests/${item.id}`,
-      });
-    }
-    for (const person of trial.trainees) {
-      if (person.days_left === null || person.days_left > trial.due_days) continue;
-      list.push({
-        key: `p-${person.id}`, icon: 'grad', tone: person.days_left < 0 ? 'red' : 'amber',
-        title: person.days_left < 0 ? 'Стажировка закончилась, решения нет' : `Стажировка заканчивается через ${person.days_left} ${plural(person.days_left, 'день', 'дня', 'дней')}`,
-        who: `${person.name} · ${person.department ?? person.office ?? '—'}`, date: person.probation_to ?? scope.to,
-        badge: person.days_left < 0 ? 'Срок прошёл' : person.days_left === 0 ? 'Сегодня' : `Через ${person.days_left} ${plural(person.days_left, 'день', 'дня', 'дней')}`,
-        rank: person.days_left < 0 ? 0 : 1, to: `/employees/${person.id}`,
       });
     }
     for (const row of rows) {
@@ -634,7 +611,7 @@ function useOverviewTab(active: boolean, ctx: Ctx): View {
                   </li>
                 ))}
               </ul>
-            ) : <p className="ax-empty">Всё спокойно: пропусков, зависших заявок, стажировок на исходе и неподтверждённых документов нет.</p>}
+            ) : <p className="ax-empty">Всё спокойно: пропусков, зависших заявок и неподтверждённых документов нет.</p>}
           </Guard>
         </Section>
       </div>
@@ -653,8 +630,6 @@ function useOverviewTab(active: boolean, ctx: Ctx): View {
               <div className="ax-strip__title"><b>Изменения в команде</b><span>Сравнение с предыдущим периодом</span></div>
               <StripItem icon="user-plus" tone="green" value={data.summary.hired} label={plural(data.summary.hired, 'новый сотрудник', 'новых сотрудника', 'новых сотрудников')}
                          delta={<Delta value={data.summary.hired - data.summary.previous_hired} unit="n" good="up" text="" />} />
-              <StripItem icon="user-ok" tone="blue" value={data.summary.promoted} label="принято в штат после стажировки"
-                         delta={<Delta value={data.summary.promoted - data.summary.previous_promoted} unit="n" good="up" text="" />} />
               <StripItem icon="user-x" tone="red" value={data.summary.left} label={plural(data.summary.left, 'увольнение', 'увольнения', 'увольнений')}
                          delta={<Delta value={data.summary.left - data.summary.previous_left} unit="n" good="down" text="" />} />
               <StripItem icon="transfer" tone="blue" value={data.transfers.length} label={plural(data.transfers.length, 'перевод', 'перевода', 'переводов')} />
@@ -1075,7 +1050,6 @@ function useTeamTab(active: boolean, ctx: Ctx): View {
         return [
           { icon: 'users', tone: 'blue', value: s.headcount, label: `${plural(s.headcount, 'сотрудник', 'сотрудника', 'сотрудников')} на конец периода`, foot: <Delta value={s.headcount - s.headcount_start} unit="n" good="up" text="за период" /> },
           { icon: 'user-plus', tone: 'green', value: s.hired, label: plural(s.hired, 'новый сотрудник', 'новых сотрудника', 'новых сотрудников'), foot: <Delta value={s.hired - s.previous_hired} unit="n" good="up" /> },
-          { icon: 'team', tone: 'blue', value: s.promoted, label: 'приняты после стажировки', foot: <Delta value={s.promoted - s.previous_promoted} unit="n" good="up" /> },
           { icon: 'user-x', tone: 'red', value: s.left, label: plural(s.left, 'увольнение', 'увольнения', 'увольнений'), foot: <Delta value={s.left - s.previous_left} unit="n" good="down" /> },
         ];
       }}
@@ -1175,7 +1149,6 @@ function useTeamTab(active: boolean, ctx: Ctx): View {
               <div className="ax-strip__title"><b>Кадровые изменения</b><span>За выбранный период</span></div>
               <StripItem icon="user-plus" tone="green" value={data.summary.hired} label="найм" />
               <StripItem icon="transfer" tone="blue" value={data.transfers.length} label={plural(data.transfers.length, 'перевод', 'перевода', 'переводов')} />
-              <StripItem icon="grad" tone="blue" value={data.summary.promoted + data.summary.probation_failed} label="завершили стажировку" />
               <StripItem icon="user-x" tone="red" value={data.summary.left} label={plural(data.summary.left, 'увольнение', 'увольнения', 'увольнений')} />
             </div>
           )}
@@ -1208,129 +1181,6 @@ function teamConclusion(data: api.TeamReport): string {
   }
   const diff = data.summary.headcount - data.summary.headcount_start;
   return diff ? `Численность ${diff > 0 ? 'выросла' : 'снизилась'} на ${Math.abs(diff)} за период.` : 'Численность за период не изменилась.';
-}
-
-// --- Стажировки -------------------------------------------------------------------
-
-function useProbationTab(active: boolean, ctx: Ctx): View {
-  const probation = useProbation(active, ctx);
-  const progress = useOnboardingRows(active, ctx);
-
-  const kpis = (
-    <Kpis block={probation}>
-      {(data) => {
-        const s = data.summary;
-        return [
-          { icon: 'users', tone: 'blue', value: s.active, label: `${plural(s.active, 'активный стажёр', 'активных стажёра', 'активных стажёров')}`, foot: <span className="ax-muted">начали в периоде: {s.started}</span> },
-          { icon: 'clock', tone: 'amber', value: s.due, label: `${plural(s.due, 'решение', 'решения', 'решений')} в ближайшие ${data.due_days} дней`, foot: s.overdue ? <span className="ax-red">срок уже прошёл: {s.overdue}</span> : <span className="ax-muted">просроченных решений нет</span> },
-          { icon: 'user-plus', tone: 'green', value: s.promoted, label: 'приняты в штат', foot: <Delta value={s.promoted - s.previous_promoted} unit="n" good="up" /> },
-          { icon: 'user-x', tone: 'red', value: s.failed, label: 'завершили без найма', foot: <Delta value={s.failed - s.previous_failed} unit="n" good="down" /> },
-        ];
-      }}
-    </Kpis>
-  );
-
-  const body = (
-    <div className="ax-grid ax-grid--side">
-      <div className="ax-col">
-        <Section title="Стажёры сейчас" sub="Ближайшее решение сверху · адаптация — ход ознакомления в боте">
-          <Guard block={joined(probation, progress)} rows={6}>
-            {([data, rows]) => data.trainees.length ? (
-              <table className="ax-table" aria-label="Стажёры сейчас">
-                <thead><tr><th>Сотрудник</th><th>Отдел</th><th>Стажировка</th><th>Осталось</th><th>Наставник</th><th>Адаптация</th><th>Решение</th></tr></thead>
-                <tbody>
-                  {data.trainees.slice(0, 8).map((one) => {
-                    const row = rows.find((r) => r.employee_id === one.id);
-                    const total = row ? row.sections_total + row.policies_total : 0;
-                    const done = row ? row.sections_done + row.policies_done : 0;
-                    const left = one.days_left;
-                    return (
-                      <tr key={one.id}>
-                        <td><Link to={`/employees/${one.id}`}>{one.name}</Link></td>
-                        <td>{one.department ?? '—'}</td>
-                        <td>{dayShort(one.probation_from)} – {one.probation_to ? dayShort(one.probation_to) : 'без даты'}</td>
-                        <td className={left === null ? '' : left < 0 ? 'ax-red' : left <= data.due_days ? 'ax-amber' : 'ax-blue'}>
-                          {left === null ? '—' : left < 0 ? `просрочено ${-left} дн.` : `${left} ${plural(left, 'день', 'дня', 'дней')}`}
-                        </td>
-                        <td>{one.mentor ? one.mentor.name : <span className="ax-muted">не назначен</span>}</td>
-                        <td>{row ? <Progress value={share(done, total)} /> : <span className="ax-muted">не приглашён</span>}</td>
-                        <td>{left === null ? <Status tone="grey">Срок не указан</Status> : left <= data.due_days ? <Status tone={left < 0 ? 'red' : 'amber'}>Ожидает решения</Status> : <Status tone="green">Идёт по плану</Status>}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            ) : <p className="ax-empty">Сейчас стажёров нет.</p>}
-          </Guard>
-        </Section>
-      </div>
-      <div className="ax-col ax-col--side">
-        <Section title="Ближайшие решения" sub={`Стажировки, которые заканчиваются в ближайшие дни`}>
-          <Guard block={probation} rows={3}>
-            {(data) => {
-              const soon = data.trainees.filter((one) => one.days_left !== null && one.days_left <= data.due_days).slice(0, 3);
-              if (!soon.length) return <p className="ax-empty">В ближайшие {data.due_days} дней решений не нужно.</p>;
-              return (
-                <ul className="ax-decisions">
-                  {soon.map((one) => (
-                    <li key={one.id}>
-                      <i className={`ax-dot--${one.days_left! < 0 ? 'red' : 'amber'}`} aria-hidden="true" />
-                      <span className="ax-decisions__date">{dayLong(one.probation_to!)}</span>
-                      <span><Link to={`/employees/${one.id}`}>{one.name}</Link><small>{one.department ?? one.office ?? '—'} · решить: в штат или завершить</small></span>
-                      <span className={`ax-chip ax-chip--${one.days_left! < 0 ? 'red' : 'amber'}`}>{one.days_left! < 0 ? 'Срок прошёл' : 'Ожидает решения'}</span>
-                    </li>
-                  ))}
-                </ul>
-              );
-            }}
-          </Guard>
-        </Section>
-        <Section title="Путь адаптации" sub="Стажёры за выбранный период" className="ax-sec--line">
-          <Guard block={probation} rows={4}>
-            {(data) => {
-              const steps = [
-                { key: 'started', name: 'Начали стажировку', value: data.summary.started },
-                { key: 'active', name: 'Сейчас на стажировке', value: data.summary.active },
-                { key: 'due', name: `Решение в ${data.due_days} дней`, value: data.summary.due },
-                { key: 'promoted', name: 'Приняты в штат', value: data.summary.promoted },
-                { key: 'failed', name: 'Без найма', value: data.summary.failed },
-              ];
-              const top = Math.max(1, ...steps.map((one) => one.value));
-              return <Bars label="Путь адаптации" rows={steps.map((one) => ({ key: one.key, name: one.name, value: (one.value * 100) / top, text: String(one.value), tone: one.key === 'failed' ? 'red' : one.key === 'promoted' ? 'green' : one.key === 'due' ? 'amber' : 'blue' }))} />;
-            }}
-          </Guard>
-        </Section>
-      </div>
-      <div className="ax-foot">
-        <Guard block={probation} rows={1}>
-          {(data) => (
-            <div className="ax-strip">
-              <div className="ax-strip__title"><b>Итоги стажировок за период</b><span>Решения, принятые в выбранном периоде</span></div>
-              <StripItem icon="user-plus" tone="green" value={data.summary.promoted} label="приняты в штат" delta={<Delta value={data.summary.promoted - data.summary.previous_promoted} unit="n" good="up" text="" />} />
-              <StripItem icon="user-x" tone="red" value={data.summary.failed} label="завершили без найма" delta={<Delta value={data.summary.failed - data.summary.previous_failed} unit="n" good="down" text="" />} />
-              <StripItem icon="team" tone="blue" value={data.summary.active} label="продолжают стажировку" />
-              <div className="ax-strip__insight">
-                <span className="ax-tone--blue"><AppIcon name="chart" size={20} /></span>
-                <span><b>Главный вывод</b><small>{probationConclusion(data)}</small></span>
-              </div>
-            </div>
-          )}
-        </Guard>
-      </div>
-    </div>
-  );
-
-  return { sub: 'Стажировки и адаптация: сроки решений и итоги испытательного срока', kpis, body };
-}
-
-function probationConclusion(data: api.ProbationReport): string {
-  const s = data.summary;
-  if (s.conversion_percent === null) {
-    return s.due ? `Решений за период не было; в ближайшие ${data.due_days} дней их нужно принять по ${s.due} ${plural(s.due, 'стажёру', 'стажёрам', 'стажёрам')}.` : 'За период решений по стажировкам не было.';
-  }
-  const was = s.previous_conversion_percent;
-  const trend = was === null ? '' : s.conversion_percent > was ? `, выше прошлого периода (${pct(was)})` : s.conversion_percent < was ? `, ниже прошлого периода (${pct(was)})` : ', как в прошлом периоде';
-  return `Конверсия в найм — ${pct(s.conversion_percent)} среди завершивших${trend}.`;
 }
 
 // --- Опросы -----------------------------------------------------------------------

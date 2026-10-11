@@ -359,64 +359,41 @@ class Scope:
 
 
 class Schedules:
-    """Действующие графики сотрудников за период. Один запрос на пачку людей."""
+    """План дней сотрудников за период — из единого `schedules.day_plan`.
+
+    Раньше выгрузка читала дни графика сама и считала «план» третьей
+    формулой нормы (аудит 12.10, D-03). Теперь норма, время смены, допуск
+    и версия графика на дату — те же, что в CRM, боте и Mini App.
+    """
 
     def __init__(self, first: date, last: date) -> None:
         self.first = first
         self.last = last
-        self._rows: dict[uuid.UUID, list] = {}
+        self._plans: dict = {}
+        self._loaded: set = set()
 
     def load(self, employee_ids) -> None:
-        from humotech.schedules.models import EmployeeScheduleAssignment
+        from humotech.schedules.day_plan import plans_for
 
-        missing = [key for key in employee_ids if key not in self._rows]
+        missing = [key for key in dict.fromkeys(employee_ids) if key not in self._loaded]
         if not missing:
             return
-        for key in missing:
-            self._rows[key] = []
-        rows = (
-            EmployeeScheduleAssignment.objects.filter(
-                employee_id__in=missing, valid_from__lte=self.last
-            )
-            .filter(Q(valid_to__isnull=True) | Q(valid_to__gte=self.first))
-            .select_related("schedule")
-            .prefetch_related("schedule__days__breaks")
-            .order_by("employee_id", "-valid_from")
-        )
-        for row in rows:
-            self._rows[row.employee_id].append(row)
+        self._loaded.update(missing)
+        self._plans.update(plans_for(missing, self.first, self.last))
 
     def on(self, employee_id: uuid.UUID, day: date):
-        """График на день — то же правило, что у `presence()`: самый поздний."""
-        for row in self._rows.get(employee_id, ()):
-            if row.valid_from <= day and (row.valid_to is None or row.valid_to >= day):
-                return row.schedule
-        return None
+        """План дня, если у сотрудника в этот день есть график, иначе None."""
+        plan = self._plans.get((employee_id, day))
+        return plan if plan is not None and plan.has_schedule else None
 
 
-def planned_seconds(row, schedule, day: date) -> int:
-    """Плановое время дня: смена по графику минус неоплачиваемые перерывы."""
-    if schedule is None or row.scheduled_start is None or row.scheduled_end is None:
+def planned_seconds(row, plan, day: date) -> int:
+    """Плановое время дня — норма из `day_plan`; 0 в выходной, праздник и
+    дни подтверждённого отсутствия. Рабочий выходной по переносу без
+    времени смены — тоже 0: норма правилом не определена (П-11)."""
+    if plan is None or row.state in ABSENCE_STATES:
         return 0
-    if row.state in ABSENCE_STATES:
-        return 0
-    start = datetime.combine(day, row.scheduled_start)
-    end = datetime.combine(day, row.scheduled_end)
-    if end <= start:
-        end += timedelta(days=1)
-    seconds = (end - start).total_seconds()
-    weekday = day.isoweekday()
-    schedule_day = next((d for d in schedule.days.all() if d.weekday == weekday), None)
-    if schedule_day is not None:
-        for pause in schedule_day.breaks.all():
-            if pause.is_paid:
-                continue
-            a = datetime.combine(day, pause.start_time)
-            b = datetime.combine(day, pause.end_time)
-            if b <= a:
-                b += timedelta(days=1)
-            seconds -= (b - a).total_seconds()
-    return max(int(seconds), 0)
+    return plan.norm_seconds or 0
 
 
 # --- отчёты -------------------------------------------------------------------
@@ -582,7 +559,8 @@ class AttendanceReport(_DayReport):
         self.notes.append(
             "Выходной и день без графика не считаются отсутствием. Время в "
             "офисе — сумма закрытых сессий; незакрытая сессия отмечена "
-            "статусом и во время не входит."
+            "статусом и во время не входит. Выездная работа засчитывает "
+            "рабочий день отдельно, но не добавляет время в офисе или отметки."
         )
 
     def rows(self, *, progress=None, day_limit=None):
@@ -593,9 +571,12 @@ class AttendanceReport(_DayReport):
                 person = self._person(row)
                 person["present"] = person.get("present", 0) + (1 if row.intervals else 0)
                 person["late"] = person.get("late", 0) + (1 if status == "LATE" else 0)
-                person["missed"] = person.get("missed", 0) + (1 if status == "NOT_COME" else 0)
+                person["missed"] = person.get("missed", 0) + (
+                    1 if status in {"NOT_COME", "FIELD_WORK_PENDING"} else 0)
                 person["absent"] = person.get("absent", 0) + (1 if status in ABSENCE_STATES else 0)
-                person["seconds"] = person.get("seconds", 0) + row.seconds
+                office_seconds = 0 if status == "FIELD_WORK" else row.seconds
+                person["seconds"] = person.get("seconds", 0) + office_seconds
+                person["field_work"] = person.get("field_work", 0) + (status == "FIELD_WORK")
                 person["open"] = person.get("open", 0) + sum(
                     1 for part in row.intervals if part.ended_at is None)
                 if "marks" in self.spec.fields and row.intervals:
@@ -606,13 +587,16 @@ class AttendanceReport(_DayReport):
                     "first_entry": local_time(row.first_entry_at, zone),
                     "last_exit": local_time(row.last_exit_at, zone),
                     "marks": marks_text(row.intervals, zone),
-                    "office_time": row.seconds,
+                    "office_time": office_seconds,
+                    "work_source": "Выездная работа" if status == "FIELD_WORK" else (
+                        "Посещение офиса" if row.intervals else None),
                     "day_status": status,
                 }
 
     def employee_table(self):
         return self._people_table([
             Column("present", "Дней с отметками", "number"),
+            Column("field_work", "Дней выездной работы", "number"),
             Column("late", "Опозданий", "number"),
             Column("missed", "Не пришёл", "number"),
             Column("absent", "Дней отсутствия", "number"),
@@ -670,11 +654,13 @@ class WorktimeReport(_DayReport):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.sums = {"planned": 0, "actual": 0, "shortfall": 0, "overtime": 0,
-                     "open_sessions": 0}
+                     "open_sessions": 0, "office_time": 0, "field_work": 0}
         self.notes.append(
             "План — смена по графику минус неоплачиваемые перерывы; в "
             "выходной, праздник и дни подтверждённого отсутствия план равен "
-            "нулю. Факт — только закрытые сессии. Недостача и переработка "
+            "нулю. Факт — закрытые сессии и утверждённая норма выездной работы; "
+            "для выездной работы план равен утверждённой норме заявки; "
+            "физическое время в офисе приводится отдельно. Недостача и переработка "
             "пусты, если графика нет: сравнивать не с чем."
         )
 
@@ -683,8 +669,10 @@ class WorktimeReport(_DayReport):
             self.schedules.load([row.employee_id for row in rows])
             for row in rows:
                 schedule = self.schedules.on(row.employee_id, day)
-                planned = planned_seconds(row, schedule, day)
+                planned = (row.seconds if row.state == "FIELD_WORK" else
+                           planned_seconds(row, schedule, day))
                 actual = row.seconds
+                office_seconds = 0 if row.state == "FIELD_WORK" else row.seconds
                 if schedule is None:
                     shortfall = overtime = None
                 elif row.state in ABSENCE_STATES:
@@ -699,6 +687,8 @@ class WorktimeReport(_DayReport):
                 for key, value in (("planned", planned), ("actual", actual),
                                    ("shortfall", shortfall or 0),
                                    ("overtime", overtime or 0),
+                                   ("office_time", office_seconds),
+                                   ("field_work", int(row.state == "FIELD_WORK")),
                                    ("closed_sessions", closed),
                                    ("open_sessions", opened)):
                     person[key] = person.get(key, 0) + value
@@ -709,6 +699,9 @@ class WorktimeReport(_DayReport):
                     **self._row_identity(row, day),
                     "planned": planned,
                     "actual": actual,
+                    "office_time": office_seconds,
+                    "work_source": "Выездная работа" if row.state == "FIELD_WORK" else (
+                        "Посещение офиса" if row.intervals else None),
                     "shortfall": shortfall,
                     "overtime": overtime,
                     "closed_sessions": closed,
@@ -718,6 +711,8 @@ class WorktimeReport(_DayReport):
     def employee_table(self):
         return self._people_table([
             Column("planned", "План", "hours"), Column("actual", "Факт", "hours"),
+            Column("office_time", "Время в офисе", "hours"),
+            Column("field_work", "Дней выездной работы", "number"),
             Column("shortfall", "Недостача", "hours"),
             Column("overtime", "Переработка", "hours"),
             Column("closed_sessions", "Закрытых сессий", "number"),
@@ -728,6 +723,8 @@ class WorktimeReport(_DayReport):
         return [
             ("Плановых часов", _hours(self.sums["planned"])),
             ("Фактических часов", _hours(self.sums["actual"])),
+            ("Часов в офисе", _hours(self.sums["office_time"])),
+            ("Дней выездной работы", self.sums["field_work"]),
             ("Недостающих часов", _hours(self.sums["shortfall"])),
             ("Переработки, часов", _hours(self.sums["overtime"])),
             ("Незакрытых сессий", self.sums["open_sessions"]),
@@ -987,7 +984,7 @@ class EmployeesReport(Report):
                 "position": assignment.position.name if assignment.position else None,
                 "manager": _full_name(assignment.manager_employee)
                 if assignment.manager_employee else None,
-                "schedule": schedule.name if schedule else None,
+                "schedule": schedule.schedule_name if schedule else None,
                 "hire_date": employee.hire_date,
                 "telegram": telegram,
             }
@@ -1018,6 +1015,10 @@ class ReportBuilderService(BaseService):
 
     def open(self, actor: Actor, spec: ReportSpec, *, author: str) -> Report:
         self.require(actor, spec.kind)
+        # Область отчёта — пересечение области данных с областью
+        # `reports.export`: офисы, отделы и сотрудники берутся только там,
+        # где у заказчика есть сама выгрузка (аудит 11.10, M-4).
+        actor = actor.confined("reports.export", KIND_PERMISSIONS[spec.kind])
         return REPORTS[spec.kind](self, actor, spec, author=author)
 
     def check(self, actor: Actor, spec: ReportSpec) -> None:
@@ -1116,6 +1117,8 @@ def sheet_titles(report: Report) -> list[str]:
 def day_status(row) -> str:
     if row.state in ABSENCE_STATES:
         return row.state
+    if row.state == "FIELD_WORK":
+        return "FIELD_WORK"
     if row.intervals:
         if row.late_minutes:
             return "LATE"

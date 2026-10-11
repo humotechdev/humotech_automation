@@ -93,8 +93,6 @@ SCOPE_ROUTES = [
     ("employee-change-assignment", _EMP, "post", lambda w: {"effective_from": D, "office_id": str(w["o1"].id)}),
     ("employee-deactivate", _EMP, "post", {}),
     ("employee-terminate", _EMP, "post", {"termination_date": D}),
-    ("employee-promote", _EMP, "post", {}),
-    ("employee-end-probation", _EMP, "post", {}),
     ("employee-photo", _EMP, "get", None),
     ("employee-photo-set", _EMP, "post", lambda w: {"file_id": str(w["emp2"].photo_id)}),
     ("employee-document-attach", _EMP, "post",

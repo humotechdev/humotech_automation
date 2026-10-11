@@ -41,7 +41,7 @@ const CAMPAIGNS = [1, 2, 3].map((i) => ({
 }));
 const RULES = [1, 2].map((i) => ({
   id: `a-${i}`, title: `Правило ${i}`, template_id: 't-1', template_title: 'Итоги стажировки',
-  trigger_kind: 'PROBATION_END', offset_days: 1, send_hour: 10, send_minute: 0, repeat_months: null,
+  trigger_kind: 'FIRST_DAY', offset_days: 1, send_hour: 10, send_minute: 0, repeat_months: null,
   scope: null, is_active: true, last_run_at: null, next_run_at: null, created_at: '2026-09-01T05:00:00Z',
 }));
 

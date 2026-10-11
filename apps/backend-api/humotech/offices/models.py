@@ -41,6 +41,37 @@ class Office(
         max_digits=9, decimal_places=6, null=True, blank=True
     )
     geofence_radius_m = models.IntegerField(null=True, blank=True)
+    #: Форма геозоны: круг (точка и радиус) или контур территории. Старые
+    #: офисы остаются кругом — о контуре они не знают, и менять им
+    #: правило молча нельзя.
+    geofence_kind = models.CharField(
+        max_length=10,
+        choices=[("CIRCLE", "Круг"), ("POLYGON", "Контур территории")],
+        default="CIRCLE",
+        db_default="CIRCLE",
+    )
+    #: Контур: `[[широта, долгота], …]`, незамкнутый, от 3 до 50 углов.
+    #: Проверяется сервисом (`offices.geo.clean_polygon`) — база только
+    #: не даёт выбрать контур, не сохранив его.
+    geofence_polygon = models.JSONField(null=True, blank=True)
+    #: Новое местоположение, ждущее подтверждения. Пока его не подтвердили,
+    #: отметки сверяются с прежним: у офиса, где уже отмечаются, не бывает
+    #: минуты «без места» и не бывает места, которое никто не проверил.
+    #: Вид: `{"geofence_kind", "latitude", "longitude", "geofence_radius_m",
+    #: "geofence_polygon"}` — те же поля, что у действующей геозоны.
+    pending_location = models.JSONField(null=True, blank=True)
+    pending_location_by_user = models.ForeignKey(
+        "accounts.User",
+        # Учётку HR можно удалить, а предложенное место остаётся ждать
+        # решения — пропадает только подпись (как у автора QR-точки).
+        on_delete=models.SET_NULL,
+        db_column="pending_location_by_user_id",
+        db_index=False,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    pending_location_at = models.DateTimeField(null=True, blank=True)
     status = models.CharField(max_length=30, choices=choices(OFFICE_STATUSES))
     opened_at = models.DateField(null=True, blank=True)
     closed_at = models.DateField(null=True, blank=True)
@@ -58,6 +89,15 @@ class Office(
                 condition=Q(geofence_radius_m__isnull=True)
                 | Q(geofence_radius_m__gt=0),
                 name="ck_offices_geofence_positive",
+            ),
+            models.CheckConstraint(
+                condition=Q(geofence_kind__in=("CIRCLE", "POLYGON")),
+                name="ck_offices_geofence_kind",
+            ),
+            models.CheckConstraint(
+                condition=~Q(geofence_kind="POLYGON")
+                | Q(geofence_polygon__isnull=False),
+                name="ck_offices_polygon_present",
             ),
             models.CheckConstraint(
                 condition=Q(closed_at__isnull=True)

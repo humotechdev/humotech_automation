@@ -113,10 +113,12 @@ class Command(BaseCommand):
         numbers = [cat.number(at) for at in range(cat.NUMBER_TO - cat.NUMBER_FROM + 1)]
         employees = Employee.objects.filter(organization=org, employee_number__in=numbers)
         ids = list(employees.values_list("id", flat=True))
-        removed += AuditLog.objects.filter(organization=org, entity_id__in=ids).delete()[0]
-        removed += purge(SurveyAutomation.objects.filter(organization=org, id__in=[did("automation", k) for k in ("adapt", "probation")]))
+        from humotech.audit.purge import allow_audit_purge
+        with allow_audit_purge():
+            removed += AuditLog.objects.filter(organization=org, entity_id__in=ids).delete()[0]
+        removed += purge(SurveyAutomation.objects.filter(organization=org, id__in=[did("automation", k) for k in ("adapt",)]))
         removed += purge(SurveyCampaign.objects.filter(organization=org, id__in=[
-            did("campaign", k) for k in ("satisfaction", "manager", "probation", "adapt-aug")]))
+            did("campaign", k) for k in ("satisfaction", "manager", "adapt-aug")]))
         removed += purge(SurveyTemplate.objects.filter(organization=org, id__in=[did("template", t[0]) for t in cat.TEMPLATES]))
         removed += purge(employees)
         removed += purge(KnowledgeSource.objects.filter(organization=org, meta__demo=cat.MARK))
@@ -154,8 +156,8 @@ class Command(BaseCommand):
         learning = onboarding.build(org, staff, today, now, tz, reviewer)
         active = [p for p in staff if p.active]
         return [
-            f"Сотрудники: {len(staff)} (активных {len(active)}, стажёров "
-            f"{sum(p.status == 'PROBATION' for p in staff)}, бывших {sum(p.status == 'TERMINATED' for p in staff)})",
+            f"Сотрудники: {len(staff)} (активных {len(active)}, "
+            f"бывших {sum(p.status == 'TERMINATED' for p in staff)})",
             f"Telegram: привязан у {sum(p.telegram == 'ACTIVE' for p in active)} активных",
             f"Отметки: {marks['events']} событий, {marks['sessions']} смен, {marks['notices']} предупреждений",
             f"Заявки: {request_counts['requests']} на отсутствия, {request_counts['absences']} подтверждённых, "

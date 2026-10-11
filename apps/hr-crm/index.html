@@ -3,7 +3,12 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="light" />
+    <!-- Только светлая: «only» запрещает браузеру автозатемнение страницы
+         (Chrome, Edge, Яндекс Браузер), а darkreader-lock — расширению
+         Dark Reader. Своей тёмной темы у CRM нет, и перекрашенная чужими
+         правилами она теряет контраст статусов и графиков. -->
+    <meta name="color-scheme" content="only light" />
+    <meta name="darkreader-lock" />
     <title>HUMOTECH — HR Control System</title>
   </head>
   <body>

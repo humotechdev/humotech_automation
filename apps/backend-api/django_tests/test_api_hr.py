@@ -112,6 +112,7 @@ def test_office_list_shows_region_and_supports_filters(hr_client, region):
             "region_id": str(region.id), "code": f"OF{index}",
             "name": f"Офис {index}", "address": f"ул. Тестовая, {index}",
             "timezone": "Asia/Dushanbe",
+            "latitude": "41.311081", "longitude": "69.240562", "geofence_radius_m": 100,
         })
 
     body = hr_client.get(f"{API}/offices/").json()
@@ -130,6 +131,7 @@ def test_office_pagination_walks_every_row_once(hr_client, region):
         hr_client.post(f"{API}/offices/", {
             "region_id": str(region.id), "code": f"P{index}", "name": f"Офис {index}",
             "address": "адрес", "timezone": "Asia/Dushanbe",
+            "latitude": "41.311081", "longitude": "69.240562", "geofence_radius_m": 100,
         })
 
     seen, cursor, pages = [], None, 0
@@ -317,22 +319,20 @@ def test_schedule_create_and_assign_through_api(hr_client, office):
     assert card_now["current_schedule"]["name"] == "Пятидневка"
 
 
-def test_night_shift_needs_explicit_flag_through_api(hr_client):
-    response = hr_client.post(f"{API}/work-schedules/", {
-        "name": "Ночная", "timezone": "Asia/Dushanbe", "weekly_minutes": 2400,
-        "days": [{"weekday": 1, "is_working_day": True,
-                  "start_time": "22:00:00", "end_time": "06:00:00"}],
-    })
-    assert response.status_code == 400
-    assert "раньше его начала" in response.json()["error"]["message"]
-
-    ok = hr_client.post(f"{API}/work-schedules/", {
-        "name": "Ночная", "timezone": "Asia/Dushanbe", "weekly_minutes": 2400,
-        "days": [{"weekday": 1, "is_working_day": True,
-                  "start_time": "22:00:00", "end_time": "06:00:00",
-                  "crosses_midnight": True}],
-    })
-    assert ok.status_code == 201
+def test_night_shift_is_rejected_through_api(hr_client):
+    """Ночные смены пока не поддерживаются ни без флага, ни с ним (Р-9)."""
+    for day in (
+        {"weekday": 1, "is_working_day": True,
+         "start_time": "22:00:00", "end_time": "06:00:00"},
+        {"weekday": 1, "is_working_day": True,
+         "start_time": "22:00:00", "end_time": "06:00:00", "crosses_midnight": True},
+    ):
+        response = hr_client.post(f"{API}/work-schedules/", {
+            "name": "Ночная", "timezone": "Asia/Dushanbe", "weekly_minutes": 2400,
+            "days": [day],
+        })
+        assert response.status_code == 400
+        assert "Ночные смены" in response.json()["error"]["message"]
 
 
 # --- права и изоляция через HTTP -------------------------------------------

@@ -456,6 +456,84 @@ body:has(.on) .adm-ask {
 
 /* --- боковые панели -------------------------------------------------------------------------- */
 
+/* Панели ознакомления (сотрудник, материал, раздел, знакомство) —
+   выдвижные справа, поверх листа. Без этих правил панель вставала
+   обычным блоком под листом во всю ширину, с голыми полями и кнопками,
+   прижатыми влево. Ширина под форму, лист под ней не сдвигается;
+   щелчок мимо панели и Esc её закрывают (SidePanel). */
+body:has(.on) .adm-side {
+  position: fixed;
+  top: var(--topbar-height, 64px);
+  right: 0;
+  bottom: 0;
+  z-index: 50;
+  width: min(480px, 100%);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--border-default);
+  border-radius: 0;
+  background: #ffffff;
+  box-shadow: -12px 0 32px rgba(15, 42, 95, 0.12);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+body:has(.on) .adm-side__head { padding: 16px 20px; }
+body:has(.on) .adm-side__title { font-size: 17px; font-weight: 700; color: var(--on-ink, #0f2a5f); }
+body:has(.on) .adm-side__body { padding: 18px 20px 24px; }
+body:has(.on) .adm-side .adm-field__label { font-size: 13px; }
+
+body:has(.on) .adm-side .adm-field input:not([type='checkbox']):not([type='file']),
+body:has(.on) .adm-side .adm-field textarea {
+  width: 100%;
+  min-height: 40px;
+  padding: 9px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: #ffffff;
+  font: inherit;
+  font-size: 14px;
+  color: var(--text-body);
+}
+
+body:has(.on) .adm-side .adm-field textarea { min-height: 88px; resize: vertical; }
+
+body:has(.on) .adm-side .adm-field input:focus-visible,
+body:has(.on) .adm-side .adm-field textarea:focus-visible {
+  outline: none;
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 3px var(--focus-ring-soft);
+}
+
+/* «Отмена» и действие — справа, под тонкой линией, как в окнах CRM. */
+body:has(.on) .adm-side__tools {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-soft);
+}
+
+body:has(.on) .adm-side .btn--primary {
+  border-color: var(--action-bg);
+  background: var(--action-bg);
+  color: var(--text-on-action);
+}
+
+body:has(.on) .adm-side .btn--primary:hover:not(:disabled) {
+  border-color: var(--action-bg-hover);
+  background: var(--action-bg-hover);
+}
+
+body:has(.on) .adm-side .btn--primary:disabled {
+  border-color: var(--disabled-border);
+  background: var(--disabled-bg);
+  color: var(--disabled-text);
+}
+
 .on-panel { display: flex; flex-direction: column; gap: 10px; font-family: 'Inter', 'Segoe UI', system-ui, sans-serif; }
 .on-panel__name { margin: 0; font-size: 20px; color: var(--on-ink, #0f2a5f); }
 .on-panel__sub { margin: 0; font-size: 13.5px; color: #6b7f9e; }

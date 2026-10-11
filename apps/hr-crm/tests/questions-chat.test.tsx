@@ -4,7 +4,9 @@
  * Анимации здесь не видны — jsdom не рисует и не раскладывает страницу.
  * Проверяется то, на чём анимация держится и что она не должна сломать:
  * новое сообщение помечено один раз и только оно; статус доставки — ровно
- * тот, что прислал сервер; ошибка не теряет текст; повтор не даёт дубля;
+ * тот, что прислал сервер («Отправляется» → «Отправлено»; «Прочитано» не
+ * пишется никогда — бот о прочтении не знает); ошибка не теряет текст;
+ * повтор не даёт дубля;
  * чтение истории не прерывается прокруткой; итог отправки не уезжает в
  * другое обращение.
  */
@@ -127,6 +129,9 @@ const replies = (calls: Call[]) =>
 
 const bubble = (id: string) => document.querySelector<HTMLElement>(`[data-message-id="${id}"]`);
 const freshBubbles = () => document.querySelectorAll('.tk-msg--new');
+/** Значок доставки в пузыре — по слову состояния. */
+const deliveryIn = (node: HTMLElement, title: string) =>
+  (within(node).queryByText(title)?.closest('.tk-delivery') ?? null) as HTMLElement | null;
 const refresh = () => fireEvent.click(screen.getByRole('button', { name: 'Обновить' }));
 
 async function openWithText(text: string, path = '/questions?id=q-1') {
@@ -151,7 +156,8 @@ describe('отправка ответа', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Отправить' }));
 
-    expect(await screen.findByText('Ответ отправлен в Telegram')).toBeTruthy();
+    // «Ответ отправлен» не пишется: успешный ответ сервера значит лишь,
+    // что реплика сохранена и стоит в очереди Telegram.
     const mine = await waitFor(() => {
       const node = bubble('m-new');
       expect(node).toBeTruthy();
@@ -164,15 +170,16 @@ describe('отправка ответа', () => {
     expect(bubble('m-1')).toBe(before);
     expect(freshBubbles()).toHaveLength(1);
     // Статус — тот, что прислал сервер: только «отправляется».
-    expect(within(mine).getByRole('img', { name: 'Отправляется' })).toBeTruthy();
-    expect(within(mine).queryByRole('img', { name: 'Доставлено' })).toBeNull();
-    expect(within(mine).queryByRole('img', { name: 'Прочитано' })).toBeNull();
+    expect(deliveryIn(mine, 'Отправляется')).toBeTruthy();
+    expect(deliveryIn(mine, 'Отправлено')).toBeNull();
+    expect(within(mine).queryByText('Прочитано')).toBeNull();
+    expect(screen.queryByText('Ответ отправлен в Telegram')).toBeNull();
     // Поле очищено только после подтверждения.
     expect(field.value).toBe('');
     expect(replies(api.calls)).toHaveLength(1);
   });
 
-  test('галочки появляются только когда их прислал сервер, а не по таймеру', async () => {
+  test('галочка появляется только когда её прислал сервер, а не по таймеру', async () => {
     const api = server({ 'q-1': question(ROW_A, BASE_THREAD) });
     await openWithText('Да, можно.');
     fireEvent.click(screen.getByRole('button', { name: 'Отправить' }));
@@ -180,26 +187,32 @@ describe('отправка ответа', () => {
 
     // Время идёт, анимации давно кончились — статус прежний.
     await act(() => new Promise((resolve) => setTimeout(resolve, 400)));
-    expect(within(bubble('m-new')!).getByRole('img', { name: 'Отправляется' })).toBeTruthy();
-    expect(within(bubble('m-new')!).queryByRole('img', { name: 'Доставлено' })).toBeNull();
+    expect(deliveryIn(bubble('m-new')!, 'Отправляется')).toBeTruthy();
+    expect(deliveryIn(bubble('m-new')!, 'Отправлено')).toBeNull();
 
-    // Сервер сообщил «доставлено» — при следующем опросе значок меняется.
+    // Сервер сообщил «доставлено» — при следующем опросе значок меняется
+    // на «Отправлено» (Telegram принял сообщение).
     const was = api.state['q-1']!;
     api.state['q-1'] = {
       ...was,
       messages: was.messages.map((one) => (one.id === 'm-new' ? hrSays('m-new', 'Да, можно.', 'DELIVERED') : one)),
     };
     refresh();
-    const delivered = await within(bubble('m-new')!).findByRole('img', { name: 'Доставлено' });
-    expect(delivered.classList.contains('tk-delivery--changed')).toBe(true);
-    expect(within(bubble('m-new')!).queryByRole('img', { name: 'Прочитано' })).toBeNull();
+    await within(bubble('m-new')!).findByText('Отправлено');
+    expect(deliveryIn(bubble('m-new')!, 'Отправлено')!.classList.contains('tk-delivery--changed')).toBe(true);
+    expect(within(bubble('m-new')!).queryByText('Прочитано')).toBeNull();
 
     api.state['q-1'] = {
       ...was,
       messages: was.messages.map((one) => (one.id === 'm-new' ? hrSays('m-new', 'Да, можно.', 'READ') : one)),
     };
+    const callsBefore = api.calls.length;
     refresh();
-    expect(await within(bubble('m-new')!).findByRole('img', { name: 'Прочитано' })).toBeTruthy();
+    // «Прочитано» бот знать не может: остаётся «Отправлено».
+    await waitFor(() => expect(api.calls.length).toBeGreaterThan(callsBefore));
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+    expect(deliveryIn(bubble('m-new')!, 'Отправлено')).toBeTruthy();
+    expect(within(bubble('m-new')!).queryByText('Прочитано')).toBeNull();
     // Пузырь — тот же, повторно не «влетал».
     expect(freshBubbles()).toHaveLength(1);
   });
@@ -275,20 +288,22 @@ describe('отправка ответа', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Отправить' }));
 
     expect(await screen.findByRole('alert')).toBeTruthy();
-    expect(screen.getByText('Сообщение не отправлено — текст остался в поле.')).toBeTruthy();
+    const failedNote = /Ответ не подтверждён сервером — текст сохранён/;
+    expect(screen.getByText(failedNote)).toBeTruthy();
     expect(field.value).toBe('Да, можно.');
     expect(bubble('m-new')).toBeNull();
     expect(screen.queryByText('Ответ отправлен в Telegram')).toBeNull();
 
-    // Повтор — той же кнопкой. Ключ повтора прежний: если первый запрос
-    // всё же дошёл, сервер не отправит сотруднику второе сообщение.
-    fireEvent.click(screen.getByRole('button', { name: 'Отправить' }));
-    expect(await screen.findByText('Ответ отправлен в Telegram')).toBeTruthy();
+    // Повтор — той же кнопкой («Повторить»). Ключ повтора прежний: если
+    // первый запрос всё же дошёл, сервер не отправит сотруднику второе
+    // сообщение.
+    fireEvent.click(screen.getByRole('button', { name: 'Повторить' }));
+    await waitFor(() => expect(bubble('m-new')).toBeTruthy());
     const [first, second] = replies(api.calls);
     expect((second?.body as { client_request_id: string }).client_request_id)
       .toBe((first?.body as { client_request_id: string }).client_request_id);
     expect(document.querySelectorAll('[data-message-id="m-new"]')).toHaveLength(1);
-    expect(screen.queryByText('Сообщение не отправлено — текст остался в поле.')).toBeNull();
+    expect(screen.queryByText(failedNote)).toBeNull();
     expect(field.value).toBe('');
   });
 

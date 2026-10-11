@@ -29,15 +29,18 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   closeScanner,
+  isSticker,
   nativeScannerReady,
   newAttemptId,
   scanWithTelegram,
 } from '../scanner';
 import {
+  FIX_PROBLEMS,
   canSendData,
+  fixAfterScan,
   haptic,
+  locate,
   sendToBot,
-  requestPosition,
   webApp,
   type Position,
 } from '../telegram';
@@ -51,6 +54,18 @@ export const PAYLOAD_ACTION = 'attendance_scan';
 /** Потолок из Bot API. Больше Telegram и сам не отправит. */
 export const MAX_PAYLOAD_BYTES = 4096;
 
+/**
+ * Сколько ждать место ПОСЛЕ скана кода с экрана.
+ *
+ * Код на экране живёт тридцать секунд (`QR_TOKEN_TTL_SECONDS`) с момента
+ * выпуска, и к скану часть срока уже прошла. Восемь секунд ожидания
+ * плюс дорога через бота укладываются в остаток; дольше — и верная
+ * отметка вернулась бы отказом «код устарел». У печатного кода срока
+ * нет, и ждать можно столько же, сколько везде.
+ */
+export const DYNAMIC_CODE_LOCATE_MS = 8_000;
+export const STICKER_LOCATE_MS = 12_000;
+
 type Phase =
   | { kind: 'locating' }
   | { kind: 'scanning' }
@@ -59,7 +74,7 @@ type Phase =
   | { kind: 'failed'; title: string; message: string };
 
 export function KeyboardScan({ onOpenCabinet }: { onOpenCabinet: () => void }) {
-  const [phase, setPhase] = useState<Phase>({ kind: 'locating' });
+  const [phase, setPhase] = useState<Phase>({ kind: 'scanning' });
 
   // Одна попытка — один ключ. Он переживает повтор внутри этой же
   // попытки: сервер по нему узнаёт ту же отправку и не создаёт вторую
@@ -91,26 +106,18 @@ export function KeyboardScan({ onOpenCabinet }: { onOpenCabinet: () => void }) {
       return;
     }
 
-    setPhase({ kind: 'locating' });
-    const position = await requestPosition();
-    if (!alive.current) return;
-
-    if (!position) {
-      setPhase({
-        kind: 'failed',
-        title: 'Не видно, где вы',
-        message:
-          'Разрешите Telegram доступ к местоположению и попробуйте снова. Без него отметка из этой кнопки не отправляется.',
-      });
-      return;
-    }
-
+    // Место определяется ВМЕСТЕ со сканом, а не до него. Раньше его
+    // спрашивали до камеры и отправляли после: человек мог получить
+    // точку у парковки, дойти до двери за минуту — и сервер сравнивал
+    // с офисом место, где его уже не было.
     setPhase({ kind: 'scanning' });
     leaving.current?.abort();
     const stop = new AbortController();
     leaving.current = stop;
 
+    const locating = locate();
     const outcome = await scanWithTelegram(window, stop.signal);
+    const scannedAt = Date.now();
     if (!alive.current) return;
 
     if (outcome.kind !== 'code') {
@@ -125,10 +132,29 @@ export function KeyboardScan({ onOpenCabinet }: { onOpenCabinet: () => void }) {
       return;
     }
 
-    setPhase({ kind: 'sending' });
     closeScanner();
+    setPhase({ kind: 'locating' });
+    // Точка — полученная во время скана, если она ещё свежая, иначе
+    // новая, уже после него. Ожидание ограничено сроком кода с экрана.
+    const fix = await fixAfterScan(locating, scannedAt, {
+      timeoutMs: isSticker(outcome.value) ? STICKER_LOCATE_MS : DYNAMIC_CODE_LOCATE_MS,
+    });
+    if (!alive.current) return;
 
-    const payload = buildPayload(outcome.value, attempt.current, position);
+    if (!fix.ok) {
+      setPhase({
+        kind: 'failed',
+        title: FIX_PROBLEMS[fix.problem].title,
+        message:
+          fix.problem === 'unavailable'
+            ? 'Разрешите Telegram доступ к местоположению и попробуйте снова. Без него отметка из этой кнопки не отправляется.'
+            : FIX_PROBLEMS[fix.problem].message,
+      });
+      return;
+    }
+
+    setPhase({ kind: 'sending' });
+    const payload = buildPayload(outcome.value, attempt.current, fix.position);
     if (payload === null) {
       setPhase({
         kind: 'failed',
@@ -247,7 +273,7 @@ const TITLES: Record<'locating' | 'scanning' | 'sending', string> = {
 export function buildPayload(
   qr: string,
   clientEventId: string,
-  position: Position,
+  position: Pick<Position, 'latitude' | 'longitude' | 'accuracy'>,
 ): string | null {
   const code = qr.trim();
   if (!code || code.length > 512) return null;

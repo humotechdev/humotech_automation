@@ -161,21 +161,6 @@ class TestPresence:
         # Незакрытой сессии не назначается выдуманное время выхода.
         assert row.last_exit_at is None
 
-    def test_probation_employee_is_part_of_the_shift(
-        self, service, attendance_actor, organization, employee, office
-    ):
-        # Стажёр ходит в тот же офис, в то же время и отмечается тем же
-        # кодом. Отсутствие его в составе смены означало бы, что человек
-        # пришёл и отметился, а «сейчас в офисе» показывает ноль — ровно
-        # так и было, пока состав собирался по одному статусу «ACTIVE».
-        employee.employment_status = "PROBATION"
-        employee.save(update_fields=["employment_status"])
-        open_session(organization, employee, office)
-
-        report = service.presence(attendance_actor, day=DAY, office_id=office.id)
-
-        assert [row.state for row in report.rows] == ["IN_OFFICE"]
-
     def test_terminated_employee_is_not_part_of_the_shift(
         self, service, attendance_actor, organization, employee, office
     ):
@@ -723,14 +708,19 @@ class TestQueryCount:
             closed_session(organization, person, office)
             return person
 
+        # Тринадцатый запрос — запросы выездной работы дня: один на всю
+        # смену, а не на человека. Ещё четыре — единый план дня
+        # (`schedules.day_plan`, аудит 12.10): сотрудники, назначения,
+        # версии графика с днями и перерывами, календарь — тоже по одному
+        # на всю смену.
         hire(1)
-        with django_assert_max_num_queries(12):
+        with django_assert_max_num_queries(17):
             service.presence(attendance_actor, day=DAY, office_id=office.id)
 
         for number in range(2, 12):
             hire(number)
         # Тот же бюджет на вдесятеро большем составе.
-        with django_assert_max_num_queries(12):
+        with django_assert_max_num_queries(17):
             report = service.presence(attendance_actor, day=DAY, office_id=office.id)
         assert len(report.rows) == 11
 

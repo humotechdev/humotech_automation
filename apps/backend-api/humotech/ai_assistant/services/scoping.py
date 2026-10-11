@@ -32,7 +32,7 @@ class EmployeeScope:
 
     @property
     def is_active(self) -> bool:
-        return self.employment_status in ("ACTIVE", "PROBATION")
+        return self.employment_status == "ACTIVE"
 
     def cache_fingerprint(self) -> str:
         """Часть ключа кэша: ответы для разных областей не должны смешиваться.

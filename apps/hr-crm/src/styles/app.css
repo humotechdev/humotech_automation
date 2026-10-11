@@ -8,8 +8,8 @@
  * означали бы вторую палитру, которая рано или поздно разойдётся с
  * первой.
  *
- * Шрифт системный: внешний CDN тянуть нельзя, а собственного файла
- * шрифта в проекте нет.
+ * Шрифт страницы входа — Inter из собственных файлов (`@font-face` в
+ * `crm.css`), как в каркасе кабинета; внешний CDN тянуть нельзя.
  */
 
 :root {
@@ -19,15 +19,19 @@
   --ink-soft: var(--text-heading);
   --muted: var(--text-muted);
   --line: var(--border-default);
-  --page: var(--background);
-  --panel: var(--blue-deep);
-  --panel-text: var(--text-on-deep-muted);
-  --panel-line: var(--border-on-deep);
 
   --radius: 10px;
   --radius-card: 18px;
 
-  color-scheme: light;
+  /* `only` — не просто «светлая», а запрет браузеру затемнять страницу
+     самому, когда в системе включена тёмная тема. */
+  color-scheme: only light;
+}
+
+/* Непрозрачная белая основа под всем документом: поверхности палитры
+   полупрозрачные, и без неё сквозь них проступал бы холст браузера. */
+html {
+  background: var(--white);
 }
 
 * {
@@ -86,13 +90,7 @@ input {
 
 /* --- каркас страницы ---------------------------------------------------- */
 
-/* Оболочка занимает всё окно. Ограничений ширины, полей, тени и
-   скруглений у неё нет: экран целиком состоит из чёрной и белой
-   половины, серой рамки вокруг быть не должно.
-
-   Ограничения остались там, где они нужны, — у формы и у графика.
-   Иначе лишняя ширина монитора растянула бы строку ввода на метр, а
-   высота вытянула бы рисунок вверх. */
+/* Простые экраны вне кабинета: «проверяем вход», «сервер не отвечает». */
 .page {
   min-height: 100dvh;
   display: flex;
@@ -103,14 +101,6 @@ input {
   align-items: center;
   justify-content: center;
   padding: clamp(16px, 3vw, 48px);
-}
-
-.card {
-  width: 100%;
-  min-height: 100dvh;
-  display: grid;
-  grid-template-columns: 39% 1fr;
-  background: var(--surface-1);
 }
 
 /* --- знак --------------------------------------------------------------- */
@@ -159,30 +149,35 @@ input {
   line-height: 1;
 }
 
-/* --- левая панель ------------------------------------------------------- */
+/* --- вход: каркас ------------------------------------------------------- */
+
+/* Две колонки на всё окно: тёмно-синяя фирменная слева, светлая с одной
+   формой справа. Inter — только здесь, у корня страницы: остальная CRM
+   своё семейство выбирает сама. Фон непрозрачный: `--surface-*` в
+   палитре полупрозрачные и рассчитаны на подложку кабинета. */
+.login {
+  min-height: 100dvh;
+  display: grid;
+  grid-template-columns: minmax(320px, 36%) 1fr;
+  background: var(--blue-050);
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  color: var(--text-body);
+}
+
+/* --- вход: левая панель ------------------------------------------------- */
 
 .brand {
-  background: var(--panel);
+  background: var(--blue-deep);
   color: var(--text-on-deep);
-  padding: clamp(32px, 3.2vw, 56px);
+  padding: clamp(40px, 6vh, 96px) clamp(32px, 3.8vw, 64px) clamp(28px, 4vh, 56px);
   display: flex;
   flex-direction: column;
-  gap: clamp(24px, 2.4vw, 36px);
-}
-
-.brand .wordmark__name {
-  color: var(--text-on-deep);
-  font-size: clamp(24px, 2.2vw, 34px);
-}
-
-.brand .wordmark__tagline {
-  color: var(--text-on-deep-muted);
 }
 
 .brand__logo .brand__full {
   /* Пропорции — из самого файла: ширина считается от высоты, надпись не
      сжимается. Тот же приём, что у знака в боковом меню CRM. */
-  height: clamp(44px, 4vw, 60px);
+  height: clamp(52px, 4.6vw, 82px);
   width: auto;
   max-width: 100%;
   object-fit: contain;
@@ -190,193 +185,292 @@ input {
   display: block;
 }
 
-/* Узкого варианта здесь нет: панель входа либо показана целиком,
-   либо скрыта вовсе. */
+/* Узкого знака здесь нет: на телефоне полоса показывает тот же файл
+   целиком, только ниже. */
 .brand__logo .brand__mark {
   display: none;
 }
 
-.brand__head {
-  display: flex;
-  flex-direction: column;
-  gap: 22px;
+.brand__text {
+  margin-top: clamp(36px, 6vh, 72px);
+  max-width: 30em;
+}
+
+.brand__title {
+  margin: 0;
+  font-size: clamp(26px, 2.1vw, 36px);
+  line-height: 1.2;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-on-deep);
 }
 
 .brand__tagline {
-  margin: 0;
-  font-size: clamp(15px, 1.1vw, 17px);
-  color: var(--panel-text);
+  margin: 14px 0 0;
+  max-width: 24em;
+  font-size: clamp(16px, 1.2vw, 20px);
+  line-height: 1.5;
+  color: var(--text-on-deep-muted);
 }
 
-.brand__columns {
+/* Справка «единый рабочий процесс»: три шага на тонкой вертикальной
+   линии. Не карточки и не кнопки — подписи к линии. Линия идёт от
+   центра первого круга до центра последнего; круги залиты фоном панели
+   и перекрывают её, точки стоят там, где линия пересекает разделители. */
+.brand__flow {
+  margin-top: clamp(32px, 5.5vh, 64px);
+  max-width: 420px;
+}
+
+.brand__flow-title {
+  margin: 0 0 clamp(8px, 1.4vh, 14px);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--text-on-deep-muted);
+}
+
+.brand__steps {
+  --step-pad: clamp(12px, 2vh, 20px);
+  --step-circle: 52px;
+  position: relative;
   list-style: none;
-  margin: auto 0 0;
-  padding: 0;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-}
-
-.brand__column {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  padding: 0 14px;
-  border-left: 1px solid var(--panel-line);
-}
-
-.brand__column:first-child {
-  padding-left: 0;
-  border-left: none;
-}
-
-.brand__column-title {
-  font-size: clamp(13px, 1vw, 15px);
-  font-weight: 600;
-  color: var(--text-on-deep);
-  letter-spacing: 0.01em;
-}
-
-.brand__column-hint {
-  font-size: clamp(11px, 0.85vw, 12.5px);
-  color: var(--text-on-deep-muted);
-  line-height: 1.35;
-}
-
-/* --- декоративный график ------------------------------------------------ */
-
-/* Иллюстрация, а не заполнитель пустоты. Прежде здесь стоял
-   `flex: 1 1 auto` без потолка: график съедал всю высоту, оставшуюся от
-   панели, и на высоком мониторе становился вертикальным. Форму держит
-   отношение сторон — то же, что у `viewBox`. */
-.chart {
-  position: relative;
-  flex: none;
-  width: 100%;
-  max-width: 560px;
-  aspect-ratio: 340 / 190;
-  /* Лишняя высота панели уходит в поля вокруг рисунка, а не в него
-     самого: `flex: 1 1 auto` без потолка когда-то делал график
-     вертикальным на высоком мониторе. */
-  margin-block: auto;
-}
-
-.chart__canvas {
-  width: 100%;
-  height: 100%;
-  display: block;
-}
-
-.chart__grid line {
-  stroke: var(--border-on-deep);
-  stroke-width: 1;
-  stroke-dasharray: 3 5;
-  vector-effect: non-scaling-stroke;
-}
-
-.chart__bars rect {
-  fill: var(--surface-1);
-}
-
-.chart__line {
-  fill: none;
-  stroke: var(--text-on-deep-muted);
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  vector-effect: non-scaling-stroke;
-}
-
-.chart__dot {
-  fill: var(--panel);
-  stroke: var(--surface-1);
-  stroke-width: 2;
-  vector-effect: non-scaling-stroke;
-}
-
-.chart__note {
-  position: absolute;
-  top: 0;
-  right: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding: 10px 14px;
-  border: 1px solid var(--panel-line);
-  border-radius: 8px;
-  background: var(--overlay-on-deep);
-  font-size: 11.5px;
-  color: var(--text-on-deep-muted);
-}
-
-/* --- правая половина ---------------------------------------------------- */
-
-.form-side {
-  background: var(--surface-1);
-  padding: clamp(20px, 2.2vw, 36px) clamp(24px, 4vw, 72px) clamp(28px, 3vw, 52px);
-  display: flex;
-  flex-direction: column;
-}
-
-.form-side__top {
-  display: flex;
-  justify-content: flex-end;
-}
-
-.form-side__body {
-  width: min(620px, 100%);
-  margin: auto;
-  padding: clamp(8px, 1.6vw, 20px) 0 0;
-}
-
-/* Знак над формой нужен только там, где чёрной панели нет. */
-.form-side__brand {
-  display: none;
-  margin-bottom: 28px;
-}
-
-.form-side__title {
   margin: 0;
-  font-size: clamp(30px, 2.5vw, 40px);
-  font-weight: 700;
-  letter-spacing: -0.01em;
+  padding: 0;
 }
 
-.form-side__subtitle {
-  margin: 8px 0 0;
-  font-size: clamp(16px, 1.15vw, 18px);
-  color: var(--muted);
+.brand__steps::before {
+  content: '';
+  position: absolute;
+  left: calc(var(--step-circle) / 2);
+  top: calc(var(--step-pad) + var(--step-circle) / 2);
+  bottom: calc(var(--step-pad) + var(--step-circle) / 2);
+  width: 1px;
+  background: var(--border-on-deep);
 }
 
-/* --- переключатель языка ------------------------------------------------ */
-
-.lang {
+.brand__step {
   position: relative;
+  display: grid;
+  grid-template-columns: var(--step-circle) 1fr;
+  align-items: center;
+  column-gap: 22px;
+  padding: var(--step-pad) 0;
 }
 
-.lang__button {
+/* Разделитель начинается от линии, а не от края панели — как в образце. */
+.brand__step:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  left: calc(var(--step-circle) / 2);
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--border-on-deep);
+}
+
+.brand__step:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: calc(var(--step-circle) / 2 - 3.5px);
+  bottom: -3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-on-deep);
+}
+
+.brand__step-icon {
+  position: relative;
+  z-index: 1;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 11px 16px;
-  background: var(--surface-1);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  font-size: clamp(14px, 1.05vw, 15px);
-  font-weight: 500;
+  justify-content: center;
+  width: var(--step-circle);
+  height: var(--step-circle);
+  border: 1.5px solid var(--text-on-deep-muted);
+  border-radius: 50%;
+  background: var(--blue-deep);
+  color: var(--text-on-deep);
+}
+
+.brand__step-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.brand__step-title {
+  font-size: clamp(16px, 1.2vw, 19px);
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--text-on-deep);
+}
+
+.brand__step-hint {
+  font-size: clamp(14px, 1vw, 16px);
+  line-height: 1.4;
+  color: var(--text-on-deep-muted);
+}
+
+/* Низкое окно (масштаб 150–200 % на ноутбуке): справка — первое, чем
+   панель жертвует, чтобы не вытягивать страницу в прокрутку. */
+@media (min-width: 901px) and (max-height: 620px) {
+  .brand__flow {
+    display: none;
+  }
+}
+
+.brand__foot {
+  margin: auto 0 0;
+  padding-top: 32px;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  color: var(--text-on-deep-muted);
+}
+
+/* --- вход: правая половина ---------------------------------------------- */
+
+/* Верх карточки закреплён, а не отцентрован: при центровке сообщение
+   об ошибке приподнимало бы всю форму на половину своей высоты. Отступ
+   считается от обычной высоты карточки (~620 px), так что пустая форма
+   стоит посередине, а ошибка растёт только вниз. */
+.login__side {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  position: relative;
+  /* Сверху не меньше 72 px: там стоит переключатель языка, и в низком
+     окне карточка не должна заезжать под него. */
+  padding: max(72px, calc((100dvh - 620px) / 2)) clamp(20px, 4vw, 72px)
+    clamp(24px, 4vh, 56px);
+}
+
+/* --- вход: язык ---------------------------------------------------------- */
+
+.login__lang {
+  position: absolute;
+  top: 18px;
+  right: clamp(16px, 2.4vw, 32px);
+}
+
+/* Три варианта рядом, выбранный — на голубой подложке. Это группа
+   радиокнопок: сами кнопки скрыты, видны подписи. */
+.login-lang {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--white);
+  box-shadow: 0 1px 2px var(--shadow-lift);
+}
+
+.login-lang__option {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
   cursor: pointer;
+  user-select: none;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 
-.lang__button:hover {
-  border-color: var(--border-strong);
+.login-lang__option:hover {
+  color: var(--text-body);
+  background: var(--hover-bg);
 }
 
-.lang__globe {
-  color: var(--ink-soft);
+.login-lang__option:has(input:checked) {
+  background: var(--blue-100);
+  color: var(--action-text);
 }
 
-.lang__chevron {
-  color: var(--muted);
+.login-lang__option:has(input:focus-visible) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
 }
+
+/* Одна белая форма: основная часть и серый подвал под тонкой линией —
+   одна карточка, а не две. `overflow: hidden` держит скругление у
+   подвала. */
+.login__card {
+  width: min(640px, 100%);
+  margin: 0 auto;
+  background: var(--white);
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  box-shadow: 0 1px 2px var(--shadow-lift), 0 8px 24px var(--shadow-lift);
+  overflow: hidden;
+}
+
+.login__main {
+  padding: clamp(28px, 4.4vh, 52px) clamp(24px, 2.8vw, 46px) clamp(24px, 3.6vh, 36px);
+}
+
+.login__eyebrow {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--action-text);
+}
+
+.login__title {
+  margin: 0;
+  font-size: clamp(26px, 2.2vw, 34px);
+  line-height: 1.2;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-heading);
+}
+
+/* Тонкая линия под подписью отделяет «что это» от «что ввести». */
+.login__subtitle {
+  margin: 8px 0 0;
+  padding-bottom: clamp(20px, 3vh, 28px);
+  border-bottom: 1px solid var(--border-soft);
+  font-size: clamp(15px, 1.15vw, 18px);
+  color: var(--text-muted);
+}
+
+.login__footer {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 20px clamp(24px, 2.8vw, 46px) 22px;
+  border-top: 1px solid var(--border-soft);
+  background: color-mix(in srgb, var(--blue-050) 70%, var(--white));
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.login__footer p {
+  margin: 0;
+}
+
+.login__footer p + p {
+  margin-top: 4px;
+}
+
+.login__shield {
+  flex: none;
+  margin-top: 1px;
+  color: var(--text-muted);
+}
+
+/* --- список языков в шапке кабинета ------------------------------------- */
 
 .lang__list {
   /* Тот же выход, что у фильтров на главной: список появляется, а не
@@ -414,175 +508,177 @@ input {
 
 /* --- форма -------------------------------------------------------------- */
 
-.form {
-  margin-top: clamp(26px, 2.2vw, 34px);
+.login .form {
+  margin-top: clamp(20px, 3vh, 28px);
   display: flex;
   flex-direction: column;
-  gap: clamp(18px, 1.5vw, 22px);
+  gap: clamp(16px, 2.4vh, 22px);
 }
 
-.field {
+.login .field {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.field__label {
-  font-size: clamp(14px, 1vw, 16px);
-  font-weight: 500;
-  color: var(--ink-soft);
+.login .field__label {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-heading);
 }
 
-.field__box {
+.login .field__box {
   display: flex;
   align-items: center;
   gap: 12px;
-  height: clamp(52px, 4vw, 58px);
-  padding: 0 18px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--surface-1);
+  height: clamp(50px, 6.6vh, 56px);
+  padding: 0 8px 0 18px;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  background: var(--white);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 /* Тот же приём, что и в формах CRM: синяя граница плюс мягкое кольцо. */
-.field__box:focus-within {
+.login .field__box:focus-within {
   border-color: var(--focus-ring);
   box-shadow: 0 0 0 3px var(--focus-ring-soft);
 }
 
-.field__icon {
+.login .field__icon {
   color: var(--text-muted);
   flex: none;
 }
 
-.field__input {
+/* Длинный логин прокручивается внутри поля, а не раздвигает карточку:
+   `min-width: 0` снимает со строки ввода её врождённую ширину. */
+.login .field__input {
   flex: 1 1 auto;
   min-width: 0;
+  height: 100%;
+  padding: 0;
   border: 0;
   outline: none;
   background: none;
-  font-size: clamp(15px, 1.15vw, 17px);
+  font-size: 16px;
+  text-overflow: ellipsis;
 }
 
-.field__input::placeholder {
+.login .field__input::placeholder {
   color: var(--disabled-text);
 }
 
-.field__input:disabled {
-  color: var(--muted);
+/* Автозаполнение браузера красит поле своим жёлтым или голубым, а рамка
+   вокруг остаётся белой — поле выглядит чужим. Тень изнутри возвращает
+   ему белый фон, текст остаётся нашим. */
+.login .field__input:-webkit-autofill,
+.login .field__input:-webkit-autofill:hover,
+.login .field__input:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--text-body);
+  box-shadow: 0 0 0 1000px var(--white) inset;
+  caret-color: var(--text-body);
 }
 
-.field__box:has(.field__input[aria-invalid='true']) {
+/* Во время отправки поля только для чтения: значение видно, но уже
+   ушло на сервер. */
+.login .field__input:read-only {
+  color: var(--text-muted);
+}
+
+.login .field__box:has(.field__input[aria-invalid='true']) {
   border-color: var(--status-danger);
 }
 
-.field__box:has(.field__input[aria-invalid='true']):focus-within {
+.login .field__box:has(.field__input[aria-invalid='true']):focus-within {
   border-color: var(--status-danger);
   box-shadow: 0 0 0 3px var(--focus-ring-danger);
 }
 
-.field__reveal {
+.login .field__reveal {
   flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 40px;
+  height: 40px;
   padding: 0;
   border: 0;
-  border-radius: 6px;
+  border-radius: 8px;
   background: none;
   color: var(--text-muted);
   cursor: pointer;
 }
 
-.field__reveal:hover {
-  color: var(--ink);
+.login .field__reveal:hover {
+  color: var(--text-body);
+  background: var(--hover-bg);
 }
 
-.field__error {
+.login .field__error {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 13px;
   color: var(--status-danger);
 }
 
-.remember {
+.login .remember {
+  align-self: flex-start;
   display: inline-flex;
   align-items: center;
   gap: 12px;
-  font-size: clamp(14px, 1.05vw, 16px);
+  font-size: 15px;
   cursor: pointer;
   user-select: none;
 }
 
-.remember input {
-  width: 19px;
-  height: 19px;
+.login .remember input {
+  flex: none;
+  width: 20px;
+  height: 20px;
   margin: 0;
   accent-color: var(--action-bg);
   cursor: pointer;
 }
 
-.form__alert {
+/* Длинное сообщение переносится, а не раздвигает карточку. */
+.login .form__alert {
   margin: 0;
-  padding: 13px 16px;
-  border: 1px solid var(--line);
+  padding: 12px 14px;
+  border: 1px solid var(--border-soft);
   border-left: 3px solid var(--status-danger);
   border-radius: 8px;
-  background: var(--surface-2);
-  font-size: clamp(14px, 1.05vw, 15px);
+  background: var(--red-050);
+  color: var(--text-body);
+  font-size: 14px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
-.submit {
-  height: clamp(54px, 4.2vw, 60px);
+.login .submit {
+  min-height: clamp(50px, 6.6vh, 58px);
+  padding: 0 16px;
   border: 0;
-  border-radius: var(--radius);
+  border-radius: 10px;
   background: var(--action-bg);
   color: var(--text-on-action);
-  font-size: clamp(16px, 1.2vw, 18px);
+  font-size: 17px;
   font-weight: 600;
   cursor: pointer;
   transition: background-color 0.15s ease;
 }
 
-.submit:hover:not(:disabled) {
+.login .submit:hover:not(:disabled) {
   background: var(--action-bg-hover);
 }
 
-.submit:active:not(:disabled) {
+.login .submit:active:not(:disabled) {
   background: var(--action-bg-pressed);
 }
 
-.submit:disabled {
-  background: var(--disabled-bg);
-  color: var(--disabled-text);
+/* Кнопка выключена только на время отправки. Цвет остаётся синим, а не
+   серым: серая кнопка читается как «нельзя», а здесь «уже идёт». */
+.login .submit:disabled {
+  opacity: 0.75;
   cursor: progress;
-}
-
-.form-side__footer {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  margin-top: clamp(26px, 2.2vw, 34px);
-  padding-top: clamp(20px, 1.8vw, 26px);
-  border-top: 1px solid var(--line);
-  color: var(--muted);
-  font-size: clamp(13.5px, 1vw, 15px);
-}
-
-.form-side__footer p {
-  margin: 0 0 4px;
-}
-
-.form-side__footer p:last-child {
-  margin-bottom: 0;
-}
-
-.form-side__shield {
-  flex: none;
-  margin-top: 2px;
-  color: var(--text-muted);
 }
 
 /* --- временная страница после входа ------------------------------------- */
@@ -642,41 +738,80 @@ input {
 
 /* --- узкие экраны ------------------------------------------------------- */
 
+/* Ниже 900 px панель становится полосой со знаком: на телефоне первым
+   виден вход, а не синий экран над ним. */
 @media (max-width: 900px) {
-  .card {
+  .login {
+    position: relative;
     grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
   }
 
-  /* Чёрная панель декоративна. Порог именно здесь: на 1024×768 обе
-     половины ещё помещаются и страница выглядит как в макете, а ниже
-     панель начинает отнимать у формы больше, чем добавляет. */
+  /* На телефоне язык — в тёмной полосе справа от знака, а не над
+     формой: форма остаётся первым, что видно под полосой. */
+  .login__side {
+    position: static;
+  }
+
+  .login__lang {
+    top: 14px;
+    right: 16px;
+  }
+
+  .login-lang {
+    border-color: var(--border-on-deep);
+    background: var(--overlay-on-deep);
+    box-shadow: none;
+  }
+
+  .login-lang__option {
+    min-width: 36px;
+    padding: 0 8px;
+    color: var(--text-on-deep-muted);
+  }
+
+  .login-lang__option:hover {
+    color: var(--text-on-deep);
+    background: var(--overlay-on-deep);
+  }
+
+  .login-lang__option:has(input:checked) {
+    background: var(--white);
+    color: var(--blue-deep);
+  }
+
   .brand {
+    padding: 14px 20px;
+  }
+
+  .brand__logo .brand__full {
+    height: 36px;
+  }
+
+  .brand__text,
+  .brand__flow,
+  .brand__foot {
     display: none;
   }
 
-  .form-side__brand {
-    display: block;
+  .login__side {
+    padding: 24px 16px 32px;
   }
 
-  .form-side__body {
-    margin: 0 auto;
-  }
 }
 
-@media (max-width: 560px) {
-  .form-side {
-    padding: 16px 20px 28px;
+@media (max-width: 480px) {
+  .login__main {
+    padding: 22px 18px 20px;
   }
 
-  .wordmark {
-    gap: 14px;
+  .login__footer {
+    padding: 16px 18px 18px;
+    gap: 10px;
+    font-size: 13px;
   }
 
-  .form-side__title {
-    font-size: 26px;
-  }
-
-  .form-side__subtitle {
-    font-size: 15px;
+  .login__title {
+    font-size: 24px;
   }
 }

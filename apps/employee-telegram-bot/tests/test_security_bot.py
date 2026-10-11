@@ -409,14 +409,16 @@ class TestDeepLink:
         token = "Ab-_" + "x" * 39
         assert parse_link_payload("link_" + token) == token
 
-    def test_accept_refused_for_recognized_says_hr(self):
+    def test_accept_says_hr_will_confirm(self):
+        """Согласие доступа не открывает: человеку пишут, что ждём HR."""
         from src.handlers.start.router import accept_link_terms
 
         refusal = Conflict(409, "conflict", "нет",
                            {"reason": "hr_confirmation_required"})
         call = _Call("link:accept")
         asyncio.run(accept_link_terms(call, _Recorder({"accept_link_terms": refusal})))
-        assert call.alerts == [(link_text.LINK_NEEDS_HR, True)]
+        assert call.alerts == [("Условия приняты", False)]
+        assert call.message.answers == [link_text.LINK_NEEDS_HR]
 
 
 # --- 5. Файлы ----------------------------------------------------------------

@@ -1,0 +1,19 @@
+<!doctype html>
+<!--
+  Только для разработки: карточка сотрудника на вымышленных данных, без
+  входа и без сервера. Нужна, чтобы снять вёрстку headless-браузером.
+  В сборку не попадает — Vite собирает только index.html.
+  Параметры: ?tab=overview|attendance|schedule|requests|history
+             &case=full|empty|error|long
+-->
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Карточка сотрудника — просмотр вёрстки</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/dev/employee-card-preview.tsx"></script>
+  </body>
+</html>

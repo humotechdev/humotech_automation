@@ -126,7 +126,7 @@ export function SurveyWizardPage() {
   );
   const [positions] = useBlock((signal) => api.positions(signal), 'wizard-positions', kind === 'POSITION');
   const [staff] = useBlock(
-    // Без отбора по состоянию: «работает» — это и ACTIVE, и PROBATION.
+    // Без отбора по состоянию: берём всех, кого вернёт сервер.
     (signal) => api.employees({ limit: '200' }, signal),
     'wizard-staff', kind === 'EMPLOYEES',
   );

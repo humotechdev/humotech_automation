@@ -1,25 +1,26 @@
 /**
  * Вкладка «Посещаемость» в карточке сотрудника.
  *
- * Вёрстка повторяет эталон 1672×941 (`ChatGPT Image Sep 13, 2026,
- * 03_58_06 PM.png`). Размеры — в `styles/employee-attendance.css`,
- * классы с префиксом `ea-`.
+ * Сверху — период и экспорт, под ними компактная сводка за период и
+ * журнал по дням. Подробности дня раскрываются прямо под его строкой.
+ * Графики прихода и часов — в раскрываемой «Дополнительной статистике»:
+ * они нужны для разбора, а не каждый раз.
  *
- * Период и выбранный день лежат в адресе: ссылка на конкретный день,
- * обновление страницы и кнопка «Назад» показывают то же самое. Переключатель
- * периода живёт в шапке карточки (`AttendanceTools`), а читает тот же адрес.
+ * Период и раскрытый день лежат в адресе: ссылка на конкретный день,
+ * обновление страницы и кнопка «Назад» показывают то же самое.
  *
  * Правил учёта здесь нет. Время в офисе, опоздание и состояние дня
  * считает сервер; на клиенте складываются только средние и распределения
- * из тех же чисел.
+ * из тех же чисел — и только в дополнительной статистике.
  */
 
-import { useMemo } from 'react';
+import { Fragment, type ReactNode, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 
 import * as api from '../../api/crm';
 import { AppIcon, type AppIconName } from '../../components/AppIcon';
 import { AppDateRangePicker } from '../../components/DateRangePicker';
+import { FieldWorkControls } from '../../components/FieldWorkControls';
 import { useBlock } from '../dashboard/data';
 import { clock } from '../time/zone';
 import {
@@ -33,7 +34,8 @@ import {
   stats,
   timeBounds,
 } from './attendance-model';
-import { currentMonth, dayState, duration, todayIso } from './model';
+import { dayCellShort, dayRange, monthStartOf, plural, todayIn } from './card-model';
+import { dayState, duration } from './model';
 import '../../styles/employee-attendance.css';
 
 type Rights = { attendance: boolean; export: boolean; correct: boolean };
@@ -54,8 +56,8 @@ const MONTHS = [
 const MONTHS_SHORT = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
 const MONTH_TITLE = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
 
-/** Период из адреса. Один источник и для шапки, и для вкладки. */
-function usePeriod() {
+/** Период из адреса. «Сегодня» — по поясу офиса, а не браузера. */
+function usePeriod(today: string) {
   const [params, setParams] = useSearchParams();
   const patch = (changes: Record<string, string | null>) =>
     setParams(
@@ -73,44 +75,20 @@ function usePeriod() {
   const preset: PresetKey = PRESETS.some((one) => one.key === raw) ? (raw as PresetKey) : 'month';
   const from = params.get('from');
   const to = params.get('to');
-  const range = useMemo(() => bounds(preset, from, to), [preset, from, to]);
+  const range = useMemo(() => bounds(preset, from, to, today), [preset, from, to, today]);
   return { params, patch, preset, range };
 }
 
-/** Переключатель периода, даты и экспорт — справа в шапке карточки. */
-export function AttendanceTools({ id, canExport }: { id: string; canExport: boolean }) {
-  const { patch, preset, range } = usePeriod();
-  return (
-    <div className="ea-tools">
-      <div className="ea-seg" role="group" aria-label="Период">
-        {PRESETS.map((item) => (
-          <button
-            key={item.key}
-            type="button"
-            aria-pressed={preset === item.key}
-            className={preset === item.key ? 'ea-seg__one ea-seg__one--on' : 'ea-seg__one'}
-            onClick={() => patch({ period: item.key === 'month' ? null : item.key, day: null })}
-          >
-            {item.title}
-          </button>
-        ))}
-      </div>
-      <AppDateRangePicker className="ea-dates" label="Период посещаемости" now={todayIso()} from={range.first} to={range.last}
-        onFromChange={(from) => patch({ period: 'range', from, to: range.last, day: null })}
-        onToChange={(to) => patch({ period: 'range', from: range.first, to, day: null })} />
-      {canExport && (
-        <Link className="ea-export"
-              to={`/reports?kind=sessions&employee_id=${id}&date_from=${range.first}&date_to=${range.last}`}>
-          <AppIcon name="download" size={20} />
-          Экспорт
-        </Link>
-      )}
-    </div>
-  );
-}
-
-export function Attendance({ id, rights, zone }: { id: string; rights: Rights; zone: string }) {
-  const { params, patch, preset, range } = usePeriod();
+export function Attendance({ id, name, rights, zone }: {
+  id: string;
+  name: string;
+  rights: Rights;
+  /** Пояс офиса сотрудника: по нему «сегодня» и границы недели и месяца. */
+  zone: string;
+}) {
+  const today = todayIn(zone);
+  const { params, patch, preset, range } = usePeriod(today);
+  const [extra, setExtra] = useState(false);
 
   const [journal, reloadJournal, journalState] = useBlock(
     (signal) => api.attendanceDaily({ employee_id: id, date_from: range.first, date_to: range.last }, signal),
@@ -118,7 +96,7 @@ export function Attendance({ id, rights, zone }: { id: string; rights: Rights; z
     rights.attendance,
   );
 
-  // График назначен сотруднику, а не периоду: при смене недели не перезапрашивается.
+  // График нужен только дополнительной статистике (плановые линии).
   const [plan] = useBlock(
     (signal) =>
       api.employeeSchedules(id, signal).then((rows) => {
@@ -127,107 +105,186 @@ export function Attendance({ id, rights, zone }: { id: string; rights: Rights; z
         return current ? api.workSchedule(current.schedule_id, signal) : null;
       }),
     `plan|${id}`,
-    rights.attendance,
+    rights.attendance && extra,
   );
 
   if (!rights.attendance) {
     return (
-      <p className="ea-empty ea-empty--bad">
+      <p className="ec-note ec-note--bad">
         Нет права на посещаемость. Это отдельное разрешение — attendance.read.
       </p>
     );
   }
 
   const report = journal.state === 'ready' ? journal.data : null;
+  // Без назначения за период сервер отдаёт нули с пояснением — это «не с
+  // чем считать», а не подтверждённые нули: в сводке прочерк.
+  const measured = report && !(report.note && report.days.length === 0) ? report : null;
   const schedule = plan.state === 'ready' ? plan.data : null;
-  const days = report ? points(report.days, planByWeekday(schedule), todayIso()) : [];
-  const sums = stats(days);
-  // Без выбора в адресе показывается последний прошедший день с отметками.
-  const latest = [...days].reverse().find((one) => !one.future && one.entry !== null);
-  const picked = params.get('day') ?? latest?.day ?? null;
-  const chosen = days.find((one) => one.day === picked) ?? null;
-  const pick = (day: string) => patch({ day });
+  const days = report ? points(report.days, planByWeekday(schedule), today) : [];
+  // В журнале — прошедшие дни, свежие сверху: «впереди» нечего проверять.
+  const shown = days.filter((one) => !one.future).reverse();
+  const opened = params.get('day');
+  const toggle = (day: string) => patch({ day: opened === day ? null : day });
+  const fieldSeconds = days
+    .filter((one) => one.row.state === 'FIELD_WORK')
+    .reduce((sum, one) => sum + one.row.seconds, 0);
 
   return (
-    <div className={journalState.busy ? 'ea ea--busy' : 'ea'}>
-      {journal.state === 'error' && !report && (
-        <p className="ea-empty ea-empty--bad">
-          Не удалось получить журнал.{' '}
-          <button type="button" className="link" onClick={reloadJournal}>Повторить</button>
-        </p>
-      )}
-      {journalState.failed && report && (
-        <p className="ea-note" role="status">
-          Показаны прежние данные: обновить не удалось.{' '}
-          <button type="button" className="link" onClick={reloadJournal}>Повторить</button>
-        </p>
-      )}
-      {report?.note && <p className="ea-note">{report.note}</p>}
-
-      <Metrics sums={sums} report={report} />
-
-      <div className="ea-grid">
-        <div className="ea-col">
-          <section className="ea-panel ea-panel--timeline">
-            <h3 className="ea-title">Приход и уход</h3>
-            <Timeline days={days} picked={picked} onPick={pick} />
-          </section>
-          <section className="ea-panel ea-panel--hours">
-            <h3 className="ea-title">Часы по дням</h3>
-            <Hours days={days} picked={picked} onPick={pick} />
-          </section>
+    <div className={journalState.busy ? 'ec-att ec-att--busy' : 'ec-att'}>
+      <div className="ec-toolbar">
+        <span className="ec-toolbar__label">Период</span>
+        <div className="ec-seg" role="group" aria-label="Период">
+          {PRESETS.map((item) => (
+            <button key={item.key} type="button" aria-pressed={preset === item.key}
+                    className={preset === item.key ? 'ec-seg__one ec-seg__one--on' : 'ec-seg__one'}
+                    onClick={() => patch({ period: item.key === 'month' ? null : item.key, day: null })}>
+              {item.title}
+            </button>
+          ))}
         </div>
-        <div className="ea-col">
-          <Usual days={days} sums={sums} preset={preset} />
-          <DayPanel id={id} point={chosen} zone={zone} />
-        </div>
+        <AppDateRangePicker className="ec-dates" label="Период посещаемости" now={today}
+          from={range.first} to={range.last}
+          onFromChange={(from) => patch({ period: 'range', from, to: range.last, day: null })}
+          onToChange={(to) => patch({ period: 'range', from: range.first, to, day: null })} />
+        <span className="ec-toolbar__gap" />
+        {rights.export && (
+          // Выгрузку собирает сервер — тем же механизмом и с теми же
+          // правами, что и раздел «Отчёты»; здесь только готовые фильтры.
+          <Link className="ec-btn ec-btn--line"
+                to={`/reports?kind=sessions&employee_id=${id}&date_from=${range.first}&date_to=${range.last}`}>
+            <AppIcon name="download" size={18} />
+            Экспорт
+          </Link>
+        )}
       </div>
 
-      <section className="ea-panel ea-panel--journal">
-        <div className="ea-journal__head">
-          <h3 className="ea-title">Журнал по дням</h3>
-          <ul className="ea-keys">
-            <li><i className="ea-key ea-key--ok" />Вовремя</li>
-            <li><i className="ea-key ea-key--late" />Опоздание</li>
-            <li><i className="ea-key ea-key--early" />Ранний уход</li>
-            <li><i className="ea-key ea-key--off" />Выходной</li>
-            <li><i className="ea-key ea-key--leave" />Отпуск</li>
-          </ul>
-        </div>
-        <Journal days={days} picked={picked} onPick={pick} loading={journal.state === 'loading' && !report} />
+      {journal.state === 'error' && !report && (
+        <p className="ec-note ec-note--bad" role="alert">
+          {journal.kind === 'validation'
+            ? 'Период задан неверно или слишком длинный — выберите короче.'
+            : 'Не удалось получить журнал.'}{' '}
+          <button type="button" className="ec-link" onClick={reloadJournal}>Повторить</button>
+        </p>
+      )}
+      {journal.state === 'denied' && (
+        <p className="ec-note ec-note--bad">Журнал этого сотрудника закрыт вашими правами.</p>
+      )}
+      {journalState.failed && report && (
+        <p className="ec-note" role="status">
+          Показаны прежние данные: обновить не удалось.{' '}
+          <button type="button" className="ec-link" onClick={reloadJournal}>Повторить</button>
+        </p>
+      )}
+      {report?.note && <p className="ec-note">{report.note}</p>}
+
+      <div className="ec-band" aria-label={`Сводка за ${dayRange(range.first, range.last)}`}>
+        <Stat icon="clock" title="Отработано"
+              value={measured ? duration(measured.totals.seconds) : placeholder(journal.state)}
+              note={[
+                dayRange(range.first, range.last),
+                fieldSeconds > 0 ? `в т. ч. выездная работа ${duration(fieldSeconds)}` : '',
+              ].filter(Boolean).join(' · ')} />
+        <Stat icon="calendar" title="Дней с отметками"
+              value={measured ? String(measured.totals.days_with_marks) : placeholder(journal.state)}
+              note={measured ? `рабочих по графику: ${measured.totals.working_days}` : ''} />
+        <Stat icon="alert" title="Опоздания"
+              value={measured ? String(measured.totals.late_days) : placeholder(journal.state)}
+              note={report && report.totals.late_minutes > 0
+                ? `всего ${report.totals.late_minutes} мин сверх допуска` : ''} />
+      </div>
+      {report && report.totals.open_sessions > 0 && (
+        <p className="ec-note">
+          Открытых сессий: {report.totals.open_sessions}. Их время учтено до момента расчёта
+          и вырастет, пока выход не отмечен.
+        </p>
+      )}
+
+      <h3 className="ec-h3">Журнал по дням</h3>
+      <Journal days={shown} opened={opened} onToggle={toggle}
+               loading={journal.state === 'loading' && !report}
+               render={(point) => (
+                 <DayDetails id={id} name={name} point={point} zone={zone}
+                             canCorrect={rights.correct} onChanged={reloadJournal} />
+               )} />
+
+      <section className="ec-more">
+        <button type="button" className="ec-more__head" aria-expanded={extra}
+                onClick={() => setExtra((was) => !was)}>
+          <AppIcon name={extra ? 'chevron' : 'next'} size={18} />
+          Дополнительная статистика
+        </button>
+        {extra && (
+          <div className="ea ec-more__body">
+            {report ? (
+              <>
+                <Metrics sums={stats(days)} />
+                <section className="ea-panel ea-panel--timeline">
+                  <h3 className="ea-title">Приход и уход</h3>
+                  <Timeline days={days} picked={opened} onPick={(day) => patch({ day })} />
+                </section>
+                <section className="ea-panel ea-panel--hours">
+                  <h3 className="ea-title">Часы по дням</h3>
+                  <Hours days={days} picked={opened} onPick={(day) => patch({ day })} />
+                </section>
+                <Usual days={days} sums={stats(days)} preset={preset} />
+              </>
+            ) : (
+              <p className="ec-empty">Статистика появится, когда загрузится журнал.</p>
+            )}
+          </div>
+        )}
       </section>
     </div>
   );
 }
 
-/** Границы периода. «Период» берёт даты из адреса, остальные считаются. */
-function bounds(preset: string, from: string | null, to: string | null): { first: string; last: string } {
-  if (preset === 'range' && from && to) return { first: from, last: to };
-  if (preset === 'week') {
-    const now = new Date();
-    const monday = new Date(now);
-    monday.setDate(now.getDate() - ((now.getDay() + 6) % 7));
-    const sunday = new Date(monday);
-    sunday.setDate(monday.getDate() + 6);
-    return { first: iso(monday), last: iso(sunday) };
-  }
-  return currentMonth();
+/** Пока данных нет: загрузка — многоточие, отказ или сбой — прочерк, не ноль. */
+function placeholder(state: string): string {
+  return state === 'loading' ? '…' : '—';
 }
 
-const iso = (date: Date): string =>
-  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-
-// --- показатели ------------------------------------------------------------------
-
-function Metrics({ sums, report }: { sums: ReturnType<typeof stats>; report: api.DailyReport | null }) {
+function Stat({ icon, title, value, note }: {
+  icon: AppIconName; title: string; value: string; note: string;
+}) {
   return (
-    <div className="ea-metrics" aria-label="Показатели за период">
+    <div className="ec-stat">
+      <AppIcon name={icon} size={20} />
+      <span className="ec-stat__text">
+        <span className="ec-stat__title">{title}</span>
+        <strong className="ec-stat__value">{value}</strong>
+        {note && <span className="ec-stat__note">{note}</span>}
+      </span>
+    </div>
+  );
+}
+
+/** Границы периода. «Сегодня» приходит в поясе офиса. */
+function bounds(preset: string, from: string | null, to: string | null, today: string): { first: string; last: string } {
+  if (preset === 'range' && from && to) return { first: from, last: to };
+  const base = new Date(`${today}T12:00:00Z`);
+  if (preset === 'week') {
+    const monday = new Date(base);
+    monday.setUTCDate(base.getUTCDate() - ((base.getUTCDay() + 6) % 7));
+    const sunday = new Date(monday);
+    sunday.setUTCDate(monday.getUTCDate() + 6);
+    return { first: isoUtc(monday), last: isoUtc(sunday) };
+  }
+  const last = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth() + 1, 0, 12));
+  return { first: monthStartOf(today), last: isoUtc(last) };
+}
+
+const isoUtc = (date: Date): string => date.toISOString().slice(0, 10);
+
+// --- дополнительные показатели ----------------------------------------------------
+
+function Metrics({ sums }: { sums: ReturnType<typeof stats> }) {
+  return (
+    <div className="ea-metrics" aria-label="Средние за период">
       <Metric icon="users" title="Средний приход" value={hhmm(sums.averageEntry)} />
       <Metric icon="logout" title="Средний уход" value={hhmm(sums.averageExit)} tone="green" />
-      <Metric icon="clock" title="Отработано"
-              value={report ? `${Math.round(report.totals.seconds / 3600)} ч` : '—'} />
-      <Metric icon="alert" title="Опоздания" value={String(sums.lateDays)}
-              tone={sums.lateDays > 0 ? 'warn' : undefined} />
+      <Metric icon="alert" title="Ранних уходов" value={String(sums.earlyDays)}
+              tone={sums.earlyDays > 0 ? 'warn' : undefined} />
       <Metric icon="chart" title="Выполнение графика"
               value={sums.completion === null ? '—' : `${sums.completion}%`} />
     </div>
@@ -388,7 +445,7 @@ function Hours({ days, picked, onPick }: {
 
   return (
     <>
-      <svg className="ea-svg" viewBox={`0 0 ${HB.w} ${HB.h}`} role="img" aria-label="Часы в офисе по дням">
+      <svg className="ea-svg" viewBox={`0 0 ${HB.w} ${HB.h}`} role="img" aria-label="Засчитанные часы по дням">
         {[0, 4, 8, 12].map((hours) => (
           <text key={hours} className="ea-svg__axis" x={HB.left - 10} y={y(hours * 3600) + 4} textAnchor="end">
             {hours ? `${hours} ч` : '0'}
@@ -551,31 +608,27 @@ function Count({ icon, tone, title, value }: {
   );
 }
 
-// --- выбранный день ----------------------------------------------------------------------
+// --- подробности дня ---------------------------------------------------------------------
 
-function DayPanel({ id, point, zone }: { id: string; point: DayPoint | null; zone: string }) {
-  const day = point?.day ?? '';
-  const [detail] = useBlock(
+function DayDetails({ id, name, point, zone, canCorrect, onChanged }: {
+  id: string; name: string; point: DayPoint; zone: string; canCorrect: boolean; onChanged: () => void;
+}) {
+  const day = point.day;
+  const [detail, reloadDetail] = useBlock(
     (signal) => api.events(
-      { employee_id: id, date_from: day, date_to: day, limit: '50', verification_status: 'ACCEPTED' },
+      { employee_id: id, date_from: day, date_to: day, limit: '50' },
       signal,
     ),
     `day|${id}|${day}`,
-    Boolean(day),
   );
 
-  if (point === null) {
-    return (
-      <section className="ea-panel ea-panel--day">
-        <h3 className="ea-title">Подробности дня</h3>
-        <p className="ea-empty">Выберите день на графике или в журнале.</p>
-      </section>
-    );
-  }
-
   const zoned = point.row.timezone || zone;
+  // Засчитанные отметки: принятые и принятые «на проверку» (REVIEW —
+  // например, тот же сменный код у коллеги с другого адреса). Отклонённые
+  // в день не входят.
   const marks = detail.state === 'ready'
-    ? [...detail.data.items].sort((a, b) => a.occurred_at.localeCompare(b.occurred_at))
+    ? detail.data.items.filter((one) => one.verification_status !== 'REJECTED')
+      .sort((a, b) => a.occurred_at.localeCompare(b.occurred_at))
     : [];
   const late = point.late ?? 0;
   const early = point.early ?? 0;
@@ -584,58 +637,92 @@ function DayPanel({ id, point, zone }: { id: string; point: DayPoint | null; zon
     marks.some((mark) => mark[key] === true) && marks.every((mark) => mark[key] !== false);
 
   return (
-    <section className="ea-panel ea-panel--day">
-      <h3 className="ea-title">{dayLong(point.day)}</h3>
-      <p className="ea-day__sum">
-        <strong>{point.working ? duration(point.row.seconds) : dayState(point.row)}</strong>
-        {late > 0 && <><i>·</i><span className="ea-bad">Опоздание {late} мин</span></>}
-        {early > 0 && <><i>·</i><span className="ea-bad">Ранний уход {early} мин</span></>}
+    <div className="ec-day">
+      <p className="ec-day__sum">
+        <strong>{dayLong(point.day)}</strong>
+        <span>{point.working ? duration(point.row.seconds) : dayState(point.row)}</span>
+        {point.row.state === 'FIELD_WORK' && <span>Выездная работа: засчитана норма графика</span>}
+        {point.row.office_name && <span>{point.row.office_name}</span>}
+        {late > 0 && <span className="ec-bad">Опоздание {late} мин</span>}
+        {early > 0 && <span className="ec-bad">Ранний уход {early} мин</span>}
+        {point.row.conflicting_marks && (
+          <span className="ec-bad">Есть отметки в день отсутствия — проверьте</span>
+        )}
       </p>
 
-      {detail.state === 'loading' && <p className="ea-empty" role="status">Читаем отметки…</p>}
-      {detail.state === 'error' && <p className="ea-empty ea-empty--bad">Не удалось получить отметки дня.</p>}
-      {detail.state === 'ready' && marks.length === 0 && <p className="ea-empty">Отметок за день нет.</p>}
+      <FieldWorkControls employeeId={id} employeeName={name} day={point.day}
+                         scheduledStart={point.row.scheduled_start} scheduledEnd={point.row.scheduled_end}
+                         firstEntryAt={point.row.first_entry_at}
+                         state={point.row.state} summary={point.row.field_work} canCorrect={canCorrect}
+                         onChanged={onChanged} />
+
+      {detail.state === 'loading' && <p className="ec-empty" role="status">Читаем отметки…</p>}
+      {detail.state === 'error' && (
+        <p className="ec-empty ec-bad">
+          Не удалось получить отметки дня.{' '}
+          <button type="button" className="ec-link" onClick={reloadDetail}>Повторить</button>
+        </p>
+      )}
+      {detail.state === 'denied' && <p className="ec-empty">Отметки закрыты вашими правами.</p>}
+      {detail.state === 'ready' && marks.length === 0 && (
+        <p className="ec-empty">
+          Отметок входа и выхода за день нет. Отсутствие отметки само по себе ещё не прогул.
+        </p>
+      )}
 
       {marks.length > 0 && (
         <>
-          <ul className="ea-marks">
+          <ul className="ec-marks">
             {marks.map((mark, at) => {
               const entry = mark.event_type === 'ENTRY';
               const previous = marks.slice(0, at).reverse().find((one) => one.event_type === 'ENTRY');
-              const aside = entry
-                ? at === 0 && late > 0 ? `${late} мин` : ''
-                : previous
-                  ? duration(Math.round((Date.parse(mark.occurred_at) - Date.parse(previous.occurred_at)) / 1000))
-                  : '';
+              const aside = !entry && previous
+                ? duration(Math.round((Date.parse(mark.occurred_at) - Date.parse(previous.occurred_at)) / 1000))
+                : '';
               const where = mark.qr_point_name ?? mark.office_name;
+              const flags = (mark.anomalies ?? []).map((code) => ANOMALY_TEXT[code] ?? code);
               return (
-                <li key={mark.id} className={entry ? 'ea-marks__in' : 'ea-marks__out'}>
+                <li key={mark.id} className={entry ? 'ec-marks__in' : 'ec-marks__out'}>
                   <b>{clock(mark.occurred_at, zoned)}</b>
-                  <span>{entry ? 'Вход' : 'Выход'}{where ? ` · ${where}` : ''}</span>
+                  <span className="ec-marks__what">{entry ? 'Вход' : 'Выход'}{where ? ` · ${where}` : ''}</span>
                   <small>{aside}</small>
+                  {flags.length > 0 && (
+                    <span className="ec-bad ec-marks__flag" title={flags.join('\n')}>
+                      Проверить: {flags.join('; ')}
+                    </span>
+                  )}
                 </li>
               );
             })}
           </ul>
-          <div className="ea-checks">
+          <div className="ec-checks">
             <Check ok={confirmed('inside_geofence')} yes="Геозона подтверждена" no="Геозона не подтверждена" />
             <Check ok={confirmed('inside_office_network')} yes="Сеть офиса подтверждена" no="Сеть офиса не подтверждена" />
           </div>
         </>
       )}
 
-      <Link className="ea-daylink" to={`/attendance?date=${point.day}&employee=${id}`}>
-        <AppIcon name="doc" size={18} />
+      <Link className="ec-link ec-link--go" to={`/attendance?date=${point.day}&employee=${id}`}>
         Открыть полный журнал дня
       </Link>
-    </section>
+    </div>
   );
 }
 
+/**
+ * Признаки принятой отметки, на которые стоит взглянуть. Не приговор:
+ * у каждого бывает честное объяснение, поэтому отметка остаётся в силе.
+ */
+const ANOMALY_TEXT: Record<string, string> = {
+  NO_LOCATION: 'место не проверялось',
+  PERFECT_ACCURACY: 'подозрительно точная геолокация',
+  SHARED_CODE: 'тот же код у другого сотрудника с другого адреса',
+};
+
 function Check({ ok, yes, no }: { ok: boolean; yes: string; no: string }) {
   return (
-    <span className={ok ? 'ea-check ea-check--ok' : 'ea-check'}>
-      <AppIcon name={ok ? 'check' : 'alert'} size={18} />
+    <span className={ok ? 'ec-check ec-check--ok' : 'ec-check'}>
+      <AppIcon name={ok ? 'check' : 'alert'} size={16} />
       {ok ? yes : no}
     </span>
   );
@@ -643,55 +730,57 @@ function Check({ ok, yes, no }: { ok: boolean; yes: string; no: string }) {
 
 // --- журнал ------------------------------------------------------------------------------
 
-function Journal({ days, picked, onPick, loading }: {
+function Journal({ days, opened, onToggle, loading, render }: {
   days: DayPoint[];
-  picked: string | null;
-  onPick: (day: string) => void;
+  opened: string | null;
+  onToggle: (day: string) => void;
   loading: boolean;
+  render: (point: DayPoint) => ReactNode;
 }) {
-  if (loading) return <p className="ea-empty" role="status">Считаем журнал…</p>;
-  if (days.length === 0) return <p className="ea-empty">За период строк нет.</p>;
+  if (loading) return <p className="ec-empty" role="status">Считаем журнал…</p>;
+  if (days.length === 0) return <p className="ec-empty">За период прошедших дней нет.</p>;
 
   return (
-    <div className="ea-table-wrap">
-      <table className="ea-table" aria-label="Журнал по дням">
+    <div className="ec-table-wrap">
+      <table className="ec-table ec-table--journal">
+        <caption className="ec-sr">Журнал по дням</caption>
         <thead>
           <tr>
-            <th scope="col">Дата</th>
-            <th scope="col">Первый вход</th>
-            <th scope="col">Последний выход</th>
-            <th scope="col">В офисе</th>
-            <th scope="col">Отклонение</th>
+            <th scope="col">День</th>
+            <th scope="col">Приход</th>
+            <th scope="col">Уход</th>
+            <th scope="col">Засчитано</th>
             <th scope="col">Статус</th>
-            <th scope="col" aria-label="Действия" />
+            <th scope="col"><span className="ec-sr">Подробности</span></th>
           </tr>
         </thead>
         <tbody>
           {days.map((point) => {
             const status = statusOf(point);
-            const late = point.late ?? 0;
-            const early = point.early ?? 0;
-            const worked = point.working && !point.future;
+            const worked = point.working && point.entry !== null;
+            const open = opened === point.day;
             return (
-              <tr key={point.day} tabIndex={0}
-                  className={point.day === picked ? 'ea-table__on' : undefined}
-                  onClick={() => onPick(point.day)}
-                  onKeyDown={(event) => { if (event.key === 'Enter') onPick(point.day); }}>
-                <td>{dayCell(point.day)}</td>
-                <td>{worked ? hhmm(point.entry) : '—'}</td>
-                <td>{worked ? (point.open ? 'не отмечен' : hhmm(point.exit)) : '—'}</td>
-                <td>{worked && point.row.seconds > 0 ? padded(point.row.seconds) : '—'}</td>
-                <td className={late > 0 || early > 0 ? 'ea-bad' : undefined}>
-                  {late > 0 ? `Опоздание ${late} мин` : early > 0 ? `Ранний уход ${early} мин` : '—'}
-                </td>
-                <td><span className={`ea-state ea-state--${status.tone}`}>{status.title}</span></td>
-                <td>
-                  <button type="button" className="ea-dots" aria-label="Подробности дня"
-                          onClick={(event) => { event.stopPropagation(); onPick(point.day); }}>
-                    <i /><i /><i />
-                  </button>
-                </td>
-              </tr>
+              <Fragment key={point.day}>
+                <tr className={open ? 'ec-row ec-row--open' : 'ec-row'}>
+                  <td className="ec-nowrap">{dayCellShort(point.day)}</td>
+                  <td data-label="Приход">{worked ? hhmm(point.entry) : '—'}</td>
+                  <td data-label="Уход">{worked ? (point.open ? 'не отмечен' : hhmm(point.exit)) : '—'}</td>
+                  <td className="ec-nowrap" data-label="Засчитано">{counted(point)}</td>
+                  <td><span className={`ec-dot ec-dot--${status.tone}`}>{status.title}</span></td>
+                  <td className="ec-act">
+                    <button type="button" className="ec-link" aria-expanded={open}
+                            aria-label={`${open ? 'Скрыть' : 'Открыть'} ${dayLong(point.day)}`}
+                            onClick={() => onToggle(point.day)}>
+                      {open ? 'Скрыть' : 'Открыть'}
+                    </button>
+                  </td>
+                </tr>
+                {open && (
+                  <tr className="ec-row-more">
+                    <td colSpan={6}>{render(point)}</td>
+                  </tr>
+                )}
+              </Fragment>
             );
           })}
         </tbody>
@@ -700,17 +789,31 @@ function Journal({ days, picked, onPick, loading }: {
   );
 }
 
+/** Засчитанное время. Отпуск и выходной — не «0 ч», а прочерк. */
+function counted(point: DayPoint): string {
+  const state = point.row.state;
+  if (state === 'DAY_OFF' || state === 'NO_SCHEDULE' || state === 'VACATION'
+      || state === 'SICK_LEAVE' || state === 'OTHER_ABSENCE') {
+    return point.row.seconds > 0 ? duration(point.row.seconds) : '—';
+  }
+  return duration(point.row.seconds);
+}
+
 function statusOf(point: DayPoint): { title: string; tone: string } {
   const state = point.row.state;
-  if (point.future) return { title: 'Впереди', tone: 'off' };
   if (state === 'VACATION' || state === 'SICK_LEAVE' || state === 'OTHER_ABSENCE') {
     return { title: dayState(point.row), tone: 'leave' };
   }
   if (state === 'DAY_OFF') return { title: 'Выходной', tone: 'off' };
   if (state === 'NO_SCHEDULE') return { title: 'Без графика', tone: 'off' };
-  if (state === 'NOT_COME') return { title: 'Нет отметки', tone: 'bad' };
+  // Нет отметки — ещё не прогул: серым, а не красным.
+  if (state === 'NOT_COME') return { title: 'Нет отметки', tone: 'none' };
+  if (state === 'FIELD_WORK_PENDING') return { title: 'Ждёт подтверждения выезда', tone: 'early' };
+  if (state === 'FIELD_WORK') return { title: 'Выездная работа', tone: 'ok' };
+  if (point.open && state === 'IN_OFFICE') return { title: 'В офисе', tone: 'ok' };
   if ((point.late ?? 0) > 0) return { title: 'Опоздание', tone: 'late' };
   if ((point.early ?? 0) > 0) return { title: 'Ранний уход', tone: 'early' };
+  if (point.late === null) return { title: dayState(point.row), tone: 'ok' };
   return { title: 'Вовремя', tone: 'ok' };
 }
 
@@ -718,7 +821,7 @@ function statusOf(point: DayPoint): { title: string; tone: string } {
 
 function parts(day: string): { year: number; month: number; date: number; weekday: string } {
   const [year = 0, month = 1, date = 1] = day.split('-').map(Number);
-  return { year, month, date, weekday: WEEKDAY[new Date(`${day}T12:00:00`).getDay()] ?? '' };
+  return { year, month, date, weekday: WEEKDAY[new Date(`${day}T12:00:00Z`).getUTCDay()] ?? '' };
 }
 
 /** «13 сентября 2026 (Вт)». */
@@ -733,12 +836,6 @@ function dayShort(day: string): string {
   return `${p.date} ${MONTHS_SHORT[p.month - 1] ?? ''} ${p.year} (${p.weekday})`;
 }
 
-/** «01.09.2026 (Вт)». */
-function dayCell(day: string): string {
-  const p = parts(day);
-  return `${String(p.date).padStart(2, '0')}.${String(p.month).padStart(2, '0')}.${p.year} (${p.weekday})`;
-}
-
 /** «Сен 2026» или «Авг – Сен 2026». */
 function monthTitle(days: DayPoint[]): string {
   const first = days[0];
@@ -751,17 +848,8 @@ function monthTitle(days: DayPoint[]): string {
   return a.month === b.month && a.year === b.year ? `${one} ${a.year}` : `${one} – ${two} ${b.year}`;
 }
 
-/** «9 ч 09 мин» — ровные колонки в журнале. */
-function padded(seconds: number): string {
-  // Сначала целые минуты, потом часы: иначе 8 ч 59,5 мин давали «8 ч 60 мин».
-  const total = Math.round(seconds / 60);
-  return `${Math.floor(total / 60)} ч ${String(total % 60).padStart(2, '0')} мин`;
-}
-
 function daysWord(n: number): string {
-  if (n % 10 === 1 && n % 100 !== 11) return 'день';
-  if ([2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100)) return 'дня';
-  return 'дней';
+  return plural(n, 'день', 'дня', 'дней');
 }
 
 export type { Plan };

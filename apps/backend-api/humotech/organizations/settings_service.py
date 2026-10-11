@@ -170,7 +170,7 @@ class OrganizationSettingsService(BaseService):
         молча отменил бы работу первого: он отправил бы свою копию
         значений целиком.
         """
-        self.access.require(actor, "settings.manage")
+        self.access.require_whole_organization(actor, "settings.manage")
         if key not in KNOWN_KEYS:
             raise NotFound(
                 "Неизвестный ключ настроек",

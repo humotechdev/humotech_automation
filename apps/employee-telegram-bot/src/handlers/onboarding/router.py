@@ -224,8 +224,7 @@ async def begin(callback: CallbackQuery, client: SelfServiceClient) -> None:
         try:
             await client.accept_link_terms(telegram_user_id=callback.from_user.id)
         except Conflict:
-            # Согласие доступа не открыло: привязку подтверждает HR
-            # (человека узнали по имени в Telegram, а не по ссылке).
+            # Согласие доступа не открывает: привязку всегда подтверждает HR.
             await callback.message.answer(base_text.PENDING)
             return
         state = await client.onboarding_start(callback.from_user.id)

@@ -219,10 +219,11 @@ export interface ScanResponse {
   office_name: string | null;
   point_name: string | null;
   occurred_at: string | null;
-  /** Сколько метров до офиса вышло по координатам. `null` — не проверялось. */
-  distance_m: number | null;
-  /** Радиус офиса, с которым сравнивали. */
-  radius_m: number | null;
+  /**
+   * Чем проверяли место: кругом, контуром территории или ничем.
+   * Расстояния в ответе нет — оно остаётся только в записи отметки.
+   */
+  geofence_kind?: 'CIRCLE' | 'POLYGON' | null;
   session: {
     id: string;
     started_at: string;
@@ -359,21 +360,47 @@ export interface SurveyBrief {
  * проверки «человек в пределах ста метров от офиса» больше не нужно.
  */
 export function placeOf(
-  position?: { latitude: number; longitude: number; accuracy: number } | null,
-): { latitude: number; longitude: number; accuracy_m: number } | Record<string, never> {
+  position?: PlaceInput | null,
+  now: number = Date.now(),
+): Place | Record<string, never> {
   if (!position) return {};
   const { latitude, longitude, accuracy } = position;
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return {};
-  return {
+  const place: Place = {
     latitude: Number(latitude.toFixed(6)),
     longitude: Number(longitude.toFixed(6)),
-    // Погрешность сервер сравнивает с радиусом офиса, поэтому её тоже
-    // надо уложить в объявленную точность — двух знаков хватает с
-    // запасом, метры здесь не делят на сотые всерьёз.
-    accuracy_m: Number(
-      (Number.isFinite(accuracy) && accuracy > 0 ? accuracy : 30).toFixed(2),
-    ),
   };
+  // Погрешность сервер сравнивает с зоной офиса, поэтому её тоже надо
+  // уложить в объявленную точность — двух знаков хватает с запасом.
+  // Не сообщённая телефоном погрешность не подставляется ничем: раньше
+  // здесь стояло «30», и грубая точка уходила на сервер уверенной.
+  if (Number.isFinite(accuracy) && accuracy > 0) {
+    place.accuracy_m = Number(accuracy.toFixed(2));
+  }
+  // Возраст точки в момент отправки и её источник. Сервер отвергает
+  // устаревшую точку и сохраняет обе величины для разбора спорной
+  // отметки; доказательством присутствия они не являются.
+  if (typeof position.capturedAt === 'number' && Number.isFinite(position.capturedAt)) {
+    place.location_age_s = Number((Math.max(0, now - position.capturedAt) / 1000).toFixed(2));
+  }
+  if (position.source) place.location_source = position.source;
+  return place;
+}
+
+interface PlaceInput {
+  latitude: number;
+  longitude: number;
+  accuracy: number;
+  capturedAt?: number;
+  source?: 'telegram' | 'browser';
+}
+
+interface Place {
+  latitude: number;
+  longitude: number;
+  accuracy_m?: number;
+  location_age_s?: number;
+  location_source?: 'telegram' | 'browser';
 }
 
 /**
@@ -436,7 +463,7 @@ export const api = {
   scan: (
     token: string,
     clientEventId: string,
-    position?: { latitude: number; longitude: number; accuracy: number } | null,
+    position?: PlaceInput | null,
   ) =>
     call<ScanResponse>('/me/attendance/scan', {
       method: 'POST',

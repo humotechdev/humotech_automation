@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from decimal import Decimal
 
 import pytest
 from django.db import IntegrityError, connection, transaction
@@ -26,6 +27,11 @@ from humotech.regions.models import Region
 from humotech.regions.services import RegionService
 
 pytestmark = pytest.mark.django_db
+
+# Офис без местоположения не заводится: каждому созданному здесь нужна
+# точка с радиусом. Сами тесты проверяют другое — регионы, коды, пояса.
+PLACE = {"latitude": Decimal("41.311081"), "longitude": Decimal("69.240562"),
+         "geofence_radius_m": 100}
 
 
 # --- 1. HR создаёт регион и офис -------------------------------------------
@@ -48,6 +54,7 @@ def test_hr_creates_region_and_office(organization, hr_actor):
         address="ул. Ленина, 10",
         timezone="Asia/Dushanbe",
         opened_at=date(2025, 1, 1),
+        **PLACE,
     )
     assert office.region_id == region.id
     assert office.organization_id == organization.id
@@ -67,6 +74,7 @@ def test_office_timezone_is_stored_and_usable(region, hr_actor):
     office = OfficeService().create(
         hr_actor, region_id=region.id, code="TASH", name="Офис",
         address="адрес", timezone="Asia/Tashkent",
+        **PLACE,
     )
     assert office.timezone == "Asia/Tashkent"
 
@@ -88,6 +96,7 @@ def test_unknown_timezone_is_rejected(region, hr_actor):
             hr_actor, region_id=region.id, code="BAD", name="Офис",
             address="адрес",
             timezone="Asia/Dushambe",  # опечатка в названии зоны
+            **PLACE,
         )
 
 
@@ -172,6 +181,7 @@ def test_office_cannot_be_created_in_foreign_region(hr_actor, foreign_region):
         OfficeService().create(
             hr_actor, region_id=foreign_region.id, code="X", name="X",
             address="адрес", timezone="Asia/Dushanbe",
+            **PLACE,
         )
 
 
@@ -279,10 +289,10 @@ def test_duplicate_office_code_gives_controlled_error(region, hr_actor):
     offices = OfficeService()
     payload = dict(region_id=region.id, name="Офис", address="адрес",
                    timezone="Asia/Dushanbe")
-    offices.create(hr_actor, code="SAME", **payload)
+    offices.create(hr_actor, code="SAME", **payload, **PLACE)
 
     with pytest.raises(Conflict) as info:
-        offices.create(hr_actor, code="SAME", **payload)
+        offices.create(hr_actor, code="SAME", **payload, **PLACE)
     assert info.value.details["constraint"] == "uq_offices_org_code"
 
 
@@ -292,9 +302,9 @@ def test_same_code_in_two_organizations_is_allowed(
     """Уникальность кода — внутри организации, а не глобально."""
     offices = OfficeService()
     offices.create(hr_actor, region_id=region.id, code="HQ", name="Офис",
-                   address="адрес", timezone="Asia/Dushanbe")
+                   address="адрес", timezone="Asia/Dushanbe", **PLACE)
     offices.create(foreign_actor, region_id=foreign_region.id, code="HQ",
-                   name="Офис", address="адрес", timezone="Asia/Tashkent")
+                   name="Офис", address="адрес", timezone="Asia/Tashkent", **PLACE)
 
 
 # --- деактивация не трогает историю ----------------------------------------
@@ -355,6 +365,7 @@ def test_new_office_cannot_be_added_to_inactive_region(region, hr_actor):
         OfficeService().create(
             hr_actor, region_id=region.id, code="NEW", name="Новый",
             address="адрес", timezone="Asia/Dushanbe",
+            **PLACE,
         )
 
 
@@ -368,6 +379,7 @@ def test_search_filter_and_keyset_pagination(region, hr_actor):
             name=("Склад" if index % 2 else "Офис") + f" {index}",
             address=f"ул. Тестовая, {index}",
             timezone="Asia/Dushanbe",
+            **PLACE,
         )
     offices.deactivate(hr_actor, offices.list(hr_actor, search="Офис 0").items[0].id)
 
@@ -414,7 +426,7 @@ def test_rows_created_in_one_transaction_are_all_returned(region, hr_actor):
         for index in range(5):
             offices.create(hr_actor, region_id=region.id, code=f"BATCH{index}",
                            name=f"Офис {index}", address="адрес",
-                           timezone="Asia/Dushanbe")
+                           timezone="Asia/Dushanbe", **PLACE)
 
     stamps = {item.created_at for item in offices.list(hr_actor).items}
     assert len(stamps) == 1, "предпосылка теста: время создания одинаковое"
@@ -458,7 +470,7 @@ def test_every_change_is_written_to_audit_log(organization, region, hr_actor):
     regions.deactivate(hr_actor, created.id)
     office = offices.create(hr_actor, region_id=region.id, code="AUDOF",
                             name="Офис", address="адрес",
-                            timezone="Asia/Dushanbe")
+                            timezone="Asia/Dushanbe", **PLACE)
     offices.update(hr_actor, office.id, address="Новый адрес")
     offices.deactivate(hr_actor, office.id)
 

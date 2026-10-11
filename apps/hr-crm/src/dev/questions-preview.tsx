@@ -4,6 +4,16 @@
  * Сеть подменяется целиком — ни одного запроса к серверу, ни входа, ни
  * учётных данных. Данные повторяют макет: четыре обращения в очереди и
  * переписка о командировке. Нужен для снимка вёрстки headless-браузером.
+ *
+ * Режимы для проверки поведения:
+ *   ?delay=900          — ответы с задержкой (отмена запроса её прерывает);
+ *   ?long=1             — длинная история переписки;
+ *   ?replyfail=offline  — отправка ответа обрывается, ответ не сохранён;
+ *   ?replyfail=lost     — обрывается, но сервер ответ сохранил.
+ *
+ * Поток событий — подменённый EventSource: `window.__push(id, text)`
+ * добавляет сообщение сотрудника и шлёт странице тот же сигнал
+ * `question`, что и сервер. Страница обрабатывает его своим кодом.
  */
 
 import { StrictMode } from 'react';
@@ -26,7 +36,7 @@ const HR = {
   roles: ['HR'],
   permissions: [
     'questions.read', 'questions.answer', 'knowledge.read', 'employees.read',
-    'absences.read', 'attendance.read',
+    'absences.read', 'attendance.read', 'notifications.manage',
   ],
 };
 
@@ -76,6 +86,21 @@ const HR_AUTHOR = { type: 'user', id: 'u-2', name: 'Aisha Karimova' };
 const EMP_AUTHOR = { type: 'employee', id: 'e-1', name: 'Muradov Azizbek' };
 const read = (iso: string) => ({ status: 'READ', sent_at: iso, read_at: iso, error: null });
 
+/**
+ * `?delivery=mixed` — все состояния доставки ответа HR разом: первый ответ
+ * не доставлен (с повтором), последний ещё отправляется, остальные
+ * отправлены. Для снимка вёрстки строки состояния под текстом.
+ */
+const MIXED = new URLSearchParams(window.location.search).get('delivery') === 'mixed';
+function delivery(iso: string, index: number, last: number) {
+  if (!MIXED) return read(iso);
+  if (index === 0) {
+    return { status: 'FAILED', sent_at: null, read_at: null, error: 'blocked_by_user', notification_id: 'n-0', can_retry: true };
+  }
+  if (index === last) return { status: 'QUEUED', sent_at: null, read_at: null, error: null, notification_id: 'n-9', can_retry: false };
+  return { status: 'DELIVERED', sent_at: iso, read_at: null, error: null, notification_id: `n-${index}`, can_retry: false };
+}
+
 const THREAD: [string, string, string][] = [
   ['E', '10:12', 'Здравствуйте! Нужно уточнить по командировке в Ташкент.\nС 22 по 25 апреля. Нужно ли какое-то дополнительное согласование со стороны HR?'],
   ['H', '10:14', 'Здравствуйте, Azizbek!\nДа, для командировки необходимо согласование с вашим руководителем и оформление заявки в системе.\nЯ подскажу детали.'],
@@ -112,7 +137,11 @@ const QUESTION = {
       details: null,
       author: who === 'E' ? EMP_AUTHOR : HR_AUTHOR,
       created_at: iso,
-      delivery: who === 'E' ? null : read(iso),
+      delivery: who === 'E' ? null : delivery(
+        iso,
+        THREAD.slice(0, index).filter(([one]) => one !== 'E').length,
+        THREAD.filter(([one]) => one !== 'E').length - 1,
+      ),
       attachment: null,
     };
   }),
@@ -148,19 +177,124 @@ const COUNTS = {
 const answer = (body: unknown) =>
   new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
 
-window.fetch = async (input: RequestInfo | URL) => {
+const mode = new URLSearchParams(window.location.search);
+const delay = Number(mode.get('delay') ?? 0);
+const replyFail = mode.get('replyfail') ?? '';
+const calls: string[] = [];
+
+type Msg = (typeof QUESTION.messages)[number] & { client_request_id?: string | null };
+
+/** Переписки по обращениям: у каждого своя, чтобы переключение было видно. */
+const threads: Record<string, Msg[]> = {
+  'q-1': [
+    ...(mode.get('long') === '1'
+      ? Array.from({ length: 28 }, (_, k): Msg => ({
+        ...QUESTION.messages[0]!, id: `old-${k}`,
+        kind: k % 3 ? 'EMPLOYEE' : 'HR', source: k % 3 ? 'TELEGRAM' : 'CRM',
+        author: k % 3 ? EMP_AUTHOR : HR_AUTHOR,
+        body: `Сообщение из истории №${k + 1}. ${'Подробности по вопросу командировки и компенсаций. '.repeat(1 + (k % 3))}`,
+        created_at: at(8, k % 60, 1), delivery: null,
+      }))
+      : []),
+    ...QUESTION.messages,
+  ],
+};
+for (const row of ROWS.slice(1)) {
+  threads[row.id] = [{
+    ...QUESTION.messages[0]!, id: `${row.id}-m0`, body: row.snippet, created_at: at(9, 30),
+    author: { ...EMP_AUTHOR, name: row.employee.full_name },
+  }];
+}
+
+const questionOf = (id: string) => {
+  const row = ROWS.find((one) => one.id === id) ?? ROWS[0]!;
+  return { ...QUESTION, ...row, messages: threads[id] ?? [] };
+};
+
+function rowsNow() {
+  return ROWS.map((row) => {
+    const last = (threads[row.id] ?? []).at(-1);
+    return last ? { ...row, snippet: last.body ?? row.snippet, last_message_at: last.created_at, last_message_kind: last.kind } : row;
+  });
+}
+
+window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input);
+  const method = init?.method ?? 'GET';
   if (url.includes('/auth/')) return answer(HR);
+  calls.push(`${method} ${url}`);
+  if (delay > 0) {
+    await new Promise<void>((resolve, reject) => {
+      const timer = window.setTimeout(resolve, delay);
+      init?.signal?.addEventListener('abort', () => {
+        window.clearTimeout(timer);
+        reject(new DOMException('aborted', 'AbortError'));
+      });
+    });
+  }
   if (url.includes('/escalations/counts')) return answer(COUNTS);
   if (url.includes('/escalations/assignees')) return answer({ items: [{ id: 'u-2', name: 'Aisha Karimova' }, { id: 'u-3', name: 'Камилла Алимова' }] });
   if (url.includes('/context/')) return answer(CONTEXT);
   if (url.includes('/read/')) return answer({ id: 'q-1', unread: false });
-  if (/\/escalations\/q-\d+\/?(\?|$)/.test(url)) return answer(QUESTION);
-  if (/\/escalations\/?(\?|$)/.test(url)) return answer({ items: ROWS, next_cursor: null, has_more: false });
+  const reply = url.match(/\/escalations\/(q-\d+)\/reply\/?/);
+  if (reply && method === 'POST') {
+    const id = reply[1]!;
+    const body = JSON.parse(String(init?.body ?? '{}')) as { text: string; client_request_id: string };
+    const list = threads[id] ?? (threads[id] = []);
+    const saved = () => {
+      if (!list.some((one) => one.client_request_id === body.client_request_id)) {
+        list.push({
+          ...QUESTION.messages[1]!, id: `r-${Date.now()}`, kind: 'HR', source: 'CRM', author: HR_AUTHOR,
+          body: body.text, created_at: new Date().toISOString(), client_request_id: body.client_request_id,
+          delivery: { status: 'QUEUED', sent_at: null, read_at: null, error: null } as never,
+        });
+      }
+    };
+    if (replyFail === 'offline') throw new TypeError('Failed to fetch');
+    saved();
+    if (replyFail === 'lost') throw new TypeError('Failed to fetch');
+    return answer(questionOf(id));
+  }
+  const one = url.match(/\/escalations\/(q-\d+)\/?(\?|$)/);
+  if (one) return answer(questionOf(one[1]!));
+  if (/\/escalations\/?(\?|$)/.test(url)) return answer({ items: rowsNow(), next_cursor: null, has_more: false });
   if (url.includes('/offices')) return answer({ items: [{ ...OFFICE, status: 'ACTIVE', region_id: 'r-1' }] });
   if (url.includes('/photo')) return new Response('', { status: 404 });
   return answer({ items: [], next_cursor: null, has_more: false });
 };
+
+/** Подменённый поток событий: те же события, что шлёт сервер. */
+class PreviewStream extends EventTarget {
+  static last: PreviewStream | null = null;
+  /** Сколько раз страница открывала поток: лишних подключений быть не должно. */
+  static opened = 0;
+  readyState = 1;
+  onerror: ((event: Event) => void) | null = null;
+  constructor() {
+    super();
+    PreviewStream.last = this;
+    PreviewStream.opened += 1;
+    window.setTimeout(() => this.dispatchEvent(new MessageEvent('ready', { data: '{}' })), 30);
+  }
+  close() { this.readyState = 2; }
+  static CLOSED = 2;
+}
+(window as unknown as { EventSource: unknown }).EventSource = PreviewStream;
+Object.assign(window, {
+  __calls: calls,
+  __streams: () => PreviewStream.opened,
+  __push: (id: string, text: string) => {
+    const list = threads[id] ?? (threads[id] = []);
+    list.push({
+      ...QUESTION.messages[0]!, id: `p-${Date.now()}`, kind: 'EMPLOYEE', source: 'TELEGRAM',
+      author: { ...EMP_AUTHOR, name: ROWS.find((row) => row.id === id)?.employee.full_name ?? EMP_AUTHOR.name },
+      body: text, created_at: new Date().toISOString(), delivery: null,
+    });
+    PreviewStream.last?.dispatchEvent(new MessageEvent('question', {
+      data: JSON.stringify({ id, what: 'message', at: Date.now() }),
+    }));
+  },
+});
 
 const root = document.getElementById('root');
 if (root) {

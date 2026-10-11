@@ -74,26 +74,14 @@ function team(from: string, to: string) {
   const person = (i: number, hire: string, status = 'ACTIVE') => ({ id: `e-${i}`, name: NAMES[i]!, employee_number: `HT-${i}`, status, hire_date: hire, office: OFFICES[i % 5]!.name, department: DEPTS[i % 7]!, position: 'Специалист' });
   return {
     period: { first: from, last: to, days: 30 }, previous_period: { first: from, last: to },
-    summary: { headcount: 48, headcount_start: 46, previous_headcount_start: 45, hired: 2, previous_hired: 1, promoted: 1, previous_promoted: 0, left: 1, previous_left: 2, probation_failed: 0 },
+    summary: { headcount: 48, headcount_start: 46, previous_headcount_start: 45, hired: 2, previous_hired: 1, left: 1, previous_left: 2 },
     series,
     by_department: [{ id: 'd-0', name: 'Разработка', hired: 1, left: 0, difference: 1 }],
     departments: DEPTS.map((name, i) => ({ id: `d-${i}`, name, headcount: [14, 8, 7, 6, 5, 4, 3][i]!, previous_headcount: [13, 8, 7, 6, 5, 4, 3][i]! })),
     offices: OFFICES.map((o, i) => ({ id: o.id, name: o.name, headcount: [20, 10, 8, 6, 4][i]!, previous_headcount: [19, 10, 8, 6, 3][i]! })),
-    hires: [person(5, addDays(TODAY, -7), 'PROBATION'), person(8, addDays(TODAY, -4), 'PROBATION')],
+    hires: [person(5, addDays(TODAY, -7)), person(8, addDays(TODAY, -4))],
     departures: [{ ...person(7, '2023-02-01', 'TERMINATED'), termination_date: addDays(TODAY, -5), reason: 'По собственному желанию' }],
     transfers: [{ id: 'e-4', name: NAMES[4]!, date: addDays(TODAY, -3), from_office: 'Ташкент', to_office: 'Ташкент', from_department: 'Продажи', to_department: 'Поддержка' }],
-  };
-}
-
-function probation() {
-  const trainees = [3, 5, 12, 20, -1].map((left, i) => ({
-    id: `e-${i}`, name: NAMES[i]!, employee_number: null, status: 'PROBATION', hire_date: addDays(TODAY, -40), office: OFFICES[i % 5]!.name, department: DEPTS[i]!, position: null,
-    probation_from: addDays(TODAY, -40 + i), probation_to: addDays(TODAY, left), days_left: left, days_total: 60,
-  })).sort((a, b) => a.days_left - b.days_left);
-  return {
-    period: { first: TODAY, last: TODAY, days: 30 }, previous_period: { first: TODAY, last: TODAY },
-    summary: { active: 5, due: 2, overdue: 1, started: 3, promoted: 3, failed: 1, previous_started: 2, previous_promoted: 2, previous_failed: 1, conversion_percent: 75, previous_conversion_percent: 66.7 },
-    due_days: 7, trainees,
   };
 }
 
@@ -179,7 +167,6 @@ window.fetch = async (input: RequestInfo | URL) => {
   if (path.includes('/departments')) return answer({ items: DEPTS.map((name, i) => ({ id: `d-${i}`, name })), next_cursor: null, has_more: false });
   if (path.includes('/analytics/overview')) return answer(overview(from, to));
   if (path.includes('/analytics/team')) return answer(team(from, to));
-  if (path.includes('/analytics/probation')) return answer(probation());
   if (path.endsWith('/requests')) return answer(queue(q.get('status')));
   if (path.includes('/attendance/presence')) return answer(presence());
   if (path.includes('/reports/catalog')) return answer({ kinds: [], max_period_days: 366, xlsx_max_rows: 1, retention_hours: 1, preview_min_rows: 1, preview_max_rows: 1 });

@@ -16,7 +16,7 @@
  * второй завершает её. Рядом их не ставят.
  */
 
-import { type ReactNode, useCallback, useEffect, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 
 import * as api from '../api/crm';
@@ -24,7 +24,10 @@ import { ApiFailure, reasonFor } from '../api/errors';
 import { AppShell } from '../components/AppShell';
 import { AppIcon } from '../components/AppIcon';
 import { DatePicker } from '../components/DatePicker';
+import { useSession } from '../features/auth/session';
 import { todayIso } from '../features/employee/model';
+import { refreshBadgesSoon } from '../features/shell/badges';
+import { placeOf } from '../features/shell/places';
 import {
   BAD_STEPS,
   Face,
@@ -47,12 +50,65 @@ import {
 } from '../features/requests/model';
 import '../styles/requests.css';
 
+/**
+ * Действие кадровика: одно на всю страницу.
+ *
+ * Пока летит «Отклонить», «Одобрить» нажать нельзя, и двойной клик не
+ * отправляет второй запрос: замок ставится синхронно, до перерисовки.
+ * Снимается он только после того, как пришла обновлённая заявка, —
+ * иначе между ответом на решение и перезапросом на экране стоит старое
+ * «на рассмотрении» с живыми кнопками.
+ */
+export type Act = (
+  name: string,
+  work: () => Promise<unknown>,
+) => Promise<{ ok: true } | { ok: false; error: unknown; message: string }>;
+
+/**
+ * Что сказать, когда действие не прошло.
+ *
+ * Обрыв связи — не «ошибка»: запрос мог дойти, и решение могло
+ * примениться. Успеха не показываем, повторно не отправляем — страница
+ * перезапрашивает заявку и показывает, что на самом деле.
+ */
+function actionFailure(error: unknown): { message: string; recheck: boolean } {
+  if (error instanceof ApiFailure) {
+    if (error.kind === 'offline') {
+      return {
+        message: 'Связь прервалась, и неизвестно, дошло ли действие до сервера. На странице — актуальное состояние заявки; повторите, только если решение не применилось.',
+        recheck: true,
+      };
+    }
+    if (error.kind === 'conflict') {
+      return { message: `${reasonFor(error)} Показано актуальное состояние заявки.`, recheck: true };
+    }
+    if (error.kind === 'session') {
+      return { message: `${reasonFor(error)} Показано актуальное состояние заявки.`, recheck: true };
+    }
+    if (error.kind === 'server') {
+      return { message: `${reasonFor(error)} Показано актуальное состояние заявки.`, recheck: true };
+    }
+  }
+  return { message: reasonFor(error), recheck: false };
+}
+
 export function RequestPage() {
   const { id = '' } = useParams();
   const navigate = useNavigate();
   const [item, setItem] = useState<api.QueueItem | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
+  /** Перезапрос не удался, но заявка уже на экране: она остаётся. */
+  const [stale, setStale] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
+  const [acting, setActing] = useState<string | null>(null);
+  const lock = useRef(false);
+  const current = useRef(id);
+  current.current = id;
+  /** Чей ответ ждём: смена заявки отменяет перезапрос прошлой. */
+  const pending = useRef<AbortController | null>(null);
+  const shownId = useRef(id);
+  const shown = useRef<api.QueueItem | null>(null);
+  shown.current = item;
   /**
    * Где человек работает.
    *
@@ -63,28 +119,34 @@ export function RequestPage() {
    */
   const [place, setPlace] = useState<string>('');
 
-  const reload = useCallback(() => setAttempt((n) => n + 1), []);
+  const retry = useCallback(() => setAttempt((n) => n + 1), []);
 
   useEffect(() => {
+    // Другая заявка — с чистого листа: ни заголовка, ни места, ни
+    // ошибки прошлого сотрудника под именем нового. Повтор той же
+    // заявки показанное не стирает.
+    if (shownId.current !== id) {
+      shownId.current = id;
+      setItem(null);
+      setPlace('');
+      setFailed(null);
+      setStale(null);
+    }
     const stop = new AbortController();
-    api
-      .absenceRequest(id, stop.signal)
-      .then((absence) => {
-        // Страница говорит на языке очереди: та же обёртка, те же
-        // функции разбора. Две формы одного объекта разошлись бы.
-        setItem({
-          kind: 'absence',
-          id,
-          created_at: absence.submitted_at ?? '',
-          place: null,
-          absence,
-        });
+    pending.current?.abort();
+    pending.current = stop;
+    loadItem(id, stop.signal)
+      .then((next) => {
+        if (stop.signal.aborted) return;
+        setItem(next);
         setFailed(null);
-        const who = absence.employee?.id;
+        setStale(null);
+        const who = next.absence?.employee?.id;
         if (!who) return;
         api
           .employee(who, stop.signal)
           .then((card) => {
+            if (stop.signal.aborted) return;
             const at = (card as { current_assignment?: {
               region_name?: string | null;
               office_name?: string | null;
@@ -98,21 +160,66 @@ export function RequestPage() {
           })
           // Место — украшение шапки, а не условие разбора заявки:
           // отказ по нему не должен закрывать страницу.
-          .catch(() => setPlace(''));
+          .catch(() => undefined);
       })
       .catch((error) => {
         if (stop.signal.aborted) return;
-        setFailed(reasonFor(error));
+        // Заявка уже на экране — она остаётся, рядом строка «не удалось
+        // обновить». Страница целиком падает в ошибку только на первой
+        // загрузке, когда показывать нечего.
+        if (shown.current) setStale(reasonFor(error));
+        else setFailed(reasonFor(error));
       });
     return () => stop.abort();
   }, [id, attempt]);
+
+  /** Перезапросить заявку после действия; ждать ответа. */
+  const refresh = useCallback(async (): Promise<void> => {
+    const asked = current.current;
+    const stop = new AbortController();
+    pending.current?.abort();
+    pending.current = stop;
+    try {
+      const next = await loadItem(asked, stop.signal);
+      if (stop.signal.aborted || current.current !== asked) return;
+      setItem(next);
+      setStale(null);
+    } catch (error) {
+      if (stop.signal.aborted || current.current !== asked) return;
+      setStale(reasonFor(error));
+    }
+  }, []);
+
+  const act: Act = useCallback(async (name, work) => {
+    if (lock.current) return { ok: false, error: null, message: '' };
+    lock.current = true;
+    setActing(name);
+    try {
+      try {
+        await work();
+      } catch (error) {
+        const { message, recheck } = actionFailure(error);
+        if (recheck) await refresh();
+        return { ok: false, error, message };
+      }
+      // Решение показывается только тем, что прислал сервер: заявку
+      // перезапрашиваем и ждём, а не красим статус заранее.
+      await refresh();
+      refreshBadgesSoon();
+      return { ok: true };
+    } finally {
+      lock.current = false;
+      setActing(null);
+    }
+  }, [refresh]);
 
   if (failed) {
     return (
       <AppShell breadcrumb="Заявки" section="requests">
         <div className="rq rq-one">
           <p className="rq-empty rq-empty--bad">{failed}</p>
-          <Link className="rq-back" to="/requests">
+          <button type="button" className="rq-btn rq-btn--light" onClick={retry}>Повторить</button>
+          <Link className="rq-back" to={placeOf('/requests')}>
             <AppIcon name="back" size={18} />
             Заявки
           </Link>
@@ -125,7 +232,8 @@ export function RequestPage() {
     return (
       <AppShell breadcrumb="Заявки" section="requests">
         <div className="rq rq-one">
-          <p className="rq-empty">Загружаем заявку…</p>
+          <span className="visually-hidden" role="status">Загружаем заявку…</span>
+          <RequestSkeleton />
         </div>
       </AppShell>
     );
@@ -143,7 +251,9 @@ export function RequestPage() {
         <p className="rq-one__crumbs">
           <Link to="/">Рабочее пространство</Link>
           <i>/</i>
-          <Link to="/requests">Заявки</Link>
+          {/* Назад — в очередь с теми же вкладкой и фильтрами, с какими
+              из неё ушли, а не в пустой список. */}
+          <Link to={placeOf('/requests')}>Заявки</Link>
           <i>/</i>
           <b>{kind.title}</b>
         </p>
@@ -162,6 +272,14 @@ export function RequestPage() {
             </button>
           )}
         </header>
+
+        {stale && (
+          <p className="rq-stale" role="status">
+            <AppIcon name="alert" size={18} />
+            <span>Не удалось обновить заявку: {stale} Показано последнее полученное состояние.</span>
+            <button type="button" className="rq-link" onClick={retry}>Повторить</button>
+          </p>
+        )}
 
         <section className="rq-who" aria-label="Сотрудник">
           <Face id={person?.id ?? ''} name={person?.full_name ?? ''} className="rq-who__face" />
@@ -188,12 +306,46 @@ export function RequestPage() {
 
         <div className="rq-one__grid">
           <Materials item={item} />
-          <Review item={item} onDone={reload} />
+          {/* Ключ — заявка: открытый пункт, комментарий и отметки не
+              переезжают на другую заявку. */}
+          <Review key={item.id} item={item} act={act} acting={acting} />
         </div>
 
-        <Finish item={item} onDone={reload} />
+        <Finish key={item.id} item={item} act={act} acting={acting} />
       </div>
     </AppShell>
+  );
+}
+
+/** Заявка как строка очереди: те же функции разбора, что и в списке. */
+async function loadItem(id: string, signal: AbortSignal): Promise<api.QueueItem> {
+  const absence = await api.absenceRequest(id, signal);
+  // Страница говорит на языке очереди: та же обёртка, те же
+  // функции разбора. Две формы одного объекта разошлись бы.
+  return { kind: 'absence', id, created_at: absence.submitted_at ?? '', place: null, absence };
+}
+
+/** Заглушка страницы заявки по форме настоящей: путь, шапка, сотрудник, два столбца. */
+function RequestSkeleton() {
+  return (
+    <div className="rq-sk-page" aria-hidden="true">
+      <i className="rq-sk rq-sk--crumbs" />
+      <i className="rq-sk rq-sk--title" />
+      <div className="rq-sk-who">
+        <i className="rq-sk rq-sk--face" />
+        <span><i className="rq-sk rq-sk--line" /><i className="rq-sk rq-sk--short" /></span>
+      </div>
+      <div className="rq-one__grid">
+        {[0, 1].map((n) => (
+          <div key={n} className="rq-card rq-sk-card">
+            <i className="rq-sk rq-sk--line" />
+            <i className="rq-sk rq-sk--block" />
+            <i className="rq-sk rq-sk--short" />
+            <i className="rq-sk rq-sk--block" />
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -201,6 +353,11 @@ export function RequestPage() {
 
 function Materials({ item }: { item: api.QueueItem }) {
   const paper = certificateOf(item);
+  // Файл справки — медицинские данные: его открывают `absences.documents`
+  // и `absences.approve`. Остальным виден только факт, что справка есть.
+  const session = useSession();
+  const mine = session.status === 'authenticated' ? session.user.permissions : [];
+  const canOpenPaper = mine.includes('absences.documents') || mine.includes('absences.approve');
   const closed = isClosed(item);
   const steps = item.absence?.history ?? [];
 
@@ -232,7 +389,7 @@ function Materials({ item }: { item: api.QueueItem }) {
                 tone={paper.verification_status === 'REJECTED' ? 'red' : 'blue'}
                 title={paper.file.name}
                 note={`${size(paper.file.size_bytes)} · ${dateTime(paper.file.uploaded_at)}`}
-                href={api.absenceDocumentUrl(item.id, paper.id)}
+                href={canOpenPaper ? api.absenceDocumentUrl(item.id, paper.id) : undefined}
                 download={paper.file.name}
                 action="Скачать"
               />
@@ -332,9 +489,9 @@ function applicationNote(item: api.QueueItem): string {
 
 // --- проверка кадровика ---------------------------------------------------------
 
-function Review({ item, onDone }: { item: api.QueueItem; onDone: () => void }) {
+function Review({ item, act, acting }: { item: api.QueueItem; act: Act; acting: string | null }) {
   const [open, setOpen] = useState<'paper' | 'period' | 'refuse' | null>(null);
-  const [busy, setBusy] = useState(false);
+  const busy = acting !== null;
   const [failed, setFailed] = useState<string | null>(null);
   const [comment, setComment] = useState('');
   const [first, setFirst] = useState('');
@@ -371,47 +528,43 @@ function Review({ item, onDone }: { item: api.QueueItem; onDone: () => void }) {
     (step) => step.action === 'PERIOD_SET',
   );
 
-  async function run(work: () => Promise<unknown>) {
-    if (busy) return;
-    setBusy(true);
+  /** Подпись кнопки на время её собственного действия. */
+  const label = (name: string, idle: string, working: string) => (acting === name ? working : idle);
+
+  async function run(name: string, work: () => Promise<unknown>): Promise<boolean> {
     setFailed(null);
-    try {
-      await work();
+    const result = await act(name, work);
+    if (result.ok) {
       setOpen(null);
       setComment('');
-      onDone();
-    } catch (error) {
-      setFailed(reasonFor(error));
-    } finally {
-      setBusy(false);
+      return true;
     }
+    if (result.message) setFailed(result.message);
+    return false;
   }
 
   async function approve(overrideMarks = false) {
-    if (busy) return;
     if (overrideMarks && !approveNote.trim()) {
       setFailed('Напишите, почему больничный утверждается поверх отметок.');
       return;
     }
-    setBusy(true);
     setFailed(null);
-    try {
-      await api.decideAbsence(item.id, 'approve', approveNote.trim(), overrideMarks);
+    const result = await act('approve', () =>
+      api.decideAbsence(item.id, 'approve', approveNote.trim(), overrideMarks));
+    if (result.ok) {
       setMarks(null);
-      onDone();
-    } catch (error) {
-      // Отметки внутри периода — не сбой, а вопрос к кадровику: список
-      // дней считает сервер, и второго мнения о том, работал человек
-      // или нет, у страницы быть не должно.
-      if (error instanceof ApiFailure && error.reason === 'attendance_conflict') {
-        setMarks((Array.isArray(error.details.days) ? error.details.days : []).map(String));
-        setFailed(error.detail);
-        return;
-      }
-      setFailed(reasonFor(error));
-    } finally {
-      setBusy(false);
+      return;
     }
+    const { error } = result;
+    // Отметки внутри периода — не сбой, а вопрос к кадровику: список
+    // дней считает сервер, и второго мнения о том, работал человек
+    // или нет, у страницы быть не должно.
+    if (error instanceof ApiFailure && error.reason === 'attendance_conflict') {
+      setMarks((Array.isArray(error.details.days) ? error.details.days : []).map(String));
+      setFailed(error.detail);
+      return;
+    }
+    if (result.message) setFailed(result.message);
   }
 
   return (
@@ -437,11 +590,12 @@ function Review({ item, onDone }: { item: api.QueueItem; onDone: () => void }) {
                     type="button"
                     className="rq-pick__btn rq-pick__btn--take"
                     disabled={busy}
+                    aria-busy={acting === 'accept'}
                     onClick={() =>
-                      void run(() => api.decideAbsenceDocument(item.id, paper.id, 'accept'))
+                      void run('accept', () => api.decideAbsenceDocument(item.id, paper.id, 'accept'))
                     }
                   >
-                    Принять справку
+                    {label('accept', 'Принять справку', 'Принимаем…')}
                   </button>
                   <button
                     type="button"
@@ -479,18 +633,20 @@ function Review({ item, onDone }: { item: api.QueueItem; onDone: () => void }) {
                     type="button"
                     className="rq-pick__btn rq-pick__btn--take"
                     disabled={busy}
-                    onClick={() => void run(() => api.markApplicationReceived(item.id, true))}
+                    aria-busy={acting === 'received'}
+                    onClick={() => void run('received', () => api.markApplicationReceived(item.id, true))}
                   >
-                    Получено
+                    {label('received', 'Получено', 'Сохраняем…')}
                   </button>
                   {absence?.application_received_at && (
                     <button
                       type="button"
                       className="rq-pick__btn"
                       disabled={busy}
-                      onClick={() => void run(() => api.markApplicationReceived(item.id, false))}
+                      aria-busy={acting === 'unreceived'}
+                      onClick={() => void run('unreceived', () => api.markApplicationReceived(item.id, false))}
                     >
-                      Снять отметку
+                      {label('unreceived', 'Снять отметку', 'Сохраняем…')}
                     </button>
                   )}
                 </div>
@@ -528,14 +684,15 @@ function Review({ item, onDone }: { item: api.QueueItem; onDone: () => void }) {
                     type="button"
                     className="rq-pick__btn rq-pick__btn--take"
                     disabled={busy}
-                    onClick={() => void run(() =>
+                    aria-busy={acting === 'keep-period'}
+                    onClick={() => void run('keep-period', () =>
                       api.setAbsencePeriod(item.id, {
                         first_day: item.absence!.first_day!,
                         last_day: item.absence!.last_day!,
                       }),
                     )}
                   >
-                    Оставить этот период
+                    {label('keep-period', 'Оставить этот период', 'Сохраняем…')}
                   </button>
                 )}
                 {/* Календарь системы, а не поле браузера: там свой
@@ -572,11 +729,12 @@ function Review({ item, onDone }: { item: api.QueueItem; onDone: () => void }) {
                   type="button"
                   className={vacation ? 'rq-pick__btn' : 'rq-pick__btn rq-pick__btn--take'}
                   disabled={busy || !first || !last}
-                  onClick={() => void run(() =>
+                  aria-busy={acting === 'period'}
+                  onClick={() => void run('period', () =>
                     api.setAbsencePeriod(item.id, { first_day: first, last_day: last }),
                   )}
                 >
-                  {busy
+                  {acting === 'period'
                     ? 'Сохраняем…'
                     : vacation ? 'Поставить другой период' : 'Подтвердить период'}
                 </button>
@@ -618,6 +776,7 @@ function Review({ item, onDone }: { item: api.QueueItem; onDone: () => void }) {
       {asking && paper && (
         <FixDialog
           busy={busy}
+          sending={acting === 'fix'}
           comment={comment}
           failed={failed}
           onComment={setComment}
@@ -627,10 +786,23 @@ function Review({ item, onDone }: { item: api.QueueItem; onDone: () => void }) {
               setFailed('Напишите, что не так со справкой — это уйдёт сотруднику.');
               return;
             }
-            void run(async () => {
-              await api.decideAbsenceDocument(item.id, paper.id, 'reject', comment.trim());
-              setAsking(false);
-            });
+            void (async () => {
+              setFailed(null);
+              const result = await act('fix', () =>
+                api.decideAbsenceDocument(item.id, paper.id, 'reject', comment.trim()));
+              if (result.ok) {
+                setAsking(false);
+                setOpen(null);
+                setComment('');
+                return;
+              }
+              // Ошибку в тексте исправляют в окне. Неизвестный исход и
+              // конфликт — уже про заявку, а не про текст: окно
+              // закрывается, сообщение и свежие данные — на странице.
+              const known = result.error instanceof ApiFailure && result.error.kind === 'validation';
+              if (!known) setAsking(false);
+              if (result.message) setFailed(result.message);
+            })();
           }}
         />
       )}
@@ -652,9 +824,9 @@ function Review({ item, onDone }: { item: api.QueueItem; onDone: () => void }) {
             placeholder="Почему больничный утверждается поверх отметок"
             onChange={(event) => setApproveNote(event.target.value)}
           />
-          <button type="button" className="btn" disabled={busy}
+          <button type="button" className="btn" disabled={busy} aria-busy={acting === 'approve'}
                   onClick={() => void approve(true)}>
-            Утвердить поверх отметок
+            {label('approve', 'Утвердить поверх отметок', 'Утверждаем…')}
           </button>
         </div>
       )}
@@ -682,10 +854,11 @@ function Review({ item, onDone }: { item: api.QueueItem; onDone: () => void }) {
             type="button"
             className="rq-btn rq-btn--approve"
             disabled={busy || missing.length > 0}
+            aria-busy={acting === 'approve'}
             onClick={() => void approve()}
           >
             <AppIcon name="check" size={20} />
-            Одобрить
+            {label('approve', 'Одобрить', 'Одобряем…')}
           </button>
           {missing.length > 0 && (
             <p className="rq-foot-note">
@@ -737,36 +910,67 @@ function Review({ item, onDone }: { item: api.QueueItem; onDone: () => void }) {
  * сотруднику в чат и остаётся в истории заявки — это письмо, а не
  * пометка для себя. Окно закрывается щелчком по затемнению и Esc.
  */
-function FixDialog({ busy, comment, failed, onComment, onClose, onSend }: {
+function FixDialog({ busy, sending, comment, failed, onComment, onClose, onSend }: {
   busy: boolean;
+  sending: boolean;
   comment: string;
   failed: string | null;
   onComment: (value: string) => void;
   onClose: () => void;
   onSend: () => void;
 }) {
+  const [leaving, setLeaving] = useState(false);
+  const left = useRef(false);
+
+  /**
+   * Закрытие с короткой обратной анимацией. Повторное закрытие ничего
+   * не делает, а снятие окна подстраховано таймером: затемнение не
+   * останется висеть, даже если конец анимации не придёт (вкладка
+   * скрыта, анимации отключены). Во время отправки окно не закрывается —
+   * ответ сервера ещё не известен.
+   */
+  const close = useCallback(() => {
+    if (left.current || sending) return;
+    left.current = true;
+    const quiet = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (quiet) {
+      onClose();
+      return;
+    }
+    setLeaving(true);
+    window.setTimeout(onClose, 160);
+  }, [onClose, sending]);
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key === 'Escape') close();
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [close]);
+
+  // Фокус возвращается туда, откуда окно открыли. Кнопку запоминаем
+  // ещё при отрисовке: к эффекту фокус уже у поля с autoFocus.
+  const [opener] = useState(() => document.activeElement as HTMLElement | null);
+  useEffect(() => () => {
+    if (opener && opener.isConnected) opener.focus();
+  }, [opener]);
 
   return (
     <div
-      className="rq-ask"
+      className={leaving ? 'rq-ask rq-ask--leaving' : 'rq-ask'}
       role="dialog"
       aria-modal="true"
       aria-label="Отправить справку на исправление"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
+        if (event.target === event.currentTarget) close();
       }}
     >
       <div className="rq-ask__box">
         <header className="rq-ask__head">
           <h2>Отправить на исправление</h2>
-          <button type="button" className="rq-ask__x" aria-label="Закрыть" onClick={onClose}>
+          <button type="button" className="rq-ask__x" aria-label="Закрыть" onClick={close}
+                  disabled={sending}>
             <AppIcon name="close" size={18} />
           </button>
         </header>
@@ -779,6 +983,7 @@ function FixDialog({ busy, comment, failed, onComment, onClose, onSend }: {
           rows={4}
           value={comment}
           autoFocus
+          readOnly={sending}
           aria-label="Причина отказа по справке"
           placeholder="В справке не видны даты периода…"
           onChange={(event) => onComment(event.target.value)}
@@ -786,12 +991,12 @@ function FixDialog({ busy, comment, failed, onComment, onClose, onSend }: {
         {failed && <p className="rq-ask__bad" role="alert">{failed}</p>}
         <div className="rq-ask__tools">
           <button type="button" className="rq-btn rq-btn--light" disabled={busy}
-                  onClick={onClose}>
+                  onClick={close}>
             Отмена
           </button>
           <button type="button" className="rq-pick__btn rq-pick__btn--fix" disabled={busy}
-                  onClick={onSend}>
-            {busy ? 'Отправляем…' : 'Отправить на исправление'}
+                  aria-busy={sending} onClick={onSend}>
+            {sending ? 'Отправляем…' : 'Отправить на исправление'}
           </button>
         </div>
       </div>
@@ -844,30 +1049,22 @@ function Step({ done, bad, title, value, can, onOpen, children }: {
 
 // --- финальное отклонение --------------------------------------------------------
 
-function Finish({ item, onDone }: { item: api.QueueItem; onDone: () => void }) {
+function Finish({ item, act, acting }: { item: api.QueueItem; act: Act; acting: string | null }) {
   const [asking, setAsking] = useState(false);
   const [comment, setComment] = useState('');
-  const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
+  const busy = acting !== null;
 
   if (!isOpen(item)) return null;
 
   async function refuse() {
-    if (busy) return;
     if (!comment.trim()) {
       setFailed('Напишите причину отклонения — она уйдёт сотруднику.');
       return;
     }
-    setBusy(true);
     setFailed(null);
-    try {
-      await api.decideAbsence(item.id, 'reject', comment.trim());
-      onDone();
-    } catch (error) {
-      setFailed(reasonFor(error));
-    } finally {
-      setBusy(false);
-    }
+    const result = await act('reject', () => api.decideAbsence(item.id, 'reject', comment.trim()));
+    if (!result.ok && result.message) setFailed(result.message);
   }
 
   return (
@@ -878,16 +1075,18 @@ function Finish({ item, onDone }: { item: api.QueueItem; onDone: () => void }) {
             className="input"
             rows={2}
             value={comment}
+            readOnly={acting === 'reject'}
             aria-label="Причина отклонения заявки"
             placeholder="Причина отклонения — она уйдёт сотруднику"
             onChange={(event) => setComment(event.target.value)}
           />
           <div className="rq-act__row">
             <button type="button" className="rq-btn rq-btn--danger" disabled={busy}
-                    onClick={() => void refuse()}>
-              {busy ? 'Отправляем…' : 'Подтвердить отклонение'}
+                    aria-busy={acting === 'reject'} onClick={() => void refuse()}>
+              {acting === 'reject' ? 'Отправляем…' : 'Подтвердить отклонение'}
             </button>
-            <button type="button" className="btn" onClick={() => setAsking(false)}>
+            <button type="button" className="btn" disabled={acting === 'reject'}
+                    onClick={() => { setAsking(false); setFailed(null); }}>
               Отмена
             </button>
           </div>
@@ -895,7 +1094,8 @@ function Finish({ item, onDone }: { item: api.QueueItem; onDone: () => void }) {
         </div>
       ) : (
         <>
-          <button type="button" className="rq-btn rq-btn--danger" onClick={() => setAsking(true)}>
+          <button type="button" className="rq-btn rq-btn--danger" disabled={busy}
+                  onClick={() => setAsking(true)}>
             <AppIcon name="trash" size={20} />
             Отклонить заявку
           </button>

@@ -40,6 +40,7 @@ from humotech.core.service import BaseService
 from humotech.core.timeframes import organization_zone, range_bounds
 from humotech.employees.models import EmployeeAssignment
 from humotech.employees.selectors import require_visible_employee
+from humotech.realtime import signals
 from humotech.notifications.models import Notification, NotificationAttempt
 
 NOTIFICATION_FIELDS = (
@@ -240,6 +241,7 @@ class NotificationService(BaseService):
                     "error_message", "updated_at",
                 ]
             )
+            signals.deliveries_changed([row.id])
             self.audit.record(
                 actor,
                 action="notification.cancel",
@@ -273,10 +275,12 @@ class NotificationService(BaseService):
                 organization_id=actor.organization_id, status="FAILED"
             )
             if employee_id is not None:
-                require_visible_employee(self.access, actor, employee_id)
+                require_visible_employee(
+                    self.access, actor, employee_id, "notifications.manage"
+                )
                 queryset = queryset.filter(employee_id=employee_id)
             else:
-                queryset = self._limit_to_scope(actor, queryset)
+                queryset = self._limit_to_scope(actor, queryset, "notifications.manage")
             if notification_type:
                 queryset = queryset.filter(
                     notification_type__startswith=_text(
@@ -473,8 +477,12 @@ class NotificationService(BaseService):
                 "error_message", "updated_at",
             ]
         )
+        # Снова «Отправляется» в чате CRM — и отправщик просыпается сразу,
+        # а не к следующему опросу.
+        signals.deliveries_changed([row.id])
+        signals.outbox_ready()
 
-    def _limit_to_scope(self, actor: Actor, queryset):
+    def _limit_to_scope(self, actor: Actor, queryset, permission: str | None = None):
         """Уведомления видны по офисам сотрудника-адресата.
 
         Область берётся по ЛЮБОМУ периоду назначения, а не только по
@@ -482,7 +490,7 @@ class NotificationService(BaseService):
         и карточка расходились бы: после перевода человека его прошлые
         уведомления пропали бы из списка, оставшись доступными по ссылке.
         """
-        visible = self.access.visible_office_ids(actor)
+        visible = self.access.visible_office_ids(actor, permission)
         if visible is None:
             return queryset
         # Пустое множество — это «ничего не видно», а не «видно всё».
@@ -492,7 +500,8 @@ class NotificationService(BaseService):
             ).values_list("employee_id", flat=True)
         )
 
-    def _require(self, actor: Actor, notification_id: uuid.UUID) -> Notification:
+    def _require(self, actor: Actor, notification_id: uuid.UUID,
+                 permission: str | None = None) -> Notification:
         row = (
             Notification.objects.select_related("employee")
             .filter(id=notification_id, organization_id=actor.organization_id)
@@ -501,7 +510,7 @@ class NotificationService(BaseService):
         if row is None:
             # чужая организация отвечает так же, как несуществующая запись
             raise NotFound("Уведомление не найдено")
-        require_visible_employee(self.access, actor, row.employee_id)
+        require_visible_employee(self.access, actor, row.employee_id, permission)
         return row
 
     def _lock(self, actor: Actor, notification_id: uuid.UUID) -> Notification:
@@ -510,7 +519,7 @@ class NotificationService(BaseService):
         Без неё отправщик успевает перевести строку в RUNNING между
         чтением статуса и записью нового, и повтор затирает захват.
         """
-        row = self._require(actor, notification_id)
+        row = self._require(actor, notification_id, "notifications.manage")
         return Notification.objects.select_for_update().get(id=row.id)
 
     @staticmethod

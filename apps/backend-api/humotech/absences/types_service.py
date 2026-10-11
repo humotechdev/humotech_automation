@@ -109,7 +109,7 @@ class AbsenceTypeService(BaseService):
         document_required_after_days: int | None = None,
         deducts_leave_balance: bool = False, code: str | None = None,
     ) -> AbsenceType:
-        self.access.require(actor, "absences.manage_types")
+        self.access.require_whole_organization(actor, "absences.manage_types")
         self._check_days(requires_document, document_required_after_days)
 
         with self.atomic():
@@ -141,7 +141,7 @@ class AbsenceTypeService(BaseService):
         document_required_after_days: int | None = None,
         deducts_leave_balance: bool | None = None,
     ) -> AbsenceType:
-        self.access.require(actor, "absences.manage_types")
+        self.access.require_whole_organization(actor, "absences.manage_types")
         item = self._require(actor, type_id)
         before = snapshot(item, AUDITED)
 
@@ -177,7 +177,7 @@ class AbsenceTypeService(BaseService):
         истории и в отчётах. Это и есть «архивировать»: удаления у вида
         отсутствия нет ни в одном виде.
         """
-        self.access.require(actor, "absences.manage_types")
+        self.access.require_whole_organization(actor, "absences.manage_types")
         item = self._require(actor, type_id)
         if item.is_active == active:
             return item
@@ -200,7 +200,7 @@ class AbsenceTypeService(BaseService):
         пропал бы ответ на вопрос, почему человека не было в марте.
         Такой вид выключают.
         """
-        self.access.require(actor, "absences.manage_types")
+        self.access.require_whole_organization(actor, "absences.manage_types")
         item = self._require(actor, type_id)
 
         used = usage([item.id]).get(item.id, 0)

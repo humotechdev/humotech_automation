@@ -86,7 +86,9 @@ def test_schedule_list_search_and_status_filter(organization, hr_actor):
 # --- некорректные интервалы -------------------------------------------------
 
 def test_end_before_start_is_rejected(hr_actor):
-    with pytest.raises(ValidationFailed, match="раньше его начала"):
+    """Конец раньше начала — это ночная смена или опечатка; ни то, ни другое
+    система пока не принимает (решение владельца Р-9, аудит 12.10)."""
+    with pytest.raises(ValidationFailed, match="Ночные смены"):
         WorkScheduleService().create(
             hr_actor, name="Плохой", timezone="Asia/Dushanbe",
             weekly_minutes=2400,
@@ -94,22 +96,19 @@ def test_end_before_start_is_rejected(hr_actor):
                           start_time=time(18, 0), end_time=time(9, 0))])
 
 
-def test_night_shift_is_allowed_when_marked_explicitly(hr_actor):
-    """22:00–06:00 — не опечатка, если помечено `crosses_midnight`.
-
-    Именно поэтому проверку нельзя было отдать CHECK-ограничению: без флага
-    ночная смена и перепутанные местами часы выглядят одинаково.
-    """
-    service = WorkScheduleService()
-    schedule = service.create(
-        hr_actor, name="Ночная", timezone="Asia/Dushanbe", weekly_minutes=2400,
-        days=[DaySpec(weekday=1, is_working_day=True, start_time=time(22, 0),
-                      end_time=time(6, 0), crosses_midnight=True)])
-    assert service.days_of(schedule)[0].crosses_midnight is True
+def test_night_shift_is_rejected_even_when_marked_explicitly(hr_actor):
+    """Ночные смены пока не поддерживаются (Р-9): опоздание после полуночи
+    терялось, день смены путался (C-07). Их нельзя создать даже с флагом
+    `crosses_midnight`, чтобы не считать неверно."""
+    with pytest.raises(ValidationFailed, match="Ночные смены"):
+        WorkScheduleService().create(
+            hr_actor, name="Ночная", timezone="Asia/Dushanbe", weekly_minutes=2400,
+            days=[DaySpec(weekday=1, is_working_day=True, start_time=time(22, 0),
+                          end_time=time(6, 0), crosses_midnight=True)])
 
 
 def test_night_shift_flag_without_night_shift_is_rejected(hr_actor):
-    with pytest.raises(ValidationFailed, match="Ночная смена"):
+    with pytest.raises(ValidationFailed, match="Ночные смены"):
         WorkScheduleService().create(
             hr_actor, name="Странный", timezone="Asia/Dushanbe",
             weekly_minutes=2400,
@@ -118,7 +117,7 @@ def test_night_shift_flag_without_night_shift_is_rejected(hr_actor):
 
 
 def test_zero_length_day_is_rejected(hr_actor):
-    with pytest.raises(ValidationFailed, match="нулевой длины"):
+    with pytest.raises(ValidationFailed, match="Ночные смены"):
         WorkScheduleService().create(
             hr_actor, name="Нулевой", timezone="Asia/Dushanbe",
             weekly_minutes=2400,

@@ -142,10 +142,11 @@ class KnowledgeService(BaseService):
         идентификатору.
         """
         self.access.require(actor, "knowledge.read")
-        source = self.use_cases._require_source(actor, source_id)
+        source = self._readable_source(actor, source_id)
         rows = self.use_cases.version_history(actor, source.title, source.language)
         return list(
-            KnowledgeSource.objects.filter(id__in=[row.id for row in rows])
+            self._in_area(actor, KnowledgeSource.objects.filter(
+                id__in=[row.id for row in rows]))
             .select_related("office", "region", "created_by_user")
             .order_by("-version", "-created_at")
         )
@@ -181,9 +182,9 @@ class KnowledgeService(BaseService):
         search: str | None = None,
         all_versions: bool = False,
     ):
-        queryset = KnowledgeSource.objects.filter(
+        queryset = self._in_area(actor, KnowledgeSource.objects.filter(
             organization_id=actor.organization_id
-        ).select_related("office", "region", "department", "created_by_user")
+        ).select_related("office", "region", "department", "created_by_user"))
 
         if not all_versions:
             # Самая новая версия каждой линейки. Подзапрос НЕ сужается
@@ -212,10 +213,10 @@ class KnowledgeService(BaseService):
         if language:
             queryset = queryset.filter(language=language.strip())
         if office_id is not None:
-            self.access.require_office(actor, office_id)
+            self.access.require_office(actor, office_id, "knowledge.read")
             queryset = queryset.filter(office_id=office_id)
         if region_id is not None:
-            self.access.require_region(actor, region_id)
+            self.access.require_region(actor, region_id, "knowledge.read")
             queryset = queryset.filter(region_id=region_id)
         if search:
             needle = search.strip()
@@ -226,7 +227,7 @@ class KnowledgeService(BaseService):
 
     def get_source(self, actor: Actor, source_id: uuid.UUID) -> KnowledgeSource:
         self.access.require(actor, "knowledge.read")
-        return self.use_cases._require_source(actor, source_id)
+        return self._readable_source(actor, source_id)
 
     def create_source(self, actor: Actor, **payload) -> KnowledgeSource:
         with _readable_refusal(), self.atomic():
@@ -255,6 +256,8 @@ class KnowledgeService(BaseService):
             return self.use_cases.start_indexing(actor, source_id)
 
     def index_status(self, actor: Actor, source_id: uuid.UUID):
+        self.access.require(actor, "knowledge.read")
+        self._readable_source(actor, source_id)
         return self.use_cases.index_status(actor, source_id)
 
     def publish(self, actor: Actor, source_id: uuid.UUID) -> KnowledgeSource:
@@ -299,22 +302,23 @@ class KnowledgeService(BaseService):
         self.access.require(actor, "knowledge.read")
         # Задание само принадлежит организации: фильтр через источник
         # был бы соединением там, где есть свой индекс.
-        queryset = KnowledgeIndexJob.objects.filter(
+        queryset = self._in_area(actor, KnowledgeIndexJob.objects.filter(
             organization_id=actor.organization_id
-        ).select_related("source")
+        ).select_related("source"), prefix="source__")
         if status is not None:
             queryset = queryset.filter(
                 status=_known(status, "status", INDEX_JOB_STATUSES)
             )
         if source_id is not None:
-            self.use_cases._require_source(actor, source_id)
+            self._readable_source(actor, source_id)
             queryset = queryset.filter(source_id=source_id)
         return paginate(queryset, limit=limit, cursor=cursor)
 
     def get_index_job(self, actor: Actor, job_id: uuid.UUID) -> KnowledgeIndexJob:
         self.access.require(actor, "knowledge.read")
         job = (
-            KnowledgeIndexJob.objects.select_related("source")
+            self._in_area(actor, KnowledgeIndexJob.objects.select_related("source"),
+                          prefix="source__")
             .filter(id=job_id, organization_id=actor.organization_id)
             .first()
         )
@@ -378,9 +382,9 @@ class KnowledgeService(BaseService):
         source_id: uuid.UUID | None = None,
         search: str | None = None,
     ):
-        queryset = FaqEntry.objects.filter(
+        queryset = self._in_area(actor, FaqEntry.objects.filter(
             organization_id=actor.organization_id
-        ).select_related("office", "region", "source", "created_by_user")
+        ).select_related("office", "region", "source", "created_by_user"))
         if status is not None:
             wanted = [
                 _known(part, "status", FAQ_ENTRY_STATUSES)
@@ -392,16 +396,16 @@ class KnowledgeService(BaseService):
         if language:
             queryset = queryset.filter(language=language.strip())
         if office_id is not None:
-            self.access.require_office(actor, office_id)
+            self.access.require_office(actor, office_id, "knowledge.read")
             queryset = queryset.filter(office_id=office_id)
         if region_id is not None:
-            self.access.require_region(actor, region_id)
+            self.access.require_region(actor, region_id, "knowledge.read")
             queryset = queryset.filter(region_id=region_id)
         if source_id is not None:
-            # Документ сверяется по организации: иначе по чужому
+            # Документ сверяется по организации и области: иначе по чужому
             # идентификатору можно было бы проверить, есть ли у соседей
             # FAQ по этому документу.
-            self.use_cases._require_source(actor, source_id)
+            self._readable_source(actor, source_id)
             queryset = queryset.filter(source_id=source_id)
         if search:
             needle = search.strip()
@@ -413,6 +417,9 @@ class KnowledgeService(BaseService):
 
     def get_faq(self, actor: Actor, faq_id: uuid.UUID) -> FaqEntry:
         self.access.require(actor, "knowledge.read")
+        if not self._in_area(actor, FaqEntry.objects.filter(
+                id=faq_id, organization_id=actor.organization_id)).exists():
+            raise NotFound("FAQ не найден")
         return self._require_faq(actor, faq_id)
 
     def create_faq(
@@ -448,7 +455,8 @@ class KnowledgeService(BaseService):
         # Своя организация, своя видимость; FAQ на всю организацию — только
         # тому, кому видна вся организация.
         self.use_cases._require_area(
-            actor, office_id=office_id, region_id=region_id
+            actor, office_id=office_id, region_id=region_id,
+            permission="knowledge.write",
         )
         if source_id is not None:
             self.use_cases._require_source(actor, source_id)
@@ -491,7 +499,7 @@ class KnowledgeService(BaseService):
         сотрудник спросил бы одно, а получил ответ на другое.
         """
         self.access.require(actor, "knowledge.write")
-        faq = self._require_faq_in_scope(actor, faq_id)
+        faq = self._require_faq_in_scope(actor, faq_id, "knowledge.write")
         before = snapshot(faq, FAQ_FIELDS)
         fields: list[str] = []
 
@@ -541,7 +549,7 @@ class KnowledgeService(BaseService):
         """Включить FAQ в поиск или убрать из него."""
         self.access.require(actor, "knowledge.publish")
         target = _known(status, "status", FAQ_ENTRY_STATUSES)
-        faq = self._require_faq_in_scope(actor, faq_id)
+        faq = self._require_faq_in_scope(actor, faq_id, "knowledge.publish")
 
         if target == "ACTIVE" and faq.question_embedding is None:
             # Без эмбеддинга запись действующей быть не может: поиск
@@ -569,7 +577,8 @@ class KnowledgeService(BaseService):
             )
         return faq
 
-    def _require_faq_in_scope(self, actor: Actor, faq_id: uuid.UUID) -> FaqEntry:
+    def _require_faq_in_scope(self, actor: Actor, faq_id: uuid.UUID,
+                              permission: str | None = None) -> FaqEntry:
         """FAQ своей организации, и его офис или регион виден актору.
 
         Для правки и включения в поиск: иначе пользователь с правами на
@@ -577,9 +586,41 @@ class KnowledgeService(BaseService):
         """
         faq = self._require_faq(actor, faq_id)
         self.use_cases._require_area(
-            actor, office_id=faq.office_id, region_id=faq.region_id
+            actor, office_id=faq.office_id, region_id=faq.region_id,
+            permission=permission,
         )
         return faq
+
+    def _in_area(self, actor: Actor, queryset, *, prefix: str = ""):
+        """Только то, что относится к области `knowledge.read` актора.
+
+        Материалы всей организации (без офиса и региона) видят все
+        читатели; материалы региона — кому виден этот регион целиком или
+        офис в нём; материалы офиса — кому виден этот офис. Раньше любой с
+        `knowledge.read` читал черновики и FAQ всех офисов и регионов
+        (аудит 11.10, L-7; решение владельца 11.10.2026). Организация
+        отсекается раньше — фильтром каждого запроса.
+        """
+        from humotech.offices.models import Office
+
+        scope = self.access.scope_for(actor, "knowledge.read")
+        if scope.all_offices:
+            return queryset
+        regions = set(scope.region_ids) | set(
+            Office.objects.filter(id__in=scope.office_ids)
+            .values_list("region_id", flat=True))
+        office, region = f"{prefix}office_id", f"{prefix}region_id"
+        return queryset.filter(
+            Q(**{f"{office}__isnull": True, f"{region}__isnull": True})
+            | Q(**{f"{office}__in": scope.office_ids})
+            | Q(**{f"{office}__isnull": True, f"{region}__in": regions})
+        )
+
+    def _readable_source(self, actor: Actor, source_id: uuid.UUID) -> KnowledgeSource:
+        source = self.use_cases._require_source(actor, source_id)
+        if not self._in_area(actor, KnowledgeSource.objects.filter(id=source.id)).exists():
+            raise NotFound("Документ не найден")
+        return source
 
     def _require_faq(self, actor: Actor, faq_id: uuid.UUID) -> FaqEntry:
         faq = (

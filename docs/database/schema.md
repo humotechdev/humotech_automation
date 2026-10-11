@@ -438,7 +438,7 @@ production предусмотрен `ROTATING`; `STATIC` оставлен как
 | `created_at` | DATETIME | нет | default `now()` |
 | `archived_at` | DATETIME | да | — |
 
-- CHECK `ck_employees_employment_status`: `employment_status IN ('ACTIVE', 'PROBATION', 'SUSPENDED', 'TERMINATED', 'ARCHIVED')`
+- CHECK `ck_employees_employment_status`: `employment_status IN ('ACTIVE', 'SUSPENDED', 'TERMINATED', 'ARCHIVED')`
 - UNIQUE `uq_employees_org_number`: (organization_id, employee_number)
 - CHECK `ck_employees_termination_after_hire`: `termination_date IS NULL OR termination_date >= hire_date`
 - INDEX `ix_employees_org_status`: (organization_id, employment_status)

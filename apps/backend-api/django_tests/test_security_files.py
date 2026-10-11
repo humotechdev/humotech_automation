@@ -340,6 +340,17 @@ class TestScanStatus:
         assert response["Content-Disposition"].startswith("attachment")
         assert bot_client.get(me_url(request), **bot_headers(TG_ID)).status_code == 404
 
+    def test_scanner_off_marks_unscanned_not_fake_clean(self, bot_client, sick):
+        """Без сканера файл получает честный UNSCANNED, а не фиктивный CLEAN.
+
+        Доступ к нему уже ограничен на уровне view (свой документ, своя
+        область), поэтому он отдаётся, но статус в базе теперь правдив —
+        и настоящий антивирус переведёт его в CLEAN или INFECTED."""
+        request, document = sick
+        assert File.objects.get(id=document.file_id).scan_status == "UNSCANNED"
+        # UNSCANNED по-прежнему отдаётся владельцу (как прежний CLEAN).
+        assert bot_client.get(me_url(request), **bot_headers(TG_ID)).status_code == 200
+
     def test_deleted_file_is_not_served(self, hr_client, bot_client, sick):
         request, document = sick
         File.objects.filter(id=document.file_id).update(deleted_at=timezone.now())
@@ -369,6 +380,45 @@ class TestScanStatus:
         File.objects.filter(id=photo.id).update(deleted_at=timezone.now())
         assert client.get(f"{API}/employees/{employee.id}/photo/").status_code == 404
 
+    def test_employee_papers_open_only_for_hr(self, make_user, organization, employee):
+        """Паспорт и договор открывает кадровик, а не каждый, кто видит карточку.
+
+        Матрица ролей обещает наблюдателю, бухгалтеру и руководителю
+        «документы — нет», а сервер до 07.10 отдавал файл по `employees.read`.
+        Список документов (название, состояние) им по-прежнему виден в
+        карточке — закрыт только сам файл.
+        """
+        from humotech.core.rbac import Actor
+
+        hr = make_user(organization, permissions=EMPLOYEE_HR)
+        actor = Actor(user_id=hr.id, organization_id=organization.id)
+        service = EmployeeAttachmentService()
+        record = service.upload(actor, upload=upload("pass.pdf", PDF, "application/pdf"),
+                                purpose="document")
+        row = service.attach_document(actor, employee.id, kind="IDENTITY",
+                                      file_id=record.id, title="Паспорт")
+        url = f"{API}/employees/{employee.id}/documents/{row.id}/download/"
+
+        for perms in (
+            ("employees.read",),  # наблюдатель
+            ("employees.read", "attendance.read", "absences.read",
+             "absences.approve"),  # руководитель
+            ("employees.read", "reports.export"),  # бухгалтер
+        ):
+            reader = APIClient()
+            reader.force_authenticate(user=make_user(organization, permissions=perms))
+            refused = reader.get(url)
+            assert refused.status_code == 403, (perms, refused.status_code)
+            assert b"%PDF" not in refused.content
+            # Карточка с перечнем документов при этом открывается.
+            card = reader.get(f"{API}/employees/{employee.id}/")
+            assert card.status_code == 200
+            assert [doc["title"] for doc in card.json()["documents"]] == ["Паспорт"]
+
+        hr_client = APIClient()
+        hr_client.force_authenticate(user=hr)
+        assert hr_client.get(url).status_code == 200
+
     def test_rules_of_the_helper(self, organization):
         record = put(organization)
         assert viewable_for(record, STAFF) and viewable_for(record, EMPLOYEE)
@@ -379,9 +429,20 @@ class TestScanStatus:
         with pytest.raises(NotFound):
             require_viewable(record, STAFF)
 
-    def test_scanner_enabled_marks_new_files_pending(self, settings, organization):
-        settings.FILES = {**settings.FILES, "SCANNER_ENABLED": True}
-        assert put(organization).scan_status == "PENDING"
+    def test_scanner_enabled_but_unreachable_refuses_upload(self, settings, organization):
+        """Включённый антивирус без ответа — файл не принимается (503), а не
+        оседает навсегда в PENDING: перевести его в проверенные некому
+        (аудит 11.10, M-11). Проверки с ответами clamd — в
+        test_security_fix_2026_10_11.py::TestAntivirusScan."""
+        from humotech.core.errors import ScannerUnavailable
+
+        settings.FILES = {**settings.FILES, "SCANNER_ENABLED": True,
+                          "SCANNER_HOST": "127.0.0.1", "SCANNER_PORT": 9,
+                          "SCANNER_TIMEOUT_SECONDS": 2}
+        before = File.objects.count()
+        with pytest.raises(ScannerUnavailable):
+            put(organization)
+        assert File.objects.count() == before
 
     def test_employee_upload_still_works_with_scanner_off(
         self, bot_client, context, sick_leave

@@ -446,26 +446,6 @@ class TeamView(APIView):
         return Response(PeopleService().team(Actor.from_user(request.user), **_scope(request)))
 
 
-class ProbationView(APIView):
-    """Стажировки: кто сейчас стажируется и чем закончились решения."""
-
-    permission_classes = [IsAuthenticated]
-
-    @extend_schema(
-        summary="Стажировки",
-        description=(
-            "Сейчас на стажировке — по статусу и текущему назначению. "
-            "Решения периода: оставлен в штате (журнал) и не прошёл "
-            "стажировку (увольнение с этой причиной)."
-        ),
-        parameters=SCOPE_PARAMS,
-        responses={200: OpenApiTypes.OBJECT},
-        tags=["Аналитика"],
-    )
-    def get(self, request):
-        return Response(PeopleService().probation(Actor.from_user(request.user), **_scope(request)))
-
-
 def _period(request):
     """Период запроса. По умолчанию — текущий месяц.
 

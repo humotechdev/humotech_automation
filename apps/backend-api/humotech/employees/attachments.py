@@ -69,22 +69,35 @@ class EmployeeAttachmentService(BaseService):
         return stored.file
 
     def take(self, actor: Actor, file_ids: list[uuid.UUID]) -> dict[uuid.UUID, File]:
-        """Проверить, что файлы существуют и принадлежат этой организации.
+        """Проверить, что файлы — свежие загрузки этого же кадровика.
 
-        Идентификатор приходит от клиента, и без этой проверки чужой файл
-        привязался бы к своему сотруднику по одному только UUID.
+        Идентификатор приходит от клиента, а карточка отдаёт `file_id`
+        документов и фото каждому, кто её видит. Поэтому мало, чтобы файл
+        был из этой организации: иначе паспорт сотрудника из чужой области
+        привязывался бы к «своему» сотруднику и скачивался бы мимо
+        `employees.manage` в области того сотрудника (аудит 11.10, H-1).
+        Принимается только файл, который загрузил сам актор и который ещё
+        ни к кому не привязан: так файл попадает в карточку ровно одним
+        путём — `upload` → привязка тем же человеком.
         """
         if not file_ids:
             return {}
-        rows = File.objects.filter(
-            id__in=file_ids,
-            organization_id=actor.organization_id,
-            deleted_at__isnull=True,
-            # Только кадровые загрузки (`upload` выше кладёт их под
-            # `employees/`). Иначе по UUID к «документам» сотрудника
-            # привязывалась бы чужая справка больничного или файл
-            # обращения — и скачивалась бы мимо `absences.read`.
-            storage_key__startswith="employees/",
+        rows = (
+            File.objects.filter(
+                id__in=file_ids,
+                organization_id=actor.organization_id,
+                uploaded_by_user_id=actor.user_id,
+                deleted_at__isnull=True,
+                # Только кадровые загрузки (`upload` выше кладёт их под
+                # `employees/`). Иначе по UUID к «документам» сотрудника
+                # привязывалась бы чужая справка больничного или файл
+                # обращения — и скачивалась бы мимо `absences.read`.
+                storage_key__startswith="employees/",
+            )
+            .exclude(id__in=EmployeeDocument.objects.filter(
+                file_id__isnull=False).values("file_id"))
+            .exclude(id__in=Employee.objects.filter(
+                photo_id__isnull=False).values("photo_id"))
         )
         found = {row.id: row for row in rows}
         missing = [str(one) for one in file_ids if one not in found]
@@ -118,7 +131,9 @@ class EmployeeAttachmentService(BaseService):
         ссылаться журнал, а история кадровых бумаг важнее места на диске.
         """
         self.access.require(actor, "employees.manage")
-        employee = require_visible_employee(self.access, actor, employee_id)
+        employee = require_visible_employee(
+            self.access, actor, employee_id, "employees.manage"
+        )
         stored = self.take(actor, [file_id])[file_id]
         # Поле модели — `original_filename`; прежнее `original_name` роняло
         # каждое прикрепление без заголовка в 500.
@@ -170,7 +185,9 @@ class EmployeeAttachmentService(BaseService):
         её никто не требовал, и пустая строка была бы мусором.
         """
         self.access.require(actor, "employees.manage")
-        employee = require_visible_employee(self.access, actor, employee_id)
+        employee = require_visible_employee(
+            self.access, actor, employee_id, "employees.manage"
+        )
         row = EmployeeDocument.objects.filter(
             id=document_id,
             employee_id=employee.id,
@@ -205,7 +222,9 @@ class EmployeeAttachmentService(BaseService):
     def set_photo(self, actor: Actor, employee_id: uuid.UUID, file_id: uuid.UUID):
         """Заменить фотографию в карточке."""
         self.access.require(actor, "employees.manage")
-        employee = require_visible_employee(self.access, actor, employee_id)
+        employee = require_visible_employee(
+            self.access, actor, employee_id, "employees.manage"
+        )
         stored = self.take(actor, [file_id])[file_id]
         before = {"photo_id": str(employee.photo_id) if employee.photo_id else None}
         employee.photo = stored
@@ -239,8 +258,18 @@ class EmployeeAttachmentService(BaseService):
     def open_document(
         self, actor: Actor, employee_id: uuid.UUID, document_id: uuid.UUID
     ):
-        self.access.require(actor, "employees.read")
-        require_visible_employee(self.access, actor, employee_id)
+        # Файл кадрового документа — паспорт, договор, приказ — открывает
+        # кадровик (`employees.manage`), а не каждый, кто видит карточку.
+        # Наблюдателю, бухгалтеру и руководителю виден список документов
+        # (название и состояние), но не сами бумаги: так записано в матрице
+        # ролей (`docs/security/pentest-role-matrix.md`, «документы — нет»),
+        # а до 07.10 сервер отдавал файл по одному `employees.read`.
+        # Область — того назначения, что несёт право (§3): «HR на офис A +
+        # наблюдатель на офис B» паспорт сотрудника из B не открывает.
+        # Справки к заявкам на отсутствие идут другой дорогой
+        # (`AbsenceService.open_document`): их смотрит тот, кто решает.
+        self.access.require(actor, "employees.manage")
+        require_visible_employee(self.access, actor, employee_id, "employees.manage")
         document = (
             EmployeeDocument.objects.filter(
                 id=document_id,

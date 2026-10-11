@@ -61,7 +61,7 @@ class FakeClient:
         self.result = result or {
             "status": "ENTERED", "accepted": True,
             "office_name": "Ташкент Сити", "point_name": "Главный вход",
-            "point_mode": "ENTRY", "distance_m": 23, "radius_m": 100,
+            "point_mode": "ENTRY", "geofence_kind": "CIRCLE",
             "occurred_at_local": "09:02", "session": None,
         }
 
@@ -121,7 +121,7 @@ def test_the_location_goes_to_the_backend_with_the_sticker():
     assert call["accuracy_m"] == 12.0
     assert state.state is None
     reply = message.answers[-1]
-    assert "Расстояние до офиса: 23 м" in reply
+    assert "Место: на территории офиса" in reply
     assert "Время: 09:02" in reply
 
 
@@ -165,10 +165,14 @@ def test_an_old_location_message_is_not_accepted():
 
 # --- тексты ------------------------------------------------------------------
 
-def test_too_far_says_how_far_and_what_is_allowed():
+def test_too_far_does_not_name_numbers():
+    """Цифр нет: координаты присылает клиент, и точное расстояние
+    подсказывало бы, какую точку подставить. Даже если они пришли."""
     body = text.outcome({"status": "OUTSIDE_GEOFENCE", "distance_m": 184,
                          "radius_m": 100})
-    assert "Вы слишком далеко от офиса: 184 м. Допустимо: 100 м" in body
+    assert "Вы слишком далеко от офиса" in body
+    assert "184" not in body
+    assert "100" not in body
 
 
 def test_a_reissued_code_is_called_no_longer_valid():

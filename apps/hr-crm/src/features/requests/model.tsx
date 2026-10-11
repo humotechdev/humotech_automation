@@ -324,7 +324,8 @@ export function FileRow({ tone, title, note, href, download, action }: {
   tone: 'blue' | 'red';
   title: string;
   note: string;
-  href: string;
+  /** Без адреса — файл есть, но этой роли не открывается (решает сервер). */
+  href?: string | undefined;
   download?: string;
   action: string;
 }) {
@@ -337,10 +338,14 @@ export function FileRow({ tone, title, note, href, download, action }: {
         <b>{title}</b>
         <small>{note}</small>
       </span>
-      <a className="rq-file__get" href={href} download={download} target="_blank" rel="noreferrer">
-        <AppIcon name="download" size={18} />
-        {action}
-      </a>
+      {href ? (
+        <a className="rq-file__get" href={href} download={download} target="_blank" rel="noreferrer">
+          <AppIcon name="download" size={18} />
+          {action}
+        </a>
+      ) : (
+        <small className="rq-file__closed">Файл открывает тот, кто проверяет или решает</small>
+      )}
     </div>
   );
 }

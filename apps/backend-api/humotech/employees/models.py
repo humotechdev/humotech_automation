@@ -83,25 +83,6 @@ class Employee(
     # карточку. У новых он обязателен — это проверяет сервис приёма.
     pinfl = models.CharField(max_length=14, null=True, blank=True)
     hire_date = models.DateField()
-    # Срок стажировки. Обе даты необязательны: человека берут на
-    # стажировку и тогда, когда конец ещё не назван, — а «взяли
-    # стажёром» и «стажируется до такого-то» это разные утверждения.
-    # Сам факт стажировки живёт в `employment_status`; здесь только
-    # период, и без статуса PROBATION он ничего не значит.
-    probation_from = models.DateField(null=True, blank=True)
-    probation_to = models.DateField(null=True, blank=True)
-    #: Наставник на время стажировки — к кому идёт стажёр с вопросами и
-    #: кто даёт отзыв к решению. Не руководитель: руководитель задаётся
-    #: назначением и живёт дольше стажировки.
-    mentor_employee = models.ForeignKey(
-        "self",
-        on_delete=models.PROTECT,
-        db_column="mentor_employee_id",
-        db_index=False,
-        null=True,
-        blank=True,
-        related_name="+",
-    )
     termination_date = models.DateField(null=True, blank=True)
     # Почему человека нет в штате. Свободный текст: причин столько же,
     # сколько обстоятельств, а «прочее» из списка не отвечает ни на один
@@ -136,18 +117,6 @@ class Employee(
             status_check(
                 "employment_status", EMPLOYMENT_STATUSES,
                 "ck_employees_employment_status",
-            ),
-            # Конец стажировки не раньше её начала. Проверка в базе, а не
-            # только в сервисе: даты правятся не одним путём, и запись,
-            # где стажировка кончается до начала, не должна существовать
-            # ни при каком порядке вызовов.
-            models.CheckConstraint(
-                condition=(
-                    Q(probation_from__isnull=True)
-                    | Q(probation_to__isnull=True)
-                    | Q(probation_to__gte=F("probation_from"))
-                ),
-                name="ck_employees_probation_order",
             ),
             status_check("gender", GENDERS, "ck_employees_gender", nullable=True),
             status_check(

@@ -251,7 +251,7 @@ export type OverviewGroup = {
   difference_points: number | null;
 };
 
-// --- люди за период: команда и стажировки ----------------------------------
+// --- люди за период: команда -----------------------------------------------
 
 export type PeopleScope = {
   date_from: string;
@@ -282,12 +282,8 @@ export type TeamReport = {
     previous_headcount_start: number;
     hired: number;
     previous_hired: number;
-    /** Переведены в штат после стажировки — по журналу. */
-    promoted: number;
-    previous_promoted: number;
     left: number;
     previous_left: number;
-    probation_failed: number;
   };
   series: { day: string; headcount: number }[];
   by_department: { id: string | null; name: string; hired: number; left: number; difference: number }[];
@@ -302,41 +298,8 @@ export type TeamReport = {
   }[];
 };
 
-export type Trainee = TeamPerson & {
-  probation_from: string;
-  probation_to: string | null;
-  /** Дней до решения; отрицательное — срок прошёл. */
-  days_left: number | null;
-  days_total: number | null;
-  /** Наставник на время стажировки. */
-  mentor?: { id: string; name: string } | null;
-};
-
-export type ProbationReport = {
-  period: { first: string; last: string; days: number };
-  previous_period: { first: string; last: string };
-  summary: {
-    active: number;
-    due: number;
-    overdue: number;
-    started: number;
-    promoted: number;
-    failed: number;
-    previous_started: number;
-    previous_promoted: number;
-    previous_failed: number;
-    conversion_percent: number | null;
-    previous_conversion_percent: number | null;
-  };
-  due_days: number;
-  trainees: Trainee[];
-};
-
 export const analyticsTeam = (params: PeopleScope, signal?: AbortSignal) =>
   request<TeamReport>(`/analytics/team${query(params)}`, signal ? { signal } : {});
-
-export const analyticsProbation = (params: PeopleScope, signal?: AbortSignal) =>
-  request<ProbationReport>(`/analytics/probation${query(params)}`, signal ? { signal } : {});
 
 // --- справочники -----------------------------------------------------------
 
@@ -585,10 +548,6 @@ export type EmployeeEdit = {
   birth_date?: string | null;
   gender?: string | null;
   marital_status?: string | null;
-  /** Срок стажировки. Обе даты необязательны и по отдельности тоже. */
-  probation_from?: string | null;
-  probation_to?: string | null;
-  mentor_employee_id?: string | null;
 };
 
 export const updateEmployee = (id: string, body: EmployeeEdit) =>
@@ -644,30 +603,6 @@ export const changeEmployeeAssignment = (
   body,
 });
 
-/**
- * Принять стажёра в штат.
- *
- * Должность передаётся, только если её пересмотрели по итогам
- * стажировки: перевод в штат сам по себе не повод её менять.
- */
-export const promoteEmployee = (id: string, body: { position_id?: string } = {}) =>
-  request<Record<string, unknown>>(`/employees/${id}/promote/`, {
-    method: 'POST',
-    body,
-  });
-
-/**
- * Завершить стажировку расставанием.
- *
- * Это увольнение с причиной «Не прошёл стажировку» — отдельного статуса
- * для такого случая нет и заводить его не нужно.
- */
-export const endProbation = (id: string, body: { reason?: string } = {}) =>
-  request<Record<string, unknown>>(`/employees/${id}/end-probation/`, {
-    method: 'POST',
-    body,
-  });
-
 export const employeeAssignments = (id: string, signal?: AbortSignal) =>
   request<Items<Assignment>>(`/employees/${id}/assignments/`, signal ? { signal } : {});
 
@@ -699,6 +634,19 @@ export const inviteToTelegram = (employee_id: string, replace = false) =>
     '/telegram/invitations/',
     { method: 'POST', body: { employee_id, replace } },
   );
+
+/**
+ * Решение HR по переходу по ссылке привязки.
+ *
+ * Согласие сотрудника в боте доступа не открывает: рабочей привязку
+ * делает только подтверждение здесь. Перед ним HR видит, какой именно
+ * Telegram перешёл по ссылке, — её могли переслать или перехватить.
+ */
+export const confirmTelegramLink = (invitationId: string) =>
+  request<unknown>(`/telegram/invitations/${invitationId}/confirm/`, { method: 'POST' });
+
+export const rejectTelegramLink = (invitationId: string) =>
+  request<unknown>(`/telegram/invitations/${invitationId}/reject/`, { method: 'POST' });
 
 export type Department = { id: string; name: string; office_id?: string | null };
 
@@ -995,7 +943,45 @@ export type PresenceRow = {
   /** Хотя бы одна отметка дня пришла из-за границы геозоны офиса.
    *  Не нарушение само по себе — повод посмотреть. */
   outside_geofence: boolean;
+  /** Выездная работа учитывается отдельно от событий входа и выхода. */
+  field_work?: { id: string; status: FieldWorkStatus } | null;
 };
+
+export type FieldWorkStatus = 'PENDING' | 'CONFIRMED' | 'DECLINED' | 'CANCELLED' | 'EXPIRED';
+export type FieldWorkRequest = {
+  id: string;
+  employee_id: string;
+  date: string;
+  status: FieldWorkStatus;
+  requested_at: string;
+  confirmed_at?: string | null;
+  declined_at?: string | null;
+  work_location?: string | null;
+  work_description?: string | null;
+  /** Плановая норма дня из графика, секунды. Считает сервер. */
+  norm_seconds?: number;
+  responded_at?: string | null;
+  expires_at?: string;
+  /** Статус сообщения в очереди — не статус запроса. */
+  delivery_status?: 'PENDING' | 'RUNNING' | 'SENT' | 'READ' | 'FAILED' | 'CANCELLED' | string | null;
+};
+
+export const fieldWorkRequests = (employee_id: string, date: string, signal?: AbortSignal) =>
+  request<{ items: FieldWorkRequest[] }>(
+    `/attendance/field-work${query({ employee_id, date })}`,
+    signal ? { signal } : {},
+  );
+
+export const requestFieldWork = (body: {
+  employee_id: string; date: string; manager_confirmed: true;
+  work_location?: string; work_description?: string;
+}) => request<FieldWorkRequest>('/attendance/field-work', { method: 'POST', body });
+
+export const cancelFieldWork = (id: string) =>
+  request<FieldWorkRequest>(`/attendance/field-work/${encodeURIComponent(id)}/cancel`, { method: 'POST', body: {} });
+
+export const retryFieldWork = (id: string) =>
+  request<FieldWorkRequest>(`/attendance/field-work/${encodeURIComponent(id)}/retry`, { method: 'POST', body: {} });
 
 export type PresencePage = {
   date: string;
@@ -1046,7 +1032,14 @@ export type EventRow = {
    */
   inside_geofence: boolean | null;
   inside_office_network: boolean | null;
+  /**
+   * Почему принятую отметку стоит проверить. Отметку они не отменяют:
+   * у каждого признака бывает честное объяснение. Пусто — признаков нет.
+   */
+  anomalies?: AttendanceAnomaly[];
 };
+
+export type AttendanceAnomaly = 'NO_LOCATION' | 'PERFECT_ACCURACY' | 'SHARED_CODE';
 
 export type EventQuery = {
   employee_id?: string;
@@ -1103,10 +1096,73 @@ export type OfficeFull = Office & {
   latitude: string | number | null;
   longitude: string | number | null;
   geofence_radius_m: number | null;
+  /** Форма геозоны. У старых ответов поля нет — это круг. */
+  geofence_kind?: 'CIRCLE' | 'POLYGON';
+  /** Углы участка `[широта, долгота]`, незамкнутый контур. */
+  geofence_polygon?: [number, number][] | null;
+  /**
+   * Новое местоположение, ждущее подтверждения. Пока оно здесь, отметки
+   * сверяются с действующим (поля выше). `null` — предложения нет.
+   */
+  pending_location?: PendingLocation | null;
+  pending_location_at?: string | null;
+  pending_location_by_name?: string | null;
   opened_at: string | null;
   closed_at: string | null;
   updated_at?: string;
 };
+
+export type PendingLocation = {
+  geofence_kind: 'CIRCLE' | 'POLYGON';
+  latitude: string | null;
+  longitude: string | null;
+  geofence_radius_m: number | null;
+  geofence_polygon: [number, number][] | null;
+};
+
+/** Новое место начинает действовать вместо прежнего. */
+export const confirmOfficeLocation = (id: string) =>
+  request<OfficeFull>(`/offices/${id}/location/confirm/`, { method: 'POST', body: {} });
+
+/** Новое место отброшено; прежнее продолжает действовать. */
+export const discardOfficeLocation = (id: string) =>
+  request<OfficeFull>(`/offices/${id}/location/discard/`, { method: 'POST', body: {} });
+
+type Fenced = Pick<OfficeFull, 'latitude' | 'longitude' | 'geofence_radius_m'
+  | 'geofence_kind' | 'geofence_polygon'>;
+
+/**
+ * Настроена ли у офиса геозона — кругом или контуром.
+ *
+ * Одно правило на все экраны, то же, что у сервера: контур действует,
+ * если выбран и нарисован; круг — если есть точка и радиус. Раньше
+ * «настроен» определялось по одному радиусу, и офис с контуром выглядел
+ * бы ненастроенным.
+ */
+export function geofenceReady(office: Fenced): boolean {
+  if (office.geofence_kind === 'POLYGON') return (office.geofence_polygon?.length ?? 0) >= 3;
+  return office.latitude !== null && office.longitude !== null
+    && (office.geofence_radius_m ?? 0) > 0;
+}
+
+/** Геозона словами: «70 м», «контур, 6 углов» или «не задана». */
+export function geofenceLabel(office: Fenced): string {
+  if (!geofenceReady(office)) return 'не задана';
+  if (office.geofence_kind === 'POLYGON') {
+    return `контур, ${office.geofence_polygon!.length} ${cornersWord(office.geofence_polygon!.length)}`;
+  }
+  return `${office.geofence_radius_m} м`;
+}
+
+/** «угол», «угла», «углов» — одно правило на всю CRM. */
+export function cornersWord(count: number): string {
+  const tens = count % 100;
+  const ones = count % 10;
+  if (tens >= 11 && tens <= 14) return 'углов';
+  if (ones === 1) return 'угол';
+  if (ones >= 2 && ones <= 4) return 'угла';
+  return 'углов';
+}
 
 export const officesPage = (
   params: { search?: string; status?: string; region_id?: string; limit?: string; cursor?: string },
@@ -1148,15 +1204,17 @@ export const updateRegion = (
  * Часового пояса в теле нет: он один на страну и берётся у организации
  * на сервере. Передать его отсюда значило бы дать интерфейсу
  * возможность завести офис, живущий на час в стороне от остальных.
+ *
+ * Местоположение обязательно: точка с радиусом или контур. Без него
+ * сервер офис не заводит.
  */
 export const createOffice = (body: {
   region_id: string;
   /** Пусто — офис назовётся по региону. */
   name?: string;
-  /** Адрес задают в карточке офиса, а не при заведении. */
   address?: string;
   opened_at?: string;
-}) => request<OfficeFull>('/offices/', { method: 'POST', body });
+} & Record<string, unknown>) => request<OfficeFull>('/offices/', { method: 'POST', body });
 
 export const setRegionActive = (id: string, active: boolean) =>
   request<RegionFull>(`/regions/${id}/${active ? 'reactivate' : 'deactivate'}/`, {
@@ -1328,7 +1386,13 @@ export type QuestionMessage = {
     sent_at: string | null;
     read_at: string | null;
     error: string | null;
+    /** Строка очереди Telegram — для повтора отправки. */
+    notification_id?: string | null;
+    /** Повтор разрешён состоянием и правом `notifications.manage`. */
+    can_retry?: boolean;
   } | null;
+  /** Ключ повтора своего ответа: по нему узнаётся «Отправляется» на экране. */
+  client_request_id?: string | null;
   /** Файл к ответу HR: сотрудник получил его документом. */
   attachment?: { name: string; mime_type: string; size_bytes: number } | null;
 };
@@ -1462,8 +1526,15 @@ export const question = (id: string, signal?: AbortSignal) =>
 export const questionContext = (id: string, signal?: AbortSignal) =>
   request<QuestionContext>(`${QUESTIONS}/${id}/context/`, signal ? { signal } : {});
 
-export const readQuestion = (id: string) =>
-  request<{ id: string; unread: boolean }>(`${QUESTIONS}/${id}/read/`, { method: 'POST', body: {} });
+/**
+ * Отметить прочитанным то, что было на экране. `seenMessageId` — последнее
+ * показанное сообщение: пришедшее после него сервер прочитанным не считает.
+ */
+export const readQuestion = (id: string, seenMessageId?: string | null) =>
+  request<{ id: string; unread: boolean }>(`${QUESTIONS}/${id}/read/`, {
+    method: 'POST',
+    body: seenMessageId ? { seen_message_id: seenMessageId } : {},
+  });
 
 const questionAction = (id: string, action: string, body: Record<string, unknown> = {}) =>
   request<Question>(`${QUESTIONS}/${id}/${action}/`, { method: 'POST', body });
@@ -2659,9 +2730,11 @@ export type DailyRow = {
   /** Минуты СВЕРХ допуска. `null` — сравнивать не с чем. */
   late_minutes: number | null;
   scheduled_start: string | null;
+  scheduled_end?: string | null;
   absence_code: string | null;
   absence_name: string | null;
   conflicting_marks: boolean;
+  field_work?: { id: string; status: FieldWorkStatus } | null;
 };
 
 /** Итоги за ВЕСЬ период, а не за показанные строки. */
@@ -2764,6 +2837,11 @@ export type ScheduleRow = {
   timezone: string;
   status: string;
   weekly_minutes?: number;
+  /** Регион графика; null — график организации. */
+  region_id?: string | null;
+  region_name?: string | null;
+  /** Может ли текущий пользователь менять график (решает сервер). */
+  can_manage?: boolean | null;
 };
 
 export const workSchedules = (signal?: AbortSignal) =>
@@ -2845,9 +2923,6 @@ export type OnboardBody = {
   manager_employee_id?: string | null;
   employment_type: string;
   employment_status?: string;
-  /** Срок стажировки. Сервер запишет его только при самой стажировке. */
-  probation_from?: string | null;
-  probation_to?: string | null;
   schedule_id: string;
   gender?: string | null;
   marital_status?: string | null;
@@ -3424,7 +3499,6 @@ export const surveySummary = (id: string, signal?: AbortSignal) =>
  */
 
 export type SurveyTriggerKind =
-  | 'PROBATION_END'
   | 'FIRST_DAY'
   | 'DAYS_AFTER_HIRE'
   | 'BIRTHDAY'

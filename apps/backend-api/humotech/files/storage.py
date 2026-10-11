@@ -17,13 +17,16 @@
 
 Про `scan_status` отдельно и честно. В схеме он есть, и правило «файл со
 `scan_status <> CLEAN` показывать нельзя» записано в документации модели.
-Антивируса в проекте НЕТ. Поэтому здесь принято явное решение: пока
-`FILES["SCANNER_ENABLED"]` выключен, загруженный файл помечается CLEAN,
-и это значит ровно «проверка не проводилась», а не «проверен и чист».
-Альтернатива — ставить PENDING — привела бы к тому, что ни один кадровик
-не смог бы открыть ни одну справку, то есть к неработающей функции при
-видимости безопасности. Когда сканер появится, флаг включается, и
-непроверенные файлы перестают отдаваться сами собой.
+Антивируса в проекте НЕТ. Пока `FILES["SCANNER_ENABLED"]` выключен,
+загруженный файл помечается UNSCANNED — честное «проверка не
+проводилась», а не фиктивное CLEAN (так было до 30.09). UNSCANNED
+отдаётся так же, как CLEAN: доступ к файлу уже ограничен view.
+
+С флагом файл проверяется clamd (`humotech/files/scanner.py`) ДО записи
+на диск: чистый получает CLEAN, заражённый отклоняется и не сохраняется,
+при недоступном сканере загрузка отклоняется с 503 — «принять на потом»
+нельзя, перевести файл в проверенные позже некому. Сервис `clamav` —
+в профиле `antivirus` compose тестового сервера (аудит 11.10, M-11).
 
 Отдача — только через `humotech.files.serving.file_response`: там одна
 на все view проверка статуса и удаления (PENDING — только кадровику и
@@ -172,6 +175,10 @@ def store(
         digest.update(chunk)
     upload.seek(0)
 
+    scan_status = "UNSCANNED"
+    if settings.FILES["SCANNER_ENABLED"]:
+        scan_status = _antivirus(upload, organization_id=organization_id)
+
     storage = private_storage()
     # Имя на диске не связано с исходным: ни фамилии, ни диагноза, ни даты.
     key = f"{prefix}/{secrets.token_urlsafe(24)}{EXTENSIONS[declared]}"
@@ -185,9 +192,11 @@ def store(
         mime_type=declared,
         size_bytes=size,
         checksum_sha256=digest.hexdigest(),
-        # См. пояснение в документации модуля: CLEAN здесь означает
-        # «проверка не проводилась», пока сканер не включён.
-        scan_status="PENDING" if settings.FILES["SCANNER_ENABLED"] else "CLEAN",
+        # Сканер включён — файл ждёт проверки (PENDING). Выключен —
+        # честный UNSCANNED («не проверялся»), а не фиктивный CLEAN:
+        # правило выдачи ниже относится к UNSCANNED так же осторожно,
+        # как к PENDING, а загрузку сотрудника наружу не отдаёт.
+        scan_status=scan_status,
         uploaded_by_employee=employee,
         uploaded_by_user_id=user_id,
     )
@@ -295,3 +304,32 @@ def _jpeg_dimensions(upload) -> tuple[int, int] | None:
 
 
 __all__ = ["StoredFile", "is_viewable", "open_stored", "private_storage", "store"]
+
+
+def _antivirus(upload, *, organization_id) -> str:
+    """Проверить файл антивирусом ДО записи на диск. Вернуть статус CLEAN.
+
+    Заражённый — отказ, на диск он не попадает; сканер недоступен — 503.
+    """
+    import logging
+
+    from humotech.core.errors import ScannerUnavailable
+    from humotech.files.scanner import ScanError, scan
+
+    try:
+        verdict = scan(upload)
+    except ScanError as error:
+        logging.getLogger("humotech.files").error(
+            "antivirus unavailable: %s", error)
+        raise ScannerUnavailable(
+            "Проверка файлов антивирусом временно недоступна. Попробуйте позже."
+        ) from error
+    if not verdict.clean:
+        logging.getLogger("humotech.files").warning(
+            "infected upload refused: org=%s signature=%s",
+            organization_id, verdict.signature)
+        raise ValidationFailed(
+            "Файл не прошёл антивирусную проверку",
+            details={"reason": "infected"},
+        )
+    return "CLEAN"

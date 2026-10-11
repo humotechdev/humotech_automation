@@ -28,6 +28,7 @@ import aiohttp
 
 from src.api.errors import error_for
 from src.config.settings import settings
+from src.utils.safe import is_uuid
 
 BOT_SECRET_HEADER = "X-Bot-Token"
 EMPLOYEE_HEADER = "X-Telegram-User-Id"
@@ -433,6 +434,24 @@ class SelfServiceClient:
 
     # --- очередь уведомлений ---------------------------------------------
 
+    async def field_work_decision(
+        self, *, telegram_user_id: int, request_id: str, decision: str
+    ) -> dict:
+        """Передать нажатие серверу: привязку и владельца решает он.
+
+        `telegram_user_id` берётся только из Telegram callback.from_user.id.
+        UUID проверяется до вставки в URL с общим секретом бота.
+        """
+        if not is_uuid(request_id):
+            raise ValueError("field work request id must be UUID")
+        if decision not in ("CONFIRM", "DECLINE"):
+            raise ValueError("invalid field work decision")
+        return await self._request(
+            "POST", f"/telegram/bot/field-work/{request_id}/decision",
+            headers={},
+            json={"telegram_user_id": telegram_user_id, "decision": decision},
+        )
+
     async def claim_notifications(self) -> dict:
         """Забрать пачку сообщений. Только общий секрет, без сотрудника."""
         return await self._request("GET", "/telegram/bot/outbox", headers={})
@@ -440,6 +459,20 @@ class SelfServiceClient:
     async def report_notifications(self, results: list[dict]) -> dict:
         return await self._request(
             "POST", "/telegram/bot/outbox", headers={}, json={"results": results}
+        )
+
+    async def wait_outbox(self, seconds: int) -> dict:
+        """Ждать, пока в очереди появится что отправить.
+
+        Backend отвечает `{"ready": true}`, как только HR ответил, или
+        `{"ready": false}` по истечении ожидания. Сам ничего не захватывает:
+        забирает очередь прежний `claim_notifications`. Время ожидания
+        запроса — с запасом сверх ожидания на сервере.
+        """
+        return await self._request(
+            "GET", "/telegram/bot/outbox/wait", headers={},
+            params={"timeout": str(seconds)},
+            timeout=aiohttp.ClientTimeout(total=seconds + 15),
         )
 
     # --- внутри ----------------------------------------------------------
@@ -459,15 +492,18 @@ class SelfServiceClient:
         headers: dict,
         params: dict | None = None,
         json: dict | None = None,
+        timeout: aiohttp.ClientTimeout | None = None,
     ) -> Any:
         session = await self._get_session()
         all_headers = {BOT_SECRET_HEADER: settings.backend_bot_secret, **headers}
+        extra = {"timeout": timeout} if timeout is not None else {}
         async with session.request(
             method,
             f"{self._base_url}{path}",
             headers=all_headers,
             params=params,
             json=json,
+            **extra,
         ) as response:
             body = await self._body(response)
             if response.status >= 400:

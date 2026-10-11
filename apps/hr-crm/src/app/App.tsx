@@ -17,7 +17,7 @@ import { RequestPage } from '../pages/RequestPage';
 import { RequestsPage } from '../pages/RequestsPage';
 import { AttendancePage } from '../pages/AttendancePage';
 import { OfficesPage } from '../pages/OfficesPage';
-import { OfficeSetupPage } from '../pages/OfficeSetupPage';
+import { NewOfficePage, OfficeSetupPage } from '../pages/OfficeSetupPage';
 import { QuestionsPage } from '../pages/QuestionsPage';
 import { SurveysPage } from '../pages/SurveysPage';
 import { SurveyTemplatePage } from '../pages/SurveyTemplatePage';
@@ -33,6 +33,7 @@ import { AuditPage } from '../pages/admin/AuditPage';
 import { LoginPage } from '../pages/LoginPage';
 import { useSession } from '../features/auth/session';
 import { ShellLayout } from '../components/AppShell';
+import { probeSession, startLive, stopLive } from '../features/realtime/session-probe';
 import { forgetNavigation } from '../features/shell/memory';
 
 export function App() {
@@ -66,6 +67,7 @@ export function App() {
         <Route path="/requests/:id" element={<RequestPage />} />
         <Route path="/attendance" element={<AttendancePage />} />
         <Route path="/offices" element={<OfficesPage />} />
+        <Route path="/offices/new" element={<NewOfficePage />} />
         <Route path="/offices/:id/setup" element={<OfficeSetupPage />} />
         <Route path="/questions" element={<QuestionsPage />} />
         {/*
@@ -126,6 +128,15 @@ function Protected() {
   useEffect(() => {
     if (session.status === 'anonymous') forgetNavigation();
   }, [session.status]);
+
+  // Поток событий — одному вошедшему с правом на обращения. Выход
+  // закрывает его через forgetNavigation выше.
+  const reads = session.status === 'authenticated'
+    && session.user.permissions.includes('questions.read');
+  useEffect(() => {
+    if (reads) startLive(probeSession);
+    else stopLive();
+  }, [reads]);
 
   if (session.status === 'checking') return <Checking />;
   // Сначала сбой связи, потом отсутствие доступа: перепутать их значит

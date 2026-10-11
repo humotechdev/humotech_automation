@@ -1022,7 +1022,7 @@ class AbsenceService(BaseService):
         self.access.require(actor, "absences.approve")
         moment = now or timezone.now()
 
-        request = self._hr_request(actor, request_id)
+        request = self._hr_request(actor, request_id, "absences.approve")
         if request.status not in OPEN_STATUSES:
             raise Conflict(
                 "Заявка уже рассмотрена", details={"status": request.status}
@@ -1132,7 +1132,7 @@ class AbsenceService(BaseService):
         """
         self.access.require(actor, "absences.approve")
         moment = now or timezone.now()
-        request = self._hr_request(actor, request_id)
+        request = self._hr_request(actor, request_id, "absences.approve")
         if request.status not in OPEN_STATUSES:
             raise Conflict(
                 "Период правится до решения по заявке",
@@ -1226,7 +1226,7 @@ class AbsenceService(BaseService):
         """
         self.access.require(actor, "absences.documents")
         moment = now or timezone.now()
-        request = self._hr_request(actor, request_id)
+        request = self._hr_request(actor, request_id, "absences.documents")
         self._forbid_self_approval(actor, request)
 
         with self.atomic():
@@ -1266,7 +1266,7 @@ class AbsenceService(BaseService):
         """Отмена уже подтверждённого отсутствия — только отделом кадров."""
         self.access.require(actor, "absences.approve")
         moment = now or timezone.now()
-        request = self._hr_request(actor, request_id)
+        request = self._hr_request(actor, request_id, "absences.approve")
         if request.status != "APPROVED":
             raise Conflict("Отменять нечего: заявка не подтверждена")
 
@@ -1365,13 +1365,20 @@ class AbsenceService(BaseService):
                 | Q(employee__last_name__icontains=pattern)
                 | Q(employee__employee_number__icontains=pattern)
             )
+        # Границы суток — по поясу организации, а не UTC: начало заявки —
+        # местная полночь, по UTC это ещё вчера, и заявка с 20-го попадала
+        # в отбор «по 19-е» (аудит 12.10, C-26).
+        if date_from or date_to:
+            from humotech.core.timeframes import day_bounds, organization_zone
+
+            tz = organization_zone(actor.organization_id)
         if date_from:
             queryset = queryset.filter(
-                requested_end_at__date__gte=_parse_day(date_from, "date_from")
+                requested_end_at__gte=day_bounds(_parse_day(date_from, "date_from"), tz)[0]
             )
         if date_to:
             queryset = queryset.filter(
-                requested_start_at__date__lte=_parse_day(date_to, "date_to")
+                requested_start_at__lt=day_bounds(_parse_day(date_to, "date_to"), tz)[1]
             )
 
         visible = self._scope_ids(actor, office_id=office_id, region_id=region_id)
@@ -1379,12 +1386,18 @@ class AbsenceService(BaseService):
             queryset = queryset.filter(employee_id__in=visible)
         return queryset
 
-    def _scope_ids(self, actor: Actor, *, office_id=None, region_id=None):
+    def _scope_ids(self, actor: Actor, *, office_id=None, region_id=None,
+                   permission: str | None = None):
         """Сотрудники в области видимости. `None` — вся организация.
 
         Именно `None` для «всех» и ПУСТОЙ набор для «ничего не видно»:
         слить эти случаи проверкой `if ids:` значит молча показать всю
         организацию тому, у кого прав нет.
+
+        `permission` сужает область до назначений, несущих это право: для
+        РЕШЕНИЯ по заявке (подтвердить больничный) сотрудник должен быть
+        виден через то же назначение, что даёт право решать, а не через
+        соседнее «только чтение».
         """
         from datetime import date
 
@@ -1393,13 +1406,14 @@ class AbsenceService(BaseService):
 
         condition = None
         if office_id:
-            self.access.require_office(actor, office_id)
+            self.access.require_office(actor, office_id, permission)
             condition = Q(office_id=office_id)
         elif region_id:
-            self.access.require_region(actor, region_id)
-            condition = Q(office__region_id=region_id)
+            condition = self.access.region_condition(
+                actor, region_id, permission=permission
+            )
         else:
-            visible = self.access.visible_office_ids(actor)
+            visible = self.access.visible_office_ids(actor, permission)
             if visible is not None:
                 condition = Q(office_id__in=visible)
 
@@ -1460,15 +1474,32 @@ class AbsenceService(BaseService):
                 related_entity_id=request.id,
             )
 
-    def open_document(self, actor: Actor, request_id, document_id):
-        """Файл справки к заявке — тем, кто видит саму заявку.
+    #: Кто открывает ФАЙЛ справки: тот, кто проверяет бумаги, и тот, кто
+    #: решает по заявке. Наблюдатель, бухгалтер и администратор офиса
+    #: видят в заявке только факт, что справка есть (решение владельца
+    #: 11.10.2026 по противоречию в матрице ролей, аудит M-5).
+    DOCUMENT_FILE_PERMISSIONS = ("absences.documents", "absences.approve")
 
-        Право то же, что на очередь, и область та же: справка чужого офиса
-        не открывается по угаданному адресу. Отказ по области отвечает «не
-        найдено», а не «запрещено»: иначе по ответу можно было бы
-        перебирать, какие заявки существуют.
+    def open_document(self, actor: Actor, request_id, document_id):
+        """Файл справки к заявке — тому, кто проверяет или решает.
+
+        Справка — медицинские данные. `absences.read` мало: его несут
+        VIEWER, ACCOUNTANT и OFFICE_ADMIN. Нужно `absences.documents` или
+        `absences.approve`, и сотрудник должен быть в области ИМЕННО того
+        назначения, что несёт это право, — «HR на офис A + наблюдатель на
+        офис B» справку из B не открывает. Область — по текущему
+        назначению сотрудника, у уволенного — по последнему: так HR его
+        офиса не теряет справки уволенного (аудит L-10).
+
+        Отказ по области отвечает «не найдено», а не «запрещено»: иначе по
+        ответу можно было бы перебирать, какие заявки существуют.
         """
-        self.access.require(actor, "absences.read")
+        held = [code for code in self.DOCUMENT_FILE_PERMISSIONS
+                if self.access.has(actor, code)]
+        if not held:
+            raise PermissionDenied(
+                "Файл справки открывает тот, кто проверяет бумаги или решает по заявке"
+            )
         document = (
             AbsenceDocument.objects.filter(
                 id=document_id,
@@ -1480,12 +1511,30 @@ class AbsenceService(BaseService):
         )
         if document is None:
             raise NotFound("Документ не найден")
-        visible = self._scope_ids(actor)
-        if visible is not None and not visible.filter(
-            employee_id=document.absence_request.employee_id
-        ).exists():
+        if not any(
+            self._covers_employee(actor, document.absence_request.employee_id, code)
+            for code in held
+        ):
             raise NotFound("Документ не найден")
         return open_stored(document.file), document.file
+
+    def can_open_papers(self, actor: Actor, employee_id) -> bool:
+        """Может ли актор открыть файл справки этого сотрудника — то же
+        правило, что в `open_document` (без поиска документа)."""
+        return any(
+            self.access.has(actor, code)
+            and self._covers_employee(actor, employee_id, code)
+            for code in self.DOCUMENT_FILE_PERMISSIONS
+        )
+
+    def _covers_employee(self, actor: Actor, employee_id, permission: str) -> bool:
+        from humotech.employees.selectors import require_visible_employee
+
+        try:
+            require_visible_employee(self.access, actor, employee_id, permission)
+        except (NotFound, PermissionDenied):
+            return False
+        return True
 
     def verify_document(
         self,
@@ -1523,7 +1572,10 @@ class AbsenceService(BaseService):
         if document is None:
             raise NotFound("Документ не найден")
 
-        visible = self._scope_ids(actor)
+        # Решение по справке — запись: область в разрезе absences.documents
+        # (как и второй путь через _hr_request). Иначе право из назначения на
+        # один регион действовало бы на справку сотрудника другого.
+        visible = self._scope_ids(actor, permission="absences.documents")
         if visible is not None and not visible.filter(
             employee_id=document.absence_request.employee_id
         ).exists():
@@ -1755,6 +1807,10 @@ class AbsenceService(BaseService):
         # У продления исключается и родитель: `_approve` раздвигает
         # ЕГО отсутствие, и новый конец неизбежно перекрывает старый.
         lock_employee(request.employee_id)
+        from humotech.employees.models import Employee
+        Employee.objects.select_for_update().get(id=request.employee_id)
+        from humotech.attendance.field_work import require_no_field_work
+        require_no_field_work(request.employee_id, first_day, last_day)
         raise_on_overlap(
             request.employee_id, first_day, last_day, tz,
             ignore_request_ids=(request.id, request.parent_request_id),
@@ -1919,13 +1975,20 @@ class AbsenceService(BaseService):
             raise NotFound("Такой вид отсутствия недоступен")
         return absence_type
 
-    def _hr_request(self, actor: Actor, request_id) -> AbsenceRequest:
+    def _hr_request(
+        self, actor: Actor, request_id, permission: str | None = None
+    ) -> AbsenceRequest:
         """Заявка для действия кадровика: своя организация и своя область.
 
         Чужой офис отвечает так же, как несуществующая заявка, — иначе
         по ответу перебирают, какие заявки есть. Раньше решения и шаги
         проверки смотрели только на организацию: кадровик офиса Б
         подтверждал больничный сотрудника офиса А, которого даже не видит.
+
+        `permission` берёт область в разрезе права действия (решение по
+        заявке, работа со справкой): право из назначения на один офис не
+        должно действовать в офисе, выданном отдельным назначением лишь
+        на чтение.
         """
         request = (
             AbsenceRequest.objects.filter(
@@ -1936,7 +1999,7 @@ class AbsenceService(BaseService):
         )
         if request is None:
             raise NotFound("Заявка не найдена")
-        visible = self._scope_ids(actor)
+        visible = self._scope_ids(actor, permission=permission)
         if visible is not None and not visible.filter(
             employee_id=request.employee_id
         ).exists():
@@ -2184,56 +2247,23 @@ class AbsenceService(BaseService):
         Отпуск считается рабочими днями: суббота, попавшая в отпуск,
         не тратит остаток. Без этого две недели отпуска стоили бы
         четырнадцать дней вместо десяти.
+
+        Каждый день — по единому плану дня (`schedules.day_plan`): версия
+        графика на эту дату и календарь офиса, где человек числился в этот
+        день, а не текущий офис (аудит 12.10, D-02, C-10). День без
+        графика считается рабочим: заниженный отпуск списал бы меньше,
+        чем человек отгулял.
         """
-        assignments = list(
-            EmployeeScheduleAssignment.objects.filter(
-                employee_id=context.employee.id, valid_from__lte=last_day
-            )
-            .select_related("schedule")
-            .prefetch_related("schedule__days")
-            .order_by("valid_from")
-        )
-        exceptions = {
-            row.date: (row.is_working_day, row.office_id)
-            for row in sorted(
-                CalendarException.objects.filter(
-                    organization_id=context.organization_id,
-                    date__gte=first_day,
-                    date__lte=last_day,
-                    is_active=True,
-                ),
-                key=lambda r: r.office_id is not None,
-            )
-            if row.office_id in (None, getattr(context.office, "id", None))
-        }
+        from humotech.schedules.day_plan import plans_for
 
-        if not assignments:
-            # Графика нет — считаем все дни периода. Занижать нельзя:
-            # заниженный отпуск списал бы меньше, чем человек отгулял.
-            return (last_day - first_day).days + 1
-
+        plans = plans_for([context.employee.id], first_day, last_day)
         total = 0
         for day in days_in(first_day, last_day):
-            schedule = next(
-                (
-                    a.schedule for a in assignments
-                    if a.valid_from <= day
-                    and (a.valid_to is None or a.valid_to >= day)
-                ),
-                None,
-            )
-            if schedule is None:
+            plan = plans.get((context.employee.id, day))
+            if plan is None or not plan.has_schedule:
                 total += 1
                 continue
-            override = exceptions.get(day)
-            if override is not None:
-                total += 1 if override[0] else 0
-                continue
-            match = next(
-                (d for d in schedule.days.all() if d.weekday == day.isoweekday()),
-                None,
-            )
-            total += 1 if (match and match.is_working_day) else 0
+            total += 1 if plan.is_working else 0
         return total
 
     def _check_balance(
@@ -2531,8 +2561,14 @@ def hr_period_summary(request: AbsenceRequest) -> dict:
     и для поданной заявки, и для одобренной. У отклонённой и отменённой
     минуты уже возвращены, и «до» равно доступному.
     """
-    first = request.requested_start_at.date() if request.requested_start_at else None
-    last = request.requested_end_at.date() if request.requested_end_at else None
+    # Дни — по поясу офиса сотрудника: начало хранится как местная полночь
+    # (накануне по UTC), и `.date()` в UTC прибавлял лишний день (аудит
+    # 12.10, C-26).
+    tz = _zone_of(request.employee)
+    first = (request.requested_start_at.astimezone(tz).date()
+             if request.requested_start_at else None)
+    last = (request.requested_end_at.astimezone(tz).date()
+            if request.requested_end_at else None)
     if first is None or last is None:
         return {
             "calendar_days": None,

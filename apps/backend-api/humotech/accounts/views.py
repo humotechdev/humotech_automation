@@ -16,6 +16,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from humotech.accounts.session_age import mark_login
 from humotech.accounts.security import LoginGuard, audit_logout
 from humotech.accounts.selectors import active_role_codes, permission_codes
 from humotech.core.timeframes import organization_zone
@@ -190,6 +191,7 @@ class LoginView(APIView):
         # `login` сам меняет ключ сессии и CSRF-токен: ключ, подсунутый
         # до входа (session fixation), после входа ничего не открывает.
         login(request, user)
+        mark_login(request)
         guard.succeeded(user)
         return Response(_describe(user))
 

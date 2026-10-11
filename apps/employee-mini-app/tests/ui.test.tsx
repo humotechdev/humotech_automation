@@ -1046,8 +1046,6 @@ describe('доступность', () => {
           office_name: 'Головной офис',
           point_name: 'Главный вход',
           occurred_at: '2026-09-04T03:54:00Z',
-          distance_m: null,
-          radius_m: null,
           session: null,
         }}
         timeZone={TZ}

@@ -1627,6 +1627,16 @@ a.rq-row__go:hover {
   color: #1466d8;
 }
 
+/* Справка есть, но этой роли файл не открывается: тихая подпись вместо
+   кнопки, чтобы не звать к действию, которое сервер отклонит. */
+.rq-file__closed {
+  max-width: 220px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--rq-muted);
+  text-align: right;
+}
+
 /* Справку не приняли. Приглушённый тон и строка под файлом, а не
    баннер во всю ширину: бумагу не выбросили, за ней придут снова. */
 .rq-refused {
@@ -2097,4 +2107,205 @@ a.rq-row__go:hover {
   gap: 10px;
   width: 100%;
   max-width: 560px;
+}
+
+/* --- страница заявки на узком экране ---------------------------------------------------------- */
+
+/*
+ * Ниже 900 px два столбца не помещаются: столбец проверки держал
+ * минимум 340 px и наезжал на материалы. Встают друг под другом.
+ * На телефоне шапка переносится, а полоса сотрудника — в две строки:
+ * лицо и имя, под ними дата и состояние. Длинное ФИО не режется.
+ */
+@media (max-width: 900px) {
+  .rq-one__grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 720px) {
+  .rq-one__head { flex-wrap: wrap; align-items: center; }
+  .rq-who {
+    grid-template-columns: 48px minmax(0, 1fr);
+    gap: 12px 14px;
+    padding: 14px;
+  }
+  .rq-who__split { display: none; }
+  .rq-who__when,
+  .rq-who .rq-mark { grid-column: 1 / -1; }
+  .rq-who__name b { overflow-wrap: anywhere; }
+}
+
+/* --- движение --------------------------------------------------------------------------- */
+
+/*
+ * Только раздел «Заявки». Коротко и строго: прозрачность и сдвиг на
+ * 6 px, замедление к концу; ни пружин, ни пульсации. Заливка
+ * `backwards`: после конца анимации у блоков не остаётся `transform`,
+ * и окна с `position: fixed` внутри страницы встают по окну, а не по
+ * блоку.
+ */
+@keyframes rq-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes rq-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes rq-slide { from { opacity: 0; transform: translateX(8px); } to { opacity: 1; transform: none; } }
+@keyframes rq-reveal { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+@keyframes rq-pop { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
+@keyframes rq-fade-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes rq-pop-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(6px) scale(0.98); } }
+
+/* Вход в раздел: шапка, затем рабочая зона. Секции не пересоздаются ни
+   при смене фильтра, ни при новых данных — появление не повторяется. */
+.rq > .rq-head { animation: rq-rise 0.22s cubic-bezier(0.2, 0.7, 0.2, 1) backwards; }
+.rq > .rq-grid { animation: rq-rise 0.22s cubic-bezier(0.2, 0.7, 0.2, 1) 0.05s backwards; }
+
+/* Страница заявки: путь, шапка, сотрудник, столбцы, отклонение. */
+.rq-one > * { animation: rq-rise 0.22s cubic-bezier(0.2, 0.7, 0.2, 1) backwards; }
+.rq-one > :nth-child(2) { animation-delay: 0.03s; }
+.rq-one > :nth-child(3) { animation-delay: 0.06s; }
+.rq-one > :nth-child(4) { animation-delay: 0.09s; }
+.rq-one > :nth-child(n + 5) { animation-delay: 0.12s; }
+
+/* Новый состав очереди проявляется разом — без очереди по строкам. */
+.rq-page { animation: rq-fade 0.16s ease-out backwards; }
+
+/* Обновление поверх показанного: строки бледнеют и не нажимаются,
+   сверху тонкая неподвижная полоса. Короткая задержка — быстрый ответ
+   проходит без мигания; вкладка и поле фильтра меняются сразу. */
+.rq-rows { transition: opacity 0.14s ease; }
+.rq-list--busy .rq-rows {
+  opacity: 0.5;
+  pointer-events: none;
+  box-shadow: inset 0 2px 0 var(--rq-blue);
+  transition: opacity 0.14s ease 0.1s;
+}
+
+/* Выбранная заявка: колонка справа появляется со своей стороны. */
+.rq-view:not(.rq-view--idle) { animation: rq-slide 0.2s cubic-bezier(0.2, 0.7, 0.2, 1) backwards; }
+
+/* Раскрытие пунктов проверки, формы отклонения и сообщений. Без
+   анимации высоты и без `overflow: hidden`: внутри открывается
+   календарь, и обрезать его нельзя. */
+.rq-pick,
+.rq-act,
+.rq-finish__ask,
+.rq-marks,
+.rq-alert,
+.rq-stale,
+.rq-note { animation: rq-reveal 0.16s ease-out backwards; }
+
+/* Окно причины: затемнение проявляется, само окно — мягко поднимается.
+   При закрытии — коротко обратно; клики сквозь уходящее окно не ловятся. */
+.rq-ask { animation: rq-fade 0.18s ease-out backwards; }
+.rq-ask__box { animation: rq-pop 0.22s cubic-bezier(0.2, 0.7, 0.2, 1) backwards; }
+.rq-ask--leaving { animation: rq-fade-out 0.16s ease-in forwards; pointer-events: none; }
+.rq-ask--leaving .rq-ask__box { animation: rq-pop-out 0.16s ease-in forwards; }
+
+/* --- реакции -------------------------------------------------------------------------------- */
+
+.rq-btn,
+.rq-pick__btn,
+.rq-pager__btn,
+.rq-tabs > button,
+.rq-row,
+.rq-chip,
+.rq-reset,
+.rq-row__go,
+.rq-ask__x {
+  transition: background-color 0.14s ease, border-color 0.14s ease, color 0.14s ease, opacity 0.14s ease;
+}
+
+.rq-btn--light:active:not(:disabled),
+.rq-pick__btn:active:not(:disabled),
+.rq-pager__btn:active:not(:disabled) { background: #eef3fa; }
+.rq-row:active { background: #e8f1fd; }
+.rq-btn--approve:active:not(:disabled) { filter: brightness(0.94); }
+
+/* Идёт своё действие: кнопка не гаснет как недоступная, а ждёт. */
+[aria-busy='true'].rq-btn,
+[aria-busy='true'].rq-pick__btn,
+.rq-btn[aria-busy='true']:disabled,
+.rq-pick__btn[aria-busy='true']:disabled { opacity: 0.8; cursor: progress; }
+
+/* --- заглушки ------------------------------------------------------------------------------- */
+
+.rq-sk {
+  display: block;
+  height: 11px;
+  border-radius: 6px;
+  background: #eef3f9;
+}
+
+.rq-sk--face { width: 44px; height: 44px; border-radius: 50%; }
+.rq-sk--line { width: 70%; }
+.rq-sk--short { width: 45%; height: 9px; }
+.rq-sk--chip { width: 120px; height: 26px; border-radius: 13px; }
+.rq-sk--crumbs { width: 240px; height: 10px; margin-bottom: 18px; }
+.rq-sk--title { width: 220px; height: 26px; margin-bottom: 18px; }
+.rq-sk--block { width: 100%; height: 64px; border-radius: 10px; }
+
+.rq-row--sk { cursor: default; pointer-events: none; }
+.rq-row--sk:hover { background: transparent; }
+.rq-sk-stack { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+
+.rq-sk-page { display: flex; flex-direction: column; }
+.rq-sk-who { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
+.rq-sk-who > span { display: flex; flex: 1 1 auto; flex-direction: column; gap: 8px; max-width: 320px; }
+.rq-sk-card { display: flex; flex-direction: column; gap: 14px; }
+
+/* --- «не удалось обновить» ------------------------------------------------------------------- */
+
+.rq-stale {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border: 1px solid #f1d9b5;
+  border-radius: 10px;
+  background: #fff8ec;
+  font-size: 13.5px;
+  color: #8a5a10;
+}
+
+.rq-stale > span { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+
+.rq-link {
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--rq-blue);
+  cursor: pointer;
+}
+
+.rq-link:hover { text-decoration: underline; }
+
+/* --- уменьшенное движение -------------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .rq > .rq-head,
+  .rq > .rq-grid,
+  .rq.rq-one > *,
+  .rq-view:not(.rq-view--idle),
+  .rq-pick,
+  .rq-act,
+  .rq-finish__ask,
+  .rq-marks,
+  .rq-alert,
+  .rq-stale,
+  .rq-note,
+  .rq-ask__box { animation: rq-fade 0.12s linear backwards; animation-delay: 0s; }
+  .rq-ask--leaving,
+  .rq-ask--leaving .rq-ask__box { animation: none; }
+  .rq-btn,
+  .rq-pick__btn,
+  .rq-pager__btn,
+  .rq-tabs > button,
+  .rq-row,
+  .rq-chip,
+  .rq-reset,
+  .rq-row__go,
+  .rq-ask__x,
+  .rq-rows,
+  .rq-list--busy .rq-rows { transition: none; }
 }

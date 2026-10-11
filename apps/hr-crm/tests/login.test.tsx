@@ -5,10 +5,14 @@
  * сервер и чего на этой странице быть не должно.
  */
 
-import { screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { StrictMode } from 'react';
+import { MemoryRouter } from 'react-router-dom';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 
+import { App } from '../src/app/App';
+import { SessionProvider } from '../src/features/auth/session';
 import { USER, crm, empty, fakeNetwork, html, json, renderApp } from './helpers';
 
 /** Сессии нет: приложение спрашивает `/auth/me` и получает отказ. */
@@ -22,7 +26,7 @@ function anonymous(after: (path: string, method: string) => Response | Promise<R
 }
 
 async function openForm() {
-  await screen.findByRole('heading', { name: 'Добро пожаловать' });
+  await screen.findByRole('heading', { name: 'Вход в систему' });
 }
 
 describe('форма входа', () => {
@@ -34,8 +38,8 @@ describe('форма входа', () => {
     expect(screen.getByLabelText('Логин')).toBeTruthy();
     expect(screen.getByLabelText('Пароль')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Войти' })).toBeTruthy();
-    expect(screen.getByText('Войдите в HR-систему HUMOTECH')).toBeTruthy();
-    expect(screen.getByText('Доступ только для авторизованных сотрудников')).toBeTruthy();
+    expect(screen.getByText('Введите данные вашей учётной записи')).toBeTruthy();
+    expect(screen.getByText('Доступ предоставляется администратором')).toBeTruthy();
     expect(screen.getByText('Нет доступа? Обратитесь к администратору')).toBeTruthy();
   });
 
@@ -91,6 +95,38 @@ describe('форма входа', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Скрыть пароль' }));
     expect(password.getAttribute('type')).toBe('password');
+  });
+
+  test('показ пароля не теряет введённое', async () => {
+    anonymous(() => empty(204));
+    renderApp('/login');
+    await openForm();
+
+    const password = screen.getByLabelText('Пароль') as HTMLInputElement;
+    await userEvent.type(password, 'секрет-123');
+    await userEvent.click(screen.getByRole('button', { name: 'Показать пароль' }));
+    expect(password.value).toBe('секрет-123');
+    await userEvent.click(screen.getByRole('button', { name: 'Скрыть пароль' }));
+    expect(password.value).toBe('секрет-123');
+  });
+
+  test('подсказки автозаполнения стоят на своих полях', async () => {
+    // Без них менеджер паролей браузера не узнаёт форму входа и
+    // предлагает сохранить логин как пароль.
+    anonymous(() => empty(204));
+    renderApp('/login');
+    await openForm();
+
+    expect(screen.getByLabelText('Логин').getAttribute('autocomplete')).toBe('username');
+    expect(screen.getByLabelText('Пароль').getAttribute('autocomplete')).toBe('current-password');
+  });
+
+  test('переключателя языка нет: перевод один, выбирать не из чего', async () => {
+    anonymous(() => empty(204));
+    renderApp('/login');
+    await openForm();
+
+    expect(screen.queryByRole('button', { name: /язык/i })).toBeNull();
   });
 
   test('вход отправляется клавишей Enter', async () => {
@@ -210,8 +246,53 @@ describe('отправка', () => {
 
     expect(await screen.findByRole('alert')).toHaveProperty(
       'textContent',
-      'Нет связи с сервером. Проверьте подключение',
+      'Нет связи с сервером. Проверьте подключение и попробуйте ещё раз.',
     );
+  });
+
+  test('после сбоя сети пароль остаётся — можно просто повторить', async () => {
+    let attempts = 0;
+    fakeNetwork((path, call) => {
+      if (path.endsWith('/auth/me')) {
+        return json(403, { error: { code: 'not_authenticated', message: '…', details: null } });
+      }
+      if (path.endsWith('/auth/login') && call.method === 'POST') {
+        attempts += 1;
+        if (attempts === 1) throw new TypeError('Failed to fetch');
+        return json(200, USER);
+      }
+      return crm(path) ?? json(200, { items: [] });
+    });
+    renderApp('/login');
+    await openForm();
+
+    await userEvent.type(screen.getByLabelText('Логин'), 'hr@humotech.local');
+    await userEvent.type(screen.getByLabelText('Пароль'), 'пароль');
+    await userEvent.click(screen.getByRole('button', { name: 'Войти' }));
+    await screen.findByRole('alert');
+    // Не «неверный пароль» — и пароль не стёрт.
+    expect(screen.getByRole('alert').textContent).not.toContain('Неверный');
+    expect((screen.getByLabelText('Пароль') as HTMLInputElement).value).toBe('пароль');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Войти' }));
+    expect(await screen.findByText('Обзор на сегодня')).toBeTruthy();
+    expect(attempts).toBe(2);
+  });
+
+  test('слишком много попыток — просьба подождать, а не «неверный пароль»', async () => {
+    anonymous(() => json(429, {
+      error: { code: 'too_many_attempts', message: '…', details: { retry_after: 120 } },
+    }));
+    renderApp('/login');
+    await openForm();
+
+    await userEvent.type(screen.getByLabelText('Логин'), 'hr@humotech.local');
+    await userEvent.type(screen.getByLabelText('Пароль'), 'пароль');
+    await userEvent.click(screen.getByRole('button', { name: 'Войти' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('Слишком много попыток');
+    expect(alert.textContent).not.toContain('Неверный');
   });
 
   test('HTML-страница ошибки Django не попадает на экран', async () => {
@@ -226,9 +307,158 @@ describe('отправка', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Войти' }));
 
     const alert = await screen.findByRole('alert');
-    expect(alert.textContent).toBe('Сервер временно недоступен. Попробуйте позже');
+    expect(alert.textContent).toBe('Сервис временно недоступен. Попробуйте позже.');
     expect(document.body.textContent).not.toContain('Server Error');
     expect(document.body.textContent).not.toContain('doctype');
+  });
+});
+
+describe('отказы, которых не видно по коду ответа', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function fillAndSend() {
+    await userEvent.type(screen.getByLabelText('Логин'), 'hr@humotech.local');
+    await userEvent.type(screen.getByLabelText('Пароль'), 'пароль');
+    await userEvent.click(screen.getByRole('button', { name: 'Войти' }));
+  }
+
+  test('зависший сервер обрывается по таймауту, пароль остаётся', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    fakeNetwork((path, call) => {
+      if (path.endsWith('/auth/me')) {
+        return json(403, { error: { code: 'not_authenticated', message: '…', details: null } });
+      }
+      // Ответа нет, пока форма сама не оборвёт запрос.
+      return new Promise<Response>((_, reject) => {
+        call.signal?.addEventListener('abort', () =>
+          reject(new DOMException('The operation was aborted.', 'AbortError')));
+      });
+    });
+    renderApp('/login');
+    await openForm();
+
+    await fillAndSend();
+    expect(screen.getByRole('button', { name: 'Проверяем…' })).toBeTruthy();
+    await act(() => vi.advanceTimersByTimeAsync(20_000));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toBe('Сервер не ответил вовремя. Попробуйте ещё раз.');
+    expect((screen.getByLabelText('Пароль') as HTMLInputElement).value).toBe('пароль');
+    expect(screen.getByRole('button', { name: 'Войти' }).hasAttribute('disabled')).toBe(false);
+  });
+
+  test('в StrictMode после отказа форма снова готова к попытке', async () => {
+    // Приложение запущено в StrictMode (`main.tsx`): страница монтируется
+    // дважды. Флаг «форма на экране» после второго монтирования должен
+    // снова стать истинным — иначе кнопка навсегда остаётся «Проверяем…».
+    anonymous(() =>
+      json(401, { error: { code: 'invalid_credentials', message: '…', details: null } }),
+    );
+    render(
+      <StrictMode>
+        <MemoryRouter initialEntries={['/login']}>
+          <SessionProvider>
+            <App />
+          </SessionProvider>
+        </MemoryRouter>
+      </StrictMode>,
+    );
+    await openForm();
+
+    await fillAndSend();
+
+    expect((await screen.findByRole('alert')).textContent).toBe('Неверный логин или пароль');
+    const button = screen.getByRole('button', { name: 'Войти' });
+    expect(button.hasAttribute('disabled')).toBe(false);
+  });
+
+  test('200 без учётной записи в теле — не вход', async () => {
+    // Прокси или заглушка может ответить 200 чем угодно. Открыть кабинет
+    // с таким «пользователем» значит упасть на первом же списке прав.
+    anonymous((path) => (path.endsWith('/auth/login') ? json(200, { ok: true }) : empty(204)));
+    renderApp('/login');
+    await openForm();
+
+    await fillAndSend();
+
+    expect((await screen.findByRole('alert')).textContent)
+      .toBe('Сервис временно недоступен. Попробуйте позже.');
+    expect(screen.queryByText('Обзор на сегодня')).toBeNull();
+  });
+
+  test('отказ в доступе — не «неверный пароль» и без слов сервера', async () => {
+    anonymous(() => json(403, {
+      error: { code: 'permission_denied', message: 'Учётная запись отключена', details: null },
+    }));
+    renderApp('/login');
+    await openForm();
+
+    await fillAndSend();
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toBe('Доступ к системе закрыт. Обратитесь к администратору.');
+    expect(document.body.textContent).not.toContain('Учётная запись отключена');
+  });
+});
+
+describe('язык страницы входа', () => {
+  test('по умолчанию русский, выбор — из двух: русский и узбекский', async () => {
+    anonymous(() => empty(204));
+    renderApp('/login');
+    await openForm();
+
+    const group = screen.getByRole('radiogroup', { name: 'Язык интерфейса' });
+    const options = within(group).getAllByRole('radio');
+    expect(options.map((one) => one.getAttribute('aria-label'))).toEqual(['Русский', 'Oʻzbekcha']);
+    expect((within(group).getByRole('radio', { name: 'Русский' }) as HTMLInputElement).checked).toBe(true);
+    expect(document.documentElement.lang).toBe('ru');
+  });
+
+  test('узбекский переводит форму, а ошибка переводится вместе с ней', async () => {
+    anonymous(() =>
+      json(401, { error: { code: 'invalid_credentials', message: '…', details: null } }),
+    );
+    renderApp('/login');
+    await openForm();
+
+    await userEvent.type(screen.getByLabelText('Логин'), 'hr@humotech.local');
+    await userEvent.type(screen.getByLabelText('Пароль'), 'не тот');
+    await userEvent.click(screen.getByRole('button', { name: 'Войти' }));
+    expect((await screen.findByRole('alert')).textContent).toBe('Неверный логин или пароль');
+
+    await userEvent.click(screen.getByRole('radio', { name: 'Oʻzbekcha' }));
+
+    expect(screen.getByRole('heading', { name: 'Tizimga kirish' })).toBeTruthy();
+    expect(screen.getByLabelText('Parol')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Kirish' })).toBeTruthy();
+    expect(screen.getByRole('alert').textContent).toBe('Login yoki parol notoʻgʻri');
+    // Введённый логин при смене языка не пропадает.
+    expect((screen.getByLabelText('Login') as HTMLInputElement).value).toBe('hr@humotech.local');
+    expect(document.documentElement.lang).toBe('uz');
+  });
+
+  test('запоминается только код языка', async () => {
+    anonymous(() => empty(204));
+    renderApp('/login');
+    await openForm();
+
+    await userEvent.click(screen.getByRole('radio', { name: 'Oʻzbekcha' }));
+
+    expect(localStorage.getItem('humotech.crm.language')).toBe('uz');
+  });
+
+  test('сохранённый узбекский открывается сразу, непонятное значение — русским', async () => {
+    localStorage.setItem('humotech.crm.language', 'uz');
+    anonymous(() => empty(204));
+    const first = renderApp('/login');
+    expect(await screen.findByRole('heading', { name: 'Tizimga kirish' })).toBeTruthy();
+    first.unmount();
+
+    localStorage.setItem('humotech.crm.language', 'en');
+    renderApp('/login');
+    await openForm();
   });
 });
 
@@ -262,6 +492,17 @@ describe('«Запомнить логин»', () => {
     await screen.findByText('Обзор на сегодня');
 
     expect(JSON.stringify(localStorage)).not.toContain('hr@humotech.local');
+  });
+
+  test('снятая галочка сразу удаляет запомненный логин', async () => {
+    localStorage.setItem('humotech.crm.login', 'hr@humotech.local');
+    anonymous(() => empty(204));
+    renderApp('/login');
+    await openForm();
+
+    await userEvent.click(screen.getByLabelText('Запомнить логин'));
+
+    expect(localStorage.getItem('humotech.crm.login')).toBeNull();
   });
 
   test('запомненный логин подставляется при следующем открытии', async () => {

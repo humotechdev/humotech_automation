@@ -23,7 +23,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from django.conf import settings
 from django.db import transaction
@@ -34,8 +34,16 @@ from humotech.employees.models import (
     EmployeeAssignment,
     EmployeeOfficeAccess,
 )
-from humotech.attendance.models import AttendanceEvent, AttendanceSession
-from humotech.offices.geo import distance_m, looks_like_coordinates, within_office
+from humotech.attendance.models import AttendanceEvent, AttendanceSession, FieldWorkRequest
+from humotech.core.enums import COUNTED_VERIFICATION
+from humotech.core.timeframes import office_zone
+from humotech.offices.geo import (
+    Decision,
+    distance_m,
+    geofence_kind,
+    looks_like_coordinates,
+    within_office,
+)
 from humotech.qr_codes.models import OfficeQrPoint
 
 # насколько время клиента может отличаться от серверного
@@ -54,6 +62,12 @@ class RejectionReason:
     OUTSIDE_GEOFENCE = "OUTSIDE_GEOFENCE"
     # Координаты пришли, но такой погрешности верить нельзя.
     LOCATION_TOO_VAGUE = "LOCATION_TOO_VAGUE"
+    # Погрешность пересекает границу контура: человек может быть и
+    # внутри, и снаружи. Ни принять, ни отказать «слишком далеко» честно
+    # нельзя — нужна новая точка.
+    LOCATION_AMBIGUOUS = "LOCATION_AMBIGUOUS"
+    # Точка получена слишком давно: это место, где человек БЫЛ.
+    LOCATION_STALE = "LOCATION_STALE"
     NETWORK_REQUIRED = "NETWORK_REQUIRED"
     CLOCK_DRIFT = "CLOCK_DRIFT"
     # Печатный код: у офиса нет точки на карте или радиуса, и проверить,
@@ -64,6 +78,24 @@ class RejectionReason:
     # сразу после первого у точки «вход и выход» закрыл бы только что
     # открытую сессию.
     TOO_SOON = "TOO_SOON"
+    # День уже засчитан как подтверждённая выездная работа: физическая
+    # отметка поверх полной нормы дала бы двойной зачёт.
+    FIELD_WORK_CONFIRMED = "FIELD_WORK_CONFIRMED"
+
+
+@dataclass(frozen=True)
+class LocationAssessment:
+    """Одно решение по присланному месту — для отказа и для журнала сразу.
+
+    `reason` — причина отказа по месту, либо None. `inside` — что записать
+    в журнал: да, нет или «не установлено». `distance_m` у круга — до
+    центра офиса, у контура — до его границы.
+    """
+
+    reason: str | None = None
+    inside: bool | None = None
+    distance_m: float | None = None
+    kind: str | None = None
 
 
 @dataclass(frozen=True)
@@ -84,8 +116,16 @@ def employee_may_use_office(
 
     Основание — либо действующее основное назначение в этот офис,
     либо явно выданный доступ в `employee_office_access`.
+
+    День — по поясу ОФИСА, а не UTC: в Ташкенте с 00:00 до 05:00 дата UTC
+    ещё вчерашняя, и в день перевода сотрудника не пускали в новый офис
+    (аудит 12.10, X-DAY-01 / A-08).
     """
-    day = at.date()
+    from humotech.core.timeframes import local_date
+    from humotech.offices.models import Office
+
+    office = Office.objects.select_related("organization").filter(id=office_id).first()
+    day = local_date(at, office_zone(office))
 
     assigned = EmployeeAssignment.objects.filter(
         Q(valid_to__isnull=True) | Q(valid_to__gte=day),
@@ -126,7 +166,7 @@ def _nonce_already_used(*, employee_id: uuid.UUID, nonce_hash: str) -> bool:
     return AttendanceEvent.objects.filter(
         employee_id=employee_id,
         qr_nonce_hash=nonce_hash,
-        verification_status="ACCEPTED",
+        verification_status__in=COUNTED_VERIFICATION,
     ).exists()
 
 
@@ -144,7 +184,8 @@ def register_scan(
     location_accuracy_m: Decimal | None = None,
     ip_address: str | None = None,
     inside_office_network: bool | None = None,
-    inside_geofence: bool | None = None,
+    location_age_s: Decimal | None = None,
+    location_source: str | None = None,
     employee_device_id: uuid.UUID | None = None,
     qr_display_session_id: uuid.UUID | None = None,
     client_event_id: str | None = None,
@@ -172,7 +213,8 @@ def register_scan(
             location_accuracy_m=location_accuracy_m,
             ip_address=ip_address,
             inside_office_network=inside_office_network,
-            inside_geofence=inside_geofence,
+            location_age_s=location_age_s,
+            location_source=location_source,
             employee_device_id=employee_device_id,
             qr_display_session_id=qr_display_session_id,
             client_event_id=client_event_id,
@@ -195,7 +237,8 @@ def _register_locked(
     location_accuracy_m: Decimal | None,
     ip_address: str | None,
     inside_office_network: bool | None,
-    inside_geofence: bool | None,
+    location_age_s: Decimal | None,
+    location_source: str | None,
     employee_device_id: uuid.UUID | None,
     qr_display_session_id: uuid.UUID | None,
     client_event_id: str | None,
@@ -212,6 +255,16 @@ def _register_locked(
     occurred_at = occurred_at or now
     office_id = qr_point.office_id  # офис берём ТОЛЬКО отсюда
 
+    # Same employee lock as HR request and Telegram decision. Do not count
+    # physical QR time on top of an already credited full field-work shift.
+    active_field_work = list(FieldWorkRequest.objects.select_related("office", "office__organization")
+        .filter(employee_id=employee_id, status__in=("PENDING", "CONFIRMED"),
+                date__gte=occurred_at.date() - timedelta(days=1),
+                date__lte=occurred_at.date() + timedelta(days=1)))
+    matching_field_work = [row for row in active_field_work
+        if occurred_at.astimezone(office_zone(row.office)).date() == row.date]
+    field_work = any(row.status == "CONFIRMED" for row in matching_field_work)
+
     current_session = open_session_for(employee_id=employee_id)
 
     # направление: у точки ENTRY/EXIT оно фиксировано, у BOTH — по факту
@@ -220,13 +273,13 @@ def _register_locked(
     else:
         event_type = "EXIT" if current_session is not None else "ENTRY"
 
-    # Считается здесь, а не берётся у вызывающего: «внутри ли» — вывод из
-    # координат и радиуса офиса, и делать его должно одно место.
-    if inside_geofence is None:
-        inside_geofence = location_check(
-            qr_point, latitude, longitude, location_accuracy_m
-        )
-    distance = location_distance(qr_point, latitude, longitude)
+    # Считается здесь и только здесь, одним вызовом: и причина отказа, и
+    # то, что пишется в журнал, берутся из ОДНОГО решения. Готового
+    # «внутри» вызывающий передать не может — такого параметра нет.
+    location = assess_location(
+        qr_point, latitude, longitude, location_accuracy_m, location_age_s,
+        strict_location=strict_location,
+    )
 
     reason = _reject_reason(
         employee_id=employee_id,
@@ -238,12 +291,48 @@ def _register_locked(
         qr_expires_at=qr_expires_at,
         latitude=latitude,
         longitude=longitude,
-        location_accuracy_m=location_accuracy_m,
+        location=location,
         inside_office_network=inside_office_network,
         current_session=current_session,
         strict_location=strict_location,
     )
+    if field_work and reason is None:
+        reason = RejectionReason.FIELD_WORK_CONFIRMED
     accepted = reason is None
+
+    if accepted:
+        pending = [row for row in matching_field_work if row.status == "PENDING"]
+        for request in pending:
+            request.status = "CANCELLED"
+            request.cancelled_at = now
+            request.save(update_fields=["status", "cancelled_at", "updated_at"])
+            from humotech.notifications.models import Notification
+            Notification.objects.filter(related_entity_type="attendance_field_work_request",
+                related_entity_id=request.id, status="PENDING").update(status="CANCELLED")
+            from humotech.audit.models import AuditLog
+            AuditLog.objects.create(organization_id=request.organization_id,
+                actor_employee_id=employee_id, action="field_work.cancelled_by_qr",
+                entity_type="attendance_field_work_requests", entity_id=request.id,
+                new_values={"date": request.date.isoformat(), "status": "CANCELLED"})
+
+    found = (
+        _anomalies(
+            employee_id=employee_id, qr_nonce_hash=qr_nonce_hash,
+            ip_address=ip_address, latitude=latitude,
+            longitude=longitude, accuracy_m=location_accuracy_m,
+            inside_office_network=inside_office_network,
+        )
+        if accepted else ()
+    )
+    # Один сменный код, уже принятый у ДРУГОГО сотрудника с другого
+    # адреса, — признак пересланного фото экрана. Проход не блокируется
+    # (двое честных людей сканируют один экран и с мобильного интернета
+    # приходят с разных адресов), но отметка уходит на проверку HR —
+    # решение владельца 11.10.2026 (аудит M-9).
+    status = (
+        ("REVIEW" if Anomaly.SHARED_CODE in found else "ACCEPTED")
+        if accepted else "REJECTED"
+    )
 
     event = AttendanceEvent.objects.create(
         organization_id=qr_point.organization_id,
@@ -254,7 +343,7 @@ def _register_locked(
         employee_device_id=employee_device_id,
         event_type=event_type,
         source=source,
-        verification_status="ACCEPTED" if accepted else "REJECTED",
+        verification_status=status,
         occurred_at=occurred_at,
         received_at=now,
         qr_nonce_hash=qr_nonce_hash,
@@ -264,13 +353,19 @@ def _register_locked(
         longitude=longitude,
         location_accuracy_m=location_accuracy_m,
         ip_address=ip_address,
-        inside_geofence=inside_geofence,
+        inside_geofence=location.inside,
         distance_m=(
-            Decimal(str(round(distance, 2))) if distance is not None else None
+            Decimal(str(round(location.distance_m, 2)))
+            if location.distance_m is not None else None
         ),
         inside_office_network=inside_office_network,
         client_event_id=client_event_id,
         rejection_reason=reason,
+        event_metadata=_location_metadata(
+            location, location_age_s=location_age_s,
+            location_source=location_source,
+            anomalies=found,
+        ),
     )
 
     # Отклонённая попытка НИКОГДА не трогает рабочие сессии.
@@ -313,7 +408,7 @@ def _reject_reason(
     qr_expires_at: datetime | None,
     latitude: Decimal | None,
     longitude: Decimal | None,
-    location_accuracy_m: Decimal | None,
+    location: LocationAssessment,
     inside_office_network: bool | None,
     current_session: AttendanceSession | None,
     strict_location: bool = False,
@@ -354,10 +449,8 @@ def _reject_reason(
     # точка или нет. Присланное и негодное хуже неприсланного: молча
     # принять «я в трёх километрах» значит записать это в журнал как
     # обычную отметку.
-    if latitude is not None and longitude is not None:
-        geo = _location_verdict(qr_point, latitude, longitude, location_accuracy_m)
-        if geo is not None:
-            return geo
+    if location.reason is not None:
+        return location.reason
 
     if qr_point.require_office_network and not inside_office_network:
         return RejectionReason.NETWORK_REQUIRED
@@ -378,70 +471,184 @@ def _reject_reason(
     return None
 
 
-def _location_verdict(qr_point, latitude, longitude, accuracy_m) -> str | None:
-    """Причина отказа по местоположению, либо None.
+def assess_location(
+    qr_point, latitude, longitude, accuracy_m, age_s=None, *, strict_location=False
+) -> LocationAssessment:
+    """Решение по месту. ЕДИНСТВЕННОЕ место, где оно принимается.
 
-    Порядок проверок: сперва вообще похоже ли это на точку на Земле,
-    потом — можно ли верить погрешности, и только потом расстояние.
-    Считать расстояние от мусора бессмысленно, а отвечать «слишком
-    далеко» на широту 900 — врать про причину.
+    Порядок: сперва похоже ли это вообще на точку на Земле, потом не
+    устарела ли она и можно ли верить погрешности, и только потом — где
+    человек относительно геозоны. Считать расстояние от мусора
+    бессмысленно, а отвечать «слишком далеко» на широту 900 — врать про
+    причину.
 
-    Офис без координат или без радиуса проверку не проходит и не
-    заваливает: сравнивать не с чем, и записывать это человеку в вину
-    нельзя. `inside_geofence` в таком случае остаётся `None` —
-    «не проверялось», а не «нарушение».
+    Офис без геозоны проверку не проходит и не заваливает: сравнивать не
+    с чем, и записывать это человеку в вину нельзя. `inside` в таком
+    случае остаётся `None` — «не проверялось», а не «нарушение», — а
+    расстояние до точки офиса, если она есть, всё равно пишется:
+    «насколько далеко он был» полезно знать и без вердикта.
     """
+    if latitude is None or longitude is None:
+        return LocationAssessment()
     if not looks_like_coordinates(latitude, longitude):
-        return RejectionReason.LOCATION_TOO_VAGUE
+        return LocationAssessment(reason=RejectionReason.LOCATION_TOO_VAGUE)
 
+    office = qr_point.office
+    ceiling = settings.QR["MAX_LOCATION_ACCURACY_M"]
+    # Потолок точки может только ужесточить общий, но не ослабить:
+    # иначе настройка в карточке точки была бы видимостью.
+    own = getattr(qr_point, "allowed_location_accuracy_m", None)
+    if own and own > 0:
+        ceiling = min(ceiling, own)
+
+    reason = None
+    if age_s is not None and _stale(age_s):
+        reason = RejectionReason.LOCATION_STALE
+
+    accuracy = None
     if accuracy_m is not None:
         try:
             accuracy = Decimal(str(accuracy_m))
         except (ArithmeticError, TypeError, ValueError):
-            return RejectionReason.LOCATION_TOO_VAGUE
-        ceiling = settings.QR["MAX_LOCATION_ACCURACY_M"]
-        # Потолок точки может только ужесточить общий, но не ослабить:
-        # иначе настройка в карточке точки была бы видимостью.
-        own = getattr(qr_point, "allowed_location_accuracy_m", None)
-        if own and own > 0:
-            ceiling = min(ceiling, own)
-        if not accuracy.is_finite() or accuracy <= 0 or accuracy > ceiling:
-            return RejectionReason.LOCATION_TOO_VAGUE
+            accuracy = None
+            reason = reason or RejectionReason.LOCATION_TOO_VAGUE
+        else:
+            if not accuracy.is_finite() or accuracy <= 0 or accuracy > ceiling:
+                accuracy = None
+                reason = reason or RejectionReason.LOCATION_TOO_VAGUE
 
+    # Для печатного кода (strict_location) круг с неизвестной погрешностью
+    # означал бы нулевой допуск (offices/geo.py): булавка, выбранная на
+    # карте в центре офиса, прошла бы как «внутри» из дома. Телефон,
+    # измеривший координату, погрешность присылает; её отсутствие —
+    # признак выбранной точки. Для меняющегося кода (Mini App) поведение
+    # прежнее: сканер отдаёт настоящую погрешность прибора.
+    if (strict_location and reason is None and accuracy is None
+            and geofence_kind(office) == "CIRCLE"):
+        reason = RejectionReason.LOCATION_TOO_VAGUE
     verdict = within_office(
-        qr_point.office, latitude, longitude, accuracy_m=accuracy_m
+        office, latitude, longitude, accuracy_m=accuracy,
+        unknown_accuracy_m=ceiling,
     )
-    if verdict.checked and not verdict.inside:
-        return RejectionReason.OUTSIDE_GEOFENCE
-    return None
+    if not verdict.checked:
+        near = None
+        if (
+            office is not None
+            and office.latitude is not None
+            and office.longitude is not None
+        ):
+            near = distance_m(office.latitude, office.longitude, latitude, longitude)
+        return LocationAssessment(reason=reason, distance_m=near)
+
+    if reason is None and verdict.decision == Decision.OUTSIDE:
+        reason = RejectionReason.OUTSIDE_GEOFENCE
+    elif reason is None and verdict.decision == Decision.AMBIGUOUS:
+        reason = RejectionReason.LOCATION_AMBIGUOUS
+    return LocationAssessment(
+        reason=reason,
+        # Негодной или устаревшей точке «внутри» не ставится: принять её
+        # нельзя, а «был внутри» в журнале читалось бы как подтверждение.
+        inside=(
+            verdict.inside
+            if reason in (None, RejectionReason.OUTSIDE_GEOFENCE)
+            else None
+        ),
+        distance_m=verdict.distance_m,
+        kind=verdict.kind,
+    )
+
+
+def _stale(age_s) -> bool:
+    """Старше ли точка допустимого. Мусор вместо возраста — тоже старая."""
+    limit = settings.QR.get("MAX_LOCATION_AGE_SECONDS", 30)
+    try:
+        age = Decimal(str(age_s))
+    except (ArithmeticError, TypeError, ValueError):
+        return True
+    return not age.is_finite() or age < 0 or age > limit
+
+
+def _location_metadata(location, *, location_age_s, location_source, anomalies=()):
+    """Как получена точка — для разбора спорной отметки, не для решения.
+
+    Источник и возраст присылает клиент, и доказательством они не
+    являются. Но без них на вопрос «почему телефон видел человека в
+    двухстах метрах» нечего ответить, кроме догадки.
+    """
+    data = {}
+    if location.kind is not None:
+        data["geofence_kind"] = location.kind
+    if location_source:
+        data["location_source"] = str(location_source)[:20]
+    if location_age_s is not None:
+        try:
+            data["location_age_s"] = float(location_age_s)
+        except (TypeError, ValueError):
+            pass
+    if anomalies:
+        data["anomalies"] = list(anomalies)
+    return data or None
+
+
+# Точнее этого телефон в реальной жизни почти не отвечает: в помещении
+# погрешность — десятки метров, на улице — от трёх-пяти. Ровные «1 м» —
+# частый почерк подменённой геолокации.
+SUSPICIOUS_ACCURACY_M = Decimal("2")
+
+
+class Anomaly:
+    """Почему принятая отметка подсвечена HR. Отметку это не отменяет."""
+
+    # Ни координат, ни подтверждённой офисной сети: место не проверялось.
+    NO_LOCATION = "NO_LOCATION"
+    # Погрешность подозрительно мала для телефона.
+    PERFECT_ACCURACY = "PERFECT_ACCURACY"
+    # Тот же сменный код уже засчитан другому сотруднику с другого адреса:
+    # похоже, код сфотографировали и переслали.
+    SHARED_CODE = "SHARED_CODE"
+
+
+def _anomalies(
+    *, employee_id, qr_nonce_hash, ip_address, latitude, longitude, accuracy_m,
+    inside_office_network=None,
+) -> tuple[str, ...]:
+    """Признаки, по которым HR стоит взглянуть на принятую отметку.
+
+    Ни один из них не доказывает обман — у каждого бывает честное
+    объяснение, — поэтому отметку они не отклоняют, а только помечают.
+    Решение остаётся за человеком, который видит журнал целиком.
+    """
+    found = []
+    if latitude is None or longitude is None:
+        # Офисная сеть — тоже проверка места: экран внутри офиса без
+        # геолокации иначе подсвечивал бы каждую отметку.
+        if inside_office_network is not True:
+            found.append(Anomaly.NO_LOCATION)
+    elif accuracy_m is not None:
+        try:
+            if Decimal(str(accuracy_m)) < SUSPICIOUS_ACCURACY_M:
+                found.append(Anomaly.PERFECT_ACCURACY)
+        except (InvalidOperation, ValueError):
+            pass
+    if qr_nonce_hash is not None and ip_address:
+        shared = (
+            AttendanceEvent.objects.filter(
+                qr_nonce_hash=qr_nonce_hash,
+                verification_status__in=COUNTED_VERIFICATION,
+            )
+            .exclude(employee_id=employee_id)
+            .exclude(ip_address__isnull=True)
+            .exclude(ip_address=ip_address)
+            .exists()
+        )
+        if shared:
+            found.append(Anomaly.SHARED_CODE)
+    return tuple(found)
 
 
 def office_is_located(office) -> bool:
-    """Есть ли у офиса точка на карте и радиус — то, с чем сравнивать."""
-    return (
-        office is not None
-        and office.latitude is not None
-        and office.longitude is not None
-        and bool(office.geofence_radius_m)
-        and office.geofence_radius_m > 0
-    )
-
-
-def location_distance(qr_point, latitude, longitude) -> float | None:
-    """Расстояние от присланной точки до офиса, в метрах, либо None.
-
-    Считается и тогда, когда радиус не задан: «насколько далеко он был»
-    полезно знать и без вердикта. Мусорные координаты расстояния не
-    имеют — отвечать на широту 900 числом метров значило бы врать.
-    """
-    office = qr_point.office
-    if latitude is None or longitude is None:
-        return None
-    if not looks_like_coordinates(latitude, longitude):
-        return None
-    if office is None or office.latitude is None or office.longitude is None:
-        return None
-    return distance_m(office.latitude, office.longitude, latitude, longitude)
+    """Есть ли у офиса геозона — круг или контур, — с которой сравнивать."""
+    return geofence_kind(office) is not None
 
 
 def _repeated_too_soon(*, employee_id, qr_point, now) -> bool:
@@ -455,21 +662,9 @@ def _repeated_too_soon(*, employee_id, qr_point, now) -> bool:
     return AttendanceEvent.objects.filter(
         employee_id=employee_id,
         qr_point_id=qr_point.id,
-        verification_status="ACCEPTED",
+        verification_status__in=COUNTED_VERIFICATION,
         occurred_at__gte=now - timedelta(seconds=seconds),
     ).exists()
-
-
-def location_check(qr_point, latitude, longitude, accuracy_m):
-    """Тот же расчёт для записи в журнал: внутри ли, если проверяли."""
-    if latitude is None or longitude is None:
-        return None
-    if not looks_like_coordinates(latitude, longitude):
-        return None
-    verdict = within_office(
-        qr_point.office, latitude, longitude, accuracy_m=accuracy_m
-    )
-    return verdict.inside if verdict.checked else None
 
 
 def utcnow() -> datetime:

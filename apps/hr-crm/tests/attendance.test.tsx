@@ -209,12 +209,36 @@ describe('один экран', () => {
 });
 
 describe('за день', () => {
+  test('для HR строка без отметки открывает подтверждение выездной работы', async () => {
+    network(() => null, ['attendance.read', 'attendance.correct']);
+    renderApp(`/attendance?date=${DAY}`);
+    await screen.findByText('Саидова Дилноза');
+    fireEvent.click(within(tableRow('Саидова Дилноза')).getByRole('button', { name: 'Выездная работа' }));
+    // Одна правая панель, форма встроена в неё — без второго окна.
+    const card = await screen.findByRole('complementary', { name: 'Отметка за день' });
+    expect(await within(card).findByLabelText(/Объект или место/)).toBeTruthy();
+    expect(within(card).getByText(/До его ответа день не засчитывается/)).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  test('предупредившему об опоздании тоже можно запросить выездную работу; предупреждение остаётся видимым', async () => {
+    network(() => null, ['attendance.read', 'attendance.correct']);
+    renderApp(`/attendance?date=${DAY}`);
+    await screen.findByText('Юсупова Камила');
+    const line = tableRow('Юсупова Камила');
+    expect(within(line).getByText('Пробки')).toBeTruthy();
+    fireEvent.click(within(line).getByRole('button', { name: 'Выездная работа' }));
+    const card = await screen.findByRole('complementary', { name: 'Отметка за день' });
+    expect(await within(card).findByLabelText(/Объект или место/)).toBeTruthy();
+    expect(screen.getAllByText('Пробки').length).toBeGreaterThanOrEqual(2);
+  });
+
   test('числа полосы приходят с сервера, а не считаются по строкам', async () => {
     network();
     renderApp(`/attendance?date=${DAY}`);
 
     // 205 из 214 — это карточки дашборда, строк в таблице всего пять.
-    expect(await screen.findByText('205 из 214 по графику')).toBeTruthy();
+    expect(await screen.findByText('205 из 214 по графику (205 в офисе, 0 на выезде)')).toBeTruthy();
     expect(screen.getByText('96%')).toBeTruthy();
     expect(screen.getByText('+5 п.п. к вчера')).toBeTruthy();
   });
@@ -307,7 +331,7 @@ describe('карточка дня', () => {
     network();
     renderApp(`/attendance?date=${DAY}&employee=e-1`);
 
-    const card = await screen.findByRole('complementary', { name: 'Отметки за день' });
+    const card = await screen.findByRole('complementary', { name: 'Отметка за день' });
     expect(await within(card).findByText('Каримов Алишер')).toBeTruthy();
     expect((await within(card).findAllByText(/Главный вход|Служебный вход/)).length).toBe(2);
   });

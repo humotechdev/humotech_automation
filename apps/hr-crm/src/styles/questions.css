@@ -1136,6 +1136,193 @@ a.tk-person__name:hover { color: var(--tk-blue); }
   .tk-msg { max-width: 92%; }
 }
 
+/* --- живая переписка ------------------------------------------------------- */
+
+/* Свой ответ: время и состояние доставки — строкой под текстом. Слово
+   состояния («Отправляется», «Отправлено», «Не доставлено: …») длиннее
+   распорки в последней строке и перекрывало бы текст. */
+.tk-msg--mine .tk-msg__pad { display: none; }
+.tk-msg--mine .tk-msg__time {
+  position: static;
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+.tk-delivery { gap: 3px; }
+.tk-delivery__text { font-size: 12px; }
+.tk-delivery--sent { color: var(--tk-blue); }
+.tk-delivery__retry {
+  margin-left: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--tk-blue);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.tk-delivery__retry:disabled { color: var(--tk-muted); cursor: default; }
+
+/* До ответа сервера реплика чуть бледнее — она ещё не записана. */
+.tk-msg--pending .tk-msg__bubble { opacity: 0.72; }
+
+/* Строка очереди, которую только что изменило сообщение: мягкая
+   подсветка на полторы секунды, без мигания всей очереди. */
+.tk-row--fresh { animation: tk-row-fresh 1.5s ease-out; }
+@keyframes tk-row-fresh {
+  from { background-color: var(--tk-soft-2); }
+  to { background-color: transparent; }
+}
+.tk-row--on.tk-row--fresh { animation: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .tk-row--fresh { animation: none; }
+}
+/* Недоставленный ответ — красным и внутри строки времени, где синий
+   задан для остальных состояний. */
+.tk-msg__time .tk-delivery--bad { color: var(--tk-red); }
+
+/* --- движение ------------------------------------------------------------------------- */
+
+/*
+ * Только «Обращения». Прозрачность и сдвиг на 4–6 px, замедление к
+ * концу; ни пружин, ни пульсации, ни «набора текста». Заливка
+ * `backwards`: после анимации у блоков не остаётся `transform`.
+ */
+@keyframes tk-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes tk-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes tk-msg-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+@keyframes tk-drop { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+@keyframes tk-pop { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
+@keyframes tk-fade-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes tk-pop-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(6px) scale(0.98); } }
+
+/* Вход в раздел — один раз: шапка, вкладки, рабочая зона. Обновление
+   очереди и сигналы потока эти блоки не пересоздают. */
+.tk-sheet > .tk-head { animation: tk-rise 0.22s cubic-bezier(0.2, 0.7, 0.2, 1) backwards; }
+.tk-sheet > .tk-tabs { animation: tk-rise 0.22s cubic-bezier(0.2, 0.7, 0.2, 1) 0.04s backwards; }
+/* Рабочая зона только проявляется: сдвиг у неё на миг дал бы полосу
+   прокрутки у ленты и очереди. */
+.tk-sheet > .tk-work { animation: tk-fade 0.2s ease-out 0.08s backwards; }
+
+/* Открытие обращения: переписка проявляется. При быстром переключении
+   под заголовком нового обращения сообщений прошлого не бывает —
+   переписка пересоздаётся по обращению. */
+.tk-talk__body,
+.tk-side__body { animation: tk-fade 0.18s ease-out backwards; }
+
+/* Новые реплики — пришедшие после открытия и свой «Отправляется».
+   История при открытии не проявляется. */
+.tk-msg--new { animation: tk-msg-in 0.18s cubic-bezier(0.2, 0.7, 0.2, 1) backwards; }
+
+/* Заглушки неподвижны: мерцание — то самое постоянное движение. */
+.tk-sheet .tk-ghost,
+.tk-side .tk-ghost { animation: none; background: #eef3f9; }
+
+.tk-sk-talk { padding: 18px 22px; }
+.tk-sk-head { display: flex; align-items: center; gap: 12px; padding-bottom: 16px; border-bottom: 1px solid var(--tk-line); }
+.tk-sk-lines { display: flex; flex: 1 1 auto; flex-direction: column; gap: 8px; max-width: 260px; }
+.tk-sk-thread { display: flex; flex-direction: column; gap: 14px; padding-top: 20px; }
+.tk-sk-bubble { display: block; width: 46%; height: 52px; border-radius: 14px; background: #f1f5fa; }
+.tk-sk-bubble--mine { align-self: flex-end; width: 38%; background: #eaf2fd; }
+.tk-sk-bubble--wide { width: 60%; height: 72px; }
+.tk-sk-side { display: flex; flex-direction: column; gap: 12px; padding: 18px 20px; }
+.tk-sk-field { height: 38px; border-radius: 9px; }
+
+/* Меню раздела (рисуются у body, класс свой): короткое раскрытие. */
+.app-popover.tk-menu { animation: tk-drop 0.14s ease-out backwards; }
+
+/* Окно закрытия: затемнение проявляется, карточка мягко поднимается;
+   при отмене — коротко обратно, клики сквозь уходящее окно не ловятся. */
+.tk-modal { animation: tk-fade 0.18s ease-out backwards; }
+.tk-modal__card { animation: tk-pop 0.22s cubic-bezier(0.2, 0.7, 0.2, 1) backwards; }
+.tk-modal__card:focus { outline: none; }
+.tk-modal--leaving { animation: tk-fade-out 0.16s ease-in forwards; pointer-events: none; }
+.tk-modal--leaving .tk-modal__card { animation: tk-pop-out 0.16s ease-in forwards; }
+
+/* Сообщения над перепиской. */
+.tk-notice { animation: tk-drop 0.16s ease-out backwards; }
+
+/* Нет связи для живых обновлений — тихая строка, не тревога. */
+.tk-offline {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  color: #a5650c;
+  animation: tk-fade 0.16s ease-out backwards;
+}
+
+/* Отправка не подтверждена: текст сохранён, кнопка — «Повторить». */
+.tk-compose__failed {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  color: #b3302b;
+  overflow-wrap: anywhere;
+  animation: tk-fade 0.16s ease-out backwards;
+}
+
+.tk-compose--failed .tk-compose__box { box-shadow: 0 0 0 1px #f0b8b4; border-radius: 10px; }
+.tk-compose[aria-busy='true'] .tk-compose__field { color: #6b7c98; }
+.tk-send[aria-busy='true'] { cursor: progress; }
+
+/* --- реакции ------------------------------------------------------------------------------ */
+
+.tk-btn,
+.tk-chip,
+.tk-tab,
+.tk-row,
+.tk-icon,
+.tk-action,
+.tk-link,
+.tk-choice__button,
+.tk-menu button {
+  transition: background-color 0.14s ease, border-color 0.14s ease, color 0.14s ease, opacity 0.14s ease;
+}
+
+.tk-btn:active:not(:disabled),
+.tk-action:active:not(:disabled),
+.tk-choice__button:active:not(:disabled) { background: #eef3fa; }
+.tk-row:active { background: #e8f1fd; }
+
+/* Выдвижная панель контекста закрывается так же плавно, как открывается:
+   скрытие откладывается до конца сдвига. Затемнение проявляется. */
+@media (max-width: 1279px) {
+  .tk-side { transition: transform 0.2s ease, visibility 0s linear 0.2s; }
+  .tk-side--open { transition: transform 0.22s cubic-bezier(0.2, 0.7, 0.2, 1), visibility 0s; }
+  .tk-scrim { animation: tk-fade 0.18s ease-out backwards; }
+}
+
+/* --- уменьшенное движение ------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .tk-sheet > .tk-head,
+  .tk-sheet > .tk-tabs,
+  .tk-sheet > .tk-work,
+  .tk-talk__body,
+  .tk-side__body,
+  .tk-msg--new,
+  .app-popover.tk-menu,
+  .tk-modal__card,
+  .tk-notice { animation: tk-fade 0.12s linear backwards; animation-delay: 0s; }
+  .tk-modal--leaving,
+  .tk-modal--leaving .tk-modal__card { animation: none; }
+  .tk-side,
+  .tk-side--open { transition: none; }
+  .tk-btn,
+  .tk-chip,
+  .tk-tab,
+  .tk-row,
+  .tk-icon,
+  .tk-action,
+  .tk-link,
+  .tk-choice__button,
+  .tk-menu button { transition: none; }
+}
+
+/* Движение переписки из ветки UI идёт после правил ветки аудита: при
+   совпадении (`.tk-msg--new`, `tk-msg-in`, уменьшенное движение) действует оно. */
 /* --- движение в переписке ------------------------------------------------
  *
  * Новое сообщение появляется мягко: чуть снизу, из прозрачности, с едва

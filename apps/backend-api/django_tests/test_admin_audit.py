@@ -333,14 +333,14 @@ class TestWhatIsRecorded:
         entry = entries_for(grant)[0]
         assert entry.new_values["role_id"] == str(other_role.pk)
 
-    def test_the_record_goes_to_the_organization_of_the_object(
+    def test_foreign_organization_record_cannot_be_edited(
         self, admin_browser, admin_request, seeded, super_admin, organization
     ):
-        """В админке нет фильтра по организации.
+        """Админка ограничена организацией вошедшего (аудит 11.10, M-7).
 
-        Суперадминистратор одной организации может править запись другой,
-        и положить такое изменение в СВОЙ журнал значило бы спрятать его
-        от тех, кого оно касается.
+        Раньше фильтра по организации не было, и суперадминистратор одной
+        организации правил запись другой. Теперь чужая запись не открывается
+        и не меняется — и, значит, в журнал ничего не попадает.
         """
         foreign_role = Role.objects.create(
             organization=organization, code="FOREIGN", name="Чужая"
@@ -348,14 +348,15 @@ class TestWhatIsRecorded:
         assert organization.id != seeded.id
         model_admin = admin.site._registry[Role]
 
-        admin_browser.post(
+        response = admin_browser.post(
             change_url(foreign_role),
             form_payload(model_admin, admin_request, foreign_role, name="Правка соседа"),
         )
 
-        entry = entries_for(foreign_role)[0]
-        assert entry.organization_id == organization.id
-        assert entry.actor_user_id == super_admin.id
+        assert response.status_code in (302, 404)
+        foreign_role.refresh_from_db()
+        assert foreign_role.name == "Чужая"
+        assert entries_for(foreign_role) == []
 
 
 # --- устройство --------------------------------------------------------------

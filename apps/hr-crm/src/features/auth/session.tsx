@@ -41,7 +41,7 @@ export type SessionState =
   | { status: 'authenticated'; user: CurrentUser };
 
 type Session = SessionState & {
-  signIn: (email: string, password: string) => Promise<void>;
+  signIn: (email: string, password: string, signal?: AbortSignal) => Promise<void>;
   signOut: () => Promise<void>;
   /** Спросить сервер заново. Нужна экрану «backend не отвечает». */
   recheck: () => void;
@@ -78,8 +78,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const recheck = useCallback(() => setAttempt((n) => n + 1), []);
 
-  const signIn = useCallback(async (email: string, password: string) => {
-    const user = await api.login(email, password);
+  const signIn = useCallback(async (email: string, password: string, signal?: AbortSignal) => {
+    const user = await api.login(email, password, signal);
     setState({ status: 'authenticated', user });
   }, []);
 

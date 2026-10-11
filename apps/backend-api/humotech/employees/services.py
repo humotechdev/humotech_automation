@@ -21,6 +21,7 @@ from datetime import date, timedelta
 from django.db.models import Case, Count, IntegerField, Q, Value, When
 from django.db.models.functions import Lower, Replace
 
+from humotech.core.enums import OFFERED_EMPLOYMENT_TYPES
 from humotech.core.errors import Conflict, NotFound, ValidationFailed
 from humotech.core.pagination import Cursor, Page, normalize_limit, paginate
 from humotech.core.rbac import Actor, snapshot
@@ -56,7 +57,6 @@ from humotech.telegram.models import TelegramAccount
 CARD_FIELDS = (
     "employee_number", "first_name", "last_name", "middle_name", "phone",
     "corporate_email", "personal_email", "birth_date", "hire_date",
-    "probation_from", "probation_to", "mentor_employee_id",
     "termination_date", "termination_reason", "preferred_language",
     "employment_status",
 )
@@ -73,11 +73,10 @@ ASSIGNMENT_FIELDS = (
 CONTACT_FIELDS = ("first_name", "last_name", "middle_name", "phone",
                   "corporate_email", "personal_email", "birth_date",
                   "preferred_language", "employee_number",
-                  "gender", "marital_status",
-                  "probation_from", "probation_to", "mentor_employee_id")
+                  "gender", "marital_status")
 
 # Статусы, при которых сотрудник считается работающим.
-WORKING_STATUSES = ("ACTIVE", "PROBATION")
+WORKING_STATUSES = ("ACTIVE",)
 # Статусы, после которых кадровые операции недоступны.
 FINAL_STATUSES = ("TERMINATED", "ARCHIVED")
 
@@ -430,6 +429,10 @@ class EmployeeService(BaseService):
                 employee_id__in=[e.id for e in page.items]
             ).values_list("employee_id", "status", "telegram_username")
         }
+        # Показать расписание версии, действующей на дату списка (Р-5).
+        from humotech.schedules.day_plan import show_versions_on
+
+        show_versions_on(schedules.values(), at)
         for employee in page.items:
             employee.current_assignment = assignments.get(employee.id)
             employee.current_schedule = schedules.get(employee.id)
@@ -590,6 +593,10 @@ class EmployeeService(BaseService):
             connected_at=account.connected_at if account else None,
         )
 
+        if schedule is not None:
+            from humotech.schedules.day_plan import show_versions_on
+
+            show_versions_on([schedule.schedule], date.today())
         return EmployeeCard(
             employee=employee,
             current_assignment=current,
@@ -656,6 +663,7 @@ class EmployeeService(BaseService):
                 "Нового сотрудника нельзя завести сразу уволенным",
                 details={"employment_status": employment_status},
             )
+        self._validate_employment_type(employment_type)
 
         with self.atomic():
             employee = Employee.objects.create(
@@ -676,8 +684,6 @@ class EmployeeService(BaseService):
                                               field="personal_email"),
                 birth_date=contacts.get("birth_date"),
                 hire_date=hire_date,
-                probation_from=contacts.get("probation_from"),
-                probation_to=contacts.get("probation_to"),
                 preferred_language=contacts.get("preferred_language", "ru"),
                 employment_status=employment_status,
             )
@@ -713,7 +719,9 @@ class EmployeeService(BaseService):
         его нет.
         """
         self.access.require(actor, "employees.manage")
-        employee = self._require_visible_employee(actor, employee_id)
+        employee = self._require_visible_employee(
+            actor, employee_id, permission="employees.manage"
+        )
 
         unknown = set(changes) - set(CONTACT_FIELDS)
         if unknown:
@@ -755,28 +763,6 @@ class EmployeeService(BaseService):
             employee.gender = changes["gender"] or None
         if "marital_status" in changes:
             employee.marital_status = changes["marital_status"] or None
-        if "probation_from" in changes:
-            employee.probation_from = changes["probation_from"]
-        if "probation_to" in changes:
-            employee.probation_to = changes["probation_to"]
-        if "mentor_employee_id" in changes:
-            mentor = changes["mentor_employee_id"]
-            if mentor is not None:
-                if str(mentor) == str(employee.id):
-                    raise ValidationFailed("Сотрудник не может быть своим наставником",
-                                           details={"field": "mentor_employee_id"})
-                if not Employee.objects.filter(id=mentor, organization_id=employee.organization_id).exists():
-                    raise ValidationFailed("Наставник не найден", details={"field": "mentor_employee_id"})
-            employee.mentor_employee_id = mentor
-        # Порядок дат проверяется здесь, чтобы человек увидел причину, а
-        # не отказ базы. Правится одна из двух — сравнивать приходится с
-        # той, что уже записана.
-        require_order(
-            employee.probation_from, employee.probation_to,
-            message="Стажировка не может кончаться раньше, чем началась",
-            details={"probation_from": str(employee.probation_from),
-                     "probation_to": str(employee.probation_to)},
-        )
         if changes.get("preferred_language"):
             employee.preferred_language = changes["preferred_language"]
         if changes.get("employee_number") is not None:
@@ -807,7 +793,9 @@ class EmployeeService(BaseService):
         в другой офис не должен молча стирать должность.
         """
         self.access.require(actor, "employees.manage")
-        employee = self._require_visible_employee(actor, employee_id)
+        employee = self._require_visible_employee(
+            actor, employee_id, permission="employees.manage"
+        )
 
         if employee.employment_status in FINAL_STATUSES:
             raise Conflict(
@@ -847,6 +835,18 @@ class EmployeeService(BaseService):
         office = self._require_assignable_office(
             actor, changes.get("office_id") or current.office_id
         )
+
+        # Тип занятости проверяем ТОЛЬКО когда его реально меняют на другой.
+        # Форма перевода CRM присылает текущий тип всегда; у существующего
+        # сотрудника со снятым типом INTERN («стажёр») это не изменение, и
+        # перевод (другой офис/должность) не должен падать из-за него — иначе
+        # таких сотрудников нельзя было бы вести. Ввести INTERN заново по-
+        # прежнему нельзя: это уже смена значения и она отвергается.
+        if (
+            "employment_type" in changes
+            and changes["employment_type"] != current.employment_type
+        ):
+            self._validate_employment_type(changes["employment_type"])
 
         if "department_id" in changes:
             department_id = self._validate_department(
@@ -913,7 +913,9 @@ class EmployeeService(BaseService):
         self, actor: Actor, employee_id: uuid.UUID, status: str, action: str
     ) -> EmployeeCard:
         self.access.require(actor, "employees.manage")
-        employee = self._require_visible_employee(actor, employee_id)
+        employee = self._require_visible_employee(
+            actor, employee_id, permission="employees.manage"
+        )
 
         if employee.employment_status == status:
             raise Conflict(f"Сотрудник уже в статусе {status}",
@@ -948,7 +950,9 @@ class EmployeeService(BaseService):
         строка остаётся, у неё появляется дата окончания.
         """
         self.access.require(actor, "employees.archive")
-        employee = self._require_visible_employee(actor, employee_id)
+        employee = self._require_visible_employee(
+            actor, employee_id, permission="employees.archive"
+        )
 
         if employee.employment_status in FINAL_STATUSES:
             raise Conflict(
@@ -1042,22 +1046,38 @@ class EmployeeService(BaseService):
         return condition
 
     def _require_visible_employee(
-        self, actor: Actor, employee_id: uuid.UUID, *, at: date | None = None
+        self, actor: Actor, employee_id: uuid.UUID, *, at: date | None = None,
+        permission: str | None = None,
     ) -> Employee:
         # Само правило лежит в selectors: тем же пользуется привязка Telegram,
         # и разойтись эти два ответа не имеют права.
-        return require_visible_employee(self.access, actor, employee_id)
+        return require_visible_employee(
+            self.access, actor, employee_id, permission
+        )
 
     def _require_assignable_office(
         self, actor: Actor, office_id: uuid.UUID
     ) -> Office:
-        office = self.access.require_office(actor, office_id)
+        # Назначение в офис — изменение: право и офис из одного назначения.
+        office = self.access.require_office(actor, office_id, "employees.manage")
         if office.status != "ACTIVE":
             raise Conflict(
                 "Офис не активен: назначать в него сотрудников нельзя",
                 details={"office_id": str(office_id), "status": office.status},
             )
         return office
+
+    @staticmethod
+    def _validate_employment_type(employment_type: str) -> None:
+        """Тип занятости из разрешённых. INTERN («стажёр») больше не
+        назначается — он часть удалённой стажировки; существующие записи с
+        ним остаются, но завести или сменить тип на него нельзя."""
+        if employment_type not in OFFERED_EMPLOYMENT_TYPES:
+            raise ValidationFailed(
+                "Недопустимый тип занятости",
+                details={"employment_type": employment_type,
+                         "allowed": list(OFFERED_EMPLOYMENT_TYPES)},
+            )
 
     def _validate_department(
         self, actor: Actor, department_id: uuid.UUID | None, *, office_id: uuid.UUID

@@ -200,15 +200,20 @@ HUMOTECH_APPS = [
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + HUMOTECH_APPS
 
 MIDDLEWARE = [
+    # Первым: метка запроса нужна логам всех следующих слоёв (аудит 12.10, A-42).
+    "humotech.core.request_id.RequestIdMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "humotech.accounts.session_age.AbsoluteSessionAgeMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     # CORS только для Mini App и только для его путей — см. модуль.
     "humotech.core.cors.ScopedCorsMiddleware",
+    # Ответы API — персональные данные: не кэшировать (аудит 11.10, M-10).
+    "humotech.core.nocache.PrivateApiResponseMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -326,6 +331,9 @@ LOGIN_THROTTLE = {
 SESSION_ENGINE = "django.contrib.sessions.backends.db"
 SESSION_COOKIE_AGE = int(env("DJANGO_SESSION_COOKIE_AGE", str(12 * 60 * 60)))
 SESSION_SAVE_EVERY_REQUEST = True
+# Потолок от момента входа: скольжение не продлевает сессию дольше суток
+# (аудит 11.10, L-11). См. humotech/accounts/session_age.py.
+SESSION_ABSOLUTE_AGE = int(env("DJANGO_SESSION_ABSOLUTE_AGE", str(24 * 60 * 60)))
 SESSION_EXPIRE_AT_BROWSER_CLOSE = False
 SESSION_COOKIE_HTTPONLY = True
 # Lax, а не Strict: со Strict переход в CRM по ссылке из Telegram или
@@ -426,6 +434,11 @@ QR = {
     # и это ещё осмысленный сигнал. Больше — уже не «около офиса»,
     # а «где-то в городе».
     "MAX_LOCATION_ACCURACY_M": int(env("QR_MAX_LOCATION_ACCURACY_M", "100")),
+    # Сколько секунд может пройти от получения точки до отправки отметки.
+    # Возраст сообщает клиент, и доказательством он не является; но
+    # честный клиент с ошибкой — отправить место, полученное до скана, —
+    # так ловится на сервере, а не только в самом клиенте.
+    "MAX_LOCATION_AGE_SECONDS": int(env("QR_MAX_LOCATION_AGE_SECONDS", "30")),
 }
 
 # --- Очередь уведомлений ---
@@ -478,11 +491,17 @@ ONBOARDING = {
 FILES = {
     "PROVIDER": env("FILES_PROVIDER", "local"),
     "PRIVATE_ROOT": env("FILES_PRIVATE_ROOT", str(BASE_DIR / "private-media")),
-    # Антивируса в проекте нет. Пока флаг выключен, загруженный файл
-    # помечается CLEAN, и это означает «проверка не проводилась», а не
-    # «проверен и чист» — см. humotech/files/storage.py. Включение флага
-    # переводит новые файлы в PENDING, и до проверки они не отдаются.
+    # Антивирус (clamd) включается этим флагом. Выключен — файл помечается
+    # UNSCANNED, честное «проверка не проводилась». Включён — файл
+    # проверяется ДО записи: чистый CLEAN, заражённый отклоняется, сканер
+    # недоступен — загрузка отклоняется (503). См. humotech/files/scanner.py.
     "SCANNER_ENABLED": env("FILES_SCANNER_ENABLED", "false").lower() == "true",
+    # clamd (ClamAV), протокол INSTREAM — см. humotech/files/scanner.py.
+    # Предел потока у clamd (StreamMaxLength) должен быть не меньше
+    # максимального размера загрузки (100 МБ).
+    "SCANNER_HOST": env("FILES_SCANNER_HOST", "clamav"),
+    "SCANNER_PORT": int(env("FILES_SCANNER_PORT", "3310")),
+    "SCANNER_TIMEOUT_SECONDS": float(env("FILES_SCANNER_TIMEOUT_SECONDS", "30")),
 }
 
 # --- Фоновые выгрузки ---
@@ -547,7 +566,7 @@ LOGGING = {
     "disable_existing_loggers": False,
     "formatters": {
         "standard": {
-            "format": "%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+            "format": "%(asctime)s %(levelname)-8s [%(request_id)s] %(name)s: %(message)s",
         },
     },
     # Маскирование секретов в тексте сообщения: токен бота, `password=…`,
@@ -557,12 +576,15 @@ LOGGING = {
         "redact_secrets": {
             "()": "humotech.audit.redaction.SecretRedactingFilter",
         },
+        "request_id": {
+            "()": "humotech.core.request_id.RequestIdLogFilter",
+        },
     },
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
             "formatter": "standard",
-            "filters": ["redact_secrets"],
+            "filters": ["request_id", "redact_secrets"],
         },
     },
     "root": {"handlers": ["console"], "level": env("LOG_LEVEL", "INFO")},

@@ -155,13 +155,15 @@ def test_office_update_rejects_latitude_out_of_range(hr, office):
 
 def test_attach_document_without_title_is_not_500(hr, employee, organization, private_files):
     """Прежде `stored.original_name` → AttributeError → 500."""
-    paper = store(
-        SimpleUploadedFile("contract.pdf", PDF_MIN, content_type="application/pdf"),
-        organization_id=organization.id, employee=None, allowed_types=("application/pdf",),
-        max_bytes=1024 * 1024, prefix="employees/documents",
-    ).file
+    # Файл — настоящей загрузкой этого же кадровика: привязать можно только
+    # свою свежую загрузку (аудит 11.10, H-1).
+    uploaded = hr.post(f"{API}/employees/attachments/",
+                       {"file": SimpleUploadedFile("contract.pdf", PDF_MIN,
+                                                   content_type="application/pdf"),
+                        "purpose": "document"}, format="multipart")
+    assert uploaded.status_code == 201, uploaded.content
     response = hr.post(f"{API}/employees/{employee.id}/documents/",
-                       {"kind": "OTHER", "file_id": str(paper.id)}, format="json")
+                       {"kind": "OTHER", "file_id": uploaded.json()["id"]}, format="json")
     assert response.status_code == 201, response.content
     assert response.json()["title"] == "contract.pdf"
 

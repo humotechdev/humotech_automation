@@ -444,10 +444,14 @@ class TestQueryCount:
             five_day_schedule(organization, person)
             worked(organization, person, office, FIRST)
 
-        with django_assert_max_num_queries(12):
+        # 17: единый план дня (`schedules.day_plan`, аудит 12.10) — офис,
+        # версия графика с днями и перерывами и календарь на каждую дату —
+        # плюс период трудоустройства (B-04). Все запросы постоянные.
+        # Главное условие теста — месяц стоит столько же, сколько день.
+        with django_assert_max_num_queries(17):
             service.office(analyst, office.id, first=FIRST, last=FIRST)
 
-        with django_assert_max_num_queries(12):
+        with django_assert_max_num_queries(17):
             report = service.office(
                 analyst, office.id, first=date(2026, 3, 1), last=date(2026, 3, 31)
             )

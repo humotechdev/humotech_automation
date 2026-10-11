@@ -284,13 +284,38 @@ def _onboarding_required(employee_id) -> bool:
     return state is not None and not state.completed
 
 
+class PerTelegramUserThrottle(ScopedRateThrottle):
+    """Предел привязки — на человека в Telegram, а не на адрес.
+
+    Все запросы приходят от одного бота с одного адреса: счётчик по адресу
+    был общим на всех, и один пользователь, нажимающий /start быстрее
+    предела, закрывал привязку остальным (аудит 11.10, L-3). Ключ —
+    `telegram_user_id` из тела; без него — прежний ключ по адресу.
+    Тело принимается только от бота с общим секретом (`IsTelegramBot`
+    проверяется раньше), так что чужой id сюда не подставить.
+    """
+
+    def get_cache_key(self, request, view):
+        data = getattr(request, "data", None)
+        # Тело может оказаться не объектом (список, строка) — тогда ключа
+        # нет, и валидатор view ответит 400; предел не должен падать в 500.
+        raw = data.get("telegram_user_id") if hasattr(data, "get") else None
+        try:
+            ident = f"tg:{int(raw)}" if raw is not None else None
+        except (TypeError, ValueError):
+            ident = None
+        if ident is None:
+            return super().get_cache_key(request, view)
+        return self.cache_format % {"scope": self.scope, "ident": ident}
+
+
 class BotLinkView(APIView):
     """Погашение ссылки. Вызывает только бот, пользователя за запросом нет."""
 
     authentication_classes: list = []
     permission_classes = [IsTelegramBot]
     throttle_scope = "telegram_bot_link"
-    throttle_classes = [ScopedRateThrottle]
+    throttle_classes = [PerTelegramUserThrottle]
 
     @extend_schema(
         operation_id="telegram_bot_link",
@@ -326,16 +351,17 @@ class BotLinkView(APIView):
 
 
 class BotLinkAcceptView(BotLinkView):
-    """Подтверждение условий сотрудником; HR в этом шаге не участвует."""
-    @extend_schema(request=BotLinkAcceptSerializer, responses={200: BotLinkResultSerializer}, tags=["Telegram"])
+    """Согласие сотрудника с условиями.
+
+    Записывается в журнал, но доступа не открывает: ответ всегда 409
+    `hr_confirmation_required`. Рабочей привязку делает только HR
+    (`/telegram/invitations/{id}/confirm/`).
+    """
+    @extend_schema(request=BotLinkAcceptSerializer, responses={409: None}, tags=["Telegram"])
     def post(self, request):
         payload = validated(BotLinkAcceptSerializer, request.data)
-        account = TelegramLinkService().accept_terms(telegram_user_id=payload["telegram_user_id"])
-        return Response({
-            "status": account.status,
-            "employee_known": True,
-            "onboarding_required": _onboarding_required(account.employee_id),
-        })
+        # Всегда бросает TelegramLinkError -> 409 с причиной для бота.
+        TelegramLinkService().accept_terms(telegram_user_id=payload["telegram_user_id"])
 
 
 class BotRecognizeView(APIView):
@@ -352,7 +378,7 @@ class BotRecognizeView(APIView):
     authentication_classes: list = []
     permission_classes = [IsTelegramBot]
     throttle_scope = "telegram_bot_link"
-    throttle_classes = [ScopedRateThrottle]
+    throttle_classes = [PerTelegramUserThrottle]
 
     @extend_schema(
         operation_id="telegram_bot_recognize",
@@ -375,8 +401,14 @@ class BotRecognizeView(APIView):
             telegram_chat_id=payload["telegram_chat_id"],
             language_code=payload.get("language_code") or None,
         )
+        # До подтверждения кадровиком — без имени. Узнавание по `@username`
+        # слабее ссылки: при опечатке HR в нике или занятом чужом имени
+        # посторонний узнал бы, как зовут сотрудника (решение владельца
+        # 11.10.2026, аудит L-1). Бот здоровается нейтрально («коллега»).
+        facts = (welcome_facts(account.employee) if account.status == "ACTIVE"
+                 else {"first_name": None})
         return Response(
-            {"status": account.status, **welcome_facts(account.employee)},
+            {"status": account.status, **facts},
             status=status.HTTP_201_CREATED,
         )
 

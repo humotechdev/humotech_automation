@@ -34,9 +34,21 @@ OPEN_REQUESTS = ("SUBMITTED", "IN_REVIEW")
 
 def question_context(access: AccessControl, actor: Actor, question: EmployeeQuestion) -> dict:
     employee = question.employee
+    seen: dict[str, bool] = {}
 
     def has(code: str) -> bool:
-        return access.has(actor, code)
+        """Право `code` действует именно на ЭТОГО сотрудника.
+
+        Наличия права «где-то в организации» мало: кадровик с
+        `questions.read` на всю организацию и `absences.read` на один
+        офис иначе видел бы заявки и больничные сотрудника из чужого
+        офиса (аудит 11.10, M-1). Сотрудник должен попадать в область
+        того назначения, что несёт само право.
+        """
+        if code not in seen:
+            seen[code] = access.has(actor, code) and _visible(
+                access, actor, employee.id, code)
+        return seen[code]
 
     place = _places([employee.id]).get(employee.id) or {}
     telegram = _telegram(employee.id)
@@ -68,6 +80,17 @@ def question_context(access: AccessControl, actor: Actor, question: EmployeeQues
         "today": _today(access, actor, employee, place) if has("attendance.read") else None,
         "materials": _materials(question) if has("knowledge.read") else None,
     }
+
+
+def _visible(access: AccessControl, actor: Actor, employee_id, code: str) -> bool:
+    from humotech.core.errors import NotFound, PermissionDenied
+    from humotech.employees.selectors import require_visible_employee
+
+    try:
+        require_visible_employee(access, actor, employee_id, code)
+    except (NotFound, PermissionDenied):
+        return False
+    return True
 
 
 def _today(access, actor: Actor, employee, place: dict) -> dict:
@@ -115,7 +138,7 @@ def _username(employee_id) -> str | None:
 
 def _schedule(employee_id) -> dict | None:
     """Действующий график и его рабочие дни одной строкой: «Пн–Пт · 09:00–18:00»."""
-    from humotech.schedules.models import EmployeeScheduleAssignment, ScheduleDay
+    from humotech.schedules.models import EmployeeScheduleAssignment
 
     today = timezone.localdate()
     row = (
@@ -127,11 +150,15 @@ def _schedule(employee_id) -> dict | None:
     )
     if row is None:
         return None
-    days = list(
-        ScheduleDay.objects.filter(schedule_id=row.schedule_id, is_working_day=True)
-        .order_by("weekday")
-        .values("weekday", "start_time", "end_time")
-    )
+    # Расписание версии графика, действующей сегодня (Р-5).
+    from humotech.schedules.day_plan import show_versions_on
+
+    show_versions_on([row.schedule], today)
+    days = [
+        {"weekday": one.weekday, "start_time": one.start_time, "end_time": one.end_time}
+        for one in sorted(row.schedule.display_days, key=lambda one: one.weekday)
+        if one.is_working_day
+    ]
     return {
         "name": row.schedule.name,
         "flexible": row.schedule.is_flexible,

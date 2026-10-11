@@ -119,7 +119,25 @@ def telegram_chat_id_field(**extra) -> serializers.IntegerField:
     )
 
 
-class BotRecognizeSerializer(serializers.Serializer):
+class PrivateChatMixin:
+    """Привязка — только из личного чата с ботом.
+
+    В Telegram идентификатор личного чата совпадает с идентификатором
+    пользователя; у группы он отрицательный. Если ссылку открыли в группе,
+    в `telegram_chat_id` уходил id группы, и личные уведомления сотрудника
+    (в том числе вложения) рассылались бы туда (аудит 11.10, L-2).
+    """
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        if attrs.get("telegram_chat_id") != attrs.get("telegram_user_id"):
+            raise serializers.ValidationError(
+                {"telegram_chat_id": ["Привязка выполняется только в личном чате с ботом."]}
+            )
+        return attrs
+
+
+class BotRecognizeSerializer(PrivateChatMixin, serializers.Serializer):
     """Что бот сообщает о человеке, открывшем его без ссылки."""
 
     telegram_user_id = telegram_user_id_field()
@@ -135,25 +153,17 @@ class BotRecognizeSerializer(serializers.Serializer):
 
 
 class WelcomeSerializer(serializers.Serializer):
-    """Чем бот здоровается с узнанным сотрудником.
+    """Чем бот здоровается с узнанным по имени сотрудником.
 
-    Ровно то, что человек и так про себя знает: имя, где работает и по
-    какому графику. Ни зарплаты, ни документов, ни чужих данных — бот
-    здесь ничего не сообщает сверх того, что кадровик уже сказал вслух.
+    Только имя для приветствия: узнавание по `@username` слабее ссылки и
+    отвечает до подтверждения HR, поэтому персональных данных (офис,
+    график, руководитель) здесь нет.
     """
 
     status = serializers.CharField(help_text="Состояние привязки: PENDING")
-    full_name = serializers.CharField()
-    employment_status = serializers.CharField()
-    hire_date = serializers.DateField(allow_null=True)
-    office_name = serializers.CharField(allow_null=True)
-    department_name = serializers.CharField(allow_null=True)
-    position_name = serializers.CharField(allow_null=True)
-    schedule_name = serializers.CharField(allow_null=True)
-    manager_name = serializers.CharField(allow_null=True)
+    first_name = serializers.CharField(allow_null=True)
 
-
-class BotConsumeSerializer(serializers.Serializer):
+class BotConsumeSerializer(PrivateChatMixin, serializers.Serializer):
     """Что бот сообщает backend о переходе по ссылке.
 
     `employee_id` и `organization_id` здесь отсутствуют намеренно: бот их

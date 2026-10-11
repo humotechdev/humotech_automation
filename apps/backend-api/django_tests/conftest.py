@@ -505,6 +505,25 @@ def reset_throttle_counters():
     cache.clear()
 
 
+# Файлы тестов — только во временную папку, не в настоящую private-media/.
+#
+# Генераторы демо-данных и загрузки пишут файлы по `FILES["PRIVATE_ROOT"]`
+# (и выгрузки по `EXPORTS["PRIVATE_ROOT"]`). По умолчанию это каталоги в
+# репозитории. Очистка демо-данных (core/demo/queues.py) удаляет только то,
+# что записано в БД, а у каждого теста своя пустая база — поэтому прежде
+# файлы оседали в `private-media/demo/` навсегда и копились между прогонами
+# (десятки тысяч PDF и фото, гигабайты). Автофикстура уводит оба корня во
+# временную папку pytest: её pytest убирает сам, репозиторий не растёт.
+# `storage.py` и выгрузки читают настройку в момент вызова, поэтому подмена
+# значения в словаре действует на весь тест.
+@pytest.fixture(autouse=True)
+def _private_media_to_tmp(tmp_path, monkeypatch):
+    from django.conf import settings
+
+    monkeypatch.setitem(settings.FILES, "PRIVATE_ROOT", str(tmp_path / "private-media"))
+    monkeypatch.setitem(settings.EXPORTS, "PRIVATE_ROOT", str(tmp_path / "private-exports"))
+
+
 # Токен заведомо ненастоящий и в Telegram не отправляется: им только
 # подписываются строки `initData` внутри тестов.
 TEST_BOT_TOKEN = "123456:TEST-BOT-TOKEN-NOT-REAL"

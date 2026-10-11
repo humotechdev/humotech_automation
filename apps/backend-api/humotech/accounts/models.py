@@ -165,14 +165,33 @@ class User(UUIDPrimaryKeyModel, TimestampedModel, ArchivableModel, AbstractBaseU
     def is_staff(self) -> bool:
         """Django Admin — аварийный вход, а не рабочий интерфейс.
 
-        Пускаем только `SUPER_ADMIN`. Остальные работают через CRM: там
-        права проверяются доменным каталогом, а не кодами моделей Django.
+        Пускаем только `SUPER_ADMIN`, и только выданный БЕЗ сужения
+        области (на всю организацию). SUPER_ADMIN, назначенный на один
+        офис или регион, в админку не входит: она не фильтрует данные по
+        области, и ограниченное назначение дало бы через неё глобальный
+        доступ. Остальные работают через CRM, где права проверяет
+        доменный каталог.
         """
-        return self._has_admin_role()
+        return self._has_unscoped_admin_role()
 
     @property
     def is_superuser(self) -> bool:
-        return self._role_codes().intersection({"SUPER_ADMIN"}) != set()
+        return self._has_unscoped_admin_role()
+
+    def _has_unscoped_admin_role(self) -> bool:
+        """Есть ли действующая админ-роль, выданная на всю организацию.
+
+        Сужение назначения (region/office) снимает признак админки:
+        `is_superuser` в Django открывает всё, а назначение на офис так
+        широко трактоваться не должно.
+        """
+        from humotech.accounts.selectors import active_scopes
+
+        return active_scopes(self).filter(
+            role__code__in=ADMIN_ROLE_CODES,
+            region__isnull=True,
+            office__isnull=True,
+        ).exists()
 
     def _role_codes(self) -> set[str]:
         from humotech.accounts.selectors import active_role_codes

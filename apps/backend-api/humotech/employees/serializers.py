@@ -140,8 +140,10 @@ class EmployeeListItemSerializer(serializers.ModelSerializer):
         # не собирается, а в названии графика дней нет. Дни уже
         # прочитаны вместе со страницей (`prefetch_related`), лишнего
         # запроса это не стоит.
+        source = getattr(schedule, "display_days", None)
         days = sorted(
-            (one for one in schedule.days.all() if one.is_working_day),
+            (one for one in (source if source is not None else schedule.days.all())
+             if one.is_working_day),
             key=lambda one: one.weekday,
         )
         return {
@@ -218,13 +220,6 @@ class EmployeeCardSerializer(serializers.Serializer):
     birth_date = serializers.DateField(source="employee.birth_date",
                                        allow_null=True)
     hire_date = serializers.DateField(source="employee.hire_date")
-    probation_from = serializers.DateField(source="employee.probation_from",
-                                           allow_null=True)
-    probation_to = serializers.DateField(source="employee.probation_to",
-                                         allow_null=True)
-    mentor = serializers.SerializerMethodField(
-        help_text="Наставник на время стажировки: id и имя; пусто — не назначен",
-    )
     termination_date = serializers.DateField(source="employee.termination_date",
                                              allow_null=True)
     preferred_language = serializers.CharField(
@@ -274,7 +269,9 @@ class EmployeeCardSerializer(serializers.Serializer):
         row = card.current_schedule
         if row is None:
             return None
-        days = [one for one in row.schedule.days.all() if one.is_working_day]
+        source = getattr(row.schedule, "display_days", None)
+        days = [one for one in (source if source is not None else row.schedule.days.all())
+                if one.is_working_day]
         days.sort(key=lambda one: one.weekday)
         return CurrentScheduleSerializer(
             {
@@ -289,13 +286,6 @@ class EmployeeCardSerializer(serializers.Serializer):
                 "end_time": days[0].end_time if days else None,
             }
         ).data
-
-    def get_mentor(self, obj) -> dict | None:
-        mentor = getattr(obj.employee, "mentor_employee", None)
-        if mentor is None:
-            return None
-        name = " ".join(one for one in [mentor.last_name, mentor.first_name] if one)
-        return {"id": str(mentor.id), "full_name": name}
 
 
 class EmployeeCreateSerializer(serializers.Serializer):
@@ -357,10 +347,6 @@ class EmployeeUpdateSerializer(serializers.Serializer):
     marital_status = serializers.ChoiceField(choices=MARITAL_STATUSES,
                                              required=False, allow_null=True,
                                              allow_blank=True)
-    # Срок стажировки: обе даты необязательны и по отдельности тоже.
-    probation_from = serializers.DateField(required=False, allow_null=True)
-    probation_to = serializers.DateField(required=False, allow_null=True)
-    mentor_employee_id = serializers.UUIDField(required=False, allow_null=True)
 
 
 class AssignmentChangeSerializer(serializers.Serializer):
@@ -378,31 +364,6 @@ class AssignmentChangeSerializer(serializers.Serializer):
 class TerminateSerializer(serializers.Serializer):
     termination_date = serializers.DateField()
     reason = serializers.CharField(required=False, allow_null=True)
-
-
-class PromoteSerializer(serializers.Serializer):
-    """Приём стажёра в штат.
-
-    Оба поля необязательны: чаще всего должность остаётся прежней, а
-    датой считается сегодняшний день. Требовать их значило бы заставлять
-    кадровика подтверждать то, что и так очевидно.
-    """
-
-    position_id = serializers.UUIDField(required=False, allow_null=True)
-    effective_from = serializers.DateField(required=False, allow_null=True)
-
-
-class EndProbationSerializer(serializers.Serializer):
-    """Расставание по итогам стажировки.
-
-    Причина подставляется сама («Не прошёл стажировку»), но её можно
-    уточнить: обстоятельства бывают разные, и формулировка остаётся в
-    карточке навсегда.
-    """
-
-    last_day = serializers.DateField(required=False, allow_null=True)
-    reason = serializers.CharField(required=False, allow_null=True,
-                                   max_length=255)
 
 
 class EmployeeDocumentInputSerializer(serializers.Serializer):
@@ -451,13 +412,8 @@ class EmployeeOnboardSerializer(serializers.Serializer):
                                             default="FULL_TIME")
     work_mode = serializers.CharField(max_length=30, required=False,
                                       default="ONSITE")
-    # Сам факт стажировки отражается статусом: в базе есть PROBATION, и
-    # второе место для той же мысли разошлось бы с ним. Даты — это срок,
-    # а не факт, и они живут отдельными полями.
     employment_status = serializers.CharField(max_length=30, required=False,
                                               default="ACTIVE")
-    probation_from = serializers.DateField(required=False, allow_null=True)
-    probation_to = serializers.DateField(required=False, allow_null=True)
     schedule_id = serializers.UUIDField()
     preferred_language = LanguageField(required=False, default="ru")
 

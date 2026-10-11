@@ -28,7 +28,7 @@ from django.conf import settings
 from django.db.models import Q
 from django.utils import timezone
 
-from humotech.core.errors import Conflict, NotFound, ValidationFailed
+from humotech.core.errors import Conflict, NotFound, PermissionDenied, ValidationFailed
 from humotech.core.pagination import Page, normalize_limit, paginate
 from humotech.core.rbac import Actor, snapshot
 from humotech.core.service import BaseService
@@ -51,7 +51,6 @@ from humotech.onboarding.models import (
 from humotech.onboarding.progress import Progress
 from humotech.telegram.models import TelegramAccount, TelegramLinkInvitation
 from humotech.telegram.services import TelegramLinkService
-from humotech.telegram.tokens import ONBOARDING_PREFIX, build_invitation_link
 
 ENTITY_ONBOARDING = "employee_onboarding"
 ENTITY_PROGRAM = "onboarding_programs"
@@ -161,15 +160,24 @@ class OnboardingService(BaseService):
         return queryset.filter(id__in=allowed)
 
     def _scoped(self, actor: Actor, *, search=None, office_id=None, department_id=None):
-        """Участники программы, видимые кадровику, с поиском и местом."""
+        """Участники программы, видимые кадровику, с поиском и местом.
+
+        Место (офис, отдел) — по текущему основному назначению: переведённый
+        не числится в прежнем офисе (аудит 12.10, A-10/B-03).
+        """
+        from humotech.core.timeframes import organization_zone, today as local_today
+        from humotech.employees.services import current_primary_assignment_filter
+
+        now_places = EmployeeAssignment.objects.filter(current_primary_assignment_filter(
+            local_today(organization_zone(actor.organization_id))))
         rows = EmployeeOnboarding.objects.filter(
             organization_id=actor.organization_id,
             employee_id__in=self._visible_employees(actor).values_list("id", flat=True),
         ).select_related("employee", "program")
         if search:
             needle = search.strip()
-            in_department = EmployeeAssignment.objects.filter(
-                is_primary=True, department__name__icontains=needle
+            in_department = now_places.filter(
+                department__name__icontains=needle
             ).values_list("employee_id", flat=True)
             rows = rows.filter(
                 Q(employee__first_name__icontains=needle)
@@ -179,12 +187,12 @@ class OnboardingService(BaseService):
                 | Q(employee_id__in=in_department)
             )
         if office_id:
-            rows = rows.filter(employee_id__in=EmployeeAssignment.objects.filter(
-                office_id=office_id, is_primary=True
+            rows = rows.filter(employee_id__in=now_places.filter(
+                office_id=office_id
             ).values_list("employee_id", flat=True))
         if department_id:
-            rows = rows.filter(employee_id__in=EmployeeAssignment.objects.filter(
-                department_id=department_id, is_primary=True
+            rows = rows.filter(employee_id__in=now_places.filter(
+                department_id=department_id
             ).values_list("employee_id", flat=True))
         return rows
 
@@ -449,16 +457,44 @@ class OnboardingService(BaseService):
     def enrol(
         self, actor: Actor, employee_id: uuid.UUID, *, now: datetime | None = None
     ) -> EmployeeOnboarding:
-        """Включить сотрудника в программу.
+        """Включить в программу уже работающего сотрудника.
 
-        Отдельное действие, а не побочный эффект приёма. Программа
-        закрывает человеку рабочие функции бота до её завершения, и
-        включать в неё всех подряд миграцией нельзя: те, кто работает
-        давно, остались бы без бота в утро выката.
+        Для них это отдельное действие кадровика: программа закрывает
+        человеку рабочие функции бота до её завершения, и включать в неё
+        всех подряд миграцией нельзя — те, кто работает давно, остались бы
+        без бота в утро выката. Новичка включает сам приём
+        (`enrol_new_hire`).
         """
         self.access.require(actor, "onboarding.manage")
-        employee = require_visible_employee(self.access, actor, employee_id)
-        program = self.program(actor.organization_id)
+        employee = require_visible_employee(
+            self.access, actor, employee_id, "onboarding.manage"
+        )
+        return self._enrol(actor, employee, self.program(actor.organization_id), now=now)
+
+    def enrol_new_hire(
+        self, actor: Actor, employee_id: uuid.UUID, *, now: datetime | None = None
+    ) -> EmployeeOnboarding | None:
+        """Включить в программу человека, которого прямо сейчас принимают.
+
+        Часть приёма, а не отдельное решение кадровика: новичок должен
+        пройти ознакомление по той же единственной ссылке, что HR видит
+        после сохранения формы. Право на приём уже проверено тем, кто
+        вызывает, — отдельного `onboarding.manage` для этого не нужно,
+        иначе кадровик без него принимал бы людей мимо ознакомления.
+
+        Программы нет (стенд не наполнен) — приём не срывается: `None`.
+        Давно работающих это не затрагивает: вызывается только при приёме.
+        """
+        program = OnboardingProgram.objects.filter(
+            organization_id=actor.organization_id, is_active=True, archived_at__isnull=True
+        ).first()
+        if program is None:
+            return None
+        employee = Employee.objects.get(id=employee_id, organization_id=actor.organization_id)
+        return self._enrol(actor, employee, program, now=now)
+
+    def _enrol(self, actor: Actor, employee, program, *, now=None) -> EmployeeOnboarding:
+        employee_id = employee.id
         moment = now or timezone.now()
 
         with self.atomic():
@@ -527,10 +563,10 @@ class OnboardingService(BaseService):
             actor, employee_id, replace=replace,
             ttl_seconds=settings.TELEGRAM["ONBOARDING_INVITATION_TTL_SECONDS"],
         )
-        link = build_invitation_link(
-            settings.TELEGRAM["BOT_USERNAME"], issued.token,
-            prefix=ONBOARDING_PREFIX,
-        )
+        # Ссылка того же вида, что и при приёме: вид ссылки ничего не
+        # решает. После перехода бот спрашивает сервер, ждёт ли человека
+        # ознакомление, и ведёт по ответу.
+        link = issued.link
         moment = now or timezone.now()
         EmployeeOnboarding.objects.filter(pk=row.pk).update(invited_at=moment)
         self.audit.record(
@@ -555,7 +591,7 @@ class OnboardingService(BaseService):
         """Отозвать действующую ссылку."""
         self.access.require(actor, "onboarding.manage")
         self.access.require(actor, "telegram.manage")
-        require_visible_employee(self.access, actor, employee_id)
+        require_visible_employee(self.access, actor, employee_id, "onboarding.manage")
         live = (
             TelegramLinkInvitation.objects.filter(
                 employee_id=employee_id, status="ACTIVE"
@@ -578,7 +614,7 @@ class OnboardingService(BaseService):
         честнее отказать с причиной, чтобы кадровик отправил ссылку.
         """
         self.access.require(actor, "onboarding.manage")
-        require_visible_employee(self.access, actor, employee_id)
+        require_visible_employee(self.access, actor, employee_id, "onboarding.manage")
         state = self.employee_state(actor, employee_id)
         if state.progress.completed:
             raise Conflict("Ознакомление уже завершено")
@@ -625,7 +661,7 @@ class OnboardingService(BaseService):
     def set_due(self, actor: Actor, employee_id: uuid.UUID, due_date: date | None) -> EmployeeOnboarding:
         """Назначить или снять срок ознакомления."""
         self.access.require(actor, "onboarding.manage")
-        require_visible_employee(self.access, actor, employee_id)
+        require_visible_employee(self.access, actor, employee_id, "onboarding.manage")
         row = EmployeeOnboarding.objects.filter(employee_id=employee_id).first()
         if row is None:
             raise NotFound("Сотрудник не включён в программу ознакомления")
@@ -656,6 +692,17 @@ class OnboardingService(BaseService):
         moment = now or timezone.now()
         results = []
         for employee_id in dict.fromkeys(employee_ids):
+            # Область — ДО любых сведений о человеке: иначе «уже напомнили
+            # сегодня» выдавало бы, что у сотрудника чужого офиса идёт
+            # ознакомление (аудит 11.10, L-8). Вне области — тот же ответ,
+            # что «не на ознакомлении»: ни существования, ни состояния.
+            try:
+                require_visible_employee(self.access, actor, employee_id,
+                                         "onboarding.manage")
+            except (NotFound, PermissionDenied):
+                results.append({"employee_id": str(employee_id),
+                                "outcome": "not_enrolled"})
+                continue
             row = EmployeeOnboarding.objects.filter(
                 employee_id=employee_id, organization_id=actor.organization_id
             ).first()
@@ -933,7 +980,7 @@ class PolicyService(BaseService):
         return facts
 
     def create_document(self, actor: Actor, data: dict) -> PolicyDocument:
-        self.access.require(actor, "policies.publish")
+        self.access.require_whole_organization(actor, "policies.publish")
         code = (data.get("code") or "").strip().upper()
         if not code:
             raise ValidationFailed("Код документа обязателен",
@@ -964,7 +1011,7 @@ class PolicyService(BaseService):
     def update_document(
         self, actor: Actor, document_id: uuid.UUID, data: dict
     ) -> PolicyDocument:
-        self.access.require(actor, "policies.publish")
+        self.access.require_whole_organization(actor, "policies.publish")
         row = self._require_document(actor, document_id)
         before = snapshot(row, DOCUMENT_AUDIT_FIELDS)
         fields: list[str] = []
@@ -1000,7 +1047,7 @@ class PolicyService(BaseService):
         Подтверждения прежних редакций остаются: человек действительно
         соглашался с ними, и архивирование документа это не отменяет.
         """
-        self.access.require(actor, "policies.publish")
+        self.access.require_whole_organization(actor, "policies.publish")
         row = self._require_document(actor, document_id)
         if row.archived_at is not None:
             return row
@@ -1024,7 +1071,7 @@ class PolicyService(BaseService):
         self, actor: Actor, document_id: uuid.UUID, data: dict
     ) -> PolicyDocumentVersion:
         """Новая редакция. Создаётся черновиком и никого не обязывает."""
-        self.access.require(actor, "policies.publish")
+        self.access.require_whole_organization(actor, "policies.publish")
         document = self._require_document(actor, document_id)
         number = (data.get("version") or "").strip()
         if not number:
@@ -1068,7 +1115,7 @@ class PolicyService(BaseService):
         записано, — а это ровно та подмена, ради невозможности которой
         документ вообще версионируется.
         """
-        self.access.require(actor, "policies.publish")
+        self.access.require_whole_organization(actor, "policies.publish")
         row = self._require_version(actor, version_id)
         if row.status != "DRAFT":
             raise Conflict(
@@ -1112,7 +1159,7 @@ class PolicyService(BaseService):
         как считается завершение: карточки проверяются по факту
         подтверждения, документы — по номеру действующей редакции.
         """
-        self.access.require(actor, "policies.publish")
+        self.access.require_whole_organization(actor, "policies.publish")
         row = self._require_version(actor, version_id)
         if row.status == "PUBLISHED":
             return row
@@ -1328,7 +1375,7 @@ class CategoryService(BaseService):
         return result
 
     def create(self, actor: Actor, data: dict) -> PolicyCategory:
-        self.access.require(actor, "policies.publish")
+        self.access.require_whole_organization(actor, "policies.publish")
         owner = self._owner(actor, data.get("owner_employee_id"))
         with self.atomic():
             row = PolicyCategory.objects.create(
@@ -1344,7 +1391,7 @@ class CategoryService(BaseService):
         return row
 
     def update(self, actor: Actor, category_id: uuid.UUID, data: dict) -> PolicyCategory:
-        self.access.require(actor, "policies.publish")
+        self.access.require_whole_organization(actor, "policies.publish")
         row = self._require(actor, category_id, live=True)
         before = snapshot(row, CATEGORY_AUDIT_FIELDS)
         fields = []
@@ -1370,7 +1417,7 @@ class CategoryService(BaseService):
 
     def archive(self, actor: Actor, category_id: uuid.UUID) -> PolicyCategory:
         """Убрать раздел. Только пустой: материалы сначала переносят."""
-        self.access.require(actor, "policies.publish")
+        self.access.require_whole_organization(actor, "policies.publish")
         row = self._require(actor, category_id, live=True)
         if PolicyDocument.objects.filter(category_id=row.id, archived_at__isnull=True).exists():
             raise Conflict("В разделе есть материалы: перенесите их в другой раздел")

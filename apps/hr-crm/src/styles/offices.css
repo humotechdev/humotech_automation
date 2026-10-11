@@ -2164,3 +2164,410 @@
   justify-content: center;
   min-height: 0;
 }
+
+/* --- движение (только «Офисы и регионы») ------------------------------------------- */
+
+/*
+ * Прозрачность и сдвиг на 6 px, замедление к концу, один раз — при
+ * открытии раздела. Отбор, поиск и обновление секции не пересоздают.
+ * Заливка `backwards`: после анимации у блоков нет `transform`.
+ */
+@keyframes of-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes of-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes of-slide { from { opacity: 0; transform: translateX(8px); } to { opacity: 1; transform: none; } }
+@keyframes of-pop { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
+@keyframes of-fade-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes of-pop-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(6px) scale(0.98); } }
+
+/* Лист появляется один раз; внутри — сводка, карта с регионами и офисы. */
+.orp > .orp-sheet { animation: of-rise 0.22s cubic-bezier(0.2, 0.7, 0.2, 1) backwards; }
+
+/* Правая колонка: карточка офиса, регион или таблица регионов — новая
+   появляется со своей стороны. Карточка пересоздаётся по офису, поэтому
+   при выборе другого офиса данные прежнего под новым названием не стоят. */
+.orp-side > .ofc,
+.orp-side > .of-region,
+.orp-side > .of-regions { animation: of-slide 0.2s cubic-bezier(0.2, 0.7, 0.2, 1) backwards; }
+
+/* Смена отбора или страницы — карточки проявляются разом. */
+.orp-cards { animation: of-fade 0.16s ease-out backwards; }
+
+/* Заглушки ленты — неподвижные, по форме карточек. */
+.of-sk-strip { display: flex; gap: 14px; overflow: hidden; padding: 4px 0; }
+.of-sk-card { flex: 0 0 300px; height: 200px; border-radius: 12px; background: #eef3f9; }
+
+/* Окно «Новый офис»: появление и короткое закрытие. */
+.of-ask { animation: of-fade 0.18s ease-out backwards; }
+.of-ask__box { animation: of-pop 0.22s cubic-bezier(0.2, 0.7, 0.2, 1) backwards; }
+.of-ask__box:focus { outline: none; }
+.of-ask--leaving { animation: of-fade-out 0.16s ease-in forwards; pointer-events: none; }
+.of-ask--leaving .of-ask__box { animation: of-pop-out 0.16s ease-in forwards; }
+
+@media (prefers-reduced-motion: reduce) {
+  .orp > .orp-sheet,
+  .orp-side > .ofc,
+  .orp-side > .of-region,
+  .orp-side > .of-regions,
+  .orp-cards,
+  .of-ask__box { animation: of-fade 0.12s linear backwards; animation-delay: 0s; }
+  .of-ask--leaving,
+  .of-ask--leaving .of-ask__box { animation: none; }
+  .map__area,
+  .of-btn--icon { transition: none; }
+  .of-btn--icon:hover,
+  .of-btn--icon:focus-visible { transform: none; }
+}
+
+/* === Один лист «Офисы и регионы» (композиция по образцу) ============================ */
+
+/*
+ * Вся страница — один белый лист на спокойном светло-сером фоне: шапка,
+ * сводка сети, карта с регионами и офисы. Разделы — тонкими линиями,
+ * без отдельных плавающих карточек. Фотографии офиса под этой страницей
+ * нет: на ней читают карту и числа.
+ */
+body:has(.orp) .shell__backdrop,
+body:has(.orp) .shell__wash { display: none; }
+.shell:has(.orp) { background: #eef2f6; }
+
+.orp { display: flex; flex-direction: column; min-width: 0; }
+
+.orp-sheet {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 22px 24px 18px;
+  border: 1px solid #e3e9f1;
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+/* --- шапка --- */
+.orp-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px 20px;
+}
+
+.orp-head__text { min-width: 0; }
+.orp-head__title { margin: 0; font-size: 30px; line-height: 36px; font-weight: 700; color: #13295a; }
+.orp-head__sub { margin: 2px 0 0; font-size: 15px; color: #5c6f8d; }
+.orp-head__tools { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.orp-head__tools .of-search { width: 260px; max-width: 100%; }
+
+/* --- сводка сети --- */
+.orp-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 18px 0 0;
+  padding: 14px 0;
+  list-style: none;
+  border-radius: 12px;
+  background: #f3f6fa;
+}
+
+.orp-stat {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  min-width: 0;
+  padding: 2px 28px;
+}
+
+.orp-stat + .orp-stat { border-left: 1px solid #dbe3ee; }
+.orp-stat__value { font-size: 28px; line-height: 32px; font-weight: 700; color: #13295a; }
+.orp-stat__value--muted { color: #93a3ba; }
+.orp-stat__label { min-width: 0; font-size: 15px; color: #4d5f7d; }
+.orp-stat__label small { font-size: 12.5px; color: #93a3ba; }
+
+/* --- карта и регионы --- */
+.orp-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 440px);
+  margin-top: 18px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid #e3e9f1;
+}
+
+.orp-title { margin: 0; font-size: 20px; line-height: 26px; font-weight: 700; color: #13295a; }
+
+/* Карта занимает свою колонку целиком; заголовок — поверх её свободного
+   угла. Высота явная: холст карты растягивается на контейнер, и без неё
+   карта схлопнулась бы. Размер SVG пересчитывается по контейнеру. */
+.orp-map.of-map {
+  position: relative;
+  height: clamp(320px, 46vh, 470px);
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.orp-map.of-map { box-shadow: none; }
+.orp-map > .orp-title { position: absolute; top: 0; left: 0; z-index: 2; }
+/* Плашка выбранной области — под заголовком карты, а не поверх него. */
+.orp-map > .of-area { top: 36px; left: 0; z-index: 2; }
+
+/* Регионы, карточка офиса или выбранный регион — на той же поверхности,
+   за тонкой вертикальной линией. Свои рамки и тени у них здесь сняты. */
+.orp-side {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: clamp(320px, 46vh, 470px);
+  padding-left: 22px;
+  border-left: 1px solid #e3e9f1;
+}
+
+/* Колонка — высотой с карту; регионы, панель региона и карточка офиса
+   прокручиваются внутри неё, шапка таблицы остаётся на месте. */
+.orp-side > .of-regions,
+.orp-side > .of-region,
+.orp-side > .ofc { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+
+/* Полоса прокрутки — в своём желобе и с отступом от текста: иначе она
+   ложилась поверх чисел у правого края. */
+.orp .orp-side > .of-region,
+.orp .orp-side > .ofc,
+.orp .orp-side .of-regions__wrap { scrollbar-gutter: stable; scrollbar-width: thin; padding-right: 12px; }
+
+/* Панель региона на общем листе: плитки — плоские серые, как сводка;
+   строки офисов — постоянные колонки, «Активен» стоит столбиком. */
+.orp-side .of-region__tiles li { border: 0; border-radius: 10px; background: #f3f6fa; }
+.orp-side .of-region__list button { grid-template-columns: minmax(0, 1fr) 96px 84px; }
+.orp-side .of-region__here { justify-self: end; text-align: right; }
+
+.orp-side > .of-regions,
+.orp-side > .of-region,
+.orp-side > .ofc {
+  max-height: none;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.orp-side .of-regions__title { margin: 0 0 12px; font-size: 20px; line-height: 26px; font-weight: 700; color: #13295a; }
+.orp-side > .of-regions { display: flex; flex-direction: column; overflow: hidden; }
+.orp-side .of-regions__wrap { flex: 1 1 auto; min-height: 0; max-height: none; overflow-y: auto; }
+.orp-side .of-regions__table thead th { position: sticky; top: 0; z-index: 1; }
+.orp-regions__count { margin: 8px 0 0; font-size: 13.5px; color: #6b7c98; }
+.orp-side .of-regions__table { width: 100%; border-collapse: collapse; }
+.orp-side .of-regions__table thead th {
+  padding: 10px 16px;
+  background: #f3f6fa;
+  font-size: 13px;
+  font-weight: 600;
+  color: #4d5f7d;
+  text-align: right;
+}
+.orp-side .of-regions__table thead th:first-child { text-align: left; border-radius: 8px 0 0 8px; }
+.orp-side .of-regions__table thead th:last-child { border-radius: 0 8px 8px 0; }
+.orp-side .of-regions__table tbody th,
+.orp-side .of-regions__table tbody td {
+  padding: 10px 16px;
+  border-bottom: 1px solid #edf1f6;
+  font-size: 14.5px;
+  text-align: right;
+}
+.orp-side .of-regions__table tbody th { text-align: left; font-weight: 400; }
+/* Строки — тонкими линиями, без заливки через одну. */
+.orp-side .of-regions__table tbody tr:nth-child(even) { background: transparent; }
+.orp-side .of-regions__table tbody tr:hover { background: #f6f9fd; }
+.orp-side .of-regions__table tbody button { color: #1f5fc4; }
+
+.orp-regions__more {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 10px;
+  padding: 4px 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  color: #5c6f8d;
+  cursor: pointer;
+}
+.orp-regions__more:hover { color: #1f5fc4; }
+
+/* --- офисы --- */
+.orp-offices { margin-top: 16px; }
+.orp-offices__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  margin-bottom: 14px;
+}
+.orp-offices__count { font-weight: 500; color: #4d5f7d; }
+.orp-offices__filters { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.orp-cards {
+  display: grid;
+  grid-auto-flow: column;
+  /* Четыре карточки в видимой части; остальные — прокруткой вбок. */
+  grid-auto-columns: max(240px, calc((100% - 42px) / 4));
+  gap: 14px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 2px 10px;
+  scroll-snap-type: x proximity;
+  scrollbar-width: thin;
+  overscroll-behavior-x: contain;
+}
+
+.orp-cards__item { display: flex; min-width: 0; scroll-snap-align: start; }
+.orp-cards__item > .orp-card { flex: 1 1 auto; }
+
+/* Карточка: тонкая рамка, небольшое скругление, без тяжёлой тени. */
+.orp-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 14px 16px 12px;
+  border: 1px solid #e3e9f1;
+  border-radius: 10px;
+  background: #ffffff;
+  transition: border-color 0.14s ease, background-color 0.14s ease;
+}
+.orp-card:hover { border-color: #c9d6e7; }
+.orp-card--on { border-color: #8db4ec; background: #f8fbff; }
+
+.orp-card__pick {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+
+.orp-card__region { font-size: 13.5px; color: #6b7c98; }
+.orp-card__name {
+  max-width: 100%;
+  font-size: 18px;
+  line-height: 23px;
+  font-weight: 700;
+  color: #13295a;
+  overflow-wrap: anywhere;
+}
+.orp-card__staff { font-size: 14px; color: #4d5f7d; }
+.orp-card__staff b { font-weight: 600; color: #13295a; }
+
+.orp-card__note { margin: 6px 0 0; font-size: 12.5px; color: #6b7c98; }
+.orp-card__note--warn { color: #b8650a; }
+
+/* Три числа дня — общей серой полоской с тонкими разделителями. */
+.orp-card__now {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 12px 0 10px;
+  padding: 8px 0;
+  border-radius: 8px;
+  background: #f3f6fa;
+}
+.orp-card__now > div { min-width: 0; padding: 0 4px; text-align: center; }
+.orp-card__now > div + div { border-left: 1px solid #dbe3ee; }
+/* Подписи помещаются и в узкой карточке ленты (≈240 px). */
+.orp-card__now dt { overflow: hidden; font-size: 11.5px; color: #5c6f8d; text-overflow: ellipsis; white-space: nowrap; }
+.orp-card__now dd { margin: 2px 0 0; font-size: 17px; font-weight: 700; color: #13295a; }
+
+.orp-card__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+  margin-top: auto;
+}
+.orp-card__facts { font-size: 12.5px; color: #6b7c98; }
+.orp-card__facts b { font-weight: 600; color: #22355c; }
+.orp-card__facts i { margin: 0 6px; font-style: normal; }
+.orp-card__open {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 14.5px;
+  font-weight: 600;
+  color: #1f5fc4;
+  text-decoration: none;
+}
+.orp-card__open:hover { text-decoration: underline; }
+
+.orp-offices__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 14px;
+}
+.orp-offices__foot p { margin: 0; font-size: 14px; color: #6b7c98; }
+
+.orp-pages { display: flex; align-items: center; gap: 6px; }
+.orp-pages__one,
+.orp-pages__arrow {
+  display: inline-grid;
+  place-items: center;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  color: #33466a;
+  cursor: pointer;
+  transition: background-color 0.14s ease, border-color 0.14s ease;
+}
+.orp-pages__arrow { border-color: #dfe7f1; }
+.orp-pages__one:hover,
+.orp-pages__arrow:hover:not(:disabled) { background: #f3f6fa; }
+.orp-pages__one--on { border-color: #b8d2f5; background: #e8f1fd; color: #1f5fc4; font-weight: 600; }
+.orp-pages__arrow:disabled { opacity: 0.45; cursor: default; }
+
+/* --- ширины --- */
+@media (max-width: 1280px) {
+  .orp-cards { grid-auto-columns: max(240px, calc((100% - 14px) / 2)); }
+}
+
+@media (max-width: 1100px) {
+  .orp-body { grid-template-columns: minmax(0, 1fr); }
+  .orp-side { height: auto; max-height: 460px; padding: 18px 0 0; border-left: 0; border-top: 1px solid #e3e9f1; }
+}
+
+@media (max-width: 760px) {
+  .orp-sheet { padding: 16px 14px 14px; }
+  .orp-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 10px; }
+  .orp-stat { padding: 2px 16px; gap: 8px; }
+  .orp-stat:nth-child(3) { border-left: 0; }
+  .orp-stat__value { font-size: 24px; line-height: 28px; }
+  .orp-head__tools { width: 100%; }
+  .orp-head__tools .of-search { flex: 1 1 100%; width: auto; }
+  .orp-map.of-map { height: 300px; }
+}
+
+@media (max-width: 640px) {
+  /* Телефон: карточка почти во всю ширину, край следующей виден —
+     понятно, что лента листается. */
+  .orp-cards { grid-auto-columns: 86%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orp-card,
+  .orp-pages__one,
+  .orp-pages__arrow { transition: none; }
+}

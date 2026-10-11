@@ -718,6 +718,18 @@ a.at-row:hover { background: #f8fbff; }
 
 @keyframes at-drawer { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
 
+/* Панель в листе — во всю высоту: заголовок сверху, прокручивается тело. */
+.at-drawer__panel { overflow: hidden; display: flex; }
+.at-drawer__panel > .side-panel { position: static; flex: 1; max-height: none; height: 100%; border: 0; border-radius: 0; box-shadow: none; }
+
+/* Плашка дня: дата в поясе офиса, состояние и график. */
+.day-card .who__name { overflow-wrap: anywhere; white-space: normal; }
+.day-card__day { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border: 1px solid #e3ebf5; border-radius: 10px; background: #f5f9fe; }
+.day-card__date { font-size: 12.5px; color: #5577a6; }
+.day-card__state { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 14px; }
+.day-card__state strong { min-width: 0; overflow-wrap: anywhere; }
+.day-card__plan { flex: none; color: #5577a6; font-variant-numeric: tabular-nums; }
+
 /* --- узкие экраны ------------------------------------------------------------------ */
 
 @media (max-width: 1440px) {

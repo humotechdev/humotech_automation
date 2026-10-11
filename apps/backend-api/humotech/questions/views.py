@@ -319,6 +319,12 @@ class DeliverySerializer(serializers.Serializer):
     sent_at = serializers.DateTimeField(allow_null=True)
     read_at = serializers.DateTimeField(allow_null=True)
     error = serializers.CharField(allow_null=True)
+    notification_id = serializers.UUIDField(
+        allow_null=True, help_text="Строка очереди Telegram — для повтора отправки"
+    )
+    can_retry = serializers.BooleanField(
+        help_text="Можно ли повторить отправку: состояние и право notifications.manage"
+    )
 
 
 class AttachmentSerializer(serializers.Serializer):
@@ -337,6 +343,7 @@ class MessageSerializer(serializers.Serializer):
     author = AuthorSerializer()
     created_at = serializers.DateTimeField()
     delivery = DeliverySerializer(allow_null=True)
+    client_request_id = serializers.CharField(allow_null=True)
     attachment = AttachmentSerializer(allow_null=True)
 
 
@@ -506,6 +513,10 @@ class ReadResultSerializer(serializers.Serializer):
     unread = serializers.BooleanField()
 
 
+class ReadSerializer(serializers.Serializer):
+    seen_message_id = serializers.UUIDField(required=False, allow_null=True)
+
+
 class PrioritySerializer(serializers.Serializer):
     priority = serializers.ChoiceField(choices=QUESTION_PRIORITIES)
 
@@ -663,12 +674,24 @@ class EscalationViewSet(ServiceViewSet):
         )
 
     @extend_schema(
-        summary="Отметить прочитанным", request=None,
+        summary="Отметить прочитанным",
+        description=(
+            "`seen_message_id` — последнее сообщение, которое было на экране. "
+            "Если сотрудник написал после него, отметка не снимается."
+        ),
+        request=ReadSerializer,
         responses={200: ReadResultSerializer},
     )
     @action(detail=True, methods=["post"])
     def read(self, request, pk=None):
-        return Response(ReadResultSerializer(self.service.read(self.actor, pk)).data)
+        payload = validated(ReadSerializer, request.data or {})
+        return Response(
+            ReadResultSerializer(
+                self.service.read(
+                    self.actor, pk, seen_message_id=payload.get("seen_message_id")
+                )
+            ).data
+        )
 
     @extend_schema(summary="Взять в работу", request=None)
     @action(detail=True, methods=["post"])

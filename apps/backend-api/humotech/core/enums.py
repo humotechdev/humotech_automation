@@ -24,8 +24,16 @@ DEPARTMENT_STATUSES = ("ACTIVE", "INACTIVE", "ARCHIVED")
 POSITION_STATUSES = ("ACTIVE", "INACTIVE", "ARCHIVED")
 
 # --- сотрудники ---
-EMPLOYMENT_STATUSES = ("ACTIVE", "PROBATION", "SUSPENDED", "TERMINATED", "ARCHIVED")
+EMPLOYMENT_STATUSES = ("ACTIVE", "SUSPENDED", "TERMINATED", "ARCHIVED")
+# INTERN («стажёр») — часть удаляемой стажировки. В наборе остаётся только
+# для СУЩЕСТВУЮЩИХ записей (их CHECK базы по-прежнему допускает), но завести
+# или сменить тип занятости на INTERN больше нельзя: см. OFFERED_EMPLOYMENT_TYPES
+# и _validate_employment_type. Снять INTERN из CHECK можно лишь после решения
+# по существующим INTERN-назначениям (перечень — в отчёте), поэтому значение
+# пока оставлено, чтобы не уронить миграцию на живых данных.
 EMPLOYMENT_TYPES = ("FULL_TIME", "PART_TIME", "CONTRACT", "INTERN")
+#: Типы занятости, которые можно НАЗНАЧИТЬ (без INTERN/«стажёр»).
+OFFERED_EMPLOYMENT_TYPES = ("FULL_TIME", "PART_TIME", "CONTRACT")
 WORK_MODES = ("ONSITE", "HYBRID", "REMOTE")
 OFFICE_ACCESS_TYPES = ("PRIMARY", "TEMPORARY", "PERMANENT", "VISITOR")
 # Документы при приёме. «Будет сформирован» — это не файл, а обещание
@@ -73,7 +81,7 @@ SURVEY_RECIPIENT_STATUSES = (
 
 #: Событие, по которому опрос уходит сам.
 SURVEY_TRIGGER_KINDS = (
-    "PROBATION_END", "FIRST_DAY", "DAYS_AFTER_HIRE", "BIRTHDAY", "SCHEDULE",
+    "FIRST_DAY", "DAYS_AFTER_HIRE", "BIRTHDAY", "SCHEDULE",
 )
 
 QR_DIRECTION_MODES = ("ENTRY", "EXIT", "BOTH")
@@ -90,6 +98,10 @@ DEVICE_STATUSES = ("PENDING", "TRUSTED", "REVOKED")
 ATTENDANCE_EVENT_TYPES = ("ENTRY", "EXIT")
 ATTENDANCE_SOURCES = ("QR", "MANUAL", "IMPORT")
 VERIFICATION_STATUSES = ("ACCEPTED", "REJECTED", "REVIEW")
+#: Отметки, которые СЧИТАЮТСЯ состоявшимися. REVIEW — принята, но кадровику
+#: стоит её проверить (например, один сменный код с разных адресов): проход
+#: не блокируется, человек на работе, а отметка видна HR отдельно.
+COUNTED_VERIFICATION = ("ACCEPTED", "REVIEW")
 ATTENDANCE_SESSION_STATUSES = ("OPEN", "CLOSED", "CORRECTED", "INVALID")
 #: Что человек сам сказал про свой день в ответ на напоминание.
 #: «Не приду» здесь — это предупреждение, а не оформленное отсутствие:
@@ -106,7 +118,7 @@ ABSENCE_REQUEST_STATUSES = (
 )
 EMPLOYEE_ABSENCE_STATUSES = ("PLANNED", "ACTIVE", "COMPLETED", "CANCELLED")
 DOCUMENT_VERIFICATION_STATUSES = ("PENDING", "VERIFIED", "REJECTED")
-FILE_SCAN_STATUSES = ("PENDING", "CLEAN", "INFECTED", "FAILED")
+FILE_SCAN_STATUSES = ("PENDING", "UNSCANNED", "CLEAN", "INFECTED", "FAILED")
 ABSENCE_ACTIONS = (
     "CREATED", "SUBMITTED", "TAKEN_IN_REVIEW", "APPROVED", "REJECTED",
     "CANCELLED", "DOCUMENT_ATTACHED", "DOCUMENT_VERIFIED",

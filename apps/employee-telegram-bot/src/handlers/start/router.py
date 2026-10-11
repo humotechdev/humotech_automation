@@ -20,6 +20,7 @@ import logging
 import re
 
 from aiogram import F, Router
+from aiogram.enums import ChatType
 from aiogram.filters import CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
@@ -76,7 +77,9 @@ def is_onboarding_link(payload: str | None) -> bool:
     return bool(payload) and payload.strip().startswith(ONBOARDING_PREFIX)
 
 
-@router.message(CommandStart(deep_link=True))
+# Привязка и узнавание — только в личном чате: в группе `chat.id` — id
+# группы, и личные уведомления ушли бы туда (аудит 11.10, L-2).
+@router.message(CommandStart(deep_link=True), F.chat.type == ChatType.PRIVATE)
 async def start_with_link(
     message: Message,
     command: CommandObject,
@@ -121,9 +124,10 @@ async def start_with_link(
         # только тот Telegram ID, который погасил ссылку.
         if reason == "pending":
             # Ссылку уже открывали: привязка ждёт согласия. Продолжаем
-            # тот же сценарий — и именно тот, на который указывает
-            # префикс ссылки, а не какой-нибудь другой.
-            if onboarding_link:
+            # тот же сценарий. Какой — говорит сервер: ссылка у всех
+            # одного вида. Префикс `onboarding_` остался только у ссылок,
+            # выданных до этого изменения.
+            if (error.details or {}).get("onboarding_required") or onboarding_link:
                 await message.answer(
                     onboarding_text.greeting(user.first_name),
                     reply_markup=ob.welcome(),
@@ -151,36 +155,29 @@ async def start_with_link(
 
 @router.callback_query(F.data == kb.LINK_ACCEPT)
 async def accept_link_terms(callback: CallbackQuery, client: SelfServiceClient) -> None:
+    """Согласие с условиями. Доступа оно не открывает — его открывает HR.
+
+    Сервер на согласие всегда отвечает `hr_confirmation_required`: и по
+    ссылке, и при узнавании по имени. О подтверждении HR бот напишет сам
+    (уведомление `telegram.link.confirmed`), поэтому меню здесь не ставится.
+    """
     try:
         await client.accept_link_terms(telegram_user_id=callback.from_user.id)
     except ApiError as error:
         reason = (error.details or {}).get("reason") if isinstance(error.details, dict) else None
-        if reason == "hr_confirmation_required":
-            # Узнали по имени в Telegram, а не по ссылке: доступ откроет
-            # только кадровик. Повторное нажатие ничего не изменит.
-            await callback.answer(text.LINK_NEEDS_HR, show_alert=True)
+        if reason != "hr_confirmation_required":
+            await callback.answer("Не получилось подтвердить условия. Попробуйте ещё раз.", show_alert=True)
             return
-        await callback.answer("Не получилось подтвердить условия. Попробуйте ещё раз.", show_alert=True)
-        return
+    # Сюда же попадает и успешный ответ сервера прежней версии (пока бот
+    # обновлён раньше backend): человеку в обоих случаях — одно и то же.
+    # Кнопка снимается: повторное нажатие ничего не изменит.
     await callback.answer("Условия приняты")
     if callback.message:
         await callback.message.edit_reply_markup(reply_markup=None)
-        from src.handlers.menu.router import build_menu
-
-        # Профиль перечитывается, а не подставляется заглушкой: меню
-        # зависит от того, ждёт ли человека ознакомление, и собранное
-        # по `True` обещало бы рабочие разделы тому, кому они закрыты.
-        try:
-            profile = await client.profile(callback.from_user.id)
-        except ApiError:
-            profile = None
-        await callback.message.answer(
-            text.LINK_CONNECTED,
-            reply_markup=build_menu(profile, callback.message),
-        )
+        await callback.message.answer(text.LINK_NEEDS_HR)
 
 
-@router.message(CommandStart(deep_link=False))
+@router.message(CommandStart(deep_link=False), F.chat.type == ChatType.PRIVATE)
 async def start_plain(
     message: Message, employee, denial, client: SelfServiceClient
 ) -> None:

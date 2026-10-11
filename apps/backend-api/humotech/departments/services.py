@@ -133,9 +133,8 @@ class DepartmentService(BaseService):
                 Q(office_id=office_id) | Q(office__isnull=True)
             )
         elif region_id:
-            self.access.require_region(actor, region_id)
             queryset = queryset.filter(
-                Q(office__region_id=region_id) | Q(office__isnull=True)
+                self.access.region_condition(actor, region_id) | Q(office__isnull=True)
             )
         else:
             visible = self.access.visible_office_ids(actor)
@@ -193,14 +192,17 @@ class DepartmentService(BaseService):
         два разных ответа на один вопрос.
         """
         self.access.require(actor, "departments.manage")
+        if office_id is None:
+            # Общий отдел — для всех офисов сразу (аудит 11.10, M-2).
+            self.access.require_whole_organization(actor, "departments.manage")
         office = (
-            self.access.require_office(actor, office_id)
+            self.access.require_office(actor, office_id, "departments.manage")
             if office_id is not None else None
         )
 
         parent = None
         if parent_department_id:
-            parent = self._require(actor, parent_department_id)
+            parent = self._require(actor, parent_department_id, "departments.manage")
             if office is not None and parent.office_id != office.id:
                 # Иерархия внутри офиса. Отдел, вложенный в отдел другого
                 # офиса, означал бы, что человек числится сразу в двух
@@ -266,7 +268,7 @@ class DepartmentService(BaseService):
         бы одинаково.
         """
         self.access.require(actor, "departments.manage")
-        department = self._require(actor, department_id)
+        department = self._require(actor, department_id, "departments.manage")
         before = snapshot(department, DEPARTMENT_FIELDS)
 
         if name is not None:
@@ -301,7 +303,7 @@ class DepartmentService(BaseService):
                 details={"status": status, "allowed": list(DEPARTMENT_STATUSES)},
             )
         self.access.require(actor, "departments.manage")
-        department = self._require(actor, department_id)
+        department = self._require(actor, department_id, "departments.manage")
         if department.status == status:
             return department
 
@@ -346,7 +348,7 @@ class DepartmentService(BaseService):
         в отчётах.
         """
         self.access.require(actor, "departments.manage")
-        department = self._require(actor, department_id)
+        department = self._require(actor, department_id, "departments.manage")
 
         used = EmployeeAssignment.objects.filter(
             department_id=department.id
@@ -386,7 +388,8 @@ class DepartmentService(BaseService):
             )
         return employee
 
-    def _require(self, actor: Actor, department_id: uuid.UUID) -> Department:
+    def _require(self, actor: Actor, department_id: uuid.UUID,
+                 permission: str | None = None) -> Department:
         department = (
             Department.objects.select_related("office", "head_employee")
             .filter(id=department_id, organization_id=actor.organization_id)
@@ -394,9 +397,15 @@ class DepartmentService(BaseService):
         )
         if department is None:
             raise NotFound("Отдел не найден")
-        # У общего отдела офиса нет, и проверять доступ к месту не к чему.
         if department.office_id is not None:
-            self.access.require_office(actor, department.office_id)
+            self.access.require_office(actor, department.office_id, permission)
+        elif permission is not None:
+            # Общий отдел (без офиса) — общий объект организации: менять его
+            # может только тот, у кого право на всю организацию. Раньше
+            # проверка места здесь пропускалась, и кадровик одного офиса
+            # правил отдел всей компании (аудит 11.10, M-2). Чтение
+            # (`permission=None`) по-прежнему открыто всем, кто видит отделы.
+            self.access.require_whole_organization(actor, permission)
         return department
 
 
@@ -447,7 +456,7 @@ class PositionService(BaseService):
         code: str | None = None,
         description: str | None = None,
     ) -> Position:
-        self.access.require(actor, "positions.manage")
+        self.access.require_whole_organization(actor, "positions.manage")
         with self.atomic():
             position = Position.objects.create(
                 organization_id=actor.organization_id,
@@ -484,7 +493,7 @@ class PositionService(BaseService):
         name: str | None = None,
         description: str | None = None,
     ) -> Position:
-        self.access.require(actor, "positions.manage")
+        self.access.require_whole_organization(actor, "positions.manage")
         position = self._require(actor, position_id)
         before = snapshot(position, POSITION_FIELDS)
 
@@ -513,7 +522,7 @@ class PositionService(BaseService):
                 "Неизвестный статус должности",
                 details={"status": status, "allowed": list(POSITION_STATUSES)},
             )
-        self.access.require(actor, "positions.manage")
+        self.access.require_whole_organization(actor, "positions.manage")
         position = self._require(actor, position_id)
         if position.status == status:
             return position
@@ -534,7 +543,7 @@ class PositionService(BaseService):
 
     def delete(self, actor: Actor, position_id: uuid.UUID) -> None:
         """Убрать должность совсем — только пока её никто не занимал."""
-        self.access.require(actor, "positions.manage")
+        self.access.require_whole_organization(actor, "positions.manage")
         position = self._require(actor, position_id)
 
         used = EmployeeAssignment.objects.filter(position_id=position.id).count()

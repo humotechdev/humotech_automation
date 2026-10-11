@@ -20,7 +20,7 @@
  * живут и на главной, и сжимать их здесь значило бы менять её.
  */
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import * as api from '../api/crm';
@@ -151,7 +151,7 @@ function Overview({ row, canManage, updated }: {
           </div>
           <div>
             <dt>Геозона</dt>
-            <dd>{office.geofence_radius_m ? `${office.geofence_radius_m} м` : 'не задана'}</dd>
+            <dd>{api.geofenceLabel(office)}</dd>
           </div>
           <div>
             <dt>Координаты</dt>
@@ -221,6 +221,7 @@ export function OfficeForm({ office, onCancel, onDone }: {
   });
   const [regions] = useBlock((signal) => api.regions(signal), 'office-regions');
   const [sending, setSending] = useState(false);
+  const lock = useRef(false);
   const [failed, setFailed] = useState<string | null>(null);
   const [fields, setFields] = useState<Record<string, string[]>>({});
 
@@ -228,7 +229,9 @@ export function OfficeForm({ office, onCancel, onDone }: {
     setForm((was) => ({ ...was, [key]: value }));
 
   async function save() {
-    if (sending) return;
+    // Замок синхронный: двойное нажатие быстрее перерисовки.
+    if (lock.current) return;
+    lock.current = true;
     setSending(true);
     setFailed(null);
     setFields({});
@@ -245,6 +248,7 @@ export function OfficeForm({ office, onCancel, onDone }: {
       const details = (error as { fields?: Record<string, string[]> }).fields;
       if (details) setFields(details);
     } finally {
+      lock.current = false;
       setSending(false);
     }
   }
@@ -381,7 +385,7 @@ function Points({ row, canManage }: { row: OfficeStats; canManage: boolean }) {
       <dl className="ofc-facts ofc-facts--three">
         <div>
           <dt>Геозона</dt>
-          <dd>{office.geofence_radius_m ? `${office.geofence_radius_m} м` : 'не задана'}</dd>
+          <dd>{api.geofenceLabel(office)}</dd>
         </div>
         <div>
           <dt>Координаты</dt>

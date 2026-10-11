@@ -59,7 +59,6 @@ AUDITED = (
 #: списке правил: два разных слова про одно событие означали бы, что
 #: настраивал он одно, а сработало другое.
 TRIGGER_TITLES = {
-    "PROBATION_END": "Окончание стажировки",
     "FIRST_DAY": "Первый рабочий день",
     "DAYS_AFTER_HIRE": "Через N дней после выхода",
     "BIRTHDAY": "День рождения",
@@ -532,8 +531,6 @@ def _due_for(
 
 def _on_event(people, kind: str, target: date):
     """Сузить выборку до тех, у кого событие именно в этот день."""
-    if kind == "PROBATION_END":
-        return people.filter(probation_to=target)
     if kind in ("FIRST_DAY", "DAYS_AFTER_HIRE"):
         return people.filter(hire_date=target)
     if kind == "BIRTHDAY":
@@ -634,10 +631,6 @@ def _birthday_near(born: date, target: date) -> date | None:
 
 def _event_day(kind: str, person: Employee) -> date | None:
     """День самого события у конкретного человека."""
-    if kind == "PROBATION_END":
-        # Конец стажировки необязателен: человека берут стажёром и
-        # тогда, когда срок ещё не назван. Без даты события нет.
-        return person.probation_to
     if kind in ("FIRST_DAY", "DAYS_AFTER_HIRE"):
         return person.hire_date
     if kind == "BIRTHDAY":
@@ -651,15 +644,13 @@ def _scoped(automation: SurveyAutomation):
     Возвращается выборка, а не список: поверх неё ещё ляжет
     отбор по дню события, и вытаскивать до него всю компанию незачем.
 
-    Стажёры входят наравне с остальными — иначе опрос об итогах
-    стажировки не достался бы ровно тем, ради кого он написан.
     Уволенные и архивные не входят: опрос человеку, которого уже нет,
     это не опрос, а письмо в пустоту.
     """
     people = Employee.objects.filter(
         organization_id=automation.organization_id,
         archived_at__isnull=True,
-        employment_status__in=("ACTIVE", "PROBATION"),
+        employment_status__in=("ACTIVE",),
     )
 
     scope = automation.scope or {}
@@ -670,7 +661,13 @@ def _scoped(automation: SurveyAutomation):
         # Офис, отдел и должность живут в назначении, а не в карточке:
         # людей переводят, и правило обязано смотреть на то, где человек
         # числится сейчас, а не где числился при найме.
-        places = EmployeeAssignment.objects.filter(is_primary=True)
+        # «Сейчас» — основное назначение, действующее сегодня по поясу
+        # организации, а не любое за всё время (аудит 12.10, A-10/B-03).
+        from humotech.core.timeframes import organization_zone, today as local_today
+        from humotech.employees.services import current_primary_assignment_filter
+
+        places = EmployeeAssignment.objects.filter(current_primary_assignment_filter(
+            local_today(organization_zone(automation.organization_id))))
         if offices:
             places = places.filter(office_id__in=offices)
         if departments:

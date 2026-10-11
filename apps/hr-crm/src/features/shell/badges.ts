@@ -9,14 +9,17 @@
  * переход между разделами его не сбрасывает: оболочка при переходе
  * перемонтируется, а числа остаются те же, что были секунду назад.
  *
- * Обновляются они изредка и только в видимой вкладке: это подсказка
- * «там ждут», а не показание прибора. Ошибка запроса прежние числа не
- * стирает — пустое место читалось бы как «всё разобрано».
+ * Число «Обращений» живое: сигнал потока событий пересчитывает его сразу,
+ * на любой странице CRM. Остальное — изредка и только в видимой вкладке:
+ * редкий опрос остаётся и при живом потоке — обращение становится
+ * просроченным само, без всякого события. Ошибка запроса прежние числа
+ * не стирает — пустое место читалось бы как «всё разобрано».
  */
 
 import { useEffect, useState } from 'react';
 
 import * as api from '../../api/crm';
+import { onLive } from '../realtime/events';
 
 export type Badges = Record<string, number>;
 
@@ -64,7 +67,53 @@ function refresh(force = false): void {
     .catch(() => undefined)
     .finally(() => {
       loading = null;
+      if (again) {
+        again = false;
+        refresh(true);
+      }
     });
+}
+
+/* --- живое обновление --------------------------------------------------- */
+
+/** Обращение, из-за которого число выросло: по нажатию меню открывается оно. */
+let latestQuestion: string | null = null;
+let liveBound = false;
+let again = false;
+
+/**
+ * Пересчёт по сигналу — сразу. Если запрос уже идёт, он начат до сигнала:
+ * после него — ещё один, и только один, сколько бы сигналов ни пришло.
+ */
+function refreshSoon(): void {
+  if (loading) {
+    again = true;
+    return;
+  }
+  refresh(true);
+}
+
+/**
+ * Пересчитать числа меню сейчас — после того как действие на странице
+ * подтвердил сервер (решение по заявке). Тот же пересчёт, что и по
+ * живому сигналу: не больше одного лишнего запроса.
+ */
+export function refreshBadgesSoon(): void {
+  refreshSoon();
+}
+
+function bindLive(): void {
+  if (liveBound) return;
+  liveBound = true;
+  onLive((signal) => {
+    if (signal.type === 'question' && signal.what === 'message') latestQuestion = signal.id;
+    refreshSoon();
+  });
+}
+
+/** Какое обращение открыть по нажатию «Обращения», когда там ждут. */
+export function latestQuestionId(): string | null {
+  return latestQuestion;
 }
 
 /**
@@ -75,6 +124,7 @@ export function useBadges(): Badges {
   const [value, setValue] = useState<Badges>(current);
 
   useEffect(() => {
+    bindLive();
     listeners.add(setValue);
     refresh();
     const timer = window.setInterval(() => {
@@ -94,5 +144,7 @@ export function forgetBadges(): void {
   generation += 1;
   loading = null;
   loadedAt = 0;
+  latestQuestion = null;
+  again = false;
   publish({});
 }

@@ -40,22 +40,65 @@ logger = logging.getLogger("humotech.notifications")
 
 
 async def run_worker(sender: Sender, client: SelfServiceClient) -> None:
-    """Бесконечный цикл. Отменяется вместе с ботом."""
-    interval = max(settings.notifications_poll_seconds, 1)
-    logger.info("notification worker started, interval=%ss", interval)
+    """Бесконечный цикл. Отменяется вместе с ботом.
 
+    Между проходами отправщик не спит вслепую, а ждёт пробуждения от
+    backend: ответ HR будит его сразу, а не к следующему опросу. Если
+    будить некому (процесс событий недоступен, старый backend), —
+    прежняя пауза в `notifications_poll_seconds`. Порядок выкатки
+    поэтому неважен: доставка работает в любом сочетании версий.
+    """
+    interval = max(settings.notifications_poll_seconds, 1)
+    wait = max(settings.notifications_wait_seconds, 1)
+    logger.info("notification worker started, wait=%ss, fallback=%ss", wait, interval)
+
+    idle = 0
     while True:
+        sent = 0
         try:
-            await tick(sender, client)
+            sent = await tick(sender, client)
         except asyncio.CancelledError:
             raise
         except ApiError as error:
             # Backend недоступен. Это не повод останавливать цикл: он
             # вернётся, а очередь никуда не денется.
             logger.warning("outbox unavailable: %s", error)
+            await asyncio.sleep(interval)
+            continue
         except Exception:
             logger.exception("notification worker tick failed")
-        await asyncio.sleep(interval)
+            await asyncio.sleep(interval)
+            continue
+
+        if sent:
+            # Отправили пачку — сразу смотреть следующую: за ней может
+            # стоять ещё. Отправленное в очередь не возвращается, так что
+            # вечного круга здесь не бывает.
+            idle = 0
+            continue
+        idle += 1
+        await wait_for_work(client, wait=wait, fallback=interval, idle=idle)
+
+
+async def wait_for_work(
+    client: SelfServiceClient, *, wait: int, fallback: int, idle: int = 1
+) -> None:
+    """Дождаться, пока появится что отправить, — или просто подождать.
+
+    `idle` — сколько проходов подряд очередь была пуста. Если backend
+    раз за разом отвечает «пора», а забрать нечего (строку взял другой
+    экземпляр бота), — короткая пауза, чтобы не крутиться вхолостую.
+    """
+    try:
+        answer = await client.wait_outbox(wait)
+    except asyncio.CancelledError:
+        raise
+    except Exception as error:  # noqa: BLE001 — будить некому, ждём по старинке
+        logger.debug("outbox wait unavailable: %s", error)
+        await asyncio.sleep(fallback)
+        return
+    if isinstance(answer, dict) and answer.get("ready") and idle > 2:
+        await asyncio.sleep(1)
 
 
 async def tick(sender: Sender, client: SelfServiceClient) -> int:
@@ -98,4 +141,4 @@ async def _deliver(sender: Sender, item: dict) -> dict:
     return {"id": item["id"], "sent": False, "error": outcome.error}
 
 
-__all__ = ["run_worker", "tick"]
+__all__ = ["run_worker", "tick", "wait_for_work"]

@@ -22,7 +22,7 @@ import { NotificationBell } from './NotificationBell';
 import { backdropImage } from '../features/shell/backdrop';
 import { AppIcon, ICON_SIZE, type AppIconName } from './AppIcon';
 import { useSession } from '../features/auth/session';
-import { useBadges } from '../features/shell/badges';
+import { latestQuestionId, useBadges } from '../features/shell/badges';
 import { placeOf, rememberPlace } from '../features/shell/places';
 import { useScrollMemory } from '../features/shell/scroll';
 import { GlobalEmployeeSearch } from './GlobalEmployeeSearch';
@@ -286,6 +286,16 @@ function ShellFrame({ children, meta, remember = false }: {
   );
 }
 
+/**
+ * Куда ведёт пункт меню. «Обращения», где ждут ответа, открывают то
+ * обращение, из-за которого вырос значок, — а не последний вид раздела.
+ */
+function targetOf(key: string, to: string, count: number | undefined, remember: boolean): string {
+  const waiting = key === 'questions' && (count ?? 0) > 0 ? latestQuestionId() : null;
+  if (waiting) return `${to}?id=${encodeURIComponent(waiting)}`;
+  return remember ? placeOf(to) : to;
+}
+
 function Group({ title, items, badges, active, remember }: {
   title: string; items: Item[]; badges: Record<string, number>; active: string; remember: boolean;
 }) {
@@ -310,7 +320,7 @@ function Group({ title, items, badges, active, remember }: {
             <li key={item.key}>
               {item.to ? (
                 <Link
-                  to={remember ? placeOf(item.to) : item.to}
+                  to={targetOf(item.key, item.to, count, remember)}
                   className={item.key === active ? 'nav nav--active' : 'nav'}
                   aria-current={item.key === active ? 'page' : undefined}
                 >
@@ -352,7 +362,9 @@ function Crumbs({ path }: { path: string }) {
       {steps.map((step, at) => (
         <Fragment key={`${step}-${at}`}>
           <AppIcon name="next" size={16} className="crumbs__sep" />
-          <span className={at === steps.length - 1 ? 'crumbs__here' : undefined}>
+          {/* Длинный шаг сокращается многоточием на экране, а полное
+              значение остаётся в подсказке и для чтения с экрана. */}
+          <span className={at === steps.length - 1 ? 'crumbs__here' : 'crumbs__step'} title={step}>
             {step}
           </span>
         </Fragment>

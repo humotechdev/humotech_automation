@@ -77,6 +77,8 @@ type Row = {
   archived: boolean;
   /** Эту строку нельзя убрать: единственный вход в систему. */
   locked?: boolean;
+  /** Почему строку нельзя менять — правка закрыта правами. */
+  readOnly?: string | null;
 };
 
 const ORDER = SECTIONS.map((one) => one.key);
@@ -189,8 +191,17 @@ export function AdministrationPage() {
       ? schedules.data.items.map((one) => ({
           id: one.id,
           title: one.name,
-          note: one.weekly_minutes
-            ? `${Math.round(one.weekly_minutes / 60)} ч в неделю`
+          // Чей график: организации или региона. Менять график организации
+          // может только HR с правом на всю организацию, график региона —
+          // HR этого региона; сервер отвечает за это сам (`can_manage`).
+          note: [
+            one.weekly_minutes ? `${Math.round(one.weekly_minutes / 60)} ч в неделю` : null,
+            one.region_name ?? 'вся организация',
+          ].filter(Boolean).join(' · ') || null,
+          readOnly: one.can_manage === false
+            ? (one.region_id
+              ? 'График другого региона: менять его может HR этого региона'
+              : 'График организации: менять его может HR с правом на всю организацию')
             : null,
           // Сколько людей на графике, список не отдаёт; сервер откажет
           // сам, если график назначен, и объяснит причину.
@@ -537,7 +548,7 @@ const matches = (query: string, ...values: Array<string | null | undefined>): bo
  * ссылкой на раскрываемую часть. Кнопки действий стоят отдельно и
  * строку не раскрывают: «Удалить» не должно попутно что-то открывать.
  */
-function TableRow({ title, open, onToggle, off, cells, tools, children, lead, meta }: {
+function TableRow({ title, open, onToggle, off, cells, tools, children, lead, meta, metaAsDescription = false }: {
   title: string;
   open: boolean;
   onToggle: () => void;
@@ -547,6 +558,9 @@ function TableRow({ title, open, onToggle, off, cells, tools, children, lead, me
   /** Короткая приписка в той же строке: «3 чел.», «в архиве». Строки
       остаются одной высоты — приписка не уходит второй строкой. */
   meta?: ReactNode;
+  /** Приписка — описание кнопки, а не часть её имени: имя остаётся
+      названием строки (например, у графика приписка — чей он). */
+  metaAsDescription?: boolean;
   /** Остальные ячейки строки. */
   cells: ReactNode;
   tools: ReactNode;
@@ -560,13 +574,15 @@ function TableRow({ title, open, onToggle, off, cells, tools, children, lead, me
     <li className={classes.join(' ')}>
       <div className="adp-row__line">
         <button type="button" className="adp-row__toggle" aria-expanded={open}
-                aria-controls={`${id}-more`} onClick={onToggle}>
+                aria-controls={`${id}-more`} onClick={onToggle}
+                aria-label={metaAsDescription && meta ? title : undefined}
+                aria-describedby={metaAsDescription && meta ? `${id}-meta` : undefined}>
           <span className="adp-chevron" aria-hidden="true">
             <AppIcon name="chevron" size={16} />
           </span>
           {lead}
           <span className="adp-row__title">{title}</span>
-          {meta && <span className="adp-row__meta">{meta}</span>}
+          {meta && <span className="adp-row__meta" id={`${id}-meta`}>{meta}</span>}
         </button>
         {cells}
         <span className="adp-row__tools">{tools}</span>
@@ -578,7 +594,12 @@ function TableRow({ title, open, onToggle, off, cells, tools, children, lead, me
   );
 }
 
-/** Карандаш и корзина/архив — те же подписи, что и раньше. */
+/**
+ * Карандаш и корзина/архив — те же подписи, что и раньше.
+ *
+ * Строка «только для чтения» (`row.readOnly`, например чужой график при
+ * `can_manage=false`) показывает обе кнопки закрытыми с причиной.
+ */
 function RowTools({ row, onEdit, onRemove }: {
   row: Row;
   onEdit: () => void;
@@ -588,6 +609,8 @@ function RowTools({ row, onEdit, onRemove }: {
     <>
       <button type="button" className="adp-tool"
               aria-label={`Изменить «${row.title}»`}
+              disabled={Boolean(row.readOnly)}
+              title={row.readOnly ?? undefined}
               onClick={onEdit}>
         <AppIcon name="pencil" size={16} />
       </button>
@@ -597,8 +620,8 @@ function RowTools({ row, onEdit, onRemove }: {
                   ? `«${row.title}» — это вы: убрать нельзя`
                   : `${row.used ? 'Архивировать' : 'Удалить'} «${row.title}»`
               }
-              disabled={row.locked}
-              title={row.locked ? 'Это вы: убрать себя нельзя' : undefined}
+              disabled={row.locked || Boolean(row.readOnly)}
+              title={row.locked ? 'Это вы: убрать себя нельзя' : row.readOnly ?? undefined}
               onClick={onRemove}>
         <AppIcon name={row.used ? 'archive' : 'cross'} size={16} />
       </button>
@@ -1132,7 +1155,10 @@ function ScheduleLine({ row, version, open, onToggle, onEdit, onRemove }: {
       open={open}
       off={row.archived}
       onToggle={onToggle}
-      meta={row.archived ? 'в архиве' : null}
+      // Чей график (организации или региона) и часы — из списка графиков:
+      // владельца видно сразу, даже когда правка закрыта (`can_manage`).
+      meta={[row.note, row.archived ? 'в архиве' : null].filter(Boolean).join(' · ') || null}
+      metaAsDescription
       cells={(
         <>
           <span className="adp-cell" data-label="Дни">{summary?.days ?? (pending ? '…' : '—')}</span>
@@ -1170,8 +1196,11 @@ function ScheduleLine({ row, version, open, onToggle, onEdit, onRemove }: {
             {summary ? (summary.restMinutes ? `${summary.restMinutes} мин` : 'Без перерыва') : '—'}
           </Fact>
         </div>
+        {row.readOnly && <p className="adp-more__note">{row.readOnly}</p>}
         <button type="button" className="btn adp-more__action"
                 aria-label={`Редактировать график «${row.title}»`}
+                disabled={Boolean(row.readOnly)}
+                title={row.readOnly ?? undefined}
                 onClick={onEdit}>
           <AppIcon name="pencil" size={16} /> Редактировать график
         </button>

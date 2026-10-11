@@ -118,9 +118,11 @@ def test_future_days_are_not_missed(service, analyst, organization, employee, of
 
     body = service.overview(analyst, first=MONDAY, last=SUNDAY, now=tuesday_noon)
 
-    # Во вторник он ещё не пришёл: вторник — сегодня и считается; среда и
-    # дальше — будущее и в знаменатель не входят.
+    # Во вторник в полдень он ещё не пришёл: вторник — сегодня и входит в
+    # знаменатель (вопрос П-1 не решён, правило прежнее), но неявкой пока
+    # не считается — смена идёт (D-01). Среда и дальше — будущее.
     assert body["summary"]["attendance"]["denominator"] == 2
+    assert day_of(body, date(2026, 3, 3))["missed"] == 0
     assert day_of(body, date(2026, 3, 4))["future"] is True
     assert day_of(body, date(2026, 3, 4))["expected"] == 0
 

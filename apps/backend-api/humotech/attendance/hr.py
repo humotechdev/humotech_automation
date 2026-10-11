@@ -40,16 +40,18 @@ from humotech.attendance.models import (
     AttendanceCorrectionRequest,
     AttendanceEvent,
     AttendanceSession,
+    FieldWorkRequest,
 )
 from humotech.attendance.statistics import (
     COUNTED_ABSENCE_STATUSES,
     SICK_CODES,
     VACATION_CODES,
 )
-from humotech.core.errors import Conflict, NotFound, ValidationFailed
+from humotech.core.errors import Conflict, NotFound, PermissionDenied, ValidationFailed
 from humotech.core.pagination import Page, paginate
 from humotech.core.rbac import Actor
 from humotech.core.service import BaseService
+from humotech.schedules.day_plan import plans_for
 from humotech.core.timeframes import day_bounds, office_zone, range_bounds
 from humotech.employees.models import Employee, EmployeeAssignment
 from humotech.employees.services import (
@@ -125,6 +127,8 @@ PRESENCE_STATES = (
     "OTHER_ABSENCE",
     "IN_OFFICE",
     "LEFT",
+    "FIELD_WORK",
+    "FIELD_WORK_PENDING",
     # Человек сам сказал, что задерживается. Отдельно от «не пришёл»:
     # предупредивший и пропавший — разные люди с точки зрения кадровика,
     # и одна плашка на двоих стирает единственную разницу между ними.
@@ -182,6 +186,7 @@ class PresenceRow:
     # Отметка есть, хотя человек числится отсутствующим. Не ошибка сама
     # по себе — повод посмотреть.
     conflicting_marks: bool
+    field_work: dict | None = None
 
     # Что человек сам сказал про этот день: `LATE`, `ABSENT` или ничего.
     # Это не отметка и не заявка — объяснение пустой строки, и держать
@@ -296,27 +301,37 @@ class AttendanceHrService(BaseService):
             return PresenceReport(day=day, timezone=str(tz), rows=[])
 
         employee_ids = list(rows.keys())
-        sessions = self._sessions_of_day(employee_ids, start, end)
-        absences = self._absences_of_day(employee_ids, start, end)
-        scheduled, calendar = self._scheduled_starts(
-            employee_ids,
-            day,
-            organization_id=actor.organization_id,
-            office_ids=[office.id for office in offices],
-        )
+        # Сутки и опоздание — в поясе офиса КАЖДОГО сотрудника, а не первого
+        # офиса выборки: в региональном отчёте офисы бывают в разных поясах
+        # (аудит 12.10, C-06). План дня — из `day_plan`, одного на систему.
+        plans = plans_for(employee_ids, day, day)
+        zones = {
+            employee_id: (plans[(employee_id, day)].timezone
+                          if (employee_id, day) in plans else tz)
+            for employee_id in employee_ids
+        }
+        sessions: dict = {}
+        absences: dict = {}
+        for zone_name in {str(one) for one in zones.values()}:
+            group = [e for e in employee_ids if str(zones[e]) == zone_name]
+            group_start, group_end = day_bounds(day, zones[group[0]])
+            sessions.update(self._sessions_of_day(group, group_start, group_end))
+            absences.update(self._absences_of_day(group, group_start, group_end))
 
         notices = notices_of_day(employee_ids, day)
+        field_work = self._field_work_of_day(employee_ids, day)
 
         result = [
             self._presence_row(
                 assignment=assignment,
                 day=day,
-                tz=tz,
+                tz=zones[employee_id],
                 sessions=sessions.get(employee_id, []),
                 absence=absences.get(employee_id),
-                schedule=scheduled.get(employee_id),
-                calendar=calendar,
+                schedule=_schedule_tuple(plans.get((employee_id, day))),
+                calendar={},
                 notice=notices.get(employee_id),
+                field_work=field_work.get(employee_id),
             )
             for employee_id, assignment in rows.items()
         ]
@@ -416,6 +431,7 @@ class AttendanceHrService(BaseService):
         rows: list[dict] = []
         totals = _empty_totals()
         shown_zone = None
+        plans = plans_for([employee_id], first, last)
 
         for offset in range(span):
             day = first + timedelta(days=offset)
@@ -433,21 +449,17 @@ class AttendanceHrService(BaseService):
             absence = self._absences_of_day([employee_id], start, end).get(
                 employee_id
             )
-            scheduled, calendar = self._scheduled_starts(
-                [employee_id],
-                day,
-                organization_id=actor.organization_id,
-                office_ids=[assignment.office_id] if assignment.office_id else [],
-            )
+            plan = plans.get((employee_id, day))
             row = self._presence_row(
                 assignment=assignment,
                 day=day,
                 tz=tz,
                 sessions=sessions,
                 absence=absence,
-                schedule=scheduled.get(employee_id),
-                calendar=calendar,
+                schedule=_schedule_tuple(plan),
+                calendar={},
                 notice=notices_of_day([employee_id], day).get(employee_id),
+                field_work=self._field_work_of_day([employee_id], day).get(employee_id),
             )
             open_session = row.open_session_id is not None
             rows.append(
@@ -465,11 +477,17 @@ class AttendanceHrService(BaseService):
                     "late_minutes": row.late_minutes,
                     "scheduled_start": row.scheduled_start,
                     "scheduled_end": row.scheduled_end,
+                    # Норма дня — из `day_plan`, одна на систему (D-03).
+                    # None — графика нет или норма не определена правилом
+                    # (рабочий выходной по переносу, вопрос П-11).
+                    "norm_seconds": plan.norm_seconds if plan is not None else None,
+                    "is_working_day": plan.is_working if plan is not None else None,
                     "absence_code": row.absence_code,
                     "absence_name": row.absence_name,
                     # Отметки в день подтверждённого отсутствия — не норма,
                     # и молчать об этом нельзя: расхождение разбирает человек.
                     "conflicting_marks": row.conflicting_marks,
+                    "field_work": row.field_work,
                 }
             )
 
@@ -478,8 +496,12 @@ class AttendanceHrService(BaseService):
                 totals["days_with_marks"] += 1
             if open_session:
                 totals["open_sessions"] += 1
-            if row.scheduled_start is not None:
+            if plan is not None and plan.is_working:
+                # Рабочий выходной по переносу — тоже рабочий день, хотя
+                # времени смены у него нет (D-06).
                 totals["working_days"] += 1
+            if plan is not None and plan.norm_seconds:
+                totals["norm_seconds"] += plan.norm_seconds
             if row.late_minutes:
                 totals["late_days"] += 1
                 totals["late_minutes"] += row.late_minutes
@@ -696,7 +718,9 @@ class AttendanceHrService(BaseService):
             except AttendanceCorrectionRequest.DoesNotExist as exc:
                 raise NotFound("Заявка на исправление не найдена") from exc
 
-            self._require_employee_visible(actor, request.employee_id)
+            self._require_employee_visible(
+                actor, request.employee_id, "attendance.correct"
+            )
 
             if request.status not in ("SUBMITTED", "IN_REVIEW"):
                 # Повторное решение по уже рассмотренной заявке — не ошибка
@@ -728,8 +752,11 @@ class AttendanceHrService(BaseService):
                 ]
             )
 
+            if decision == "approve":
+                self._forbid_self_attendance(actor, request.employee_id)
             session_after = None
             if decision == "approve" and request.attendance_session_id:
+                self._require_no_field_work_for_correction(request)
                 session_after = self._apply_correction(request)
 
             self.audit.record(
@@ -745,6 +772,27 @@ class AttendanceHrService(BaseService):
                 },
             )
         return request
+
+    def _forbid_self_attendance(self, actor: Actor, employee_id) -> None:
+        """Своё присутствие не оформляет сам себе.
+
+        Кадровик, у которого есть и учётная запись, и карточка сотрудника,
+        не должен ставить себе отметку, править свою сессию или подтверждать
+        себе выезд: это то же разделение обязанностей, что уже требует
+        модуль отсутствий (`_forbid_self_approval`).
+        """
+        from humotech.accounts.models import User
+
+        own = (
+            User.objects.filter(id=actor.user_id)
+            .values_list("employee_id", flat=True)
+            .first()
+        )
+        if own is not None and own == employee_id:
+            raise PermissionDenied(
+                "Своё присутствие оформляет кто-то другой",
+                details={"reason": "self_attendance"},
+            )
 
     def manual_event(
         self,
@@ -774,8 +822,17 @@ class AttendanceHrService(BaseService):
                 "Причина ручной отметки обязательна", details={"field": "reason"}
             )
         self.access.require(actor, "attendance.manual")
-        self.access.require_office(actor, office_id)
-        self._require_employee_visible(actor, employee_id)
+        # Право на отметку и офис/сотрудник — из ОДНОГО назначения: право
+        # из назначения на офис A не действует в офисе B, выданном отдельно
+        # лишь на чтение.
+        self.access.require_office(actor, office_id, "attendance.manual")
+        self._require_employee_visible(actor, employee_id, "attendance.manual")
+        self._forbid_self_attendance(actor, employee_id)
+
+        office = Office.objects.select_related("organization").get(id=office_id)
+        if occurred_at.tzinfo is None:
+            # Время без смещения — «время офиса», как его вводит CRM.
+            occurred_at = occurred_at.replace(tzinfo=office_zone(office))
 
         # Отметка — факт, а не план. Будущий момент или год 1 превратились
         # бы в рабочее время, которого не было, либо в 500 при расчёте суток.
@@ -787,6 +844,12 @@ class AttendanceHrService(BaseService):
         ensure_day_in_range(occurred_at.date(), "occurred_at")
 
         with self.atomic():
+            from humotech.attendance.field_work import require_no_field_work
+            from humotech.absences.services import lock_employee
+            lock_employee(employee_id)
+            Employee.objects.select_for_update().get(id=employee_id)
+            manual_day = occurred_at.astimezone(office_zone(office)).date()
+            require_no_field_work(employee_id, manual_day, manual_day)
             event = AttendanceEvent.objects.create(
                 organization_id=actor.organization_id,
                 employee_id=employee_id,
@@ -844,22 +907,29 @@ class AttendanceHrService(BaseService):
         office_id: uuid.UUID | None = None,
         region_id: uuid.UUID | None = None,
         at: date | None = None,
+        permission: str | None = None,
     ) -> QuerySet | None:
         """Идентификаторы сотрудников в области видимости. None — все.
 
         Возвращается именно `None` для «всей организации» и ПУСТОЙ набор
         для «ничего не видно». Слить эти случаи проверкой `if ids:` —
         значит молча показать всю организацию тому, у кого прав нет.
+
+        `permission` сужает область до назначений, несущих это разрешение:
+        для действия (ручная отметка) сотрудник должен быть виден через то
+        же назначение, что даёт право на действие, а не через соседнее
+        «только чтение».
         """
         condition = None
         if office_id:
-            self.access.require_office(actor, office_id)
+            self.access.require_office(actor, office_id, permission)
             condition = Q(office_id=office_id)
         elif region_id:
-            self.access.require_region(actor, region_id)
-            condition = Q(office__region_id=region_id)
+            condition = self.access.region_condition(
+                actor, region_id, permission=permission
+            )
         else:
-            visible = self.access.visible_office_ids(actor)
+            visible = self.access.visible_office_ids(actor, permission)
             if visible is not None:
                 condition = Q(office_id__in=visible)
 
@@ -888,8 +958,7 @@ class AttendanceHrService(BaseService):
             self.access.require_office(actor, office_id)
             return queryset.filter(office_id=office_id)
         if region_id:
-            self.access.require_region(actor, region_id)
-            return queryset.filter(office__region_id=region_id)
+            return queryset.filter(self.access.region_condition(actor, region_id))
         visible = self.access.visible_office_ids(actor)
         if visible is None:
             return queryset
@@ -930,8 +999,10 @@ class AttendanceHrService(BaseService):
         )
         return office_zone(office)
 
-    def _require_employee_visible(self, actor: Actor, employee_id) -> None:
-        visible = self._employee_scope_ids(actor)
+    def _require_employee_visible(
+        self, actor: Actor, employee_id, permission: str | None = None
+    ) -> None:
+        visible = self._employee_scope_ids(actor, permission=permission)
         if visible is None:
             exists = Employee.objects.filter(
                 id=employee_id, organization_id=actor.organization_id
@@ -1007,6 +1078,15 @@ class AttendanceHrService(BaseService):
         return {row.employee_id: row for row in assignments}
 
     @staticmethod
+    def _field_work_of_day(employee_ids, day):
+        result = {}
+        for row in FieldWorkRequest.objects.filter(employee_id__in=employee_ids,
+                                                    date=day, status__in=("PENDING", "CONFIRMED")):
+            if row.employee_id not in result or row.status == "CONFIRMED":
+                result[row.employee_id] = row
+        return result
+
+    @staticmethod
     def _sessions_of_day(
         employee_ids: list[uuid.UUID], start: datetime, end: datetime
     ) -> dict[uuid.UUID, list[AttendanceSession]]:
@@ -1063,56 +1143,22 @@ class AttendanceHrService(BaseService):
         employee_ids: list[uuid.UUID],
         day: date,
         *,
-        organization_id: uuid.UUID,
-        office_ids: list[uuid.UUID],
+        organization_id: uuid.UUID | None = None,
+        office_ids: list[uuid.UUID] | None = None,
     ) -> tuple[dict[uuid.UUID, tuple[time | None, time | None, bool, int]], dict]:
-        """Границы смены, признак рабочего дня и допустимое опоздание — по одному запросу на всех.
+        """Границы смены, признак рабочего дня и допуск — из `day_plan`.
 
-        Значение `(None, False)` означает «график есть, день нерабочий»;
-        отсутствие ключа — «графика нет вовсе». Это разные вещи: во втором
-        случае про опоздание сказать нечего, а в первом — есть что: человек
-        и не должен был приходить.
+        Оставлено для вызывающих снаружи (выгрузки). Календарь уже учтён в
+        плане дня, поэтому второй элемент — пустой словарь исключений.
+        Отсутствие ключа — «графика нет вовсе».
         """
-        weekday = day.isoweekday()
-        rows = (
-            EmployeeScheduleAssignment.objects.filter(
-                employee_id__in=employee_ids,
-                valid_from__lte=day,
-            )
-            .filter(Q(valid_to__isnull=True) | Q(valid_to__gte=day))
-            .select_related("schedule")
-            .prefetch_related("schedule__days")
-            .order_by("employee_id", "-valid_from")
-        )
-
-        # Праздники и переносы. Исключение офиса перекрывает общее по
-        # организации — тем же правилом, что и в `statistics.py`.
-        exceptions: dict[uuid.UUID | None, bool] = {}
-        calendar = CalendarException.objects.filter(
-            Q(office_id__in=office_ids) | Q(office__isnull=True),
-            organization_id=organization_id,
-            date=day,
-            is_active=True,
-        )
-        for row in sorted(calendar, key=lambda r: r.office_id is not None):
-            exceptions[row.office_id] = row.is_working_day
-
-        result: dict[uuid.UUID, tuple[time | None, time | None, bool, int]] = {}
-        for row in rows:
-            if row.employee_id in result:
-                continue  # берём самое позднее действующее назначение
-            match = next(
-                (d for d in row.schedule.days.all() if d.weekday == weekday),
-                None,
-            )
-            working = bool(match and match.is_working_day)
-            result[row.employee_id] = (
-                match.start_time if match and working else None,
-                match.end_time if match and working else None,
-                working,
-                row.schedule.late_grace_minutes or 0,
-            )
-        return result, exceptions
+        plans = plans_for(employee_ids, day, day)
+        result = {}
+        for employee_id in employee_ids:
+            value = _schedule_tuple(plans.get((employee_id, day)))
+            if value is not None:
+                result[employee_id] = value
+        return result, {}
 
     @staticmethod
     def _presence_row(
@@ -1125,6 +1171,7 @@ class AttendanceHrService(BaseService):
         schedule: tuple[time | None, time | None, bool, int] | None,
         calendar: dict,
         notice=None,
+        field_work=None,
     ) -> PresenceRow:
         employee = assignment.employee
         first_entry = sessions[0].started_at if sessions else None
@@ -1159,6 +1206,14 @@ class AttendanceHrService(BaseService):
             is_working=is_working,
             notice_kind=notice.kind if notice else None,
         )
+        # Facts of absence or physical scanning always remain visible if
+        # legacy/imported data unexpectedly conflicts with the field request.
+        if field_work and absence is None and not sessions:
+            if field_work.status == "CONFIRMED":
+                state = "FIELD_WORK"
+                seconds = field_work.norm_seconds
+            elif field_work.status == "PENDING" and field_work.expires_at > _now():
+                state = "FIELD_WORK_PENDING"
 
         late_minutes = None
         if first_entry and scheduled_start:
@@ -1194,6 +1249,9 @@ class AttendanceHrService(BaseService):
             notice_kind=notice.kind if notice else None,
             notice_comment=notice.comment if notice else None,
             conflicting_marks=bool(absence and sessions),
+            field_work=({"id": str(field_work.id), "status": field_work.status,
+                         "norm_seconds": field_work.norm_seconds}
+                        if field_work else None),
             intervals=tuple(
                 Interval(
                     started_at=one.started_at,
@@ -1208,6 +1266,28 @@ class AttendanceHrService(BaseService):
                 for event in (one.entry_event, one.exit_event)
             ),
         )
+
+    @staticmethod
+    def _require_no_field_work_for_correction(request: AttendanceCorrectionRequest) -> None:
+        """Исправленная сессия не должна лечь на день подтверждённого выезда.
+
+        Исправление переносит время уже существующей сессии, и новое время
+        может попасть на день, который засчитан (или ждёт зачёта) как
+        выездная работа: тогда день был бы засчитан дважды — нормой выезда
+        и физической сессией. Та же блокировка сотрудника, что у запроса и
+        ответа сотрудника, — проверка и перенос не разъезжаются.
+        """
+        from humotech.absences.services import lock_employee
+        from humotech.attendance.field_work import require_no_field_work
+
+        lock_employee(request.employee_id)
+        Employee.objects.select_for_update().get(id=request.employee_id)
+        session = request.attendance_session
+        tz = office_zone(Office.objects.select_related("organization").get(id=session.office_id))
+        started = request.requested_entry_at or session.started_at
+        ended = request.requested_exit_at or session.ended_at or started
+        first, last = sorted((started.astimezone(tz).date(), ended.astimezone(tz).date()))
+        require_no_field_work(request.employee_id, first, last)
 
     def _apply_correction(self, request: AttendanceCorrectionRequest) -> dict:
         """Перенести одобренные значения в расчётную сессию.
@@ -1261,6 +1341,7 @@ def _empty_totals() -> dict:
         "late_days": 0,
         "late_minutes": 0,
         "open_sessions": 0,
+        "norm_seconds": 0,
     }
 
 
@@ -1328,3 +1409,19 @@ def _now() -> datetime:
     from django.utils import timezone as django_timezone
 
     return django_timezone.now()
+
+
+def _schedule_tuple(plan):
+    """План дня -> `(начало, конец, рабочий, допуск)` для `_presence_row`.
+
+    None — графика на этот день нет. Рабочий выходной по переносу —
+    рабочий день без времени смены: опоздание у него не считается.
+    """
+    if plan is None or not plan.has_schedule:
+        return None
+    return (
+        plan.start if plan.is_working else None,
+        plan.end if plan.is_working else None,
+        bool(plan.is_working),
+        plan.late_grace_minutes,
+    )

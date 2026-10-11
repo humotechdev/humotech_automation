@@ -48,6 +48,7 @@ from django.utils import timezone
 from humotech.audit.redaction import redact_text
 from humotech.notifications.isolation import is_demo_chat_id
 from humotech.notifications.models import Notification, NotificationAttempt
+from humotech.realtime import signals
 from humotech.telegram.identity import AccessDenied, resolve_account
 from humotech.telegram.models import TelegramAccount
 
@@ -62,6 +63,18 @@ logger = logging.getLogger("humotech.notifications")
 # из строки привязки ТОГО ЖЕ сотрудника, а не из уведомления и не из
 # запроса. Дойти до постороннего сообщению неоткуда.
 BINDING_NOTIFICATION_PREFIX = "telegram.link."
+
+#: Сообщения, которые ждут доступа к боту, а не снимаются сразу. Приветствие
+#: ставится при приёме, когда привязки Telegram ещё нет (ссылку человек
+#: откроет позже, привязку подтвердит HR) или первый рабочий день впереди.
+#: Раньше `claim` снимал его в ту же секунду (`not_linked`), и до сотрудника
+#: оно не доходило никогда (аудит 12.10, B-02). Теперь оно откладывается и
+#: уходит, как только доступ открыт; окончательные отказы (уволен, отключён)
+#: и истечение срока по-прежнему снимают его.
+WAITS_FOR_ACCESS = frozenset({"employee.hired"})
+WAITABLE_REASONS = frozenset({"not_linked", "pending_confirmation", "no_assignment"})
+WELCOME_WAIT = timedelta(days=30)
+WELCOME_RECHECK = timedelta(hours=1)
 
 
 def _log_attempt(
@@ -154,7 +167,7 @@ def enqueue(
         if existing is not None:
             return existing
 
-    return Notification.objects.create(
+    row = Notification.objects.create(
         organization_id=organization_id,
         employee_id=employee_id,
         channel="TELEGRAM",
@@ -168,6 +181,12 @@ def enqueue(
         related_entity_type=related_entity_type,
         related_entity_id=related_entity_id,
     )
+    # Будит отправщика. В транзакции вызывающего: откатилась заявка —
+    # отправщик не проснётся ради того, чего нет. Отложенное уведомление
+    # (`scheduled_at`) будить незачем: отправщик и так дождётся его срока.
+    if scheduled_at is None or scheduled_at <= timezone.now():
+        signals.outbox_ready()
+    return row
 
 
 def claim(*, limit: int = 20, now: datetime | None = None) -> list[Outgoing]:
@@ -181,6 +200,7 @@ def claim(*, limit: int = 20, now: datetime | None = None) -> list[Outgoing]:
     moment = now or timezone.now()
     limit = max(1, min(limit, 100))
     ready: list[Outgoing] = []
+    cancelled: list = []
 
     with transaction.atomic():
         rows = list(
@@ -194,6 +214,16 @@ def claim(*, limit: int = 20, now: datetime | None = None) -> list[Outgoing]:
         )
 
         for row in rows:
+            if row.notification_type == "attendance.field_work_request":
+                from humotech.attendance.models import FieldWorkRequest
+
+                request = FieldWorkRequest.objects.filter(id=row.related_entity_id).first()
+                if request is None or request.status != "PENDING" or request.expires_at <= moment:
+                    row.status = "CANCELLED"
+                    row.error_message = "field_work_closed"
+                    row.save(update_fields=["status", "error_message", "updated_at"])
+                    _log_attempt(row, outcome="CANCELLED", reason="field_work_closed", moment=moment)
+                    continue
             account = (
                 TelegramAccount.objects.select_related("employee", "organization")
                 .filter(employee_id=row.employee_id)
@@ -210,6 +240,18 @@ def claim(*, limit: int = 20, now: datetime | None = None) -> list[Outgoing]:
             if account is not None and is_demo_chat_id(account.telegram_chat_id):
                 blocked = True
                 resolved = AccessDenied("demo_account")
+            reason = (resolved.reason if isinstance(resolved, AccessDenied)
+                      else "not_linked" if account is None else None)
+            if (
+                blocked
+                and row.notification_type in WAITS_FOR_ACCESS
+                and reason in WAITABLE_REASONS
+                and row.created_at + WELCOME_WAIT > moment
+            ):
+                # Доступ ещё не открыт, но откроется: подождать, а не снять.
+                row.next_attempt_at = moment + WELCOME_RECHECK
+                row.save(update_fields=["next_attempt_at", "updated_at"])
+                continue
             if blocked:
                 # Адресата нет или доступ закрыт. Это не ошибка отправки:
                 # повторять нечего, и держать строку в очереди вечно
@@ -231,6 +273,7 @@ def claim(*, limit: int = 20, now: datetime | None = None) -> list[Outgoing]:
                     reason=row.error_message,
                     moment=moment,
                 )
+                cancelled.append(row.id)
                 continue
 
             row.status = "RUNNING"
@@ -256,6 +299,8 @@ def claim(*, limit: int = 20, now: datetime | None = None) -> list[Outgoing]:
                     telegram_user_id=account.telegram_user_id,
                 )
             )
+        # «Не доставлено: адресата нет» — CRM-чату нужно знать сразу.
+        signals.deliveries_changed(cancelled)
     return ready
 
 
@@ -290,6 +335,7 @@ def mark_sent(notification_id, *, now: datetime | None = None) -> bool:
         row = Notification.objects.filter(id=notification_id).first()
         if row is not None:
             _log_attempt(row, outcome="SENT", reason=None, moment=moment)
+        signals.deliveries_changed([notification_id])
         return True
 
 
@@ -317,7 +363,7 @@ def mark_failed(
 #: Для остальных причин повторы и так конечны (`MAX_ATTEMPTS`), но тут
 #: и пяти попыток с растущей паузой незачем. Человек, устранив причину,
 #: повторяет вручную из CRM.
-PERMANENT_ERRORS = frozenset({"attachment_rejected", "attachment_not_found"})
+PERMANENT_ERRORS = frozenset({"attachment_rejected", "attachment_not_found", "invalid_entity_id"})
 
 
 def _fail(notification_id, *, error: str, moment: datetime) -> bool:
@@ -355,6 +401,12 @@ def _fail(notification_id, *, error: str, moment: datetime) -> bool:
         ]
     )
     _log_attempt(row, outcome="FAILED", reason=row.error_message, moment=moment)
+    # Сигнал — только когда CRM увидит перемену. Повтор по расписанию
+    # оставляет строку PENDING, а PENDING и RUNNING в чате оба выглядят
+    # «в очереди» (`questions/inbox.DELIVERY`): будить ради этого каждую
+    # открытую вкладку на каждой попытке незачем.
+    if row.status == "FAILED":
+        signals.deliveries_changed([row.id])
     return True
 
 

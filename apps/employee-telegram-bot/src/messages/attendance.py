@@ -70,6 +70,10 @@ OUTCOMES = {
         "Вы только что отметились на этой точке. "
         "Повторная отметка — не раньше чем через минуту."
     ),
+    "FIELD_WORK_CONFIRMED": (
+        "Сегодня день уже засчитан как подтверждённая работа вне офиса — "
+        "отметка в офисе не нужна. Если вы всё же в офисе, сообщите в отдел кадров."
+    ),
     "OFFICE_NOT_ALLOWED": (
         "Этот офис вам не назначен. Отметиться можно там, где вы числитесь."
     ),
@@ -85,6 +89,18 @@ OUTCOMES = {
     "LOCATION_TOO_VAGUE": (
         "Местоположение определилось слишком приблизительно. "
         "Выйдите на открытое место или подойдите к окну и попробуйте снова."
+    ),
+    # Погрешность телефона пересекает границу территории офиса: сказать
+    # честно ни «вы на месте», ни «вы далеко» нельзя.
+    "LOCATION_AMBIGUOUS": (
+        "Телефон определил место неточно: по его данным вы у самой границы "
+        "территории офиса. Подождите несколько секунд на открытом месте и "
+        "отсканируйте код ещё раз. Если не выходит — сообщите в отдел кадров: "
+        "попытка сохранена, её там видно."
+    ),
+    "LOCATION_STALE": (
+        "Геопозиция устарела — телефон прислал место, где вы были раньше. "
+        "Отсканируйте код ещё раз."
     ),
 }
 
@@ -120,9 +136,9 @@ def outcome(result: dict) -> str:
             lines.append(f"Офис: {where}")
         if point:
             lines.append(f"QR-точка: {point}")
-        metres = _metres(result.get("distance_m"))
-        if metres is not None:
-            lines.append(f"Расстояние до офиса: {metres} м")
+        # Расстояния сервер не присылает: только было ли место проверено.
+        if result.get("geofence_kind"):
+            lines.append("Место: на территории офиса")
         at = result.get("occurred_at_local")
         if at:
             lines.append(f"Время: {escape(at)}")
@@ -140,22 +156,11 @@ def outcome(result: dict) -> str:
 def _head(status: str, result: dict) -> str | None:
     """Первая строка ответа. Для части отказов — с числами из ответа."""
     mode = result.get("point_mode")
-    if status == "OUTSIDE_GEOFENCE":
-        metres = _metres(result.get("distance_m"))
-        radius = result.get("radius_m")
-        if metres is not None and isinstance(radius, int) and radius > 0:
-            return f"Вы слишком далеко от офиса: {metres} м. Допустимо: {radius} м"
     if status == "ALREADY_INSIDE" and mode == "ENTRY":
         return ONLY_ENTRY
     if status == "NOT_INSIDE" and mode == "EXIT":
         return ONLY_EXIT
     return OUTCOMES.get(status)
-
-
-def _metres(value) -> int | None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    return int(round(value))
 
 
 def duration(seconds: int) -> str:

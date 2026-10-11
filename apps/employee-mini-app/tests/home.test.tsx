@@ -99,6 +99,28 @@ describe('сотрудник в офисе', () => {
   });
 });
 
+describe('подтверждённая выездная работа', () => {
+  it('показывает зачёт как работу вне офиса без QR и без повторного сканирования', () => {
+    const onScan = vi.fn();
+    const { container } = paint({
+      today: ready({
+        status: status({ state: 'FIELD_WORK', seconds_today: 8 * 3600,
+                         last_entry_at: null, last_exit_at: null, open_session: null }),
+        sessions: [],
+      }),
+      onScan,
+    });
+
+    expect(screen.getByRole('heading', { name: 'Выездная работа' })).toBeTruthy();
+    expect(screen.getByText('Засчитано по графику')).toBeTruthy();
+    expect(screen.getByText('8 ч')).toBeTruthy();
+    expect(screen.getByText('Отметок по QR ещё не было')).toBeTruthy();
+    expect(container.querySelector('.dot-success')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Отметиться' })).toBeNull();
+    expect(onScan).not.toHaveBeenCalled();
+  });
+});
+
 // --- 2. сотрудник не в офисе -------------------------------------------------
 
 describe('сотрудник не в офисе', () => {

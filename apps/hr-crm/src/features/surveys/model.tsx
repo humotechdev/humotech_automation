@@ -69,7 +69,6 @@ export const AUDIENCE: Record<api.SurveyAudienceKind, string> = {
  * одно, а сработало другое.
  */
 export const TRIGGER: Record<api.SurveyTriggerKind, string> = {
-  PROBATION_END: 'Окончание стажировки',
   FIRST_DAY: 'Первый рабочий день',
   DAYS_AFTER_HIRE: 'Через N дней после выхода',
   BIRTHDAY: 'День рождения',
@@ -78,8 +77,6 @@ export const TRIGGER: Record<api.SurveyTriggerKind, string> = {
 
 /** Что именно произойдёт — одной строкой, под выбором события. */
 export const TRIGGER_ABOUT: Record<api.SurveyTriggerKind, string> = {
-  PROBATION_END:
-    'Сработает у тех, у кого в этот день заканчивается стажировка.',
   FIRST_DAY: 'Сработает в день выхода нового сотрудника.',
   DAYS_AFTER_HIRE:
     'Сработает через указанное число дней после выхода на работу.',

@@ -111,9 +111,8 @@ class CalendarExceptionService(BaseService):
                 Q(office_id=office_id) | Q(office__isnull=True)
             )
         elif region_id:
-            self.access.require_region(actor, region_id)
             queryset = queryset.filter(
-                Q(office__region_id=region_id) | Q(office__isnull=True)
+                self.access.region_condition(actor, region_id) | Q(office__isnull=True)
             )
         elif scope == "organization":
             queryset = queryset.filter(office__isnull=True)
@@ -181,6 +180,7 @@ class CalendarExceptionService(BaseService):
         reason = clean_text(reason, field="reason")
 
         with self.atomic():
+            _require_no_field_work(actor.organization_id, offices, days)
             try:
                 # По строке за раз, а не `bulk_create`: ключ генерирует
                 # база (`gen_random_uuid()`), и из пакетной вставки он не
@@ -240,7 +240,7 @@ class CalendarExceptionService(BaseService):
         выглядит в журнале.
         """
         self.access.require(actor, "calendar.manage")
-        row = self._require(actor, exception_id)
+        row = self._require(actor, exception_id, "calendar.manage")
         before = snapshot(row, CALENDAR_FIELDS)
 
         if name is not None:
@@ -265,6 +265,10 @@ class CalendarExceptionService(BaseService):
             row.is_working_day = WORKING_BY_TYPE[exception_type]
 
         with self.atomic():
+            # Любая смена типа меняет день для расчёта: выходной или
+            # рабочий, полная норма или сокращённая.
+            if row.exception_type != before.get("exception_type"):
+                _require_no_field_work(row.organization_id, [row.office_id], [row.date])
             row.save()
             self.audit.record(
                 actor,
@@ -307,7 +311,7 @@ class CalendarExceptionService(BaseService):
         ограничения целостности, то есть сообщением про индекс вместо
         сообщения про календарь.
         """
-        row = self._require(actor, exception_id)
+        row = self._require(actor, exception_id, "calendar.manage")
         if not row.is_active:
             taken = CalendarException.objects.filter(
                 organization_id=actor.organization_id,
@@ -339,12 +343,13 @@ class CalendarExceptionService(BaseService):
         already: str,
     ) -> CalendarException:
         self.access.require(actor, "calendar.manage")
-        row = self._require(actor, exception_id)
+        row = self._require(actor, exception_id, "calendar.manage")
         if row.is_active == active:
             raise Conflict(already, details={"is_active": row.is_active})
 
         before = snapshot(row, CALENDAR_FIELDS)
         with self.atomic():
+            _require_no_field_work(row.organization_id, [row.office_id], [row.date])
             row.is_active = active
             row.save(update_fields=["is_active", "updated_at"])
             self.audit.record(
@@ -369,7 +374,7 @@ class CalendarExceptionService(BaseService):
         так что восстановить, что именно снесли, можно.
         """
         self.access.require(actor, "calendar.manage")
-        row = self._require(actor, exception_id)
+        row = self._require(actor, exception_id, "calendar.manage")
         before = snapshot(row, CALENDAR_FIELDS)
         row_id = row.id
 
@@ -386,7 +391,8 @@ class CalendarExceptionService(BaseService):
 
     # ----------------------------------------------------------------- частное
 
-    def _require(self, actor: Actor, exception_id: uuid.UUID) -> CalendarException:
+    def _require(self, actor: Actor, exception_id: uuid.UUID,
+                 permission: str | None = None) -> CalendarException:
         row = (
             CalendarException.objects.select_related("office")
             .filter(id=exception_id, organization_id=actor.organization_id)
@@ -396,8 +402,8 @@ class CalendarExceptionService(BaseService):
             # Чужая организация отвечает как отсутствие записи.
             raise NotFound("Исключение календаря не найдено")
         if row.office_id is not None:
-            self.access.require_office(actor, row.office_id)
-        elif self.access.visible_office_ids(actor) is not None:
+            self.access.require_office(actor, row.office_id, permission)
+        elif self.access.visible_office_ids(actor, permission) is not None:
             # Общеорганизационное исключение правит только тот, чья область
             # — вся организация. Администратор одного офиса такой день в
             # календаре видит, но отменить Навруз всей компании не может.
@@ -444,10 +450,10 @@ class CalendarExceptionService(BaseService):
                 },
             )
         if office_id:
-            self.access.require_office(actor, office_id)
+            self.access.require_office(actor, office_id, "calendar.manage")
             return [office_id]
         if region_id:
-            self.access.require_region(actor, region_id)
+            self.access.require_whole_region(actor, region_id, "calendar.manage")
             offices = list(
                 Office.objects.filter(
                     organization_id=actor.organization_id,
@@ -466,7 +472,7 @@ class CalendarExceptionService(BaseService):
         # Область не указана — исключение на всю организацию. Заводит его
         # только тот, кто видит организацию целиком: иначе администратор
         # одного офиса объявил бы выходной всей компании.
-        if self.access.visible_office_ids(actor) is not None:
+        if self.access.visible_office_ids(actor, "calendar.manage") is not None:
             raise ValidationFailed(
                 "Исключение на всю организацию заводит только тот, чья "
                 "область — вся организация. Укажите офис или регион.",
@@ -476,3 +482,31 @@ class CalendarExceptionService(BaseService):
 
 
 __all__ = ["CalendarExceptionService", "MAX_RANGE_DAYS", "WORKING_BY_TYPE"]
+
+
+def _require_no_field_work(organization_id, office_ids, days) -> None:
+    """Исключение не должно менять день с активным запросом выездной работы.
+
+    Запрос фиксирует смену и норму, предъявленные сотруднику. Праздник или
+    перенос, заведённый после этого, превратил бы засчитанный день в
+    выходной с полной нормой — или отменил бы норму задним числом без
+    следа в запросе. Правило то же, что у графика: сначала отменить запрос.
+    `None` среди офисов — исключение на всю организацию.
+    """
+    from django.db.models import Q
+
+    from humotech.attendance.field_work import blocking_field_work
+
+    # Истёкший, но ещё не закрытый ожидающий запрос день не держит —
+    # правило одно с `require_no_field_work`.
+    rows = blocking_field_work().filter(
+        organization_id=organization_id, date__in=list(days),
+    )
+    offices = [one for one in office_ids if one is not None]
+    if None not in list(office_ids):
+        rows = rows.filter(Q(office_id__in=offices))
+    if rows.exists():
+        raise Conflict(
+            "На эту дату есть запрос выездной работы; сначала отмените его",
+            details={"reason": "field_work_conflict"},
+        )

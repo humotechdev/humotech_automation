@@ -25,6 +25,8 @@
 
 from __future__ import annotations
 
+from humotech.core.enums import COUNTED_VERIFICATION
+
 import logging
 import uuid
 from dataclasses import dataclass
@@ -242,38 +244,24 @@ def notices_of_day(
 
 
 def _shift_of(employee_id: uuid.UUID, day: date) -> tuple[time, int] | None:
-    """Начало смены и допуск опоздания, если день рабочий по графику."""
-    from humotech.schedules.models import EmployeeScheduleAssignment
+    """Начало смены и допуск опоздания, если день рабочий по графику.
 
-    assignment = (
-        EmployeeScheduleAssignment.objects.filter(
-            employee_id=employee_id, valid_from__lte=day
-        )
-        .filter(Q(valid_to__isnull=True) | Q(valid_to__gte=day))
-        .select_related("schedule")
-        .prefetch_related("schedule__days")
-        .order_by("-valid_from")
-        .first()
-    )
-    if assignment is None:
-        return None
+    Из единого плана дня (`schedules.day_plan`): версия графика на эту
+    дату, календарь офиса этого дня. Рабочий выходной по переносу без
+    времени смены — напоминать не от чего (П-11).
+    """
+    from humotech.schedules.day_plan import plan_for
 
-    match = next(
-        (
-            one for one in assignment.schedule.days.all()
-            if one.weekday == day.isoweekday()
-        ),
-        None,
-    )
-    if match is None or not match.is_working_day or match.start_time is None:
+    plan = plan_for(employee_id, day)
+    if not plan.is_working or plan.start is None:
         return None
 
     # Ноль здесь — это «не задано», а не «напомнить ровно в девять
     # ноль-ноль»: допуск опоздания в графике по умолчанию нулевой, и
     # понимать его буквально значило бы писать человеку в ту же минуту,
     # когда он открывает дверь.
-    grace = assignment.schedule.late_grace_minutes or DEFAULT_GRACE_MINUTES
-    return match.start_time, grace
+    grace = plan.late_grace_minutes or DEFAULT_GRACE_MINUTES
+    return plan.start, grace
 
 
 def _is_working_day(office, day: date) -> bool:
@@ -301,7 +289,7 @@ def _already_marked(employee_id: uuid.UUID, day: date, zone) -> bool:
         employee_id=employee_id,
         occurred_at__gte=start,
         occurred_at__lt=end,
-        verification_status="ACCEPTED",
+        verification_status__in=COUNTED_VERIFICATION,
     ).exists()
 
 

@@ -75,6 +75,18 @@ class AiDisabled(DomainError):
     http_status = 503
 
 
+class ScannerUnavailable(DomainError):
+    """Антивирусная проверка включена, но сканер не ответил.
+
+    Файл не принимается: принять «на потом» нельзя — перевести его в
+    проверенные позже некому (аудит 11.10, M-11). 503: запрос верный,
+    выполнить его сейчас нечем; повторить можно позже.
+    """
+
+    code = "scanner_unavailable"
+    http_status = 503
+
+
 class ProviderNotConfigured(DomainError):
     """Рубильник включён, но провайдер настроен не до конца.
 

@@ -11,6 +11,7 @@ from humotech.schedules.serializers import (
     DepartmentAssignSerializer,
     ScheduleAssignSerializer,
     ScheduleAssignmentSerializer,
+    ScheduleChangeHistorySerializer,
     WorkScheduleCreateSerializer,
     WorkScheduleDetailSerializer,
     WorkScheduleSerializer,
@@ -57,6 +58,21 @@ class WorkScheduleViewSet(ServiceViewSet):
         """Убрать совсем. Сервер откажет, если на запись уже ссылались."""
         self.service.delete(self.actor, pk)
         return Response(status=status.HTTP_204_NO_CONTENT)
+    @action(detail=True, methods=["post"], url_path="change-history")
+    def change_history(self, request, pk=None):
+        """Изменить график задним числом — отдельная операция с причиной.
+
+        Нужны `schedules.manage` и `schedules.change_history`: правка
+        меняет уже посчитанные опоздания и нормы прошлых дней.
+        """
+        payload = validated(ScheduleChangeHistorySerializer, request.data)
+        if "days" in payload:
+            payload["days"] = to_day_specs(payload["days"])
+        return self.item_response(
+            self.service.change_history(self.actor, pk, **payload),
+            serializer_class=WorkScheduleDetailSerializer,
+        )
+
     @action(detail=True, methods=["post"])
     def deactivate(self, request, pk=None):
         return self.item_response(self.service.deactivate(self.actor, pk))

@@ -74,7 +74,7 @@ class QuestionService(BaseService):
         # Право — до поиска пользователя: иначе 404/403 без права отвечать
         # подсказывали бы, есть ли в организации такая учётная запись.
         self.access.require(actor, "questions.answer")
-        self._require(actor, question_id)
+        self._require(actor, question_id, "questions.answer")
         if not User.objects.filter(
             id=to_user_id, organization_id=actor.organization_id
         ).exists():
@@ -96,7 +96,7 @@ class QuestionService(BaseService):
         note: str | None = None,
     ) -> UnansweredQuestion:
         self.access.require(actor, "questions.answer")
-        self._require(actor, question_id)
+        self._require(actor, question_id, "questions.answer")
         with self.atomic():
             self.use_cases.close_question(
                 actor, question_id, as_answered=as_answered, note=note
@@ -107,17 +107,17 @@ class QuestionService(BaseService):
         self, actor: Actor, question_id: uuid.UUID, **payload
     ):
         self.access.require(actor, "questions.answer")
-        self._require(actor, question_id)
+        self._require(actor, question_id, "questions.answer")
         # Область FAQ приходит из тела запроса. Без проверки сюда можно было
         # вписать офис или регион чужой организации либо офис вне своей
         # области — и завести правило там, куда доступа нет.
         office_id = payload.get("office_id")
         region_id = payload.get("region_id")
         if office_id is not None:
-            self.access.require_office(actor, office_id)
+            self.access.require_office(actor, office_id, "questions.answer")
         if region_id is not None:
-            self.access.require_region(actor, region_id)
-            scope = self.access.scope(actor)
+            self.access.require_region(actor, region_id, "questions.answer")
+            scope = self.access.scope_for(actor, "questions.answer")
             if not scope.all_offices and region_id not in scope.region_ids:
                 # Офис внутри региона не даёт права писать правило на
                 # весь регион: оно коснулось бы и чужих офисов.
@@ -129,7 +129,7 @@ class QuestionService(BaseService):
 
     # ------------------------------------------------------------ внутри
 
-    def _scoped(self, actor: Actor):
+    def _scoped(self, actor: Actor, permission: str | None = None):
         """Кластеры в области видимости актора.
 
         У кластера — офис и регион того, кто спросил. Кадровик офиса видит
@@ -140,7 +140,11 @@ class QuestionService(BaseService):
         rows = UnansweredQuestion.objects.filter(
             organization_id=actor.organization_id
         )
-        scope = self.access.scope(actor)
+        # Для действий (назначить, закрыть, сделать FAQ) — область самого
+        # `questions.answer`, а не объединённая: «отвечаю в A + читаю B» не
+        # распоряжается вопросами B (аудит 11.10, L-4).
+        scope = (self.access.scope(actor) if permission is None
+                 else self.access.scope_for(actor, permission))
         if scope.all_offices:
             return rows
         return rows.filter(
@@ -148,8 +152,9 @@ class QuestionService(BaseService):
             | Q(office_id__isnull=True, region_id__in=scope.region_ids)
         )
 
-    def _require(self, actor: Actor, question_id: uuid.UUID) -> UnansweredQuestion:
-        question = self._scoped(actor).filter(id=question_id).first()
+    def _require(self, actor: Actor, question_id: uuid.UUID,
+                 permission: str | None = None) -> UnansweredQuestion:
+        question = self._scoped(actor, permission).filter(id=question_id).first()
         if question is None:
             # Чужой офис отвечает так же, как отсутствие записи.
             raise NotFound("Вопрос не найден")

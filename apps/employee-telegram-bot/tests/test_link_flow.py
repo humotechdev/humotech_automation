@@ -101,14 +101,7 @@ class FakeClient:
             raise self.recognizes
         return self.recognizes or {
             "status": "PENDING",
-            "full_name": "Мурадов Азизбек",
-            "employment_status": "PROBATION",
-            "hire_date": "2026-09-18",
-            "office_name": "город Ташкент",
-            "department_name": None,
-            "position_name": None,
-            "schedule_name": "Пн–Пт 09:00–18:00",
-            "manager_name": None,
+            "first_name": "Азизбек",
         }
 
 
@@ -240,21 +233,25 @@ def test_foreign_payload_does_not_consume_a_token():
 
     assert client.calls == []
     assert len(client.recognized) == 1
-    assert message.answers[-1][0].startswith("Добро пожаловать в HUMOTECH")
+    assert message.answers[-1][0].startswith("Здравствуйте")
 
 
-def test_recognized_employee_is_greeted_with_the_facts():
-    """Узнанному сразу говорят, куда он принят и по какому графику."""
+def test_recognized_employee_is_greeted_by_name_without_pii():
+    """Узнанного здороваются по имени; персональных данных карточки нет.
+
+    Узнавание по @username отвечает ДО подтверждения HR, поэтому офис,
+    график и руководитель здесь не раскрываются (имя в Telegram можно
+    занять чужое)."""
     client = FakeClient()
     message = run_start("ref_partner42", client)
 
     said = message.answers[-1][0]
-    assert "Мурадов Азизбек" in said
-    assert "на стажировку" in said
-    assert "город Ташкент" in said
-    assert "Пн–Пт 09:00–18:00" in said
-    # Доступа это ещё не даёт, и об этом сказано прямо.
+    assert "Азизбек" in said
     assert "подтвердит привязку" in said
+    # Персональные данные карточки НЕ раскрываются до подтверждения HR.
+    assert "город Ташкент" not in said
+    assert "Пн–Пт" not in said
+    assert "Офис:" not in said and "Руководитель:" not in said
 
 
 def test_unknown_person_is_sent_to_hr():

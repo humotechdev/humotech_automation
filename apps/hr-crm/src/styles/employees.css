@@ -2391,3 +2391,81 @@
 .emp-bit--go:hover .emp-bit__text {
   text-decoration: underline;
 }
+
+/* --- движение (только список «Сотрудники») ------------------------------------------- */
+
+/*
+ * Прозрачность и сдвиг на 6 px, замедление к концу, один раз — при
+ * открытии раздела. Отбор, страница и обновление секции не пересоздают.
+ * Заливка `backwards`: после анимации у блоков не остаётся `transform`.
+ */
+@keyframes emp-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes emp-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes emp-drop { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+
+.emp > .emp-head { animation: emp-rise 0.22s cubic-bezier(0.2, 0.7, 0.2, 1) backwards; }
+.emp > .emp-list { animation: emp-rise 0.22s cubic-bezier(0.2, 0.7, 0.2, 1) 0.05s backwards; }
+.emp > .emp-note { animation: emp-drop 0.16s ease-out backwards; }
+
+/* Новый состав страницы — карточки проявляются разом, без очереди. */
+.emp-cards { animation: emp-fade 0.16s ease-out backwards; }
+
+/* Обновление поверх показанного: карточки бледнеют и не нажимаются.
+   Короткая задержка — быстрый ответ проходит без мигания. */
+.emp-body { transition: opacity 0.14s ease; }
+.emp-list--busy .emp-body {
+  opacity: 0.5;
+  pointer-events: none;
+  transition: opacity 0.14s ease 0.1s;
+}
+
+/* Заглушки неподвижны и по форме карточки. */
+.emp-sk { display: block; height: 11px; border-radius: 6px; background: #eef3f9; }
+.emp-sk--photo { flex: 0 0 auto; width: 56px; height: 56px; border-radius: 12px; }
+.emp-sk--name { width: 60%; height: 15px; margin-bottom: 10px; }
+.emp-sk--line { width: 80%; margin-top: 8px; }
+.emp-sk--short { width: 50%; }
+.emp-sk--chip { width: 96px; height: 22px; border-radius: 11px; }
+.emp-card--sk { pointer-events: none; }
+.emp-card--sk:hover { border-color: var(--emp-line); box-shadow: none; }
+.emp-card--sk .emp-card__body { flex: 1 1 auto; min-width: 0; }
+
+/* Реакции. */
+.emp-btn,
+.emp-card,
+.emp-card__go,
+.emp-chip button,
+.emp-chips__clear,
+.emp-pages__one,
+.emp-pages__arrow {
+  transition: background-color 0.14s ease, border-color 0.14s ease, color 0.14s ease, box-shadow 0.14s ease;
+}
+
+.emp-card__go:active,
+.emp-pages__one:active:not(:disabled),
+.emp-pages__arrow:active:not(:disabled) { background: #eef3fa; }
+.emp-btn[aria-busy='true'] { cursor: progress; }
+
+/* Узкий телефон: «Экспорт» и «Добавить сотрудника» делят строку, а не
+   уходят за край (у второй была жёсткая ширина 229 px). */
+@media (max-width: 480px) {
+  .emp-head__actions { flex: 1 1 100%; min-width: 0; }
+  .emp-head__actions .emp-btn { flex: 1 1 auto; min-width: 0; }
+  .emp-head__actions .emp-btn--blue { width: auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .emp > .emp-head,
+  .emp > .emp-list,
+  .emp > .emp-note,
+  .emp-cards { animation: emp-fade 0.12s linear backwards; animation-delay: 0s; }
+  .emp-body,
+  .emp-list--busy .emp-body,
+  .emp-btn,
+  .emp-card,
+  .emp-card__go,
+  .emp-chip button,
+  .emp-chips__clear,
+  .emp-pages__one,
+  .emp-pages__arrow { transition: none; }
+}

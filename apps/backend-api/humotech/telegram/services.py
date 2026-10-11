@@ -36,11 +36,13 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import NoReturn
 
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
+from humotech.audit.models import AuditLog
 from humotech.core.errors import Conflict, NotFound, PermissionDenied, ValidationFailed
 from humotech.core.pagination import Page, paginate
 from humotech.core.rbac import Actor, snapshot
@@ -143,9 +145,9 @@ class TelegramLinkError(Conflict):
     существует ли такой сотрудник.
     """
 
-    def __init__(self, reason: str, message: str) -> None:
+    def __init__(self, reason: str, message: str, **extra) -> None:
         self.reason = reason
-        super().__init__(message, details={"reason": reason})
+        super().__init__(message, details={"reason": reason, **extra})
 
 
 class TelegramLinkService(BaseService):
@@ -216,8 +218,13 @@ class TelegramLinkService(BaseService):
         if invitation is None:
             # чужая организация отвечает так же, как отсутствие записи
             raise NotFound("Приглашение не найдено")
-        # проверка области — через сотрудника, правило там одно на весь проект
-        require_visible_employee(self.access, actor, invitation.employee_id)
+        # проверка области — через сотрудника, правило там одно на весь проект.
+        # Помощник зовут только действия telegram.manage, поэтому область
+        # берём в разрезе этого права (§3): право из одного назначения не
+        # должно работать на территории другого, выданного лишь на чтение.
+        require_visible_employee(
+            self.access, actor, invitation.employee_id, "telegram.manage"
+        )
         return invitation
 
     # ------------------------------------------------------------------ чтение
@@ -282,7 +289,9 @@ class TelegramLinkService(BaseService):
         оставил бы его без входа вовсе.
         """
         self.access.require(actor, "telegram.manage")
-        employee = require_visible_employee(self.access, actor, employee_id)
+        employee = require_visible_employee(
+            self.access, actor, employee_id, "telegram.manage"
+        )
         self._require_employee_linkable(employee)
 
         bot_username = settings.TELEGRAM["BOT_USERNAME"]
@@ -391,8 +400,31 @@ class TelegramLinkService(BaseService):
 
     # ------------------------------------------------------- решение HR
 
+    # --- решения HR: под блокировкой ---------------------------------------
+    #
+    # Подтверждение, отклонение и отключение читали состояние ДО транзакции и
+    # без блокировки, а потом записывали поля целиком. Одновременные
+    # «подтвердить» и «отключить» давали ACTIVE поверх REVOKED — отключённая
+    # привязка «оживала» (аудит 12.10, A-25). Теперь каждое решение идёт в
+    # транзакции, строки блокируются в одном порядке (приглашения сотрудника,
+    # затем его привязка), и прежние проверки состояния выполняются уже по
+    # заблокированным, актуальным строкам.
+
+    def _lock_employee_link(self, employee_id) -> None:
+        list(TelegramLinkInvitation.objects.select_for_update()
+             .filter(employee_id=employee_id).order_by("id").values_list("id", flat=True))
+        list(TelegramAccount.objects.select_for_update()
+             .filter(employee_id=employee_id).values_list("id", flat=True))
+
     def confirm(self, actor: Actor, invitation_id: uuid.UUID) -> TelegramAccount:
         """Подтверждение привязки. Только отсюда она становится рабочей."""
+        self.access.require(actor, "telegram.manage")
+        employee_id = self._require_invitation(actor, invitation_id).employee_id
+        with self.atomic():
+            self._lock_employee_link(employee_id)
+            return self._confirm_locked(actor, invitation_id)
+
+    def _confirm_locked(self, actor: Actor, invitation_id: uuid.UUID) -> TelegramAccount:
         self.access.require(actor, "telegram.manage")
         invitation = self._require_invitation(actor, invitation_id)
 
@@ -462,6 +494,13 @@ class TelegramLinkService(BaseService):
     def reject(self, actor: Actor, invitation_id: uuid.UUID) -> TelegramAccount | None:
         """Отклонение: по ссылке перешёл не тот, кому её выдавали."""
         self.access.require(actor, "telegram.manage")
+        employee_id = self._require_invitation(actor, invitation_id).employee_id
+        with self.atomic():
+            self._lock_employee_link(employee_id)
+            return self._reject_locked(actor, invitation_id)
+
+    def _reject_locked(self, actor: Actor, invitation_id: uuid.UUID) -> TelegramAccount | None:
+        self.access.require(actor, "telegram.manage")
         invitation = self._require_invitation(actor, invitation_id)
 
         if invitation.status != "PENDING_CONFIRMATION":
@@ -525,7 +564,14 @@ class TelegramLinkService(BaseService):
     def disconnect(self, actor: Actor, employee_id: uuid.UUID) -> TelegramAccount:
         """Отключение привязки. После этого ни бот, ни Mini App не пускают."""
         self.access.require(actor, "telegram.manage")
-        require_visible_employee(self.access, actor, employee_id)
+        require_visible_employee(self.access, actor, employee_id, "telegram.manage")
+        with self.atomic():
+            self._lock_employee_link(employee_id)
+            return self._disconnect_locked(actor, employee_id)
+
+    def _disconnect_locked(self, actor: Actor, employee_id: uuid.UUID) -> TelegramAccount:
+        self.access.require(actor, "telegram.manage")
+        require_visible_employee(self.access, actor, employee_id, "telegram.manage")
 
         account = self._account_of(employee_id)
         if account is None:
@@ -613,8 +659,14 @@ class TelegramLinkService(BaseService):
                 raise TelegramLinkError("invalid", "Ссылка недействительна")
 
             if invitation.status == "PENDING_CONFIRMATION":
+                # Повторный переход продолжает тот же сценарий. Какой — бот
+                # узнаёт отсюда: ссылка у всех одного вида.
+                from humotech.onboarding import progress as onboarding_progress
+
+                state = onboarding_progress.of_employee(invitation.employee_id)
                 raise TelegramLinkError(
-                    "pending", "Ссылка уже использована, привязка ждёт подтверждения"
+                    "pending", "Ссылка уже использована, привязка ждёт подтверждения",
+                    onboarding_required=state is not None and not state.completed,
                 )
             if invitation.status in ("USED", "REJECTED"):
                 raise TelegramLinkError("used", "Ссылка уже использована")
@@ -782,10 +834,31 @@ class TelegramLinkService(BaseService):
         )
         return account
 
-    def accept_terms(self, *, telegram_user_id: int) -> TelegramAccount:
-        """Активировать привязку после согласия сотрудника в чате с ботом."""
-        now = self._now()
+    def accept_terms(self, *, telegram_user_id: int) -> NoReturn:
+        """Записать согласие сотрудника с условиями. Доступа оно не открывает.
+
+        Раньше согласие по персональной ссылке сразу делало привязку
+        рабочей. Но ссылка — не личность: её пересылают, перехватывают в
+        почте и мессенджерах, она живёт сутки, а ссылка на ознакомление —
+        неделю. Кто первым её открывал и нажимал «согласен», получал
+        кабинет чужого сотрудника. Теперь путь один для ссылки и для
+        узнавания по имени: согласие пишется в журнал, привязка остаётся
+        PENDING, а рабочей её делает только `confirm` — решение HR,
+        который видит, какой именно Telegram перешёл по ссылке.
+
+        Ответ всегда — `hr_confirmation_required`: бот по нему говорит
+        человеку, что доступ откроет отдел кадров.
+        """
         with transaction.atomic():
+            # Тот же порядок блокировок, что в `confirm`/`reject`/`disconnect`:
+            # сначала приглашения сотрудника, затем привязка. В обратном
+            # порядке одновременные «согласен» и подтверждение HR ловили
+            # deadlock (аудит 12.10, A-25).
+            employee_id = TelegramAccount.objects.filter(
+                telegram_user_id=telegram_user_id, status="PENDING"
+            ).values_list("employee_id", flat=True).first()
+            if employee_id is not None:
+                self._lock_employee_link(employee_id)
             account = TelegramAccount.objects.select_for_update().filter(
                 telegram_user_id=telegram_user_id, status="PENDING"
             ).first()
@@ -798,35 +871,50 @@ class TelegramLinkService(BaseService):
             ).first()
             if invitation is None:
                 raise TelegramLinkError("invalid", "Приглашение не найдено")
-            if invitation.consumed_via == "USERNAME":
-                # Узнали по имени в Telegram, а не по ссылке. Имя можно
-                # занять: кадровик вписал его в карточку, а в Telegram его
-                # взял посторонний. Согласие такого человека с условиями
-                # доступа не открывает — только подтверждение HR.
-                raise TelegramLinkError(
-                    "hr_confirmation_required",
-                    "Привязку подтвердит отдел кадров",
+            # Согласие пишется один раз: повторное нажатие кнопки не должно
+            # засорять журнал одинаковыми записями.
+            already = AuditLog.objects.filter(
+                entity_type=ENTITY_ACCOUNT,
+                entity_id=account.id,
+                action="telegram.link.accept_terms",
+                occurred_at__gte=invitation.used_at,
+            ).exists()
+            if not already:
+                self.audit.record_by_employee(
+                    organization_id=account.organization_id,
+                    employee_id=account.employee_id,
+                    action="telegram.link.accept_terms", entity_type=ENTITY_ACCOUNT,
+                    entity_id=account.id, after=snapshot(account, ACCOUNT_AUDIT_FIELDS),
                 )
-            account.status = "ACTIVE"
-            account.connected_at = now
-            account.save(update_fields=["status", "connected_at", "updated_at"])
-            invitation.status = "USED"
-            invitation.reviewed_at = now
-            invitation.save(update_fields=["status", "reviewed_at", "updated_at"])
-            Employee.objects.filter(pk=account.employee_id).update(telegram_connected=True)
-            self.audit.record_by_employee(
-                organization_id=account.organization_id, employee_id=account.employee_id,
-                action="telegram.link.accept_terms", entity_type=ENTITY_ACCOUNT,
-                entity_id=account.id, after=snapshot(account, ACCOUNT_AUDIT_FIELDS),
-            )
-        return account
+        # Вне транзакции: исключение внутри неё откатило бы запись согласия.
+        raise TelegramLinkError(
+            "hr_confirmation_required",
+            "Привязку подтвердит отдел кадров",
+        )
 
 
 def welcome_facts(employee) -> dict:
     """Чем бот здоровается с узнанным сотрудником.
 
-    Только то, что человек и так про себя знает: кто он, где работает и
-    по какому графику. Сообщать что-то сверх этого боту нечем и незачем.
+    ТОЛЬКО имя для приветствия. Узнавание по `@username` слабее ссылки:
+    имя в Telegram можно сменить и занять чужое, а этот ответ уходит
+    ЕЩЁ ДО подтверждения кадровиком. Поэтому здесь не должно быть ничего,
+    что человек про узнанного ещё не знает: офис, отдел, должность,
+    график и руководитель — это персональные данные сотрудника, и
+    показывать их тому, кто лишь предъявил совпавшее имя, нельзя.
+    Остальное человек увидит в Mini App, когда HR подтвердит привязку.
+    """
+    return {"first_name": employee.first_name}
+
+
+def employment_facts(employee) -> dict:
+    """Полный набор о месте работы — для сообщений САМОМУ сотруднику.
+
+    В отличие от `welcome_facts`, это НЕ ответ на слабое узнавание по
+    `@username`: набор идёт в уведомления, которые приходят уже принятому
+    человеку в его собственный чат (приём, перевод, итог стажировки).
+    Это его собственные данные, которые он и так про себя знает, поэтому
+    здесь они уместны — а в ответе бота до подтверждения кадровиком нет.
     """
     from humotech.employees.models import EmployeeAssignment
     from humotech.schedules.services import WorkScheduleService

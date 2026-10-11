@@ -31,3 +31,7 @@ proxy_set_header X-Real-IP $remote_addr;
 proxy_set_header X-Forwarded-For $remote_addr;
 proxy_set_header X-Forwarded-Proto $forwarded_proto;
 proxy_set_header X-Forwarded-Host $host;
+# Метка запроса — от шлюза, а не от клиента: присланный снаружи
+# X-Request-ID затирается, backend пишет метку в каждую строку лога и
+# возвращает её в ответе (аудит 12.10, A-42).
+proxy_set_header X-Request-ID $request_id;

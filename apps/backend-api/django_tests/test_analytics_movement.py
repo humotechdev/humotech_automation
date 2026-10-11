@@ -118,7 +118,7 @@ class TestHeadcount:
         # Стажёр — работающий человек. Не видеть его в численности значит
         # отчитываться не тем числом, которое стоит в коридоре.
         person(organization, office, number="G", hired=date(2026, 3, 1),
-               status="PROBATION")
+               status="ACTIVE")
 
         report = service.report(hr, first=date(2026, 3, 1), last=date(2026, 3, 31))
 

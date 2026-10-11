@@ -221,6 +221,31 @@ describe('сканирование', () => {
     expect(body.latitude).toBe(41.311123);
     expect(body.longitude).toBe(69.240568);
     expect(body.accuracy_m).toBe(18.4);
+    // Точка получена во время скана: её возраст — секунды, не минуты,
+    // и сервер видит, откуда она.
+    expect(body.location_source).toBe('browser');
+    expect(body.location_age_s).toBeGreaterThanOrEqual(0);
+    expect(body.location_age_s).toBeLessThan(15);
+  });
+
+  it('точка без погрешности — просьба повторить, а не отправка с «30 м»', async () => {
+    const scanner = openTelegram();
+    const { calls } = stubApi();
+    Object.defineProperty(window.navigator, 'geolocation', {
+      configurable: true,
+      value: {
+        getCurrentPosition: (ok: (position: unknown) => void) =>
+          ok({ coords: { latitude: 41.3, longitude: 69.3, accuracy: null } }),
+      },
+    });
+    atScanRoute();
+
+    render(<App />);
+    await waitFor(() => expect(scanner.show).toHaveBeenCalled());
+    scanner.emit(STICKER);
+
+    await screen.findByText(/не сказал, насколько оно точное/);
+    expect(posted(calls, '/me/attendance/scan')).toHaveLength(0);
   });
 
   it('без координат печатный код не отправляется вовсе', async () => {
@@ -256,7 +281,7 @@ describe('сканирование', () => {
     expect(posted(calls, '/me/attendance/scan')).toHaveLength(1);
   });
 
-  it('«слишком далеко» называет расстояние, а не спорит', async () => {
+  it('«слишком далеко» не называет цифр, даже если они пришли', async () => {
     const scanner = openTelegram();
     stubApi({
       scan: {
@@ -273,7 +298,7 @@ describe('сканирование', () => {
     scanner.emit(STICKER);
 
     await screen.findByText('Вы слишком далеко от офиса');
-    expect(screen.getByText(/342 м.*100 м/)).toBeTruthy();
+    expect(screen.queryByText(/342/)).toBeNull();
   });
 
   it('чужой код в кадре не закрывает сканер и не уходит на сервер', async () => {

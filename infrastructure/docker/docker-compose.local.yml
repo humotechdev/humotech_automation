@@ -150,6 +150,73 @@ services:
     stop_grace_period: 40s
     logging: *logging
 
+  # Поток событий CRM (SSE) и ожидание очереди ботом — отдельный
+  # ASGI-процесс на том же образе. В gunicorn каждое долгое соединение
+  # держало бы синхронный воркер целиком: трёх открытых вкладок CRM
+  # хватило бы, чтобы остальной API перестал отвечать. Здесь соединение —
+  # это корутина, а весь обычный API остаётся на gunicorn.
+  #
+  # Шлюз от этого процесса не зависит: без него CRM переходит на редкий
+  # опрос, а бот — на прежние пять секунд. Упавший поток событий не
+  # роняет ни API, ни отправку в Telegram.
+  events:
+    build:
+      context: ../../apps/backend-api
+    image: humotech/backend:local
+    container_name: humotech_events
+    env_file:
+      - ../../apps/backend-api/.env
+    environment: *backend_env
+    command:
+      - uvicorn
+      - config.asgi:application
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8001"
+      # Один процесс: один слушатель LISTEN на всех. Нагрузка —
+      # десятки долгих соединений, а не тысячи запросов в секунду.
+      - --workers
+      - "1"
+      # Django не реализует lifespan ASGI; без флага uvicorn пишет
+      # предупреждение на каждый старт.
+      - --lifespan
+      - "off"
+      # Адрес клиента разбирает Django (TRUSTED_PROXY_COUNT), как и у
+      # gunicorn. Uvicorn его не трогает.
+      - --no-proxy-headers
+      # Открытые потоки при остановке закрываются быстро: CRM
+      # переподключится сама, ждать её не нужно.
+      - --timeout-graceful-shutdown
+      - "5"
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - -fsS
+        - -o
+        - /dev/null
+        - -H
+        - "Host: ${NGROK_DOMAIN:?нужен NGROK_DOMAIN в infrastructure/docker/.env}"
+        - -H
+        - "X-Forwarded-Proto: https"
+        - http://127.0.0.1:8001/healthz
+      interval: 15s
+      timeout: 10s
+      start_period: 30s
+      retries: 5
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - humotech
+    restart: unless-stopped
+    stop_signal: SIGTERM
+    stop_grace_period: 15s
+    logging: *logging
+
   bot:
     build:
       context: ../../apps/employee-telegram-bot

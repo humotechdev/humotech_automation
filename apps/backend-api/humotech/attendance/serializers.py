@@ -57,10 +57,19 @@ class AttendanceEventSerializer(serializers.Serializer):
         help_text="Кто внёс ручную отметку; у отметки по QR — пусто",
     )
 
+    anomalies = serializers.SerializerMethodField(
+        help_text="Почему принятую отметку стоит проверить: NO_LOCATION, "
+        "PERFECT_ACCURACY, SHARED_CODE. Пусто — признаков нет",
+    )
+
     def get_author_name(self, event) -> str | None:
         authors = self.context.get("authors") or {}
         user_id = (event.event_metadata or {}).get("created_by_user_id")
         return authors.get(str(user_id)) if user_id else None
+
+    def get_anomalies(self, event) -> list[str]:
+        found = (event.event_metadata or {}).get("anomalies") or []
+        return [str(item) for item in found if isinstance(item, str)]
 
     # Ни `qr_nonce_hash`, ни координат, ни IP: журнал смотрит кадровик,
     # а это технические поля разбора инцидентов. Их место в аудите.
@@ -119,6 +128,7 @@ class PresenceRowSerializer(serializers.Serializer):
     notice_kind = serializers.CharField(allow_null=True)
     notice_comment = serializers.CharField(allow_null=True)
     conflicting_marks = serializers.BooleanField()
+    field_work = serializers.DictField(allow_null=True)
     # Отрезки присутствия за день. Шкале рабочего дня их не собрать из
     # первого входа и последнего выхода: обед между ними пропал бы.
     intervals = PresenceIntervalSerializer(many=True)
@@ -156,11 +166,27 @@ class CorrectionDecisionSerializer(serializers.Serializer):
     )
 
 
+class WallClockDateTimeField(serializers.DateTimeField):
+    """Время без смещения остаётся «наивным» — его пояс решает сервис.
+
+    CRM вводит отметку как «время офиса» и смещения не шлёт. Стандартное
+    поле DRF приписало бы наивному времени пояс сервера (UTC), и 09:00 по
+    Ташкенту сохранялось бы как 09:00 UTC (аудит 12.10, C-04). Время со
+    смещением (`Z`, `+05:00`) приводится к UTC как обычно.
+    """
+
+    def enforce_timezone(self, value):
+        if value.tzinfo is None:
+            return value
+        return super().enforce_timezone(value)
+
+
 class ManualEventSerializer(serializers.Serializer):
     employee_id = serializers.UUIDField()
     office_id = serializers.UUIDField()
     event_type = serializers.ChoiceField(choices=["ENTRY", "EXIT"])
-    occurred_at = serializers.DateTimeField()
+    # Без смещения — время офиса (см. WallClockDateTimeField).
+    occurred_at = WallClockDateTimeField()
     # Причина обязательна на уровне схемы, а не только сервиса: по этим
     # отметкам считают рабочее время, и запись без основания в системе
     # существовать не должна.

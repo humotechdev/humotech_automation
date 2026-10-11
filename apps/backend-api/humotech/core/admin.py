@@ -29,7 +29,99 @@ from humotech.core.clientip import client_ip
 from humotech.core.rbac import Actor, AuditTrail, snapshot
 
 
-class ReadOnlyAdmin(admin.ModelAdmin):
+def _has_field(model, name: str) -> bool:
+    try:
+        model._meta.get_field(name)
+    except Exception:
+        return False
+    return True
+
+
+class OrganizationScopedAdmin(admin.ModelAdmin):
+    """Админка видит и правит только организацию вошедшего.
+
+    `is_staff` даёт SUPER_ADMIN любой организации, а наборы записей
+    админки раньше не фильтровались: администратор организации A читал и
+    правил пользователей, роли и сотрудников организации B — вплоть до
+    выдачи себе роли в B (аудит 11.10, M-7). Теперь:
+
+      * списки и карточки — только строки своей организации (у самой
+        организации — только своя запись);
+      * выпадающие списки связей — тоже только своя организация, иначе
+        чужую запись подставили бы через форму;
+      * системная запись без организации (общая роль) открывается на
+        чтение, но не правится: правка задела бы все организации.
+    """
+
+    def _organization_id(self, request):
+        return getattr(request.user, "organization_id", None)
+
+    def get_queryset(self, request):
+        queryset = super().get_queryset(request)
+        mine = self._organization_id(request)
+        model = queryset.model
+        if model._meta.db_table == "organizations":
+            return queryset.filter(pk=mine)
+        if _has_field(model, "organization"):
+            field = model._meta.get_field("organization")
+            if field.null:
+                from django.db.models import Q
+
+                return queryset.filter(Q(organization_id=mine) | Q(organization__isnull=True))
+            return queryset.filter(organization_id=mine)
+        return queryset
+
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        related = db_field.related_model
+        mine = self._organization_id(request)
+        if related._meta.db_table == "organizations":
+            kwargs["queryset"] = related.objects.filter(pk=mine)
+        elif _has_field(related, "organization"):
+            from django.db.models import Q
+
+            kwargs["queryset"] = related.objects.filter(
+                Q(organization_id=mine) | Q(organization__isnull=True)
+                if related._meta.get_field("organization").null
+                else Q(organization_id=mine)
+            )
+        return super().formfield_for_foreignkey(db_field, request, **kwargs)
+
+    def formfield_for_manytomany(self, db_field, request, **kwargs):
+        related = db_field.related_model
+        if _has_field(related, "organization"):
+            kwargs["queryset"] = related.objects.filter(
+                organization_id=self._organization_id(request))
+        return super().formfield_for_manytomany(db_field, request, **kwargs)
+
+    def get_list_filter(self, request):
+        """Фильтр по связи строит варианты по всей таблице и показал бы
+        названия чужих организаций, регионов и ролей. RelatedOnly берёт
+        только значения из видимых строк (независимая проверка 11.10, F-4)."""
+        result = []
+        for item in super().get_list_filter(request):
+            if isinstance(item, str):
+                try:
+                    field = self.model._meta.get_field(item)
+                except Exception:
+                    field = None
+                if field is not None and getattr(field, "is_relation", False):
+                    result.append((item, admin.RelatedOnlyFieldListFilter))
+                    continue
+            result.append(item)
+        return result
+
+    def has_change_permission(self, request, obj=None) -> bool:
+        system_row = (
+            obj is not None
+            and _has_field(type(obj), "organization")
+            and getattr(obj, "organization_id", None) is None
+        )
+        if system_row:
+            return False
+        return super().has_change_permission(request, obj)
+
+
+class ReadOnlyAdmin(OrganizationScopedAdmin):
     """Только просмотр и поиск. Ничего не создаёт и не удаляет."""
 
     def has_add_permission(self, request) -> bool:
@@ -42,7 +134,7 @@ class ReadOnlyAdmin(admin.ModelAdmin):
         return False
 
 
-class OperationalAdmin(admin.ModelAdmin):
+class OperationalAdmin(OrganizationScopedAdmin):
     """Просмотр и правка, но без удаления. Каждая правка — в журнал.
 
     Удаление закрыто намеренно: у этих таблиц есть история, и внешние ключи
@@ -119,6 +211,16 @@ def _record_admin_change(request, obj, form, *, change: bool, before) -> None:
         user_agent=request.META.get("HTTP_USER_AGENT"),
     )
 
+
+# Группы Django в HUMOTECH не используются (права — роли и области), а
+# стандартная админка групп не знает об организациях. Лишний интерфейс
+# управления доступом убираем (аудит 11.10, M-7).
+try:
+    from django.contrib.auth.models import Group
+
+    admin.site.unregister(Group)
+except admin.sites.NotRegistered:
+    pass
 
 admin.site.site_header = "HUMOTECH — техническая панель"
 admin.site.site_title = "HUMOTECH"

@@ -102,7 +102,8 @@ describe('список', () => {
       (await screen.findByText(label, { selector: 'dt' })).parentElement?.querySelector('dd')?.textContent;
     expect(await fact('Отдел')).toBe('Операционный отдел');
     expect(await fact('Должность')).toBe('Специалист поддержки');
-    expect(await fact('Офис')).toBe('Ташкент');
+    // Офис — вместе с регионом, как в новой карточке: «Главный офис, Ташкент».
+    expect(await fact('Офис')).toBe('Ташкент, Центр');
   });
 
   test('счётчики не зависят от выбранной занятости', async () => {
