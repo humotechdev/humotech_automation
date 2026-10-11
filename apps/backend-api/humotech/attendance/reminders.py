@@ -285,11 +285,13 @@ def _is_working_day(office, day: date) -> bool:
 def _already_marked(employee_id: uuid.UUID, day: date, zone) -> bool:
     """Отмечался ли человек сегодня. Любая принятая отметка считается."""
     start, end = day_bounds(day, zone)
+    from humotech.attendance.models import counted_events_q
+
     return AttendanceEvent.objects.filter(
+        counted_events_q(),
         employee_id=employee_id,
         occurred_at__gte=start,
         occurred_at__lt=end,
-        verification_status__in=COUNTED_VERIFICATION,
     ).exists()
 
 

@@ -255,6 +255,14 @@ def _register_locked(
     occurred_at = occurred_at or now
     office_id = qr_point.office_id  # офис берём ТОЛЬКО отсюда
 
+    # Вчерашний вход без выхода закрывается автовыходом ДО выбора
+    # направления (решение владельца Р-1): иначе утренний скан на точке
+    # «вход и выход» стал бы выходом длиной в сутки. Блокировка сотрудника
+    # уже взята — фоновая задача и скан не закроют сессию дважды.
+    from humotech.attendance.auto_close import close_for_employee
+
+    close_for_employee(employee_id, occurred_at)
+
     # Same employee lock as HR request and Telegram decision. Do not count
     # physical QR time on top of an already credited full field-work shift.
     active_field_work = list(FieldWorkRequest.objects.select_related("office", "office__organization")

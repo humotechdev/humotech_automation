@@ -28,6 +28,12 @@ def session_json(session) -> dict:
         "office_name": session.office_name,
         "entry_point_name": session.entry_point_name,
         "exit_point_name": session.exit_point_name,
+        # Автовыход: выход не отмечен, сессию закрыла система. `ended_at`
+        # у такой сессии — технический момент закрытия, а не выход; часы
+        # не подтверждены и идут отдельным полем (решение Р-1).
+        "auto_closed": session.auto_closed,
+        "closure_kind": session.closure_kind,
+        "unconfirmed_seconds": session.unconfirmed_seconds,
     }
 
 
@@ -46,6 +52,7 @@ def day_json(day: DayRecord) -> dict:
         # Без неё клиенту нечем отличить «отработал день» от «отработал
         # два часа»: конец смены минус начало считает вместе с обедом.
         "norm_seconds": day.norm_seconds,
+        "unconfirmed_seconds": day.unconfirmed_seconds,
     }
 
 
@@ -55,6 +62,7 @@ def summary_json(report: PeriodReport) -> dict:
         "last": report.last.isoformat(),
         "timezone": report.timezone,
         "seconds": report.seconds,
+        "unconfirmed_seconds": report.unconfirmed_seconds,
         "completed_sessions": report.completed_sessions,
         "open_sessions": report.open_sessions,
         # null, а не ноль: график не назначен — значит, рабочих дней

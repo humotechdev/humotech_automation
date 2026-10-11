@@ -71,6 +71,17 @@ class AttendanceEventSerializer(serializers.Serializer):
         found = (event.event_metadata or {}).get("anomalies") or []
         return [str(item) for item in found if isinstance(item, str)]
 
+    review_decision = serializers.SerializerMethodField(
+        help_text="Решение HR по отметке «на проверке»: CONFIRM, ANNUL или "
+        "пусто — решения ещё нет (решение владельца Р-3)",
+    )
+
+    def get_review_decision(self, event) -> str | None:
+        try:
+            return event.review.decision
+        except Exception:  # noqa: BLE001 — решения нет: ObjectDoesNotExist
+            return None
+
     # Ни `qr_nonce_hash`, ни координат, ни IP: журнал смотрит кадровик,
     # а это технические поля разбора инцидентов. Их место в аудите.
 
@@ -87,9 +98,20 @@ class AttendanceSessionSerializer(serializers.Serializer):
     status = serializers.CharField()
     is_open = serializers.SerializerMethodField()
     created_at = serializers.DateTimeField()
+    #: Версия строки — передаётся обратно в правку как `expected_updated_at`.
+    updated_at = serializers.DateTimeField()
+    #: Автовыход (Р-1) или аннулированный выход (Р-3): `ended_at` —
+    #: технический момент закрытия, часы — неподтверждённые.
+    auto_closed = serializers.SerializerMethodField()
+    closure_kind = serializers.CharField(allow_null=True)
+    unconfirmed_seconds = serializers.IntegerField(allow_null=True)
+    auto_closed_at = serializers.DateTimeField(allow_null=True)
 
     def get_is_open(self, session) -> bool:
         return session.ended_at is None
+
+    def get_auto_closed(self, session) -> bool:
+        return session.status == "AUTO_CLOSED"
 
 
 class PresenceIntervalSerializer(serializers.Serializer):
@@ -98,6 +120,9 @@ class PresenceIntervalSerializer(serializers.Serializer):
     started_at = serializers.DateTimeField()
     ended_at = serializers.DateTimeField(allow_null=True)
     seconds = serializers.IntegerField()
+    #: Автовыход: конца нет, но человек НЕ в офисе (решение Р-1).
+    auto_closed = serializers.BooleanField()
+    unconfirmed_seconds = serializers.IntegerField()
 
 
 class PresenceRowSerializer(serializers.Serializer):
@@ -133,6 +158,8 @@ class PresenceRowSerializer(serializers.Serializer):
     # первого входа и последнего выхода: обед между ними пропал бы.
     intervals = PresenceIntervalSerializer(many=True)
     outside_geofence = serializers.BooleanField()
+    auto_closed = serializers.BooleanField()
+    unconfirmed_seconds = serializers.IntegerField()
 
 
 class CorrectionRequestSerializer(serializers.Serializer):
@@ -191,3 +218,38 @@ class ManualEventSerializer(serializers.Serializer):
     # отметкам считают рабочее время, и запись без основания в системе
     # существовать не должна.
     reason = serializers.CharField(min_length=3, max_length=1000)
+
+
+class SessionExitSerializer(serializers.Serializer):
+    """Фактический выход у сессии без выхода (открытой или с автовыходом)."""
+
+    ended_at = WallClockDateTimeField()
+    reason = serializers.CharField(min_length=3, max_length=1000)
+    expected_updated_at = serializers.DateTimeField(required=False, allow_null=True)
+
+
+class SessionCorrectSerializer(serializers.Serializer):
+    started_at = WallClockDateTimeField(required=False, allow_null=True)
+    ended_at = WallClockDateTimeField(required=False, allow_null=True)
+    reason = serializers.CharField(min_length=3, max_length=1000)
+    expected_updated_at = serializers.DateTimeField(required=False, allow_null=True)
+
+
+class SessionCreateSerializer(serializers.Serializer):
+    employee_id = serializers.UUIDField()
+    office_id = serializers.UUIDField()
+    started_at = WallClockDateTimeField()
+    ended_at = WallClockDateTimeField()
+    reason = serializers.CharField(min_length=3, max_length=1000)
+
+
+class EventReviewSerializer(serializers.Serializer):
+    decision = serializers.ChoiceField(choices=["CONFIRM", "ANNUL"])
+    reason = serializers.CharField(min_length=3, max_length=1000)
+
+
+class EventReviewResultSerializer(serializers.Serializer):
+    event_id = serializers.UUIDField()
+    decision = serializers.CharField()
+    reason = serializers.CharField()
+    decided_at = serializers.DateTimeField()

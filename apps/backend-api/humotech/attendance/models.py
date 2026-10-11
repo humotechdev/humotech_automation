@@ -12,6 +12,8 @@ from humotech.core.enums import (
     ATTENDANCE_SOURCES,
     CORRECTION_REQUEST_STATUSES,
     DAY_NOTICE_KINDS,
+    REVIEW_DECISIONS,
+    SESSION_CLOSURE_KINDS,
     VERIFICATION_STATUSES,
     choices,
     status_check,
@@ -225,6 +227,17 @@ class AttendanceSession(
         max_length=20, choices=choices(ATTENDANCE_SESSION_STATUSES)
     )
     calculated_at = models.DateTimeField(null=True, blank=True)
+    #: Почему сессия закрыта без подтверждённого выхода (AUTO_CLOSED).
+    closure_kind = models.CharField(
+        max_length=20, choices=choices(SESSION_CLOSURE_KINDS), null=True, blank=True
+    )
+    #: Неподтверждённое время: от входа до технического закрытия. В
+    #: подтверждённые часы (`duration_seconds`) оно не входит, пока HR не
+    #: укажет фактический выход (решение владельца Р-1).
+    unconfirmed_seconds = models.IntegerField(null=True, blank=True)
+    #: Когда система закрыла сессию автоматически. `ended_at` у такой
+    #: сессии — технический момент закрытия, а НЕ фактический выход.
+    auto_closed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "attendance_sessions"
@@ -254,6 +267,21 @@ class AttendanceSession(
                 condition=Q(status="OPEN"),
                 name="uq_attendance_sessions_one_open",
             ),
+            status_check(
+                "closure_kind", SESSION_CLOSURE_KINDS,
+                "ck_attendance_sessions_closure_kind", nullable=True,
+            ),
+            # Автовыход: сессия закрыта технически, подтверждённого времени
+            # нет, причина закрытия указана.
+            raw_check(
+                "status <> 'AUTO_CLOSED' OR (ended_at IS NOT NULL "
+                "AND duration_seconds = 0 AND closure_kind IS NOT NULL)",
+                "ck_attendance_sessions_auto_closed_shape",
+            ),
+            raw_check(
+                "unconfirmed_seconds IS NULL OR unconfirmed_seconds >= 0",
+                "ck_attendance_sessions_unconfirmed_non_negative",
+            ),
         ]
         indexes = [
             models.Index(
@@ -271,6 +299,48 @@ class AttendanceSession(
 
     def __str__(self) -> str:
         return f"{self.employee_id} {self.started_at:%Y-%m-%d}"
+
+
+class AttendanceEventReview(UUIDPrimaryKeyModel, OrganizationScopedModel, CreatedAtModel):
+    """Решение HR по подозрительной (REVIEW) отметке (решение владельца Р-3).
+
+    Отдельной строкой, а не правкой события: событие неизменно, и его
+    `verification_status` держит уникальность одноразового кода — пересланный
+    код и после аннулирования второй раз засчитаться не должен. Одно решение
+    на событие; передумать — значит оформить исправление сессии, а не
+    переписать решение.
+    """
+
+    event = models.OneToOneField(
+        AttendanceEvent,
+        on_delete=models.PROTECT,
+        db_column="event_id",
+        related_name="review",
+    )
+    decision = models.CharField(max_length=20, choices=choices(REVIEW_DECISIONS))
+    reason = models.TextField()
+    decided_by_user = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,
+        db_column="decided_by_user_id",
+        db_index=False,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    decided_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "attendance_event_reviews"
+        verbose_name = "решение по подозрительной отметке"
+        verbose_name_plural = "решения по подозрительным отметкам"
+        constraints = [
+            status_check("decision", REVIEW_DECISIONS, "ck_attendance_event_reviews_decision"),
+        ]
+        indexes = [
+            models.Index(fields=["organization"],
+                         name="ix_attendance_event_reviews_org_id"),
+        ]
 
 
 class FieldWorkRequest(UUIDPrimaryKeyModel, OrganizationScopedModel, TimestampedModel):
@@ -444,3 +514,15 @@ class DayNotice(UUIDPrimaryKeyModel, OrganizationScopedModel, TimestampedModel):
 
     def __str__(self) -> str:
         return f"{self.kind} {self.employee_id} {self.day}"
+
+
+def counted_events_q() -> Q:
+    """Отметки, которые считаются состоявшимися.
+
+    ACCEPTED и REVIEW — как раньше, минус отметки, аннулированные HR
+    (решение владельца Р-3). Уникальность одноразового кода этим НЕ
+    ослабляется: её держит `verification_status` самого события.
+    """
+    from humotech.core.enums import COUNTED_VERIFICATION
+
+    return Q(verification_status__in=COUNTED_VERIFICATION) & ~Q(review__decision="ANNUL")

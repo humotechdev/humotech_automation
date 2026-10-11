@@ -575,6 +575,17 @@ class DailyRowSerializer(drf_serializers.Serializer):
         help_text="Отметки в день подтверждённого отсутствия — расхождение",
     )
     field_work = drf_serializers.DictField(allow_null=True)
+    norm_seconds = drf_serializers.IntegerField(
+        allow_null=True,
+        help_text="Норма дня из графика (D-03); null — графика нет или норма не определена",
+    )
+    is_working_day = drf_serializers.BooleanField(allow_null=True)
+    auto_closed = drf_serializers.BooleanField(
+        help_text="Автовыход: выход не отмечен, сессию закрыла система (Р-1)",
+    )
+    unconfirmed_seconds = drf_serializers.IntegerField(
+        help_text="Неподтверждённое время автовыхода; в `seconds` не входит",
+    )
 
 
 class DailyTotalsSerializer(drf_serializers.Serializer):
@@ -586,6 +597,8 @@ class DailyTotalsSerializer(drf_serializers.Serializer):
     late_days = drf_serializers.IntegerField()
     late_minutes = drf_serializers.IntegerField()
     open_sessions = drf_serializers.IntegerField()
+    norm_seconds = drf_serializers.IntegerField()
+    unconfirmed_seconds = drf_serializers.IntegerField()
 
 
 class DailyResponseSerializer(drf_serializers.Serializer):
@@ -651,3 +664,101 @@ class EmployeeDailyView(APIView):
                 actor, employee_id, first=first, last=last
             )
         )
+
+
+from humotech.attendance.serializers import (  # noqa: E402
+    AttendanceSessionSerializer,
+    EventReviewResultSerializer,
+    EventReviewSerializer,
+    SessionCorrectSerializer,
+    SessionCreateSerializer,
+    SessionExitSerializer,
+)
+
+
+class _SessionWrite(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @staticmethod
+    def _answer(session, status_code=http_status.HTTP_200_OK):
+        from humotech.attendance.serializers import AttendanceSessionSerializer
+
+        return Response(AttendanceSessionSerializer(session).data, status=status_code)
+
+
+class SessionExitView(_SessionWrite):
+    """Указать фактический выход у сессии без выхода (решения Р-1, Р-2)."""
+
+    @extend_schema(
+        summary="Фактический выход сессии",
+        description=(
+            "Для открытой сессии или сессии с автовыходом. Создаёт событие "
+            "выхода MANUAL; время становится подтверждённым. Причина "
+            "обязательна; `expected_updated_at` защищает от правки по "
+            "устаревшему экрану (409)."
+        ),
+        request=SessionExitSerializer, responses=AttendanceSessionSerializer,
+        tags=["Посещаемость"],
+    )
+    def post(self, request, session_id):
+        from humotech.attendance.serializers import SessionExitSerializer
+        from humotech.attendance.sessions_hr import AttendanceSessionService
+
+        payload = validated(SessionExitSerializer, request.data)
+        session = AttendanceSessionService().set_exit(
+            Actor.from_user(request.user), session_id, **payload)
+        return self._answer(session)
+
+
+class SessionCorrectView(_SessionWrite):
+    """Исправить время закрытой сессии (решение Р-2)."""
+
+    @extend_schema(summary="Исправить сессию", request=SessionCorrectSerializer,
+                   responses=AttendanceSessionSerializer, tags=["Посещаемость"])
+    def post(self, request, session_id):
+        from humotech.attendance.serializers import SessionCorrectSerializer
+        from humotech.attendance.sessions_hr import AttendanceSessionService
+
+        payload = validated(SessionCorrectSerializer, request.data)
+        session = AttendanceSessionService().correct(
+            Actor.from_user(request.user), session_id, **payload)
+        return self._answer(session)
+
+
+class SessionCreateView(_SessionWrite):
+    """Создать сессию за прошедший интервал (решение Р-2)."""
+
+    @extend_schema(summary="Создать сессию", request=SessionCreateSerializer,
+                   responses=AttendanceSessionSerializer, tags=["Посещаемость"])
+    def post(self, request):
+        from humotech.attendance.serializers import SessionCreateSerializer
+        from humotech.attendance.sessions_hr import AttendanceSessionService
+
+        payload = validated(SessionCreateSerializer, request.data)
+        session = AttendanceSessionService().create_session(
+            Actor.from_user(request.user), **payload)
+        return self._answer(session, http_status.HTTP_201_CREATED)
+
+
+class EventReviewView(APIView):
+    """Подтвердить или аннулировать подозрительную отметку (решение Р-3)."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(summary="Решение по подозрительной отметке",
+                   request=EventReviewSerializer, responses=EventReviewResultSerializer,
+                   tags=["Посещаемость"])
+    def post(self, request, event_id):
+        from humotech.attendance.serializers import (
+            EventReviewResultSerializer,
+            EventReviewSerializer,
+        )
+        from humotech.attendance.sessions_hr import AttendanceSessionService
+
+        payload = validated(EventReviewSerializer, request.data)
+        review = AttendanceSessionService().review_event(
+            Actor.from_user(request.user), event_id, **payload)
+        return Response(EventReviewResultSerializer({
+            "event_id": review.event_id, "decision": review.decision,
+            "reason": review.reason, "decided_at": review.decided_at,
+        }).data)

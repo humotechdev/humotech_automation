@@ -455,6 +455,7 @@ class AnalyticsService(BaseService):
             .exclude(status="INVALID")
             .select_related("office", "office__organization")
             .only("employee_id", "started_at", "ended_at", "duration_seconds", "status",
+                  "unconfirmed_seconds",
                   "office__timezone", "office__organization__default_timezone")
         )
         for row in rows:
@@ -561,6 +562,8 @@ class AnalyticsService(BaseService):
         overtime_seconds = 0
         undertime_seconds = 0
         days_without_norm = 0
+        unconfirmed_seconds = 0
+        auto_closed_sessions = 0
         series: list[DayPoint] = []
 
         for day in days_in(first, last):
@@ -588,6 +591,10 @@ class AnalyticsService(BaseService):
                     office_seconds += seconds
                     day_worked += seconds
                     open_sessions += sum(1 for s in day_sessions if s.ended_at is None)
+                    for one in day_sessions:
+                        if one.status == "AUTO_CLOSED":
+                            auto_closed_sessions += 1
+                            unconfirmed_seconds += one.unconfirmed_seconds or 0
 
                 if absence_code is not None:
                     if absence_code in SICK_CODES:
@@ -708,6 +715,12 @@ class AnalyticsService(BaseService):
             # отклонение — не утверждённая переработка (D-04).
             "approved_overtime_seconds": None,
             "days_without_norm": days_without_norm,
+            # Автовыход (решение Р-1): часы до полуночи не подтверждены и в
+            # `worked_seconds` не входят; показаны отдельно, пока HR не
+            # укажет фактический выход. Как учитывать их временно — вопрос
+            # владельцу (по умолчанию не учитываются).
+            "unconfirmed_seconds": unconfirmed_seconds,
+            "auto_closed_sessions": auto_closed_sessions,
             "average_seconds_per_attended_day": (
                 round(worked_seconds / attended_days) if attended_days else None
             ),

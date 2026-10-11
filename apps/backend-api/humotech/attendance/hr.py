@@ -151,6 +151,10 @@ class Interval:
     started_at: datetime
     ended_at: datetime | None
     seconds: int
+    #: Автовыход: выход не отмечен, сессию закрыла система. Конца у
+    #: отрезка нет (`ended_at` = None), но это НЕ «ещё в офисе».
+    auto_closed: bool = False
+    unconfirmed_seconds: int = 0
 
 
 @dataclass(frozen=True)
@@ -205,6 +209,12 @@ class PresenceRow:
     # или с неточной геолокацией. Повод посмотреть — и это ровно то,
     # что показывает очередь «требует внимания».
     outside_geofence: bool = False
+
+    # Автовыход (решение Р-1): хотя бы одна сессия дня закрыта системой
+    # без отмеченного выхода. Её время — неподтверждённое и в `seconds`
+    # не входит; HR видит, что сотрудник сам выход не отметил.
+    auto_closed: bool = False
+    unconfirmed_seconds: int = 0
 
 
 @dataclass(frozen=True)
@@ -488,10 +498,13 @@ class AttendanceHrService(BaseService):
                     # и молчать об этом нельзя: расхождение разбирает человек.
                     "conflicting_marks": row.conflicting_marks,
                     "field_work": row.field_work,
+                    "auto_closed": row.auto_closed,
+                    "unconfirmed_seconds": row.unconfirmed_seconds,
                 }
             )
 
             totals["seconds"] += row.seconds
+            totals["unconfirmed_seconds"] += row.unconfirmed_seconds
             if sessions:
                 totals["days_with_marks"] += 1
             if open_session:
@@ -545,7 +558,7 @@ class AttendanceHrService(BaseService):
 
         queryset = AttendanceEvent.objects.filter(
             organization_id=actor.organization_id
-        ).select_related("employee", "office", "qr_point")
+        ).select_related("employee", "office", "qr_point", "review")
 
         queryset = self._limit_to_scope(
             actor, queryset, office_id=office_id, region_id=region_id
@@ -592,6 +605,10 @@ class AttendanceHrService(BaseService):
             queryset = queryset.filter(employee_id=employee_id)
         if status:
             queryset = queryset.filter(status=status)
+        else:
+            # Недействительная сессия (аннулированный вход, Р-3) — не
+            # посещение. В списке она видна только по явному фильтру.
+            queryset = queryset.exclude(status="INVALID")
         if only_open:
             # Именно по `ended_at`, а не только по статусу: статус может
             # быть выставлен пересчётом, а незакрытой сессию делает
@@ -1178,11 +1195,17 @@ class AttendanceHrService(BaseService):
         open_session = next((s for s in sessions if s.ended_at is None), None)
         last_exit = None
         for candidate in sessions:
+            # У автовыхода `ended_at` — технический момент закрытия, а не
+            # выход: последним выходом он не считается.
+            if candidate.status == "AUTO_CLOSED":
+                continue
             if candidate.ended_at and (
                 last_exit is None or candidate.ended_at > last_exit
             ):
                 last_exit = candidate.ended_at
         seconds = sum(s.duration_seconds or 0 for s in sessions)
+        auto_closed = [s for s in sessions if s.status == "AUTO_CLOSED"]
+        unconfirmed = sum(s.unconfirmed_seconds or 0 for s in auto_closed)
 
         scheduled_start, scheduled_end, is_working, grace_minutes = (
             schedule or (None, None, False, 0)
@@ -1255,11 +1278,16 @@ class AttendanceHrService(BaseService):
             intervals=tuple(
                 Interval(
                     started_at=one.started_at,
-                    ended_at=one.ended_at,
+                    ended_at=None if one.status == "AUTO_CLOSED" else one.ended_at,
                     seconds=one.duration_seconds or 0,
+                    auto_closed=one.status == "AUTO_CLOSED",
+                    unconfirmed_seconds=(one.unconfirmed_seconds or 0
+                                         if one.status == "AUTO_CLOSED" else 0),
                 )
                 for one in sessions
             ),
+            auto_closed=bool(auto_closed),
+            unconfirmed_seconds=unconfirmed,
             outside_geofence=any(
                 event is not None and event.inside_geofence is False
                 for one in sessions
@@ -1342,6 +1370,7 @@ def _empty_totals() -> dict:
         "late_minutes": 0,
         "open_sessions": 0,
         "norm_seconds": 0,
+        "unconfirmed_seconds": 0,
     }
 
 

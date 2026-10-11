@@ -37,8 +37,18 @@ HEARTBEAT_DEFAULT = "/tmp/attendance-reminders.heartbeat"
 DEFAULT_PAUSE = 300
 
 
+def _pass() -> int:
+    """Один проход: сначала автовыход вчерашних сессий (решение владельца
+    Р-1), затем напоминания. Автовыход живёт в этой же службе, чтобы не
+    заводить ещё один контейнер: она и так просыпается каждые пять минут."""
+    from humotech.attendance.auto_close import close_overdue_sessions
+
+    close_overdue_sessions()
+    return run_once()
+
+
 class Command(BaseCommand):
-    help = "Напоминает о начале рабочего дня тем, кто не отметился"
+    help = "Напоминает о начале рабочего дня тем, кто не отметился; закрывает автовыходом вчерашние сессии"
 
     def add_arguments(self, parser) -> None:
         parser.add_argument(
@@ -49,7 +59,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options) -> None:
         pause = options["loop"]
         if pause <= 0:
-            self.stdout.write(f"поставлено напоминаний: {run_once()}")
+            self.stdout.write(f"поставлено напоминаний: {_pass()}")
             return
 
         path = heartbeat.resolve_path(HEARTBEAT_ENV, HEARTBEAT_DEFAULT)
@@ -60,6 +70,6 @@ class Command(BaseCommand):
         # Упавший проход не уносит с собой процесс, но и признак жизни
         # не обновляет: цикл на одних ошибках healthcheck видит мёртвым.
         heartbeat.run_loop(
-            run_once, pause=pause, path=path, what="напоминания о начале дня",
+            _pass, pause=pause, path=path, what="напоминания о начале дня",
             sleep=time.sleep,
         )

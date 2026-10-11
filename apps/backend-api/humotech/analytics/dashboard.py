@@ -259,7 +259,7 @@ class DashboardService(BaseService):
     ) -> int:
         queryset = AttendanceSession.objects.filter(
             organization_id=actor.organization_id, ended_at__isnull=True
-        )
+        ).exclude(status="INVALID")
         if office_id:
             queryset = queryset.filter(office_id=office_id)
         elif region_id:

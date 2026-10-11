@@ -102,7 +102,13 @@ VERIFICATION_STATUSES = ("ACCEPTED", "REJECTED", "REVIEW")
 #: стоит её проверить (например, один сменный код с разных адресов): проход
 #: не блокируется, человек на работе, а отметка видна HR отдельно.
 COUNTED_VERIFICATION = ("ACCEPTED", "REVIEW")
-ATTENDANCE_SESSION_STATUSES = ("OPEN", "CLOSED", "CORRECTED", "INVALID")
+ATTENDANCE_SESSION_STATUSES = ("OPEN", "CLOSED", "CORRECTED", "INVALID", "AUTO_CLOSED")
+#: Почему сессия закрыта без подтверждённого выхода (статус AUTO_CLOSED):
+#: автовыход в полночь (решение владельца Р-1) или аннулированный HR
+#: подозрительный выход (Р-3). Время такой сессии — неподтверждённое.
+SESSION_CLOSURE_KINDS = ("AUTO_MIDNIGHT", "EXIT_ANNULLED")
+#: Решение HR по подозрительной (REVIEW) отметке.
+REVIEW_DECISIONS = ("CONFIRM", "ANNUL")
 #: Что человек сам сказал про свой день в ответ на напоминание.
 #: «Не приду» здесь — это предупреждение, а не оформленное отсутствие:
 #: отпуск и больничный проходят согласование и живут своими заявками.

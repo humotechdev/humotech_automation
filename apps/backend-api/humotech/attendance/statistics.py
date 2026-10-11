@@ -51,7 +51,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from humotech.absences.models import EmployeeAbsence
-from humotech.attendance.models import AttendanceSession, FieldWorkRequest
+from humotech.attendance.models import AttendanceSession, FieldWorkRequest, counted_events_q
 from humotech.core.timeframes import (
     day_bounds,
     days_in,
@@ -88,6 +88,12 @@ class SessionRecord:
     office_name: str | None
     entry_point_name: str | None
     exit_point_name: str | None
+    #: Автовыход: выход не отмечен, сессию закрыла система в полночь
+    #: (или HR аннулировал подозрительный выход). Подтверждённого времени
+    #: нет — `seconds` = 0, время до закрытия — `unconfirmed_seconds`.
+    auto_closed: bool = False
+    unconfirmed_seconds: int = 0
+    closure_kind: str | None = None
 
     @property
     def is_preliminary(self) -> bool:
@@ -115,6 +121,9 @@ class DayRecord:
     #: после конца суток в поясе офиса. Будущий день и сегодняшний до
     #: конца смены пропуском не бывают (аудит 12.10, D-01).
     settled: bool = True
+    #: Неподтверждённое время сессий с автовыходом (решение Р-1): видно
+    #: отдельно и в подтверждённые часы (`seconds`) не входит.
+    unconfirmed_seconds: int = 0
 
     @property
     def attended(self) -> bool:
@@ -142,6 +151,10 @@ class PeriodReport:
     @property
     def seconds(self) -> int:
         return sum(day.seconds for day in self.days)
+
+    @property
+    def unconfirmed_seconds(self) -> int:
+        return sum(day.unconfirmed_seconds for day in self.days)
 
     @property
     def completed_sessions(self) -> int:
@@ -241,6 +254,7 @@ def for_period(
                         and day not in absences),
             settled=(plans[day].is_settled(moment) if day in plans
                      else moment >= day_bounds(day, tz)[1]),
+            unconfirmed_seconds=sum(s.unconfirmed_seconds for s in sessions_by_day.get(day, ())),
         )
         for day in days_in(first, last)
     )
@@ -391,7 +405,12 @@ def _sessions_by_day(
                 is_open=is_open,
                 office_name=row.office.name if row.office_id else None,
                 entry_point_name=_point_name(row.entry_event),
-                exit_point_name=_point_name(row.exit_event),
+                exit_point_name=(None if row.status == "AUTO_CLOSED"
+                                 else _point_name(row.exit_event)),
+                auto_closed=row.status == "AUTO_CLOSED",
+                unconfirmed_seconds=(row.unconfirmed_seconds or 0
+                                     if row.status == "AUTO_CLOSED" else 0),
+                closure_kind=row.closure_kind if row.status == "AUTO_CLOSED" else None,
             )
         )
     return grouped
@@ -480,9 +499,9 @@ def _last_marks(employee_id) -> tuple[datetime | None, datetime | None]:
     def latest(event_type: str):
         row = (
             AttendanceEvent.objects.filter(
+                counted_events_q(),
                 employee_id=employee_id,
                 event_type=event_type,
-                verification_status__in=COUNTED_VERIFICATION,
             )
             .order_by("-occurred_at")
             .values_list("occurred_at", flat=True)

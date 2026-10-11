@@ -248,7 +248,9 @@ def _sessions(actor: Actor, filters: dict, author: str) -> Sheet:
                     _full_name(session.employee),
                     session.office.name if session.office else None,
                     session.started_at,
-                    session.ended_at,
+                    # У автовыхода `ended_at` — технический момент закрытия,
+                    # а не выход: в выгрузку он не идёт (решение Р-1).
+                    None if session.status == "AUTO_CLOSED" else session.ended_at,
                     round((session.duration_seconds or 0) / 3600, 2),
                     session.status,
                     session.ended_at is None,

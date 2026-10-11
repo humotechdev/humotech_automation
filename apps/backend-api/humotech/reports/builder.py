@@ -681,7 +681,8 @@ class WorktimeReport(_DayReport):
                     shortfall = max(planned - actual, 0)
                     overtime = max(actual - planned, 0)
                 closed = sum(1 for part in row.intervals if part.ended_at is not None)
-                opened = len(row.intervals) - closed
+                auto = sum(1 for part in row.intervals if part.auto_closed)
+                opened = len(row.intervals) - closed - auto
 
                 person = self._person(row)
                 for key, value in (("planned", planned), ("actual", actual),
@@ -1148,7 +1149,10 @@ def marks_text(intervals, zone: ZoneInfo) -> str | None:
     parts = []
     for part in intervals:
         start = part.started_at.astimezone(zone).strftime("%H:%M")
-        end = part.ended_at.astimezone(zone).strftime("%H:%M") if part.ended_at else "не закрыта"
+        if getattr(part, "auto_closed", False):
+            end = "автовыход"
+        else:
+            end = part.ended_at.astimezone(zone).strftime("%H:%M") if part.ended_at else "не закрыта"
         parts.append(f"{start}–{end}")
     return "; ".join(parts)
 

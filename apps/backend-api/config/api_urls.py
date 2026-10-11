@@ -38,6 +38,10 @@ from humotech.attendance.views import (
     CorrectionListView,
     ManualEventView,
     PresenceView,
+    EventReviewView,
+    SessionCorrectView,
+    SessionCreateView,
+    SessionExitView,
 )
 from humotech.departments.views import DepartmentViewSet, PositionViewSet
 from humotech.employees.views import EmployeeViewSet
@@ -425,6 +429,16 @@ urlpatterns = [
     path("attendance/corrections/<uuid:request_id>/<str:decision>",
          CorrectionDecisionView.as_view(), name="attendance-correction-decision"),
     path("attendance/manual", ManualEventView.as_view(), name="attendance-manual"),
+    # Ручные операции HR с сессиями и решения по подозрительным отметкам
+    # (решения владельца Р-1, Р-2, Р-3, аудит 12.10).
+    path("attendance/sessions/create", SessionCreateView.as_view(),
+         name="attendance-session-create"),
+    path("attendance/sessions/<uuid:session_id>/exit", SessionExitView.as_view(),
+         name="attendance-session-exit"),
+    path("attendance/sessions/<uuid:session_id>/correct", SessionCorrectView.as_view(),
+         name="attendance-session-correct"),
+    path("attendance/events/<uuid:event_id>/review", EventReviewView.as_view(),
+         name="attendance-event-review"),
     # Решения по заявкам на отсутствие. React-интерфейса для них пока нет —
     # он следующим этапом, — но подтверждать больничные надо уже сейчас.
     path("absence-requests/pending", PendingAbsenceRequestsView.as_view(),
