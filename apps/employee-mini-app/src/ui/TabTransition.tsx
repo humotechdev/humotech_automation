@@ -86,14 +86,14 @@ function navIndex(tab: Tab): number {
 
 /** Где слой сейчас — с учётом идущей анимации. */
 function currentTransform(el: HTMLElement): string {
-  const value = getComputedStyle(el).transform;
+  const value = window.getComputedStyle(el).transform;
   return value && value !== 'none' ? value : 'translate3d(0, 0, 0)';
 }
 
 /** Ближайший прокручиваемый предок; по умолчанию — сам документ. */
 function scrollerOf(el: HTMLElement): Element {
   for (let node = el.parentElement; node; node = node.parentElement) {
-    const { overflowY } = getComputedStyle(node);
+    const { overflowY } = window.getComputedStyle(node);
     if (
       (overflowY === 'auto' || overflowY === 'scroll') &&
       node.scrollHeight > node.clientHeight
@@ -134,6 +134,15 @@ export function TabTransition({
   const stageRef = useRef<HTMLDivElement>(null);
   const nodes = useRef(new Map<Tab, HTMLDivElement>());
   const running = useRef(new Map<HTMLElement, Animation>());
+  // Где стоял входящий раздел в последний кадр перехода. Сдвиг `top`
+  // ниже — предсказание по высоте на старте, а раздел за 300 мс мог
+  // дорасти (пришли данные). В конце сверяемся с фактом.
+  const landing = useRef<{
+    seq: number;
+    el: HTMLElement;
+    top: number;
+    scroller: Element;
+  } | null>(null);
 
   useLayoutEffect(() => {
     const host = stageRef.current;
@@ -142,10 +151,9 @@ export function TabTransition({
     const incoming = nodes.current.get(current);
     const outgoing = leaving ? nodes.current.get(leaving) : undefined;
 
-    // Откуда стартовать, читается ДО отмены прошлой анимации: иначе
-    // слой на кадр прыгнул бы на место.
-    // Слой, который только что смонтирован, стартует от края экрана,
-    // а уже едущий — из своей текущей точки.
+    // Откуда стартовать. Только что смонтированный слой — от края
+    // экрана, уже едущий — из своей текущей точки; читается ДО отмены
+    // прошлой анимации, иначе слой на кадр прыгнул бы на место.
     const fromIn =
       incoming && running.current.has(incoming)
         ? currentTransform(incoming)
@@ -164,12 +172,32 @@ export function TabTransition({
       node.style.top = '';
     });
 
-    if (!leaving || !direction) return;
+    const landed = landing.current;
+    landing.current = null;
+    if (!leaving || !direction) {
+      // Переход закончился: раздел перешёл из слоя поверх в поток, а
+      // браузер мог подвинуть прокрутку. Возвращаем раздел туда, где
+      // его видел человек в последнем кадре, — без рывка.
+      if (landed && landed.seq === seq && landed.el.isConnected) {
+        const drift = landed.el.getBoundingClientRect().top - landed.top;
+        if (drift !== 0) landed.scroller.scrollTop += drift;
+      }
+      return;
+    }
 
-    const finish = () =>
+    const finish = (measured: boolean) => {
+      if (measured && incoming && host) {
+        landing.current = {
+          seq,
+          el: incoming,
+          top: incoming.getBoundingClientRect().top,
+          scroller: scrollerOf(host),
+        };
+      }
       setStage((now) =>
         now.seq === seq ? { ...now, leaving: null, direction: null } : now,
       );
+    };
 
     if (
       !host ||
@@ -181,7 +209,7 @@ export function TabTransition({
       incoming.querySelector('.overlay') ||
       outgoing.querySelector('.overlay')
     ) {
-      finish();
+      finish(false);
       return;
     }
 
@@ -227,8 +255,11 @@ export function TabTransition({
     );
     running.current.set(incoming, enter);
     running.current.set(outgoing, exit);
-    enter.onfinish = finish;
-    const safety = window.setTimeout(finish, TAB_TRANSITION_MS + SAFETY_MS);
+    enter.onfinish = () => finish(true);
+    const safety = window.setTimeout(
+      () => finish(true),
+      TAB_TRANSITION_MS + SAFETY_MS,
+    );
 
     return () => {
       window.clearTimeout(safety);

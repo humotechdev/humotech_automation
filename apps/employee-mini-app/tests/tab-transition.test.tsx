@@ -205,16 +205,68 @@ describe('TabTransition', () => {
     expect(container.textContent).toBe('page:profile');
   });
 
-  it('уходящий слой, едущий из середины, стартует из текущей точки', () => {
-    const { rerender } = render(<TabTransition tab="home" render={page} />);
+  it('перехват на середине: едущий слой стартует из текущей точки', () => {
+    const { container, rerender } = render(
+      <TabTransition tab="home" render={page} />,
+    );
     rerender(<TabTransition tab="history" render={page} />);
-    rerender(<TabTransition tab="requests" render={page} />);
 
-    // history был входящим и уже ехал: новый старт — не от края экрана,
-    // а с того места, где он сейчас (в jsdom — нулевой сдвиг).
-    const { enter, exit } = lastPair();
-    expect(enter.keyframes[0].transform).toBe('translate3d(100%, 0, 0)');
-    expect(exit.keyframes[0].transform).toBe('translate3d(0, 0, 0)');
+    // history въезжает и сейчас на трети пути — так его видит браузер.
+    const history = layerOf(container, 'history')!;
+    const real = window.getComputedStyle.bind(window);
+    vi.spyOn(window, 'getComputedStyle').mockImplementation((el, pseudo) => {
+      if (el === history) {
+        return { transform: 'matrix(1, 0, 0, 1, 120, 0)' } as CSSStyleDeclaration;
+      }
+      return real(el, pseudo);
+    });
+
+    rerender(<TabTransition tab="requests" render={page} />);
+    const forward = lastPair();
+    // Новый раздел — от края, history уезжает с того места, где был.
+    expect(forward.enter.keyframes[0].transform).toBe('translate3d(100%, 0, 0)');
+    expect(forward.exit.el).toBe(history);
+    expect(forward.exit.keyframes[0].transform).toBe('matrix(1, 0, 0, 1, 120, 0)');
+
+    // Передумали и вернулись: history въезжает обратно из той же точки.
+    rerender(<TabTransition tab="history" render={page} />);
+    const back = lastPair();
+    expect(back.enter.el).toBe(history);
+    expect(back.enter.keyframes[0].transform).toBe('matrix(1, 0, 0, 1, 120, 0)');
+    vi.restoreAllMocks();
+  });
+
+  it('в конце перехода раздел остаётся там, где его видел человек', () => {
+    const root = document.scrollingElement ?? document.documentElement;
+    let scrollTop = 500;
+    Object.defineProperty(root, 'scrollTop', {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => {
+        scrollTop = value;
+      },
+    });
+
+    const { container, rerender } = render(
+      <TabTransition tab="home" render={page} />,
+    );
+    rerender(<TabTransition tab="history" render={page} />);
+    const history = layerOf(container, 'history')!;
+
+    // Последний кадр перехода — раздел на 100 px от верха экрана; после
+    // перехода в поток (данные дорисовались, браузер сдвинул прокрутку)
+    // он оказался бы на 160 px.
+    let top = 100;
+    history.getBoundingClientRect = () =>
+      ({ top, bottom: top, left: 0, right: 0, width: 0, height: 0 }) as DOMRect;
+    act(() => {
+      lastPair().enter.animation.end();
+      top = 160;
+    });
+
+    expect(layers(container)).toHaveLength(1);
+    expect(scrollTop).toBe(560);
+    delete (root as { scrollTop?: unknown }).scrollTop;
   });
 
   it('возврат на уезжающую вкладку не перемонтирует её', () => {
