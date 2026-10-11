@@ -400,8 +400,31 @@ class TelegramLinkService(BaseService):
 
     # ------------------------------------------------------- решение HR
 
+    # --- решения HR: под блокировкой ---------------------------------------
+    #
+    # Подтверждение, отклонение и отключение читали состояние ДО транзакции и
+    # без блокировки, а потом записывали поля целиком. Одновременные
+    # «подтвердить» и «отключить» давали ACTIVE поверх REVOKED — отключённая
+    # привязка «оживала» (аудит 12.10, A-25). Теперь каждое решение идёт в
+    # транзакции, строки блокируются в одном порядке (приглашения сотрудника,
+    # затем его привязка), и прежние проверки состояния выполняются уже по
+    # заблокированным, актуальным строкам.
+
+    def _lock_employee_link(self, employee_id) -> None:
+        list(TelegramLinkInvitation.objects.select_for_update()
+             .filter(employee_id=employee_id).order_by("id").values_list("id", flat=True))
+        list(TelegramAccount.objects.select_for_update()
+             .filter(employee_id=employee_id).values_list("id", flat=True))
+
     def confirm(self, actor: Actor, invitation_id: uuid.UUID) -> TelegramAccount:
         """Подтверждение привязки. Только отсюда она становится рабочей."""
+        self.access.require(actor, "telegram.manage")
+        employee_id = self._require_invitation(actor, invitation_id).employee_id
+        with self.atomic():
+            self._lock_employee_link(employee_id)
+            return self._confirm_locked(actor, invitation_id)
+
+    def _confirm_locked(self, actor: Actor, invitation_id: uuid.UUID) -> TelegramAccount:
         self.access.require(actor, "telegram.manage")
         invitation = self._require_invitation(actor, invitation_id)
 
@@ -471,6 +494,13 @@ class TelegramLinkService(BaseService):
     def reject(self, actor: Actor, invitation_id: uuid.UUID) -> TelegramAccount | None:
         """Отклонение: по ссылке перешёл не тот, кому её выдавали."""
         self.access.require(actor, "telegram.manage")
+        employee_id = self._require_invitation(actor, invitation_id).employee_id
+        with self.atomic():
+            self._lock_employee_link(employee_id)
+            return self._reject_locked(actor, invitation_id)
+
+    def _reject_locked(self, actor: Actor, invitation_id: uuid.UUID) -> TelegramAccount | None:
+        self.access.require(actor, "telegram.manage")
         invitation = self._require_invitation(actor, invitation_id)
 
         if invitation.status != "PENDING_CONFIRMATION":
@@ -533,6 +563,13 @@ class TelegramLinkService(BaseService):
 
     def disconnect(self, actor: Actor, employee_id: uuid.UUID) -> TelegramAccount:
         """Отключение привязки. После этого ни бот, ни Mini App не пускают."""
+        self.access.require(actor, "telegram.manage")
+        require_visible_employee(self.access, actor, employee_id, "telegram.manage")
+        with self.atomic():
+            self._lock_employee_link(employee_id)
+            return self._disconnect_locked(actor, employee_id)
+
+    def _disconnect_locked(self, actor: Actor, employee_id: uuid.UUID) -> TelegramAccount:
         self.access.require(actor, "telegram.manage")
         require_visible_employee(self.access, actor, employee_id, "telegram.manage")
 
