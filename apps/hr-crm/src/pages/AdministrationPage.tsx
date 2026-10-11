@@ -49,6 +49,8 @@ type Row = {
   archived: boolean;
   /** Эту строку нельзя убрать: единственный вход в систему. */
   locked?: boolean;
+  /** Почему строку нельзя менять — правка закрыта правами. */
+  readOnly?: string | null;
 };
 
 export function AdministrationPage() {
@@ -150,8 +152,17 @@ export function AdministrationPage() {
       ? schedules.data.items.map((one) => ({
           id: one.id,
           title: one.name,
-          note: one.weekly_minutes
-            ? `${Math.round(one.weekly_minutes / 60)} ч в неделю`
+          // Чей график: организации или региона. Менять график организации
+          // может только HR с правом на всю организацию, график региона —
+          // HR этого региона; сервер отвечает за это сам (`can_manage`).
+          note: [
+            one.weekly_minutes ? `${Math.round(one.weekly_minutes / 60)} ч в неделю` : null,
+            one.region_name ?? 'вся организация',
+          ].filter(Boolean).join(' · ') || null,
+          readOnly: one.can_manage === false
+            ? (one.region_id
+              ? 'График другого региона: менять его может HR этого региона'
+              : 'График организации: менять его может HR с правом на всю организацию')
             : null,
           // Сколько людей на графике, список не отдаёт; сервер откажет
           // сам, если график назначен, и объяснит причину.
@@ -328,6 +339,8 @@ function Block({ section, rows, open, onToggle, onAdd, onEdit, onRemove }: {
                   <span className="adm-row__tools">
                     <button type="button" className="adm-row__tool"
                             aria-label={`Изменить «${row.title}»`}
+                            disabled={Boolean(row.readOnly)}
+                            title={row.readOnly ?? undefined}
                             onClick={() => onEdit(row.id)}>
                       <AppIcon name="pencil" size={16} />
                     </button>
@@ -337,8 +350,8 @@ function Block({ section, rows, open, onToggle, onAdd, onEdit, onRemove }: {
                                 ? `«${row.title}» — это вы: убрать нельзя`
                                 : `${row.used ? 'Архивировать' : 'Удалить'} «${row.title}»`
                             }
-                            disabled={row.locked}
-                            title={row.locked ? 'Это вы: убрать себя нельзя' : undefined}
+                            disabled={row.locked || Boolean(row.readOnly)}
+                            title={row.locked ? 'Это вы: убрать себя нельзя' : row.readOnly ?? undefined}
                             onClick={() => onRemove(row)}>
                       <AppIcon name={row.used ? 'archive' : 'cross'} size={16} />
                     </button>

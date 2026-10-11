@@ -2837,6 +2837,11 @@ export type ScheduleRow = {
   timezone: string;
   status: string;
   weekly_minutes?: number;
+  /** Регион графика; null — график организации. */
+  region_id?: string | null;
+  region_name?: string | null;
+  /** Может ли текущий пользователь менять график (решает сервер). */
+  can_manage?: boolean | null;
 };
 
 export const workSchedules = (signal?: AbortSignal) =>

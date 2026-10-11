@@ -659,3 +659,26 @@ describe('вспомогательное', () => {
     expect(counted(21, unit)).toBe('21 отдел');
   });
 });
+
+describe('графики: свой регион и графики организации', () => {
+  test('чужой график виден, но кнопки правки закрыты с объяснением', async () => {
+    catalog(() => null, {
+      schedules: [
+        { id: 's-org', name: 'Пятидневка', timezone: 'Asia/Tashkent', status: 'ACTIVE',
+          weekly_minutes: 2400, region_id: null, region_name: null, can_manage: false },
+        { id: 's-reg', name: 'Сменный', timezone: 'Asia/Tashkent', status: 'ACTIVE',
+          weekly_minutes: 2400, region_id: 'r-1', region_name: 'Ташкент', can_manage: true },
+      ],
+    });
+    renderApp('/administration?open=schedules');
+
+    const editOrg = await screen.findByLabelText('Изменить «Пятидневка»');
+    expect((editOrg as HTMLButtonElement).disabled).toBe(true);
+    expect(editOrg.getAttribute('title')).toMatch(/График организации/);
+    expect(screen.getByText(/вся организация/)).toBeTruthy();
+
+    const editOwn = screen.getByLabelText('Изменить «Сменный»');
+    expect((editOwn as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByText(/Ташкент/)).toBeTruthy();
+  });
+});
