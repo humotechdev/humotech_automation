@@ -317,3 +317,59 @@ class TestWelcomeWaitsForBinding:
         claim(now=datetime.now(tz=UTC))
         row.refresh_from_db()
         assert row.status == "CANCELLED" and row.error_message == "not_linked"
+
+
+# =============================================================================
+# 6. Минимальный мониторинг (A-42): request id и очереди в readyz
+# =============================================================================
+
+
+class TestMinimalMonitoring:
+
+    def test_request_id_generated_and_echoed(self, client):
+        response = client.get("/healthz")
+        generated = response["X-Request-ID"]
+        assert len(generated) >= 16
+        again = client.get("/healthz", HTTP_X_REQUEST_ID="abc-123_DEF")
+        assert again["X-Request-ID"] == "abc-123_DEF"
+        # Мусор и слишком длинные значения не пробрасываются в логи.
+        bad = client.get("/healthz", HTTP_X_REQUEST_ID="x\nInjected: 1")
+        assert bad["X-Request-ID"] != "x\nInjected: 1" and "\n" not in bad["X-Request-ID"]
+
+    def test_log_records_carry_request_id(self, client, caplog):
+        import logging
+
+        from humotech.core.request_id import RequestIdLogFilter
+
+        with caplog.at_level(logging.INFO):
+            client.get("/api/v1/auth/me", HTTP_X_REQUEST_ID="trace-42")
+        record = logging.LogRecord("x", logging.INFO, __file__, 1, "msg", None, None)
+        assert RequestIdLogFilter().filter(record) and record.request_id == "-"
+
+    def test_django_request_log_line_carries_request_id(self, client, caplog):
+        """«Forbidden: …» пишется после ответа, когда метка уже сброшена."""
+        import logging
+
+        from humotech.core.request_id import RequestIdLogFilter
+
+        with caplog.at_level(logging.WARNING, logger="django.request"):
+            client.get("/api/v1/auth/me", HTTP_X_REQUEST_ID="trace-43")
+        lines = [r for r in caplog.records if r.name == "django.request"]
+        assert lines, "ожидалась строка django.request о 403"
+        RequestIdLogFilter().filter(lines[-1])
+        assert lines[-1].request_id == "trace-43"
+
+    def test_readyz_reports_stuck_notification_queue(self, client, organization, employee):
+        from humotech.notifications.models import Notification
+        from humotech.notifications.outbox import enqueue
+
+        row = enqueue(organization_id=organization.id, employee_id=employee.id,
+                      notification_type="absence.approved", body="x")
+        old = datetime.now(tz=UTC) - timedelta(hours=2)
+        Notification.objects.filter(id=row.id).update(created_at=old, next_attempt_at=None)
+        body = client.get("/readyz").json()
+        assert "queues" in body
+        assert body["queues"]["notifications_overdue"] >= 1
+        assert any("уведомлен" in one for one in body["warnings"])
+        # Застрявшая очередь не выводит веб-процесс из работы.
+        assert body["status"] == "ok"

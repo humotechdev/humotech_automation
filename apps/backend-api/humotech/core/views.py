@@ -13,6 +13,8 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
 from django.http import JsonResponse
@@ -66,6 +68,8 @@ def readyz(request) -> JsonResponse:
             if pending:
                 issues.append(f"не применено миграций: {pending}")
 
+    queues, warnings = _queues() if database else ({}, [])
+
     return JsonResponse(
         {
             "status": "ok" if not issues else "degraded",
@@ -73,9 +77,48 @@ def readyz(request) -> JsonResponse:
             "migrations_applied": migrations_applied,
             "extensions": extensions,
             "issues": issues,
+            # Очереди фоновых процессов — для мониторинга. На статус
+            # готовности веб-процесса НЕ влияют: остановленный бот не повод
+            # выводить из работы весь API (аудит 12.10, A-42).
+            "queues": queues,
+            "warnings": warnings,
         },
         status=200 if not issues else 503,
     )
+
+
+#: Сколько уведомление может ждать выдачи, прежде чем это тревожный знак:
+#: бот забирает очередь каждые несколько секунд.
+NOTIFICATION_OVERDUE = timedelta(minutes=15)
+#: Сколько выгрузка может стоять в очереди, прежде чем это тревожный знак.
+EXPORT_OVERDUE = timedelta(minutes=15)
+
+
+def _queues() -> tuple[dict, list[str]]:
+    """Состояние очередей по базе: без доступа к файлам и процессам воркеров."""
+    from django.db.models import Q
+    from django.utils import timezone
+
+    from humotech.notifications.models import Notification
+    from humotech.reports.models import ExportJob
+
+    now = timezone.now()
+    warnings: list[str] = []
+    try:
+        overdue = Notification.objects.filter(
+            Q(next_attempt_at__isnull=True) | Q(next_attempt_at__lte=now - NOTIFICATION_OVERDUE),
+            status="PENDING", channel="TELEGRAM", created_at__lte=now - NOTIFICATION_OVERDUE,
+        ).count()
+        exports_waiting = ExportJob.objects.filter(
+            status="QUEUED", created_at__lte=now - EXPORT_OVERDUE,
+        ).count()
+    except Exception as exc:  # noqa: BLE001 — наружу только категория
+        return {}, [f"очереди не читаются: {type(exc).__name__}"]
+    if overdue:
+        warnings.append(f"уведомления ждут выдачи дольше 15 мин: {overdue} (бот не забирает очередь?)")
+    if exports_waiting:
+        warnings.append(f"выгрузки в очереди дольше 15 мин: {exports_waiting} (export-worker не работает?)")
+    return {"notifications_overdue": overdue, "exports_waiting": exports_waiting}, warnings
 
 
 # --- ответы на ошибки вне DRF --------------------------------------------

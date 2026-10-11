@@ -200,6 +200,8 @@ HUMOTECH_APPS = [
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + HUMOTECH_APPS
 
 MIDDLEWARE = [
+    # Первым: метка запроса нужна логам всех следующих слоёв (аудит 12.10, A-42).
+    "humotech.core.request_id.RequestIdMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -564,7 +566,7 @@ LOGGING = {
     "disable_existing_loggers": False,
     "formatters": {
         "standard": {
-            "format": "%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+            "format": "%(asctime)s %(levelname)-8s [%(request_id)s] %(name)s: %(message)s",
         },
     },
     # Маскирование секретов в тексте сообщения: токен бота, `password=…`,
@@ -574,12 +576,15 @@ LOGGING = {
         "redact_secrets": {
             "()": "humotech.audit.redaction.SecretRedactingFilter",
         },
+        "request_id": {
+            "()": "humotech.core.request_id.RequestIdLogFilter",
+        },
     },
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
             "formatter": "standard",
-            "filters": ["redact_secrets"],
+            "filters": ["request_id", "redact_secrets"],
         },
     },
     "root": {"handlers": ["console"], "level": env("LOG_LEVEL", "INFO")},
