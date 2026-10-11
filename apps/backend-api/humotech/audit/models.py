@@ -18,10 +18,14 @@ class AuditLogImmutable(RuntimeError):
 
 
 class AuditLog(UUIDPrimaryKeyModel, OrganizationScopedModel, models.Model):
-    # админа можно заблокировать или удалить — запись аудита обязана остаться
+    # админа можно заблокировать или удалить — запись аудита обязана остаться.
+    # Обнуление ссылки делает САМА база (ON DELETE SET NULL, core/0002), а не
+    # коллектор Django: журнал защищён триггером append-only, и он пропускает
+    # только изменение, пришедшее из внутреннего триггера внешнего ключа
+    # (audit/0002). Поэтому здесь DO_NOTHING — ORM не пишет UPDATE сам.
     actor_user = models.ForeignKey(
         "accounts.User",
-        on_delete=models.SET_NULL,
+        on_delete=models.DO_NOTHING,
         db_column="actor_user_id",
         db_index=False,
         null=True,

@@ -68,6 +68,7 @@ class WorkSchedule(
             models.Index(
                 fields=["organization"], name="ix_work_schedules_organization_id"
             ),
+            models.Index(fields=["region"], name="ix_work_schedules_region_id"),
         ]
 
     def __str__(self) -> str:
