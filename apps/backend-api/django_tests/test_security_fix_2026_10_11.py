@@ -675,8 +675,14 @@ class TestOrganizationWideObjects:
         _, scoped = self._office_actor(
             organization, region,
             ("onboarding.read", "onboarding.manage", "policies.publish"), "M2O")
-        with pytest.raises(PermissionDenied):
-            OnboardingContentService().create_section(scoped, {"title": "Взлом",
+        # Разделы ознакомления — без изменений до отдельного решения владельца
+        # (11.10.2026: «доступ к общим разделам ознакомления пока не изменяй»).
+        # Права хватает — дальше отказ только из-за того, что в тестовой
+        # организации нет программы ознакомления (NotFound, а не 403).
+        from humotech.core.errors import NotFound
+
+        with pytest.raises(NotFound):
+            OnboardingContentService().create_section(scoped, {"title": "Раздел",
                                                                "body": "x"})
         with pytest.raises(PermissionDenied):
             PolicyService().create_document(scoped, {"code": "HACK", "title": "x"})

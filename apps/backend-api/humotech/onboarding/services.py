@@ -770,7 +770,7 @@ class OnboardingContentService(BaseService):
         return list(progress_module.active_sections(program.id))
 
     def create_section(self, actor: Actor, data: dict) -> OnboardingSection:
-        self.access.require_whole_organization(actor, "onboarding.manage")
+        self.access.require(actor, "onboarding.manage")
         program = OnboardingService().program(actor.organization_id)
         position = data.get("position")
         if position is None:
@@ -817,7 +817,7 @@ class OnboardingContentService(BaseService):
         читал. Правка одной подписи кнопки редакцию не двигает — текст
         от неё не меняется.
         """
-        self.access.require_whole_organization(actor, "onboarding.manage")
+        self.access.require(actor, "onboarding.manage")
         row = self._require_section(actor, section_id)
         before = snapshot(row, SECTION_AUDIT_FIELDS)
 
@@ -854,7 +854,7 @@ class OnboardingContentService(BaseService):
         ознакомился», и вместе с ней исчезло бы свидетельство того, что
         человек её читал.
         """
-        self.access.require_whole_organization(actor, "onboarding.manage")
+        self.access.require(actor, "onboarding.manage")
         row = self._require_section(actor, section_id)
         if row.archived_at is not None:
             return row
