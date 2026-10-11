@@ -241,4 +241,26 @@ describe('страница заявки', () => {
       .toBeGreaterThan(0);
     expect(screen.getByText('Справка загружена')).toBeTruthy();
   });
+  test('поля фактических дат раскрываются внутри «Проверки HR» и уходят целиком при сворачивании', async () => {
+    // Пустое место под «Материалами» было раскладкой сетки, а не
+    // спрятанным элементом; jsdom раскладку не считает, поэтому здесь —
+    // только то, что после сворачивания от формы ничего не остаётся.
+    network({
+      ...BASE,
+      documents: [{ ...CERTIFICATE, verification_status: 'VERIFIED', verified_at: '2026-09-21T12:00:00Z' }],
+      missing_for_approval: ['application', 'period'],
+    });
+    renderApp('/requests/r-1');
+
+    const review = await screen.findByRole('region', { name: 'Проверка HR' });
+    const step = within(review).getByRole('button', { name: /Фактические даты/ });
+    fireEvent.click(step);
+    expect(within(review).getByLabelText('Период отсутствия: с какого дня')).toBeTruthy();
+    expect(within(review).getByRole('button', { name: 'Подтвердить период' })).toBeTruthy();
+
+    fireEvent.click(step);
+    expect(screen.queryByLabelText('Период отсутствия: с какого дня')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Подтвердить период' })).toBeNull();
+    expect(document.querySelector('.cal')).toBeNull();
+  });
 });

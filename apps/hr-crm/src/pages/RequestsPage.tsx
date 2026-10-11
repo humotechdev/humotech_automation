@@ -13,7 +13,7 @@
  * клиенте дала бы не очередь, а произвольную смесь её половин.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 
 import * as api from '../api/crm';
@@ -119,6 +119,24 @@ export function RequestsPage() {
   );
   const base = `${search}|${region}|${office}|${employee}|${from}|${to}|${attempt}`;
 
+  /*
+   * Выбранная вкладка всегда на виду.
+   *
+   * На узком экране ряд вкладок прокручивается вбок, и «Отмена», открытая
+   * по ссылке, могла оказаться за краем. Сдвигается только сам ряд —
+   * `scrollIntoView` прокрутил бы заодно и всю страницу по вертикали.
+   */
+  const tabStrip = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const strip = tabStrip.current;
+    const active = strip?.querySelector<HTMLElement>('[aria-selected="true"]');
+    if (!strip || !active || strip.scrollWidth <= strip.clientWidth) return;
+    const left = active.offsetLeft - strip.offsetLeft;
+    const right = left + active.offsetWidth;
+    if (left < strip.scrollLeft) strip.scrollLeft = Math.max(0, left - 8);
+    else if (right > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = right - strip.clientWidth + 8;
+  }, [tab.key]);
+
   const [list] = useBlock(
     (signal) =>
       api.queue(
@@ -210,7 +228,7 @@ export function RequestsPage() {
             {/* Вкладки подчёркиванием, а не заливкой: их шесть, и шесть
                 залитых кнопок в ряд спорят за внимание с самой
                 очередью, ради которой страницу открыли. */}
-            <div className="rq-tabs" role="tablist" aria-label="Вид заявок">
+            <div className="rq-tabs" role="tablist" aria-label="Вид заявок" ref={tabStrip}>
               {TABS.map((one) => {
                 const count = counts.state === 'ready' && one.key !== 'all'
                   ? counts.data[one.key] ?? 0

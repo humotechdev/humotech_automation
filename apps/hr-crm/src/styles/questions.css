@@ -230,16 +230,33 @@ body.tk-type .app-popover {
   color: var(--tk-text);
 }
 
-/* Фильтры не выходят за колонку: не хватило места — вторая строка. */
-.tk-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+/*
+ * Быстрые фильтры — всегда одна строка.
+ *
+ * Раньше при нехватке ширины «Срочные» уезжали на вторую строку, и
+ * очередь под ними прыгала вниз. Теперь ряд не переносится: обычно три
+ * фильтра помещаются целиком, а в узкой колонке ряд прокручивается вбок
+ * внутри себя. Полоса прокрутки тонкая и видна только тогда, когда
+ * прокручивать действительно есть что.
+ */
+.tk-chips {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+}
 
 .tk-chip {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
-  gap: 7px;
+  gap: 5px;
   height: 32px;
-  padding: 0 11px;
+  padding: 0 9px;
   border: 0;
   border-radius: 8px;
   background: #eef2f7;
@@ -252,6 +269,9 @@ body.tk-type .app-popover {
 }
 
 .tk-chip:hover { background: #e6ecf4; }
+
+/* Рамка фокуса — внутри кнопки: снаружи её срезал бы край прокрутки. */
+.tk-chip:focus-visible { outline: 2px solid var(--tk-blue); outline-offset: -2px; }
 
 .tk-chip--on,
 .tk-chip--on:hover {
@@ -446,6 +466,15 @@ body.tk-type .app-popover {
 
 .tk-notice--bad { background: var(--tk-red-soft); color: #b3302b; }
 
+/* Обёртка ленты — точка отсчёта для кнопки «К новым сообщениям». */
+.tk-thread-wrap {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .tk-thread {
   flex: 1 1 0;
   min-height: 0;
@@ -623,12 +652,17 @@ body.tk-type .app-popover {
   font-size: 14px;
   line-height: 20px;
   color: var(--tk-text);
+  /* Высоту ставит код поля по набранному тексту — здесь только плавность. */
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, height 0.12s ease-out;
 }
 
-.tk-compose__field:focus { border-color: #9fc0ea; }
+.tk-compose__field:focus { border-color: #9fc0ea; box-shadow: 0 0 0 3px rgba(31, 111, 224, 0.1); }
+.tk-compose--sending .tk-compose__field { color: #5d6f8d; }
 .tk-compose__field::placeholder { color: #98a6bb; }
 
 .tk-send {
+  display: inline-grid;
+  place-items: center;
   flex: 0 0 auto;
   min-width: 118px;
   height: 44px;
@@ -646,6 +680,17 @@ body.tk-type .app-popover {
 .tk-send:hover:not(:disabled) { background: var(--tk-blue-hover); }
 /* Пустое поле: та же глубокая кнопка, чуть приглушённая — не серая. */
 .tk-send:disabled { background: #4f7fab; cursor: default; }
+
+/* Нажатие чувствуется: кнопка чуть проседает и сразу возвращается. */
+.tk-send { transition: background-color 0.15s ease, transform 0.12s ease-out; }
+.tk-send:active:not(:disabled) { transform: scale(0.97); }
+
+/* Две надписи в одной клетке — ширина кнопки по более длинной. */
+.tk-send__label { grid-area: 1 / 1; white-space: nowrap; }
+.tk-send__label[aria-hidden='true'] { visibility: hidden; }
+
+/* Идёт отправка: кнопка остаётся синей, а не «выключенной». */
+.tk-send--busy:disabled { background: var(--tk-blue); cursor: progress; }
 
 .tk-compose__file { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 
@@ -1089,4 +1134,91 @@ a.tk-person__name:hover { color: var(--tk-blue); }
   .tk-talk__head, .tk-compose { margin: 0 16px; }
   .tk-thread { padding: 12px 16px; }
   .tk-msg { max-width: 92%; }
+}
+
+/* --- движение в переписке ------------------------------------------------
+ *
+ * Новое сообщение появляется мягко: чуть снизу, из прозрачности, с едва
+ * заметным масштабом — 220 мс, замедление к концу, без отскока. Двигается
+ * только сама строка (transform и opacity не меняют раскладку), поэтому
+ * соседние сообщения не прыгают. Анимация привязана к модификатору
+ * `--new`, который ставится строке один раз при её появлении: обновление
+ * ленты опросом ничего не анимирует заново.
+ *
+ * Статус доставки при этом не «дорисовывается» анимацией: значок меняется
+ * только когда новый статус прислал сервер, анимация лишь смягчает смену.
+ */
+
+@keyframes tk-msg-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes tk-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes tk-drop-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+
+.tk-msg--new { animation: tk-msg-in 0.22s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.tk-msg--mine.tk-msg--new { transform-origin: 100% 100%; }
+.tk-msg--theirs.tk-msg--new { transform-origin: 0 100%; }
+
+.tk-day--new,
+.tk-event--new,
+.tk-delivery--changed { animation: tk-fade-in 0.2s ease-out both; }
+
+/* Уведомление об итоге и подсказка об ошибке — спокойно, без тряски. */
+.tk-notice,
+.tk-compose__failed { animation: tk-drop-in 0.18s ease-out both; }
+
+.tk-compose__failed {
+  margin: 0;
+  font-size: 12.5px;
+  color: #b3302b;
+}
+
+/* «К новым сообщениям»: человек читает историю, а снизу пришло новое. */
+.tk-jump {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid #cfe0f3;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 6px 18px rgba(19, 41, 90, 0.12);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--tk-blue);
+  cursor: pointer;
+  transform: translateX(-50%);
+  animation: tk-fade-in 0.18s ease-out both;
+}
+
+.tk-jump:hover { border-color: #9fc0ea; }
+
+@media (prefers-reduced-motion: reduce) {
+  .tk-msg--new,
+  .tk-day--new,
+  .tk-event--new,
+  .tk-delivery--changed,
+  .tk-notice,
+  .tk-compose__failed,
+  .tk-jump { animation: none; }
+
+  .tk-send,
+  .tk-compose__field { transition: none; }
+
+  .tk-send:active:not(:disabled) { transform: none; }
 }

@@ -19,7 +19,7 @@
  */
 
 import {
-  useCallback, useEffect, useMemo, useRef, useState,
+  memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,
   type KeyboardEvent, type ReactNode,
 } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -281,9 +281,22 @@ export function QuestionsPage() {
   }, [detail, picked, reloadList, reloadCounts]);
 
   const [busy, setBusy] = useState<string | null>(null);
-  const [notice, setNotice] = useState<{ tone: 'error' | 'ok'; text: string } | null>(null);
+  /**
+   * Чьё действие идёт и чьё сообщение показано.
+   *
+   * Ответ уходит на сервер секунду-другую, и за это время кадровик
+   * может открыть другое обращение. Итог («Ответ отправлен», ошибка) и
+   * надпись «Отправляем…» относятся к тому обращению, где нажали кнопку,
+   * а не к тому, что открыто, когда пришёл ответ сервера.
+   */
+  const [busyFor, setBusyFor] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ tone: 'error' | 'ok'; text: string; id: string } | null>(null);
   const [closing, setClosing] = useState(false);
   const [sideOpen, setSideOpen] = useState(false);
+  const opened = useRef(currentId);
+  useLayoutEffect(() => {
+    opened.current = currentId;
+  }, [currentId]);
   useEffect(() => {
     setNotice(null);
     setClosing(false);
@@ -292,7 +305,9 @@ export function QuestionsPage() {
 
   const act: Act = useCallback(
     async (label, action, done) => {
+      const owner = opened.current;
       setBusy(label);
+      setBusyFor(owner);
       setNotice(null);
       try {
         const fresh = await action();
@@ -301,14 +316,15 @@ export function QuestionsPage() {
         reloadList();
         reloadCounts();
         reloadContext();
-        if (done) setNotice({ tone: 'ok', text: done });
+        if (done) setNotice({ tone: 'ok', text: done, id: owner });
         return fresh;
       } catch (error) {
-        setNotice({ tone: 'error', text: failureText(error) });
+        setNotice({ tone: 'error', text: failureText(error), id: owner });
         if (error instanceof ApiFailure && error.kind === 'conflict') reloadDetail();
         return null;
       } finally {
         setBusy(null);
+        setBusyFor(null);
       }
     },
     [reloadDetail, reloadList, reloadCounts, reloadContext],
@@ -495,7 +511,8 @@ export function QuestionsPage() {
                   question={detail}
                   context={context}
                   busy={busy}
-                  notice={notice}
+                  sending={busy === 'reply' && busyFor === detail.id}
+                  notice={notice && notice.id === detail.id ? notice : null}
                   reply={reply}
                   setReply={setReply}
                   act={act}
@@ -602,12 +619,23 @@ function QueueSkeleton() {
 
 // --- переписка ----------------------------------------------------------------
 
+/** «Внизу ленты» — с запасом в пару строк, а не до пикселя. */
+const BOTTOM_SLACK = 64;
+/** Сколько длится плавная прокрутка к новому сообщению, с запасом. */
+const FOLLOW_MS = 700;
+
+function reducedMotion(): boolean {
+  return Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
+}
+
 function Conversation({
-  question, context, busy, notice, reply, setReply, act, onBack, onContext,
+  question, context, busy, sending, notice, reply, setReply, act, onBack, onContext,
 }: {
   question: api.Question;
   context: api.QuestionContext | null;
   busy: string | null;
+  /** Ответ из ЭТОГО обращения сейчас уходит на сервер. */
+  sending: boolean;
   notice: { tone: 'error' | 'ok'; text: string } | null;
   reply: string;
   setReply: (value: string) => void;
@@ -620,11 +648,76 @@ function Conversation({
   const actions = question.actions;
   const id = question.id;
 
-  // Новое сообщение — прокрутка вниз. Опрос без новых сообщений прокрутку не трогает.
-  useEffect(() => {
+  /*
+   * Какие сообщения уже были на экране, когда обращение открыли.
+   *
+   * Плавно появляется только сообщение, которого в этом наборе нет, —
+   * подтверждённый сервером ответ HR или новое сообщение сотрудника из
+   * опроса. Опрос, вернувший те же сообщения, ничего не анимирует
+   * заново: строки привязаны к `id` и не пересоздаются. Набор живёт,
+   * пока открыто это обращение (`Conversation` пересоздаётся по `id`).
+   */
+  const [known] = useState(() => new Set(question.messages.map((message) => message.id)));
+
+  /*
+   * Прокрутка ленты.
+   *
+   * Где был человек, запоминается по событию прокрутки — то есть ДО
+   * того, как пришло новое сообщение и лента выросла. Был внизу — лента
+   * плавно доезжает до нового сообщения. Читал историю — прокрутка не
+   * трогается вовсе, а внизу появляется кнопка «К новым сообщениям».
+   */
+  const atBottom = useRef(true);
+  const following = useRef(0);
+  const [unseen, setUnseen] = useState(false);
+  const lastId = question.messages[question.messages.length - 1]?.id ?? '';
+  const shownLast = useRef(lastId);
+
+  const toBottom = useCallback((smooth: boolean) => {
+    const box = thread.current;
+    if (!box) return;
+    window.clearTimeout(following.current);
+    following.current = window.setTimeout(() => { following.current = 0; }, FOLLOW_MS);
+    atBottom.current = true;
+    box.scrollTo({ top: box.scrollHeight, behavior: smooth && !reducedMotion() ? 'smooth' : 'auto' });
+  }, []);
+
+  const onScroll = useCallback(() => {
+    const box = thread.current;
+    if (!box) return;
+    const near = box.scrollHeight - box.scrollTop - box.clientHeight <= BOTTOM_SLACK;
+    // Пока лента сама едет вниз, промежуточные положения — не «ушёл читать».
+    atBottom.current = near || following.current !== 0;
+    if (near) setUnseen(false);
+  }, []);
+
+  // Открыли обращение — сразу к последнему сообщению, без анимации.
+  useLayoutEffect(() => {
     const box = thread.current;
     if (box) box.scrollTop = box.scrollHeight;
-  }, [question.messages.length]);
+    return () => window.clearTimeout(following.current);
+  }, []);
+
+  // Пришло новое последнее сообщение.
+  useLayoutEffect(() => {
+    if (shownLast.current === lastId) return;
+    shownLast.current = lastId;
+    if (atBottom.current) toBottom(true);
+    else setUnseen(true);
+  }, [lastId, toBottom]);
+
+  // Поле ответа выросло, появилось уведомление — лента стала ниже. Если
+  // человек был внизу, последнее сообщение остаётся на виду, а не
+  // уезжает под поле ввода.
+  useEffect(() => {
+    const box = thread.current;
+    if (!box || typeof ResizeObserver === 'undefined') return;
+    const watcher = new ResizeObserver(() => {
+      if (atBottom.current && following.current === 0) box.scrollTop = box.scrollHeight;
+    });
+    watcher.observe(box);
+    return () => watcher.disconnect();
+  }, []);
 
   const where = [question.office?.name ?? context?.employee.office?.name, context?.employee.department]
     .filter(Boolean).join(' · ');
@@ -689,14 +782,22 @@ function Conversation({
         </p>
       )}
 
-      <div className="tk-thread" ref={thread}>
-        <Thread question={question} />
-        {question.status === 'CLOSED' && (
-          <p className="tk-event tk-event--closed">
-            Обращение закрыто{question.closed_at ? ` ${fullDay(question.closed_at)} в ${clock(question.closed_at)}` : ''}
-            {question.closed_by ? ` · ${question.closed_by.name}` : ''}
-            {question.close_reason ? ` · ${question.close_reason}` : ''}
-          </p>
+      <div className="tk-thread-wrap">
+        <div className="tk-thread" ref={thread} onScroll={onScroll}>
+          <Thread question={question} known={known} />
+          {question.status === 'CLOSED' && (
+            <p className="tk-event tk-event--closed">
+              Обращение закрыто{question.closed_at ? ` ${fullDay(question.closed_at)} в ${clock(question.closed_at)}` : ''}
+              {question.closed_by ? ` · ${question.closed_by.name}` : ''}
+              {question.close_reason ? ` · ${question.close_reason}` : ''}
+            </p>
+          )}
+        </div>
+        {unseen && (
+          <button type="button" className="tk-jump" onClick={() => { setUnseen(false); toBottom(true); }}>
+            <AppIcon name="chevron" size={16} />
+            К новым сообщениям
+          </button>
         )}
       </div>
 
@@ -705,7 +806,10 @@ function Conversation({
           question={question}
           value={reply}
           onChange={setReply}
-          sending={busy === 'reply'}
+          sending={sending}
+          // Ответ из другого обращения ещё в пути: второй параллельно не
+          // отправляем, но и «Отправляем…» здесь не пишем — не отсюда.
+          blocked={busy === 'reply' && !sending}
           onSend={(body) => act(
             'reply',
             () => (body.file
@@ -727,20 +831,35 @@ function Conversation({
   );
 }
 
-function Thread({ question }: { question: api.Question }) {
+/**
+ * Лента сообщений.
+ *
+ * Перерисовывается только когда пришли другие данные обращения: набор
+ * текста в поле ответа ленту не трогает — на длинной переписке это
+ * сотни строк на каждую букву.
+ *
+ * `known` — сообщения, которые были на экране при открытии. Остальные
+ * получают модификатор `--new` и один раз мягко появляются (CSS-анимация
+ * при монтировании строки). Модификатор не снимается: строка с тем же
+ * `id` не пересоздаётся, и анимация второй раз не запускается.
+ */
+const Thread = memo(function Thread({ question, known }: { question: api.Question; known: ReadonlySet<string> }) {
   const out: ReactNode[] = [];
   let day = '';
   for (const message of question.messages) {
+    const fresh = !known.has(message.id);
     const label = fullDay(message.created_at);
     if (label !== day) {
       day = label;
-      out.push(<div key={`day-${message.id}`} className="tk-day"><span>{label}</span></div>);
+      out.push(
+        <div key={`day-${message.id}`} className={fresh ? 'tk-day tk-day--new' : 'tk-day'}><span>{label}</span></div>,
+      );
     }
     if (message.kind === 'SYSTEM') {
       // История обращения: кто взял, кому передали, когда закрыли. Мелко
       // и по центру — это работа с обращением, а не реплика в разговоре.
       out.push(
-        <p key={message.id} className="tk-event">
+        <p key={message.id} className={fresh ? 'tk-event tk-event--new' : 'tk-event'}>
           {eventText(message)}
           {message.author.type === 'user' && <> · {message.author.name}</>}
           <time dateTime={message.created_at}> · {clock(message.created_at)}</time>
@@ -767,7 +886,8 @@ function Thread({ question }: { question: api.Question }) {
       // синим, со статусом доставки. Подпись с именем остаётся: HR в
       // переписке бывает несколько, и видно, кто именно ответил.
       out.push(
-        <article key={message.id} className="tk-msg tk-msg--mine">
+        <article key={message.id} className={fresh ? 'tk-msg tk-msg--mine tk-msg--new' : 'tk-msg tk-msg--mine'}
+                 data-message-id={message.id}>
           <p className="tk-msg__who">
             <b>{message.author.name}</b>
             <span aria-hidden="true">·</span>
@@ -787,7 +907,8 @@ function Thread({ question }: { question: api.Question }) {
     }
     // Сообщение сотрудника — собеседник: слева, белое, с его лицом.
     out.push(
-      <article key={message.id} className="tk-msg tk-msg--theirs">
+      <article key={message.id} className={fresh ? 'tk-msg tk-msg--theirs tk-msg--new' : 'tk-msg tk-msg--theirs'}
+               data-message-id={message.id}>
         <Photo id={question.employee.id} name={message.author.name} has={question.employee.has_photo} className="tk-face tk-face--sm" />
         <div className="tk-msg__bubble">
           {body}
@@ -800,39 +921,61 @@ function Thread({ question }: { question: api.Question }) {
     );
   }
   return <>{out}</>;
-}
+});
 
+/**
+ * Статус доставки ответа — ровно тот, что прислал сервер.
+ *
+ * Значок не меняется сам по таймеру или по окончании анимации: «доставлено»
+ * и «прочитано» появляются только когда их сообщил сервер (опрос). Смена
+ * статуса при открытой переписке показывается мягко; при открытии
+ * переписки значки стоят сразу, без анимации.
+ */
 function Delivery({ delivery }: { delivery: NonNullable<api.QuestionMessage['delivery']> }) {
+  const [first] = useState(delivery.status);
+  const changed = delivery.status !== first ? ' tk-delivery--changed' : '';
   const title = DELIVERY_TITLE[delivery.status];
   if (delivery.status === 'FAILED') {
     return (
-      <span className="tk-delivery tk-delivery--bad">
+      <span key={delivery.status} className={`tk-delivery tk-delivery--bad${changed}`}>
         {title}{delivery.error ? `: ${TELEGRAM_REASON[delivery.error] ?? delivery.error}` : ''}
       </span>
     );
   }
   if (delivery.status === 'READ' || delivery.status === 'DELIVERED') {
     return (
-      <span className={`tk-delivery tk-delivery--${delivery.status}`} role="img" aria-label={title} title={title}>
+      <span key={delivery.status} className={`tk-delivery tk-delivery--${delivery.status}${changed}`}
+            role="img" aria-label={title} title={title}>
         <AppIcon name={delivery.status === 'READ' ? 'ticks' : 'tick'} size={16} />
       </span>
     );
   }
-  return <span className="tk-delivery" role="img" aria-label={title} title={title}><AppIcon name="clock" size={16} /></span>;
+  return (
+    <span key={delivery.status} className={`tk-delivery${changed}`} role="img" aria-label={title} title={title}>
+      <AppIcon name="clock" size={16} />
+    </span>
+  );
 }
 
 // --- ответ --------------------------------------------------------------------
 
-function Composer({ question, value, onChange, sending, onSend }: {
+/** Пять строк поля ответа; выше — прокрутка внутри поля. */
+const FIELD_MAX = 132;
+
+function Composer({ question, value, onChange, sending, blocked, onSend }: {
   question: api.Question;
   value: string;
   onChange: (value: string) => void;
   sending: boolean;
+  /** Идёт отправка из другого обращения: эта кнопка ждёт, но не «отправляет». */
+  blocked: boolean;
   onSend: (body: { text: string; after: api.ReplyAfter; client_request_id: string; file: File | null }) => Promise<api.Question | null>;
 }) {
   const [file, setFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [emoji, setEmoji] = useState(false);
+  /** Последняя отправка не удалась: текст остался в поле, это сказано рядом. */
+  const [failed, setFailed] = useState(false);
   const field = useRef<HTMLTextAreaElement | null>(null);
   const picker = useRef<HTMLInputElement | null>(null);
   // Ключ повтора живёт, пока не изменилось содержимое: повторное нажатие
@@ -842,14 +985,30 @@ function Composer({ question, value, onChange, sending, onSend }: {
   const inFlight = useRef(false);
   const connected = question.telegram.connected;
   const text = value.trim();
-  const ready = (text.length > 0 || file !== null) && connected && !sending;
+  const ready = (text.length > 0 || file !== null) && connected && !sending && !blocked;
 
-  // Поле растёт вместе с текстом, но не выше пяти строк.
-  useEffect(() => {
+  /*
+   * Поле растёт вместе с текстом, но не выше пяти строк.
+   *
+   * Нужную высоту можно узнать, только сбросив её в `auto`, — и тогда
+   * переход по `height` не срабатывает: поле прыгает. Поэтому после
+   * замера возвращается прежняя высота, браузер её фиксирует, и только
+   * потом ставится новая — её поле и проходит плавно (см. CSS). Всё это
+   * до отрисовки кадра, мигания нет.
+   */
+  useLayoutEffect(() => {
     const box = field.current;
     if (!box) return;
+    const was = box.style.height;
     box.style.height = 'auto';
-    box.style.height = `${Math.min(box.scrollHeight, 132)}px`;
+    const full = box.scrollHeight;
+    const next = `${Math.min(full, FIELD_MAX)}px`;
+    box.style.overflowY = full > FIELD_MAX ? 'auto' : 'hidden';
+    if (was && was !== next) {
+      box.style.height = was;
+      void box.offsetHeight;
+    }
+    box.style.height = next;
   }, [value]);
 
   function insert(piece: string) {
@@ -884,12 +1043,17 @@ function Composer({ question, value, onChange, sending, onSend }: {
     const sign = `${text}|${file ? `${file.name}:${file.size}` : ''}`;
     const key = pending.current?.sign === sign ? pending.current.key : requestKey();
     pending.current = { sign, key };
+    setFailed(false);
     try {
       const fresh = await onSend({ text, after: 'KEEP', client_request_id: key, file });
       if (fresh) {
         pending.current = null;
         onChange('');
         setFile(null);
+      } else {
+        // Сообщение не исчезает молча: текст и файл остаются, повтор —
+        // той же кнопкой и с тем же ключом, второго сообщения не будет.
+        setFailed(true);
       }
     } finally {
       inFlight.current = false;
@@ -906,7 +1070,9 @@ function Composer({ question, value, onChange, sending, onSend }: {
   }
 
   return (
-    <form className="tk-compose" aria-label="Отправка ответа" onSubmit={(event) => { event.preventDefault(); void send(); }}>
+    <form className={sending ? 'tk-compose tk-compose--sending' : 'tk-compose'} aria-label="Отправка ответа"
+          aria-busy={sending || undefined}
+          onSubmit={(event) => { event.preventDefault(); void send(); }}>
       {(file || fileError) && (
         <div className="tk-compose__file">
           {file && (
@@ -939,11 +1105,14 @@ function Composer({ question, value, onChange, sending, onSend }: {
             maxLength={4000}
             value={value}
             placeholder={connected ? 'Введите сообщение…' : `${telegramReason(question.telegram.reason)} — отправка недоступна`}
-            onChange={(event) => onChange(event.target.value)}
+            // Пока ответ в пути, текст не правится: после подтверждения
+            // поле очищается, и дописанное за эти секунды пропало бы.
+            readOnly={sending}
+            onChange={(event) => { setFailed(false); onChange(event.target.value); }}
             onKeyDown={onKey}
           />
           <button type="button" className="tk-emoji" aria-label="Эмодзи" aria-expanded={emoji}
-                  disabled={!connected} onClick={() => setEmoji((was) => !was)}>
+                  disabled={!connected || sending} onClick={() => setEmoji((was) => !was)}>
             <AppIcon name="smile" size={20} />
           </button>
           <AppPopover open={emoji} onClose={() => setEmoji(false)} className="tk-menu tk-emoji-menu">
@@ -954,10 +1123,16 @@ function Composer({ question, value, onChange, sending, onSend }: {
             ))}
           </AppPopover>
         </span>
-        <button type="submit" className="tk-send" disabled={!ready}>
-          {sending ? 'Отправляем…' : 'Отправить'}
+        {/* Обе надписи лежат в одной клетке, видна одна: кнопка не
+            меняет ширину, и поле ввода рядом не дёргается. */}
+        <button type="submit" className={sending ? 'tk-send tk-send--busy' : 'tk-send'} disabled={!ready}>
+          <span className="tk-send__label" aria-hidden={sending}>Отправить</span>
+          <span className="tk-send__label" aria-hidden={!sending}>Отправляем…</span>
         </button>
       </div>
+      {failed && !sending && (
+        <p className="tk-compose__failed">Сообщение не отправлено — текст остался в поле.</p>
+      )}
     </form>
   );
 }

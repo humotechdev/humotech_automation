@@ -132,6 +132,24 @@ describe('очередь', () => {
     );
   });
 
+  test('шесть вкладок — один ряд, одна выбранная, «Отмена» работает как остальные', async () => {
+    // Перенос и прокрутку jsdom не раскладывает: здесь проверяется только
+    // устройство ряда. Ширину проверяли headless-браузером (см. отчёт).
+    const calls = network();
+    renderApp('/requests?tab=cancel');
+    await screen.findByText('Muradov Azizbek');
+
+    const strip = screen.getByRole('tablist', { name: 'Вид заявок' });
+    expect(strip.classList.contains('rq-tabs')).toBe(true);
+    const tabs = within(strip).getAllByRole('tab');
+    expect(tabs.map((one) => one.textContent?.replace(/\d+/g, ''))).toEqual(
+      ['Требуют решения', 'Все', 'Отпуска', 'Больничные', 'Исправления', 'Отмена'],
+    );
+    expect(tabs.filter((one) => one.getAttribute('aria-selected') === 'true').map((one) => one.textContent))
+      .toEqual(['Отмена0']);
+    await waitFor(() => expect(calls.some((c) => c.url.includes('request_kind=CANCEL'))).toBe(true));
+  });
+
   test('пустой отбор отвечает строкой, а не пустой таблицей с листалкой', async () => {
     network([]);
     renderApp('/requests?search=никого');
