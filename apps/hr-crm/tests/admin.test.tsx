@@ -747,6 +747,8 @@ describe('переименование в строке', () => {
     expect(screen.getByRole('status').textContent).toContain('Логистика');
     expect(await screen.findByRole('button', { name: 'Логистика' })).toBeTruthy();
     await waitFor(() => expect(screen.queryByLabelText('Новое название отдела')).toBeNull());
+    // Фокус вернулся на строку, а не упал на страницу.
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Логистика' }));
   });
 
   test('отказ сервера оставляет форму открытой с введённым текстом', async () => {
@@ -780,6 +782,7 @@ describe('переименование в строке', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Отмена' }));
     await waitFor(() => expect(screen.queryByLabelText('Новое название отдела')).toBeNull());
     expect(calls.some((one) => one.method === 'PATCH')).toBe(false);
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Продажи' }));
   });
 });
 

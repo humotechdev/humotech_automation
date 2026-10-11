@@ -92,7 +92,23 @@ export function AnimatedTabContent({ activeKey, order, label, render }: {
     let live = true;
     const gen = leaving.gen;
     Promise.all(moves.map((one) => one.finished)).then(
-      () => {
+      async () => {
+        if (!live) return;
+        // Новая панель могла вырасти за время перехода (догрузились
+        // данные). Без досведения рамка прыгнула бы к настоящей высоте
+        // одним кадром — поэтому короткий добор от замеренной.
+        const real = inn.offsetHeight;
+        if (Math.abs(real - after) > 1) {
+          const settle = box.animate(
+            [{ height: `${after}px` }, { height: `${real}px` }],
+            { duration: 160, easing: EASE },
+          );
+          try {
+            await settle.finished;
+          } catch {
+            return;
+          }
+        }
         if (live) setLeaving((was) => (was && was.gen === gen ? null : was));
       },
       // Отменённая анимация — не ошибка: её сменил следующий переход.

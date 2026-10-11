@@ -937,6 +937,20 @@ function NameEditor({ which, row, onCancel, onSaved }: {
   const field = useRef<HTMLInputElement>(null);
   const fieldId = useId();
 
+  /*
+   * Форма исчезает — фокус не должен упасть на страницу целиком:
+   * человек с клавиатуры продолжает с той же строки, с её кнопки.
+   */
+  const backToRow = () => {
+    field.current?.closest('.adp-row')
+      ?.querySelector<HTMLButtonElement>('.adp-row__toggle')
+      ?.focus({ preventScroll: true });
+  };
+  const cancel = () => {
+    backToRow();
+    onCancel();
+  };
+
   useEffect(() => {
     field.current?.focus({ preventScroll: true });
     field.current?.select();
@@ -958,7 +972,10 @@ function NameEditor({ which, row, onCancel, onSaved }: {
         // Название берётся из ответа: сервер мог его нормализовать.
         if (answer && typeof answer.name === 'string') confirmed = answer.name;
       },
-      () => onSaved(confirmed),
+      () => {
+        backToRow();
+        onSaved(confirmed);
+      },
     );
   };
 
@@ -969,7 +986,7 @@ function NameEditor({ which, row, onCancel, onSaved }: {
           onKeyDown={(event) => {
             if (event.key === 'Escape' && !saving.busy) {
               event.stopPropagation();
-              onCancel();
+              cancel();
             }
           }}>
       <div className={shownError ? 'adp-editor__field adm-field--bad' : 'adp-editor__field'}>
@@ -986,7 +1003,7 @@ function NameEditor({ which, row, onCancel, onSaved }: {
       <div className="adp-editor__tools">
         <SubmitButton busy={saving.busy} label="Сохранить" />
         <button type="button" className="btn adp-editor__cancel" disabled={saving.busy}
-                onClick={onCancel}>
+                onClick={cancel}>
           Отмена
         </button>
       </div>
