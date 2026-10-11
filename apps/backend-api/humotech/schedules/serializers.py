@@ -39,8 +39,21 @@ class WorkScheduleSerializer(serializers.ModelSerializer):
             "id", "organization_id", "name", "timezone", "weekly_minutes",
             "late_grace_minutes", "early_leave_grace_minutes", "is_flexible",
             "status", "created_at", "updated_at",
+            "region_id", "region_name", "can_manage",
         )
         read_only_fields = fields
+
+    region_name = serializers.SerializerMethodField(
+        help_text="Регион графика; null — график организации")
+    can_manage = serializers.SerializerMethodField(
+        help_text="Может ли текущий пользователь менять этот график")
+
+    def get_region_name(self, schedule) -> str | None:
+        region = getattr(schedule, "region", None) if schedule.region_id else None
+        return region.name if region is not None else None
+
+    def get_can_manage(self, schedule) -> bool | None:
+        return getattr(schedule, "can_manage", None)
 
 
 class WorkScheduleDetailSerializer(WorkScheduleSerializer):
@@ -117,6 +130,9 @@ class WorkScheduleCreateSerializer(serializers.Serializer):
     early_leave_grace_minutes = serializers.IntegerField(required=False, default=0)
     is_flexible = serializers.BooleanField(required=False, default=False)
     days = DayInputSerializer(many=True, required=False, default=list)
+    #: Регион графика. Не передан — график организации (нужно право на
+    #: всю организацию) или единственного региона регионального HR.
+    region_id = serializers.UUIDField(required=False, allow_null=True)
 
 
 class WorkScheduleUpdateSerializer(serializers.Serializer):

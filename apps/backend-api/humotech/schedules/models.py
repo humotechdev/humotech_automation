@@ -32,6 +32,19 @@ class WorkSchedule(
     early_leave_grace_minutes = models.IntegerField(db_default=0)
     is_flexible = models.BooleanField(db_default=False)
     status = models.CharField(max_length=30, choices=choices(SCHEDULE_STATUSES))
+    #: Чей это график. Пусто — график ОРГАНИЗАЦИИ: его меняет только тот,
+    #: у кого `schedules.manage` на всю организацию. Регион — график
+    #: региона: его меняет HR с правом на весь регион, и назначается он
+    #: только сотрудникам офисов этого региона (решение владельца
+    #: 11.10.2026, аудит M-2).
+    region = models.ForeignKey(
+        "regions.Region",
+        on_delete=models.PROTECT,
+        db_column="region_id",
+        related_name="+",
+        null=True,
+        blank=True,
+    )
 
     class Meta:
         db_table = "work_schedules"

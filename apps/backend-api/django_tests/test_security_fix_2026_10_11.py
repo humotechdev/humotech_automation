@@ -524,59 +524,92 @@ from humotech.core.errors import PermissionDenied  # noqa: E402
 
 
 class TestSharedSchedules:
-    """Решение владельца: создавать можно; менять/отключать — только если
-    все сотрудники графика в области schedules.manage."""
+    """Решение владельца 11.10: региональный HR создаёт и меняет графики только
+    своего региона; графики организации — только с правом на всю организацию."""
 
-    def _schedule(self, actor):
+    def _schedule(self, actor, **extra):
         from humotech.schedules.services import WorkScheduleService
 
         return WorkScheduleService().create(actor, name="Пятидневка",
                                             timezone="Asia/Tashkent",
-                                            weekly_minutes=2400)
+                                            weekly_minutes=2400, **extra)
 
-    def _assign(self, schedule, employee):
-        from humotech.schedules.models import EmployeeScheduleAssignment
-
-        EmployeeScheduleAssignment.objects.create(
-            organization=employee.organization, employee=employee,
-            schedule=schedule, valid_from=date.today() - timedelta(days=5))
-
-    def test_regional_hr_cannot_edit_schedule_used_in_other_region(
+    def test_regional_hr_creates_and_edits_only_own_region_schedules(
             self, organization, region, other_region):
         from humotech.schedules.services import WorkScheduleService
 
         office_1 = make_office(organization, region, "M2S-1")
-        office_2 = make_office(organization, other_region, "M2S-2")
         _, regional = create_actor(organization, region=region,
                                    permissions=("schedules.read", "schedules.manage"))
-        schedule = self._schedule(regional)                      # создать — можно
-        self._assign(schedule, _employee(organization, office_1, "M2S-E1"))
-        WorkScheduleService().update(regional, schedule.id, name="Своя")  # свои — можно
-        self._assign(schedule, _employee(organization, office_2, "M2S-E2"))
-        with pytest.raises(PermissionDenied):
-            WorkScheduleService().update(regional, schedule.id, name="Чужая")
-        with pytest.raises(PermissionDenied):
-            WorkScheduleService().deactivate(regional, schedule.id)
-        # HR всей организации правит как прежде.
         _, wide = create_actor(organization,
                                permissions=("schedules.read", "schedules.manage"))
-        WorkScheduleService().update(wide, schedule.id, name="Общая")
+        service = WorkScheduleService()
 
-    def test_view_grant_does_not_count_as_whole_org(self, organization, region,
-                                                    other_region):
+        own = self._schedule(regional)                     # регион подставлен сам
+        assert own.region_id == region.id
+        service.update(regional, own.id, name="Своя")       # свой регион — можно
+
+        org_schedule = self._schedule(wide)                 # график организации
+        assert org_schedule.region_id is None
+        with pytest.raises(PermissionDenied):
+            service.update(regional, org_schedule.id, name="Чужая")
+        with pytest.raises(PermissionDenied):
+            service.deactivate(regional, org_schedule.id)
+        with pytest.raises(PermissionDenied):               # чужой регион — нельзя
+            self._schedule(regional, region_id=other_region.id)
+
+        # Права видны интерфейсу заранее.
+        rows = {row.id: row.can_manage for row in service.list(regional).items}
+        assert rows[own.id] is True and rows[org_schedule.id] is False
+        # HR организации правит любые.
+        service.update(wide, own.id, name="Общая")
+        service.update(wide, org_schedule.id, name="Общая 2")
+        _employee(organization, office_1, "M2S-E1")
+
+    def test_region_schedule_assigned_only_inside_region(self, organization, region,
+                                                         other_region):
+        from humotech.core.errors import ValidationFailed as VF
+        from humotech.schedules.services import WorkScheduleService
+
+        office_2 = make_office(organization, other_region, "M2S-2")
+        stranger = _employee(organization, office_2, "M2S-E2")
+        _, wide = create_actor(organization,
+                               permissions=("schedules.read", "schedules.manage",
+                                            "employees.read"))
+        regional_schedule = self._schedule(wide, region_id=region.id)
+        with pytest.raises(VF):
+            WorkScheduleService().assign_to_employee(
+                wide, employee_id=stranger.id, schedule_id=regional_schedule.id,
+                valid_from=date.today())
+
+    def test_view_grant_does_not_count_as_whole_org(self, organization, region):
         """Комбо: schedules.manage на регион + чтение всей организации."""
         from humotech.schedules.services import WorkScheduleService
 
-        office_2 = make_office(organization, other_region, "M2S-C2")
         user, actor = create_actor(organization, region=region,
                                    permissions=("schedules.read", "schedules.manage"),
                                    role_code="M2S_MANAGE_R1")
         _add_grant(organization, user, permissions=("schedules.read",),
                    role_code="M2S_READ_ORG")
-        schedule = self._schedule(actor)
-        self._assign(schedule, _employee(organization, office_2, "M2S-C2E"))
+        _, wide = create_actor(organization,
+                               permissions=("schedules.read", "schedules.manage"))
+        org_schedule = self._schedule(wide)
         with pytest.raises(PermissionDenied):
-            WorkScheduleService().update(actor, schedule.id, name="x")
+            WorkScheduleService().update(actor, org_schedule.id, name="x")
+
+    def test_other_region_schedule_hidden_from_regional_reader(self, organization,
+                                                               region, other_region):
+        from humotech.core.errors import NotFound
+        from humotech.schedules.services import WorkScheduleService
+
+        _, wide = create_actor(organization,
+                               permissions=("schedules.read", "schedules.manage"))
+        foreign = self._schedule(wide, region_id=other_region.id)
+        _, reader = create_actor(organization, region=region,
+                                 permissions=("schedules.read",))
+        assert foreign.id not in {r.id for r in WorkScheduleService().list(reader).items}
+        with pytest.raises(NotFound):
+            WorkScheduleService().get(reader, foreign.id)
 
 
 class TestOrganizationWideObjects:

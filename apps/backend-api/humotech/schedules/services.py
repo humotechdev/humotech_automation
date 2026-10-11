@@ -32,6 +32,7 @@ from humotech.core.validation import (
 from humotech.departments.models import Department
 from humotech.employees.models import Employee, EmployeeAssignment
 from humotech.employees.selectors import require_visible_employee
+from humotech.offices.models import Office
 from humotech.schedules.models import (
     EmployeeScheduleAssignment,
     ScheduleBreak,
@@ -86,11 +87,37 @@ class WorkScheduleService(BaseService):
         queryset = WorkSchedule.objects.filter(
             organization_id=actor.organization_id
         )
+        # Графики организации видны всем с правом чтения; графики региона —
+        # тем, кому виден этот регион (целиком или офисом в нём).
+        scope = self.access.scope_for(actor, "schedules.read")
+        if not scope.all_offices:
+            queryset = queryset.filter(
+                Q(region_id__isnull=True)
+                | Q(region_id__in=scope.region_ids)
+                | Q(region_id__in=Office.objects.filter(
+                    id__in=scope.office_ids).values("region_id"))
+            )
         if status:
             queryset = queryset.filter(status=status)
         if search:
             queryset = queryset.filter(name__icontains=search.strip())
-        return paginate(queryset, limit=limit, cursor=cursor)
+        page = paginate(queryset.select_related("region"), limit=limit, cursor=cursor)
+        self.mark_rights(actor, page.items)
+        return page
+
+    def mark_rights(self, actor: Actor, schedules) -> None:
+        """Проставить `can_manage` — может ли актор менять этот график.
+
+        Интерфейсу нужно знать это заранее: кнопка «Изменить» у чужого
+        графика звала бы к действию, которое сервер отклонит.
+        """
+        for schedule in schedules:
+            try:
+                self._require_editable(actor, schedule)
+            except (PermissionDenied, NotFound):
+                schedule.can_manage = False
+            else:
+                schedule.can_manage = True
 
     def get(self, actor: Actor, schedule_id: uuid.UUID) -> WorkSchedule:
         self.access.require(actor, "schedules.read")
@@ -102,10 +129,20 @@ class WorkScheduleService(BaseService):
         self.access.require_schedule(actor, schedule_id)
         # дни и перерывы — двумя дополнительными запросами на весь график,
         # а не по запросу на каждый день
-        return (
+        schedule = (
             WorkSchedule.objects.prefetch_related("days__breaks")
-            .get(id=schedule_id)
+            .select_related("region").get(id=schedule_id)
         )
+        # График чужого региона не открывается по угаданному id — по тому
+        # же правилу, что и список.
+        if schedule.region_id is not None:
+            scope = self.access.scope_for(actor, "schedules.read")
+            if not (scope.all_offices or schedule.region_id in scope.region_ids
+                    or Office.objects.filter(id__in=scope.office_ids,
+                                             region_id=schedule.region_id).exists()):
+                raise NotFound("График работы не найден")
+        self.mark_rights(actor, [schedule])
+        return schedule
 
     def days_of(self, schedule: WorkSchedule) -> list[ScheduleDay]:
         return sorted(schedule.days.all(), key=lambda day: day.weekday)
@@ -123,13 +160,16 @@ class WorkScheduleService(BaseService):
         early_leave_grace_minutes: int = 0,
         is_flexible: bool = False,
         days: list[DaySpec] | None = None,
+        region_id: uuid.UUID | None = None,
     ) -> WorkSchedule:
         self.access.require(actor, "schedules.manage")
+        region_id = self._owner_region(actor, region_id)
         days = days or []
         self._validate_days(days)
 
         with self.atomic():
             schedule = WorkSchedule.objects.create(
+                region_id=region_id,
                 organization_id=actor.organization_id,
                 name=clean_text(name, field="name", required=True),
                 timezone=validate_timezone(timezone),
@@ -302,6 +342,7 @@ class WorkScheduleService(BaseService):
         self.access.require(actor, "schedules.manage")
         employee = self._require_employee(actor, employee_id, "schedules.manage")
         schedule = self.access.require_schedule(actor, schedule_id)
+        self._require_assignable(schedule, employee)
 
         if schedule.status != "ACTIVE":
             raise Conflict(
@@ -407,7 +448,8 @@ class WorkScheduleService(BaseService):
         if department is None:
             raise NotFound("Отдел не найден")
         if department.office_id is not None:
-            self.access.require_office(actor, department.office_id)
+            self.access.require_office(actor, department.office_id,
+                                       "schedules.manage")
 
         staff = EmployeeAssignment.objects.filter(
             department_id=department_id, organization_id=actor.organization_id
@@ -415,7 +457,7 @@ class WorkScheduleService(BaseService):
         # Общий отдел (без офиса) тянется через все регионы. Региональному
         # HR достаются только люди его области: назначить график человеку
         # чужого офиса по одному запросу он не может, и через отдел — тоже.
-        visible = self.access.visible_office_ids(actor)
+        visible = self.access.visible_office_ids(actor, "schedules.manage")
         if visible is not None:
             staff = staff.filter(office_id__in=visible)
         today_staff = list(staff.values_list("employee_id", flat=True).distinct())
@@ -470,49 +512,55 @@ class WorkScheduleService(BaseService):
     # ------------------------------------------------------ внутренние правила
 
     def _require_editable(self, actor: Actor, schedule: WorkSchedule) -> None:
-        """Менять общий график можно, только если все его сотрудники — в
-        области `schedules.manage` актора.
+        """Кто может менять, отключать и удалять график.
 
-        У графика нет офиса: он общий для организации. Без этой проверки
-        региональный HR правил дни и допуски графика, по которому работают
-        люди других регионов (аудит 11.10, M-2). Правило — решение
-        владельца 11.10.2026: создавать график можно всем с правом, а
-        менять, отключать и удалять — пока он не задевает никого вне
-        области. Учитываются действующие и будущие назначения графика;
-        офис сотрудника — по его действующему (или последнему) назначению.
+        График организации (без региона) — только держатель
+        `schedules.manage` на всю организацию; график региона — держатель
+        `schedules.manage` на весь этот регион. Область — в разрезе самого
+        права: «вся организация» из соседнего назначения «только чтение»
+        не считается (решение владельца 11.10.2026, аудит M-2).
         """
-        from django.db.models import Q
+        if schedule.region_id is None:
+            self.access.require_whole_organization(actor, "schedules.manage")
+        else:
+            self.access.require_whole_region(actor, schedule.region_id,
+                                             "schedules.manage")
 
-        from humotech.employees.models import EmployeeAssignment
-        from humotech.schedules.models import EmployeeScheduleAssignment
+    def _owner_region(self, actor: Actor, region_id):
+        """Регион нового графика.
 
+        Указан — нужен весь этот регион. Не указан — график организации,
+        если право есть на всю организацию; иначе — график единственного
+        региона, выданного целиком (так региональный HR создаёт график, не
+        выбирая регион). Нет ни того, ни другого — отказ.
+        """
+        if region_id is not None:
+            self.access.require_whole_region(actor, region_id, "schedules.manage")
+            return region_id
         scope = self.access.scope_for(actor, "schedules.manage")
         if scope.all_offices:
+            return None
+        if len(scope.region_ids) == 1:
+            return next(iter(scope.region_ids))
+        raise PermissionDenied(
+            "Укажите регион графика: график организации создаёт только тот, "
+            "у кого право на всю организацию",
+            details={"field": "region_id", "reason": "scope_limited"},
+        )
+
+    def _require_assignable(self, schedule: WorkSchedule, employee) -> None:
+        """График региона назначается только сотрудникам этого региона."""
+        if schedule.region_id is None:
             return
         today = date.today()
-        people = set(
-            EmployeeScheduleAssignment.objects.filter(schedule_id=schedule.id)
-            .filter(Q(valid_to__isnull=True) | Q(valid_to__gte=today))
-            .values_list("employee_id", flat=True)
-        )
-        if not people:
-            return
-        rows = EmployeeAssignment.objects.filter(employee_id__in=people)
-        live = rows.filter(Q(valid_to__isnull=True) | Q(valid_to__gte=today))
-        offices: dict = {}
-        for employee_id, office_id in live.values_list("employee_id", "office_id"):
-            offices.setdefault(employee_id, set()).add(office_id)
-        for employee_id in people - set(offices):
-            last = rows.filter(employee_id=employee_id).order_by(
-                "-valid_from", "-created_at").values_list("office_id", flat=True).first()
-            offices[employee_id] = {last} if last else set()
-        outside = [str(employee_id) for employee_id, places in offices.items()
-                   if not places & scope.office_ids]
-        if outside:
-            raise PermissionDenied(
-                "По этому графику работают сотрудники вне вашей области",
-                details={"reason": "schedule_outside_scope",
-                         "employees_outside": len(outside)},
+        offices = EmployeeAssignment.objects.filter(
+            employee_id=employee.id,
+        ).filter(Q(valid_to__isnull=True) | Q(valid_to__gte=today)).values("office_id")
+        if not Office.objects.filter(id__in=offices, region_id=schedule.region_id).exists():
+            raise ValidationFailed(
+                "Это график другого региона: сотруднику его назначить нельзя",
+                details={"schedule_id": str(schedule.id),
+                         "reason": "schedule_of_other_region"},
             )
 
     def _require_employee(
