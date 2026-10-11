@@ -647,3 +647,56 @@ class TestOrganizationWideObjects:
                                                                "body": "x"})
         with pytest.raises(PermissionDenied):
             PolicyService().create_document(scoped, {"code": "HACK", "title": "x"})
+
+
+# =============================================================================
+# M-7. Django Admin — только своя организация
+# =============================================================================
+
+
+class TestAdminOrganizationScope:
+
+    def _admin_client(self, organization):
+        from django.test import Client
+
+        user = create_actor(organization, role_code="SUPER_ADMIN")[0]
+        assert user.is_staff
+        client = Client()
+        client.force_login(user)
+        return client, user
+
+    def test_super_admin_sees_only_own_organization(self, organization,
+                                                    other_organization):
+        client, _ = self._admin_client(organization)
+        foreign = create_actor(other_organization, permissions=())[0]
+        mine = create_actor(organization, permissions=())[0]
+
+        listing = client.get("/admin/accounts/user/")
+        assert listing.status_code == 200
+        html = listing.content.decode()
+        assert mine.email in html
+        assert foreign.email not in html
+
+        # Карточка чужого пользователя — не открывается.
+        card = client.get(f"/admin/accounts/user/{foreign.id}/change/")
+        assert card.status_code in (302, 404)
+        # Чужая организация в списке организаций не видна.
+        orgs = client.get("/admin/organizations/organization/").content.decode()
+        assert other_organization.code not in orgs
+        assert organization.code in orgs
+
+    def test_cannot_grant_role_in_foreign_organization(self, organization,
+                                                      other_organization):
+        client, _ = self._admin_client(organization)
+        foreign_role = Role.objects.create(organization=other_organization,
+                                           code="FOREIGN_R", name="Чужая")
+        page = client.get("/admin/accounts/userrolescope/add/")
+        assert page.status_code == 200
+        assert str(foreign_role.id) not in page.content.decode()
+
+    def test_system_role_is_read_only(self, organization):
+        client, _ = self._admin_client(organization)
+        system = Role.objects.create(organization=None, code="SYS_X", name="Системная")
+        page = client.get(f"/admin/rbac/role/{system.id}/change/")
+        assert page.status_code == 200
+        assert 'name="_save"' not in page.content.decode()
