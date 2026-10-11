@@ -429,9 +429,20 @@ class TestScanStatus:
         with pytest.raises(NotFound):
             require_viewable(record, STAFF)
 
-    def test_scanner_enabled_marks_new_files_pending(self, settings, organization):
-        settings.FILES = {**settings.FILES, "SCANNER_ENABLED": True}
-        assert put(organization).scan_status == "PENDING"
+    def test_scanner_enabled_but_unreachable_refuses_upload(self, settings, organization):
+        """Включённый антивирус без ответа — файл не принимается (503), а не
+        оседает навсегда в PENDING: перевести его в проверенные некому
+        (аудит 11.10, M-11). Проверки с ответами clamd — в
+        test_security_fix_2026_10_11.py::TestAntivirusScan."""
+        from humotech.core.errors import ScannerUnavailable
+
+        settings.FILES = {**settings.FILES, "SCANNER_ENABLED": True,
+                          "SCANNER_HOST": "127.0.0.1", "SCANNER_PORT": 9,
+                          "SCANNER_TIMEOUT_SECONDS": 2}
+        before = File.objects.count()
+        with pytest.raises(ScannerUnavailable):
+            put(organization)
+        assert File.objects.count() == before
 
     def test_employee_upload_still_works_with_scanner_off(
         self, bot_client, context, sick_leave

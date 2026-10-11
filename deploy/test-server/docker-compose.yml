@@ -39,6 +39,12 @@ x-backend-image: &backend_image
 
 x-backend-env: &backend_env
   DJANGO_SETTINGS_MODULE: config.settings.production
+  # Антивирус загрузок (аудит 11.10, M-11). Выключен по умолчанию: включать
+  # только вместе с сервисом clamav (профиль antivirus), иначе загрузки
+  # файлов будут отклоняться с 503. См. docs/security/antivirus.md.
+  FILES_SCANNER_ENABLED: ${FILES_SCANNER_ENABLED:-false}
+  FILES_SCANNER_HOST: ${FILES_SCANNER_HOST:-clamav}
+  FILES_SCANNER_PORT: ${FILES_SCANNER_PORT:-3310}
   DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?нужен DJANGO_SECRET_KEY}
   # Пусто по умолчанию. После утечки ключа FALLBACKS остаётся пустым,
   # а хэш утёкшего ключа — в REVOKED (docs/security/rotate-telegram-token.md).
@@ -412,8 +418,33 @@ services:
     restart: unless-stopped
     logging: *logging
 
+  # Антивирус для проверки загружаемых файлов (clamd, INSTREAM :3310).
+  # Профиль antivirus: `docker compose --profile antivirus up -d` и
+  # FILES_SCANNER_ENABLED=true в .env. Сигнатуры обновляет freshclam в том
+  # же контейнере (нужен выход в интернет из сети app) и хранит в томе.
+  # Ресурсы: ~1–1,5 ГБ ОЗУ под базу сигнатур, первый старт 1–3 минуты.
+  clamav:
+    image: clamav/clamav:1.4
+    profiles: ["antivirus"]
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      CLAMAV_NO_MILTERD: "true"
+    volumes:
+      - clamav_db:/var/lib/clamav
+    networks:
+      - app
+    healthcheck:
+      test: ["CMD-SHELL", "clamdcheck.sh || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 300s
+    mem_limit: 2g
+
 volumes:
   postgres_data:
+  clamav_db:
   static_files:
   # Справки, больничные и готовые выгрузки — кадровые данные. Только
   # тома: ни шлюз, ни CRM их не монтируют, раздаёт их view после проверки

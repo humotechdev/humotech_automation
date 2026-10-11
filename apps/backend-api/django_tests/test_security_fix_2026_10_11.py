@@ -1133,3 +1133,108 @@ class TestKnowledgeReadScope:
             f"{API}/knowledge/sources/", {"limit": 100}).json()["items"]}
         assert str(other_office.id) in everything and str(foreign.id) not in everything
         office_c  # офис другого региона заведён для полноты картины
+
+
+# =============================================================================
+# M-11. Антивирусная проверка загрузок (clamd INSTREAM)
+# =============================================================================
+
+
+class _FakeClamd:
+    """Мини-clamd: принимает INSTREAM и отвечает заданной строкой."""
+
+    def __init__(self, reply: bytes):
+        import socket
+        import threading
+
+        self.reply = reply
+        self.received = b""
+        self.sock = socket.socket()
+        self.sock.bind(("127.0.0.1", 0))
+        self.sock.listen(1)
+        self.port = self.sock.getsockname()[1]
+        threading.Thread(target=self._serve, daemon=True).start()
+
+    def _serve(self):
+        import struct
+
+        conn, _ = self.sock.accept()
+        with conn:
+            data = b""
+            while True:
+                part = conn.recv(65536)
+                if not part:
+                    break
+                data += part
+                body = data[len(b"zINSTREAM\0"):]
+                # конец потока — кусок нулевой длины
+                pos, done = 0, False
+                while pos + 4 <= len(body):
+                    (size,) = struct.unpack("!L", body[pos:pos + 4])
+                    if size == 0:
+                        done = True
+                        break
+                    pos += 4 + size
+                if done:
+                    break
+            self.received = data
+            conn.sendall(self.reply)
+
+
+class TestAntivirusScan:
+
+    def _settings(self, settings, port):
+        settings.FILES = {**settings.FILES, "SCANNER_ENABLED": True,
+                          "SCANNER_HOST": "127.0.0.1", "SCANNER_PORT": port,
+                          "SCANNER_TIMEOUT_SECONDS": 5}
+
+    def _upload(self, organization, office, hr):
+        return EmployeeAttachmentService().upload(hr, upload=_pdf(), purpose="document")
+
+    def test_clean_file_stored_as_clean(self, settings, organization, office):
+        fake = _FakeClamd(b"stream: OK\0")
+        self._settings(settings, fake.port)
+        _, hr = create_actor(organization, permissions=("employees.read", "employees.manage"))
+        record = self._upload(organization, office, hr)
+        assert record.scan_status == "CLEAN"
+        assert fake.received.startswith(b"zINSTREAM\0") and PDF in fake.received
+
+    def test_infected_file_is_refused_and_not_stored(self, settings, organization, office):
+        from humotech.files.models import File
+
+        fake = _FakeClamd(b"stream: Eicar-Test-Signature FOUND\0")
+        self._settings(settings, fake.port)
+        _, hr = create_actor(organization, permissions=("employees.read", "employees.manage"))
+        before = File.objects.count()
+        with pytest.raises(ValidationFailed) as error:
+            self._upload(organization, office, hr)
+        assert error.value.details["reason"] == "infected"
+        assert File.objects.count() == before
+
+    def test_scanner_down_refuses_with_503(self, settings, organization, office):
+        import socket
+
+        from humotech.core.errors import ScannerUnavailable
+
+        probe = socket.socket()
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+        probe.close()  # порт свободен — clamd «не запущен»
+        self._settings(settings, port)
+        _, hr = create_actor(organization, permissions=("employees.read", "employees.manage"))
+        with pytest.raises(ScannerUnavailable):
+            self._upload(organization, office, hr)
+        assert ScannerUnavailable.http_status == 503
+
+    def test_garbled_reply_is_not_a_verdict(self, settings, organization, office):
+        from humotech.core.errors import ScannerUnavailable
+
+        fake = _FakeClamd(b"INSTREAM size limit exceeded. ERROR\0")
+        self._settings(settings, fake.port)
+        _, hr = create_actor(organization, permissions=("employees.read", "employees.manage"))
+        with pytest.raises(ScannerUnavailable):
+            self._upload(organization, office, hr)
+
+    def test_scanner_off_keeps_unscanned(self, organization, office):
+        _, hr = create_actor(organization, permissions=("employees.read", "employees.manage"))
+        assert self._upload(organization, office, hr).scan_status == "UNSCANNED"

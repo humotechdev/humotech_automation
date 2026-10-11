@@ -489,11 +489,17 @@ ONBOARDING = {
 FILES = {
     "PROVIDER": env("FILES_PROVIDER", "local"),
     "PRIVATE_ROOT": env("FILES_PRIVATE_ROOT", str(BASE_DIR / "private-media")),
-    # Антивируса в проекте нет. Пока флаг выключен, загруженный файл
-    # помечается UNSCANNED — честное «проверка не проводилась», а не
-    # фиктивное «проверен и чист» — см. humotech/files/storage.py. Включение
-    # флага переводит новые файлы в PENDING, и до проверки они не отдаются.
+    # Антивирус (clamd) включается этим флагом. Выключен — файл помечается
+    # UNSCANNED, честное «проверка не проводилась». Включён — файл
+    # проверяется ДО записи: чистый CLEAN, заражённый отклоняется, сканер
+    # недоступен — загрузка отклоняется (503). См. humotech/files/scanner.py.
     "SCANNER_ENABLED": env("FILES_SCANNER_ENABLED", "false").lower() == "true",
+    # clamd (ClamAV), протокол INSTREAM — см. humotech/files/scanner.py.
+    # Предел потока у clamd (StreamMaxLength) должен быть не меньше
+    # максимального размера загрузки (100 МБ).
+    "SCANNER_HOST": env("FILES_SCANNER_HOST", "clamav"),
+    "SCANNER_PORT": int(env("FILES_SCANNER_PORT", "3310")),
+    "SCANNER_TIMEOUT_SECONDS": float(env("FILES_SCANNER_TIMEOUT_SECONDS", "30")),
 }
 
 # --- Фоновые выгрузки ---
