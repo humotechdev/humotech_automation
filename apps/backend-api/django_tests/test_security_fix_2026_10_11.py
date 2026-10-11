@@ -1009,3 +1009,48 @@ class TestLowFindings:
         session[AUTH_AT_KEY] = int(_time.time()) - settings.SESSION_ABSOLUTE_AGE - 5
         session.save()
         assert client.get(f"{API}/auth/me").status_code in (401, 403)
+
+
+# =============================================================================
+# N-1 (инвентаризация §11.7). Журнал аудита неизменяем и на уровне БД
+# =============================================================================
+
+
+class TestAuditLogAppendOnlyInDatabase:
+
+    def _row(self, organization):
+        from humotech.audit.models import AuditLog
+
+        return AuditLog.objects.create(organization=organization, action="x.test",
+                                       entity_type="tests", entity_id=organization.id,
+                                       new_values={"a": 1})
+
+    def test_update_and_delete_bypassing_model_are_refused(self, organization):
+        from django.db import DatabaseError, transaction
+
+        from humotech.audit.models import AuditLog
+
+        row = self._row(organization)
+        with pytest.raises(DatabaseError), transaction.atomic():
+            AuditLog.objects.filter(id=row.id).update(action="x.forged")
+        with pytest.raises(DatabaseError), transaction.atomic():
+            AuditLog.objects.filter(id=row.id).delete()
+        assert AuditLog.objects.get(id=row.id).action == "x.test"
+
+    def test_seeder_purge_and_user_deletion_still_work(self, organization):
+        from humotech.audit.models import AuditLog
+        from humotech.audit.purge import allow_audit_purge
+
+        user = create_actor(organization, permissions=())[0]
+        kept = AuditLog.objects.create(organization=organization, action="x.by",
+                                       entity_type="tests", entity_id=organization.id,
+                                       actor_user=user)
+        UserRoleScope.objects.filter(user=user).delete()
+        user.delete()  # ON DELETE SET NULL — разрешённое изменение
+        kept.refresh_from_db()
+        assert kept.actor_user_id is None and kept.action == "x.by"
+
+        row = self._row(organization)
+        with allow_audit_purge():
+            AuditLog.objects.filter(id=row.id).delete()
+        assert not AuditLog.objects.filter(id=row.id).exists()

@@ -296,7 +296,10 @@ class PerTelegramUserThrottle(ScopedRateThrottle):
     """
 
     def get_cache_key(self, request, view):
-        raw = request.data.get("telegram_user_id") if hasattr(request, "data") else None
+        data = getattr(request, "data", None)
+        # Тело может оказаться не объектом (список, строка) — тогда ключа
+        # нет, и валидатор view ответит 400; предел не должен падать в 500.
+        raw = data.get("telegram_user_id") if hasattr(data, "get") else None
         try:
             ident = f"tg:{int(raw)}" if raw is not None else None
         except (TypeError, ValueError):

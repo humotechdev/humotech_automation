@@ -226,7 +226,13 @@ class UserAdminService(BaseService):
 
     def get(self, actor: Actor, user_id: uuid.UUID) -> User:
         self.access.require(actor, "users.manage")
-        return self._require(actor, user_id)
+        user = self._require(actor, user_id)
+        # Карточка — по тому же правилу, что и список (аудит 11.10, L-8).
+        # Действия над учёткой отказывают своим правилом (403 в
+        # `_require_manageable`), поэтому `_require` территорию не режет.
+        if not self._in_territory(actor, User.objects.filter(id=user.id)).exists():
+            raise NotFound("Учётная запись не найдена")
+        return user
 
     def create(
         self,
@@ -496,7 +502,7 @@ class UserAdminService(BaseService):
 
     def _require(self, actor: Actor, user_id: uuid.UUID) -> User:
         user = (
-            self._in_territory(actor, User.objects.select_related("employee"))
+            User.objects.select_related("employee")
             .filter(id=user_id, organization_id=actor.organization_id)
             .first()
         )

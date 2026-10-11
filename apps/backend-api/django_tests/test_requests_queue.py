@@ -34,6 +34,9 @@ API = "/api/v1"
 pytestmark = pytest.mark.django_db
 
 QUEUE_READER = ("absences.read", "attendance.read", "employees.read")
+#: Файл справки — тем, кто проверяет бумаги или решает (решение владельца
+#: 11.10.2026, аудит M-5): одного чтения очереди мало.
+PAPER_READER = (*QUEUE_READER, "absences.documents")
 
 
 @pytest.fixture()
@@ -121,14 +124,17 @@ class TestQueueRow:
 
 
 class TestDocument:
-    def test_reader_of_the_queue_opens_the_certificate(
-        self, queue_client, sick_request
+    def test_certificate_opens_for_who_checks_papers_not_for_queue_reader(
+        self, queue_client, api_client, make_user, organization, sick_request
     ):
         document = AbsenceDocument.objects.get(absence_request=sick_request)
+        url = f"{API}/absence-requests/{sick_request.id}/documents/{document.id}/download"
 
-        answer = queue_client.get(
-            f"{API}/absence-requests/{sick_request.id}/documents/{document.id}/download"
-        )
+        # Читатель очереди (наблюдатель, бухгалтер) видит факт справки, но не файл.
+        assert queue_client.get(url).status_code == 403
+
+        api_client.force_authenticate(user=make_user(organization, permissions=PAPER_READER))
+        answer = api_client.get(url)
 
         assert answer.status_code == 200
         assert b"".join(answer.streaming_content).startswith(b"%PDF")
@@ -137,7 +143,7 @@ class TestDocument:
         self, api_client, make_user, organization, other_office, sick_request
     ):
         api_client.force_authenticate(
-            user=make_user(organization, permissions=QUEUE_READER, office=other_office)
+            user=make_user(organization, permissions=PAPER_READER, office=other_office)
         )
         document = AbsenceDocument.objects.get(absence_request=sick_request)
 
@@ -148,12 +154,13 @@ class TestDocument:
         assert answer.status_code == 404
 
     def test_document_of_another_request_is_not_found(
-        self, queue_client, sick_request, leave_request
+        self, api_client, make_user, organization, sick_request, leave_request
     ):
         """Пара «заявка — документ» проверяется: чужой документ по своей заявке не отдаётся."""
+        api_client.force_authenticate(user=make_user(organization, permissions=PAPER_READER))
         document = AbsenceDocument.objects.get(absence_request=sick_request)
 
-        answer = queue_client.get(
+        answer = api_client.get(
             f"{API}/absence-requests/{leave_request.id}/documents/{document.id}/download"
         )
 

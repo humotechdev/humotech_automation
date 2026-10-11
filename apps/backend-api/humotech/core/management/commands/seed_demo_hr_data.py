@@ -113,7 +113,9 @@ class Command(BaseCommand):
         numbers = [cat.number(at) for at in range(cat.NUMBER_TO - cat.NUMBER_FROM + 1)]
         employees = Employee.objects.filter(organization=org, employee_number__in=numbers)
         ids = list(employees.values_list("id", flat=True))
-        removed += AuditLog.objects.filter(organization=org, entity_id__in=ids).delete()[0]
+        from humotech.audit.purge import allow_audit_purge
+        with allow_audit_purge():
+            removed += AuditLog.objects.filter(organization=org, entity_id__in=ids).delete()[0]
         removed += purge(SurveyAutomation.objects.filter(organization=org, id__in=[did("automation", k) for k in ("adapt",)]))
         removed += purge(SurveyCampaign.objects.filter(organization=org, id__in=[
             did("campaign", k) for k in ("satisfaction", "manager", "adapt-aug")]))
