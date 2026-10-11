@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from humotech.core.enums import COUNTED_VERIFICATION
+
 import uuid
 from datetime import date
 
@@ -152,7 +154,7 @@ class FieldWorkService(BaseService):
         if AttendanceSession.objects.filter(employee_id=employee_id, started_at__lt=end).filter(
                 Q(ended_at__gt=start) | Q(ended_at__isnull=True)).exclude(status="INVALID").exists() or \
            AttendanceEvent.objects.filter(employee_id=employee_id, occurred_at__gte=start,
-                                          occurred_at__lt=end, verification_status="ACCEPTED").exists():
+                                          occurred_at__lt=end, verification_status__in=COUNTED_VERIFICATION).exists():
             raise Conflict("В этот день уже есть отметка посещаемости",
                            details={"reason": "attendance_conflict"})
         if EmployeeAbsence.objects.filter(employee_id=employee_id,

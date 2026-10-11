@@ -41,6 +41,8 @@
 
 from __future__ import annotations
 
+from humotech.core.enums import COUNTED_VERIFICATION
+
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from zoneinfo import ZoneInfo
@@ -592,7 +594,7 @@ def _last_marks(employee_id) -> tuple[datetime | None, datetime | None]:
             AttendanceEvent.objects.filter(
                 employee_id=employee_id,
                 event_type=event_type,
-                verification_status="ACCEPTED",
+                verification_status__in=COUNTED_VERIFICATION,
             )
             .order_by("-occurred_at")
             .values_list("occurred_at", flat=True)

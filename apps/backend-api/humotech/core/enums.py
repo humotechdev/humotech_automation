@@ -98,6 +98,10 @@ DEVICE_STATUSES = ("PENDING", "TRUSTED", "REVOKED")
 ATTENDANCE_EVENT_TYPES = ("ENTRY", "EXIT")
 ATTENDANCE_SOURCES = ("QR", "MANUAL", "IMPORT")
 VERIFICATION_STATUSES = ("ACCEPTED", "REJECTED", "REVIEW")
+#: Отметки, которые СЧИТАЮТСЯ состоявшимися. REVIEW — принята, но кадровику
+#: стоит её проверить (например, один сменный код с разных адресов): проход
+#: не блокируется, человек на работе, а отметка видна HR отдельно.
+COUNTED_VERIFICATION = ("ACCEPTED", "REVIEW")
 ATTENDANCE_SESSION_STATUSES = ("OPEN", "CLOSED", "CORRECTED", "INVALID")
 #: Что человек сам сказал про свой день в ответ на напоминание.
 #: «Не приду» здесь — это предупреждение, а не оформленное отсутствие:

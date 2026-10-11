@@ -725,7 +725,8 @@ function useLogMode(active: boolean, ctx: Ctx): View {
                         </span>
                         <span role="cell" className={`at-state at-state--${bad ? 'bad' : late > 0 ? 'warn' : 'ok'}`}>
                           <i className={`at-dot at-dot--${bad ? 'bad' : late > 0 ? 'warn' : 'ok'}`} />
-                          {bad ? (one.verification_status !== 'ACCEPTED' ? rejectionTitle(one.rejection_reason) : 'Вне геозоны')
+                          {bad ? (one.verification_status === 'REVIEW' ? 'Принято · на проверке'
+                            : one.verification_status !== 'ACCEPTED' ? rejectionTitle(one.rejection_reason) : 'Вне геозоны')
                             : late > 0 ? `Опоздание на ${late} мин` : manual ? 'Исправлено' : 'Принято'}
                         </span>
                         <span role="cell" className="at-right">

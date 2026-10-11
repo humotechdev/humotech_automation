@@ -35,6 +35,7 @@ from humotech.employees.models import (
     EmployeeOfficeAccess,
 )
 from humotech.attendance.models import AttendanceEvent, AttendanceSession, FieldWorkRequest
+from humotech.core.enums import COUNTED_VERIFICATION
 from humotech.core.timeframes import office_zone
 from humotech.offices.geo import (
     Decision,
@@ -157,7 +158,7 @@ def _nonce_already_used(*, employee_id: uuid.UUID, nonce_hash: str) -> bool:
     return AttendanceEvent.objects.filter(
         employee_id=employee_id,
         qr_nonce_hash=nonce_hash,
-        verification_status="ACCEPTED",
+        verification_status__in=COUNTED_VERIFICATION,
     ).exists()
 
 
@@ -306,6 +307,25 @@ def _register_locked(
                 entity_type="attendance_field_work_requests", entity_id=request.id,
                 new_values={"date": request.date.isoformat(), "status": "CANCELLED"})
 
+    found = (
+        _anomalies(
+            employee_id=employee_id, qr_nonce_hash=qr_nonce_hash,
+            ip_address=ip_address, latitude=latitude,
+            longitude=longitude, accuracy_m=location_accuracy_m,
+            inside_office_network=inside_office_network,
+        )
+        if accepted else ()
+    )
+    # Один сменный код, уже принятый у ДРУГОГО сотрудника с другого
+    # адреса, — признак пересланного фото экрана. Проход не блокируется
+    # (двое честных людей сканируют один экран и с мобильного интернета
+    # приходят с разных адресов), но отметка уходит на проверку HR —
+    # решение владельца 11.10.2026 (аудит M-9).
+    status = (
+        ("REVIEW" if Anomaly.SHARED_CODE in found else "ACCEPTED")
+        if accepted else "REJECTED"
+    )
+
     event = AttendanceEvent.objects.create(
         organization_id=qr_point.organization_id,
         employee_id=employee_id,
@@ -315,7 +335,7 @@ def _register_locked(
         employee_device_id=employee_device_id,
         event_type=event_type,
         source=source,
-        verification_status="ACCEPTED" if accepted else "REJECTED",
+        verification_status=status,
         occurred_at=occurred_at,
         received_at=now,
         qr_nonce_hash=qr_nonce_hash,
@@ -336,15 +356,7 @@ def _register_locked(
         event_metadata=_location_metadata(
             location, location_age_s=location_age_s,
             location_source=location_source,
-            anomalies=(
-                _anomalies(
-                    employee_id=employee_id, qr_nonce_hash=qr_nonce_hash,
-                    ip_address=ip_address, latitude=latitude,
-                    longitude=longitude, accuracy_m=location_accuracy_m,
-                    inside_office_network=inside_office_network,
-                )
-                if accepted else ()
-            ),
+            anomalies=found,
         ),
     )
 
@@ -613,7 +625,8 @@ def _anomalies(
     if qr_nonce_hash is not None and ip_address:
         shared = (
             AttendanceEvent.objects.filter(
-                qr_nonce_hash=qr_nonce_hash, verification_status="ACCEPTED",
+                qr_nonce_hash=qr_nonce_hash,
+                verification_status__in=COUNTED_VERIFICATION,
             )
             .exclude(employee_id=employee_id)
             .exclude(ip_address__isnull=True)
@@ -641,7 +654,7 @@ def _repeated_too_soon(*, employee_id, qr_point, now) -> bool:
     return AttendanceEvent.objects.filter(
         employee_id=employee_id,
         qr_point_id=qr_point.id,
-        verification_status="ACCEPTED",
+        verification_status__in=COUNTED_VERIFICATION,
         occurred_at__gte=now - timedelta(seconds=seconds),
     ).exists()
 

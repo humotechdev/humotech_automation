@@ -27,6 +27,8 @@ Face ID, геолокации или турникета это в принцип
 
 from __future__ import annotations
 
+from humotech.core.enums import COUNTED_VERIFICATION
+
 import logging
 from dataclasses import dataclass
 from datetime import datetime
@@ -385,7 +387,7 @@ def _replay(
 
     common = _place_of(first, point)
 
-    if first.verification_status != "ACCEPTED":
+    if first.verification_status not in COUNTED_VERIFICATION:
         return ScanOutcome(
             status=_REJECTION_TO_STATUS.get(
                 first.rejection_reason, ScanStatus.QR_INVALID

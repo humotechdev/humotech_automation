@@ -743,3 +743,60 @@ class TestAccountLockDoesNotLockOwnerOut:
         codes = [self._login(organization, owner.email, "не тот", ip).status_code
                  for _ in range(6)]
         assert codes[-1] == 429
+
+
+# =============================================================================
+# M-9. Пересланный сменный QR — на проверку HR, проход не блокируется
+# =============================================================================
+
+
+class TestSharedRotatingCodeGoesToReview:
+
+    def test_second_employee_from_other_address_is_review_but_counted(
+            self, organization, office, employee, qr_point, now, fresh_qr):
+        from humotech.attendance.services import register_scan
+
+        first = register_scan(employee_id=employee.id, qr_point=qr_point, now=now,
+                              qr_nonce_hash="shared-1", ip_address="10.0.0.1",
+                              **fresh_qr)
+        assert first.event.verification_status == "ACCEPTED"
+
+        colleague = _employee(organization, office, "M9-COL")
+        second = register_scan(employee_id=colleague.id, qr_point=qr_point, now=now,
+                               qr_nonce_hash="shared-1", ip_address="10.0.0.2",
+                               **fresh_qr)
+        assert second.accepted, "проход не блокируется"
+        assert second.session is not None
+        assert second.event.verification_status == "REVIEW"
+        assert "SHARED_CODE" in second.event.event_metadata["anomalies"]
+
+    def test_same_address_colleague_is_plain_accepted(
+            self, organization, office, employee, qr_point, now, fresh_qr):
+        from humotech.attendance.services import register_scan
+
+        register_scan(employee_id=employee.id, qr_point=qr_point, now=now,
+                      qr_nonce_hash="shared-2", ip_address="10.0.0.1", **fresh_qr)
+        colleague = _employee(organization, office, "M9-COL2")
+        second = register_scan(employee_id=colleague.id, qr_point=qr_point, now=now,
+                               qr_nonce_hash="shared-2", ip_address="10.0.0.1",
+                               **fresh_qr)
+        assert second.event.verification_status == "ACCEPTED"
+
+    def test_review_mark_counts_as_checked_in(self, organization, office, employee,
+                                              qr_point, now, fresh_qr):
+        """Напоминание «вы не отметились» не уходит тому, чья отметка на проверке."""
+        from humotech.attendance import reminders
+        from humotech.attendance.services import register_scan
+
+        register_scan(employee_id=employee.id, qr_point=qr_point, now=now,
+                      qr_nonce_hash="shared-3", ip_address="10.0.0.1", **fresh_qr)
+        colleague = _employee(organization, office, "M9-COL3")
+        second = register_scan(employee_id=colleague.id, qr_point=qr_point, now=now,
+                               qr_nonce_hash="shared-3", ip_address="10.0.0.2",
+                               **fresh_qr)
+        assert second.event.verification_status == "REVIEW"
+        from zoneinfo import ZoneInfo
+
+        zone = ZoneInfo("Asia/Dushanbe")
+        assert reminders._already_marked(colleague.id, now.astimezone(zone).date(), zone)
+

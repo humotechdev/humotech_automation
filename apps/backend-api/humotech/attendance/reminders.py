@@ -25,6 +25,8 @@
 
 from __future__ import annotations
 
+from humotech.core.enums import COUNTED_VERIFICATION
+
 import logging
 import uuid
 from dataclasses import dataclass
@@ -301,7 +303,7 @@ def _already_marked(employee_id: uuid.UUID, day: date, zone) -> bool:
         employee_id=employee_id,
         occurred_at__gte=start,
         occurred_at__lt=end,
-        verification_status="ACCEPTED",
+        verification_status__in=COUNTED_VERIFICATION,
     ).exists()
 
 

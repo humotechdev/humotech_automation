@@ -616,15 +616,19 @@ function DayDetails({ id, name, point, zone, canCorrect, onChanged }: {
   const day = point.day;
   const [detail, reloadDetail] = useBlock(
     (signal) => api.events(
-      { employee_id: id, date_from: day, date_to: day, limit: '50', verification_status: 'ACCEPTED' },
+      { employee_id: id, date_from: day, date_to: day, limit: '50' },
       signal,
     ),
     `day|${id}|${day}`,
   );
 
   const zoned = point.row.timezone || zone;
+  // Засчитанные отметки: принятые и принятые «на проверку» (REVIEW —
+  // например, тот же сменный код у коллеги с другого адреса). Отклонённые
+  // в день не входят.
   const marks = detail.state === 'ready'
-    ? [...detail.data.items].sort((a, b) => a.occurred_at.localeCompare(b.occurred_at))
+    ? detail.data.items.filter((one) => one.verification_status !== 'REJECTED')
+      .sort((a, b) => a.occurred_at.localeCompare(b.occurred_at))
     : [];
   const late = point.late ?? 0;
   const early = point.early ?? 0;
