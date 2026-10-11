@@ -1087,3 +1087,49 @@ class TestAuditLogAppendOnlyInDatabase:
         with allow_audit_purge():
             AuditLog.objects.filter(id=row.id).delete()
         assert not AuditLog.objects.filter(id=row.id).exists()
+
+
+# =============================================================================
+# L-7. База знаний — по организации, области и правам
+# =============================================================================
+
+
+class TestKnowledgeReadScope:
+
+    def test_reader_sees_org_own_region_and_office_only(self, organization, region,
+                                                        other_region, other_organization):
+        from django_tests.test_knowledge_api import make_faq, make_source
+
+        office_a = make_office(organization, region, "L7-A")
+        office_b = make_office(organization, region, "L7-B")
+        office_c = make_office(organization, other_region, "L7-C")
+        author = create_actor(organization, permissions=())[0]
+        org_wide = make_source(organization, author, title="Общий")
+        own_region = make_source(organization, author, title="Регион", region=region)
+        own_office = make_source(organization, author, title="Офис A", office=office_a)
+        other_office = make_source(organization, author, title="Офис B", office=office_b)
+        other_region_doc = make_source(organization, author, title="Чужой регион",
+                                       region=other_region)
+        foreign_author = create_actor(other_organization, permissions=())[0]
+        foreign = make_source(other_organization, foreign_author, title="Соседи")
+        faq_b = make_faq(organization, author, office=office_b)
+
+        reader = create_actor(organization, office=office_a,
+                              permissions=("knowledge.read",))[0]
+        client = _client(reader)
+        listed = {row["id"] for row in client.get(
+            f"{API}/knowledge/sources/", {"limit": 100}).json()["items"]}
+        assert {str(org_wide.id), str(own_region.id), str(own_office.id)} <= listed
+        assert str(other_office.id) not in listed
+        assert str(other_region_doc.id) not in listed
+        assert str(foreign.id) not in listed
+        # По угаданному id — тоже нет.
+        assert client.get(f"{API}/knowledge/sources/{other_office.id}/").status_code == 404
+        assert client.get(f"{API}/knowledge/sources/{foreign.id}/").status_code == 404
+        assert client.get(f"{API}/knowledge/faq/{faq_b.id}/").status_code == 404
+        # Читатель всей организации видит всё своё.
+        wide = create_actor(organization, permissions=("knowledge.read",))[0]
+        everything = {row["id"] for row in _client(wide).get(
+            f"{API}/knowledge/sources/", {"limit": 100}).json()["items"]}
+        assert str(other_office.id) in everything and str(foreign.id) not in everything
+        office_c  # офис другого региона заведён для полноты картины
