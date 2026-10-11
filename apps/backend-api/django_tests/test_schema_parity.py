@@ -363,7 +363,9 @@ def test_business_schema_has_expected_shape():
     #   FK     202 + 4 — запрос выездной работы: организация, сотрудник,
     #                    офис и HR, отправивший запрос (attendance/0006).
     #   FK     206 + 1 — кто предложил новое место офиса (offices/0005), SET NULL.
-    assert counts["f"] == 207, f"FOREIGN KEY: {counts['f']}, ожидалось 207"
+    #   FK     207 + 1 — регион графика (schedules/0004-0005), RESTRICT:
+    #                    график региона — решение владельца 11.10.2026.
+    assert counts["f"] == 208, f"FOREIGN KEY: {counts['f']}, ожидалось 208"
     #   UNIQUE  35 + 0 — «один активный запрос выездной работы на
     #                    сотрудника и дату» частичный: ИНДЕКС, не ограничение.
     assert counts["u"] == 35, f"UNIQUE: {counts['u']}, ожидалось 35"
@@ -409,7 +411,8 @@ def test_every_foreign_key_keeps_its_on_delete_action():
     # наставник стажёра (employees/0009) УДАЛЁН вместе со стажировкой.
     # +4 — запрос выездной работы (attendance/0006), все RESTRICT.
     # +1 — кто предложил новое место офиса (offices/0005), SET NULL.
-    assert len(rows) == 207, f"внешних ключей {len(rows)}, ожидалось 207"
+    # +1 — регион графика (schedules/0005), RESTRICT.
+    assert len(rows) == 208, f"внешних ключей {len(rows)}, ожидалось 208"
 
     # 'a' = NO ACTION: значит, действие не задано
     without_action = [f"{t}.{n}" for t, n, kind, _ in rows if kind == "a"]
@@ -455,7 +458,8 @@ def test_every_foreign_key_keeps_its_on_delete_action():
     # наставник стажёра УДАЛЁН вместе со стажировкой (employees/0011).
     # 162 + 4 — запрос выездной работы: организация, сотрудник, офис и HR.
     # Запрос — основание зачёта дня, и исчезнуть вместе с ними он не должен.
-    assert actions["r"] == 166, f"RESTRICT: {actions['r']}, ожидалось 166"
+    # 166 + 1 — регион графика (schedules/0005).
+    assert actions["r"] == 167, f"RESTRICT: {actions['r']}, ожидалось 167"
     # 19 + 1 SET NULL — автор точки отметки: учётную запись HR можно
     # отключить, а точка у двери работать не перестаёт.
     # 20 + 2 — авторы шаблона и рассылки опроса: учётную запись HR можно
