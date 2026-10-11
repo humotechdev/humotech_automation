@@ -245,6 +245,25 @@ class AccessControl:
 
     # ------------------------------------------------------- доступ к объекту
 
+    def require_whole_organization(self, actor: Actor, permission: str) -> None:
+        """Право `permission` есть у актора на ВСЮ организацию.
+
+        Для объектов, общих для организации (настройки, типы отсутствий,
+        общие отделы, должности, программа ознакомления, документы для
+        ознакомления): их правка задевает сотрудников всех офисов, и
+        держатель права на один офис или регион через неё действовал бы
+        за пределами своей области (аудит 11.10, M-2). Область — в
+        разрезе самого права: «вся организация» из соседнего назначения
+        «только чтение» не считается.
+        """
+        self.require(actor, permission)
+        if not self.scope_for(actor, permission).all_offices:
+            raise PermissionDenied(
+                "Это общая настройка организации: менять её может только "
+                "тот, у кого право на всю организацию",
+                details={"permission": permission, "reason": "scope_limited"},
+            )
+
     def require_office(
         self, actor: Actor, office_id: uuid.UUID, permission: str | None = None
     ):

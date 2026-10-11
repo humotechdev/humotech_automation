@@ -192,6 +192,9 @@ class DepartmentService(BaseService):
         два разных ответа на один вопрос.
         """
         self.access.require(actor, "departments.manage")
+        if office_id is None:
+            # Общий отдел — для всех офисов сразу (аудит 11.10, M-2).
+            self.access.require_whole_organization(actor, "departments.manage")
         office = (
             self.access.require_office(actor, office_id, "departments.manage")
             if office_id is not None else None
@@ -394,9 +397,15 @@ class DepartmentService(BaseService):
         )
         if department is None:
             raise NotFound("Отдел не найден")
-        # У общего отдела офиса нет, и проверять доступ к месту не к чему.
         if department.office_id is not None:
             self.access.require_office(actor, department.office_id, permission)
+        elif permission is not None:
+            # Общий отдел (без офиса) — общий объект организации: менять его
+            # может только тот, у кого право на всю организацию. Раньше
+            # проверка места здесь пропускалась, и кадровик одного офиса
+            # правил отдел всей компании (аудит 11.10, M-2). Чтение
+            # (`permission=None`) по-прежнему открыто всем, кто видит отделы.
+            self.access.require_whole_organization(actor, permission)
         return department
 
 
@@ -447,7 +456,7 @@ class PositionService(BaseService):
         code: str | None = None,
         description: str | None = None,
     ) -> Position:
-        self.access.require(actor, "positions.manage")
+        self.access.require_whole_organization(actor, "positions.manage")
         with self.atomic():
             position = Position.objects.create(
                 organization_id=actor.organization_id,
@@ -484,7 +493,7 @@ class PositionService(BaseService):
         name: str | None = None,
         description: str | None = None,
     ) -> Position:
-        self.access.require(actor, "positions.manage")
+        self.access.require_whole_organization(actor, "positions.manage")
         position = self._require(actor, position_id)
         before = snapshot(position, POSITION_FIELDS)
 
@@ -513,7 +522,7 @@ class PositionService(BaseService):
                 "Неизвестный статус должности",
                 details={"status": status, "allowed": list(POSITION_STATUSES)},
             )
-        self.access.require(actor, "positions.manage")
+        self.access.require_whole_organization(actor, "positions.manage")
         position = self._require(actor, position_id)
         if position.status == status:
             return position
@@ -534,7 +543,7 @@ class PositionService(BaseService):
 
     def delete(self, actor: Actor, position_id: uuid.UUID) -> None:
         """Убрать должность совсем — только пока её никто не занимал."""
-        self.access.require(actor, "positions.manage")
+        self.access.require_whole_organization(actor, "positions.manage")
         position = self._require(actor, position_id)
 
         used = EmployeeAssignment.objects.filter(position_id=position.id).count()

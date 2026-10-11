@@ -514,3 +514,136 @@ class TestExportConfinedToExportGrant:
         _, wide = create_actor(organization,
                                permissions=("reports.export", "reports.download_any"))
         assert ExportJobService()._covers_report(wide, job) is True
+
+
+# =============================================================================
+# M-2. Общие для организации объекты
+# =============================================================================
+
+from humotech.core.errors import PermissionDenied  # noqa: E402
+
+
+class TestSharedSchedules:
+    """Решение владельца: создавать можно; менять/отключать — только если
+    все сотрудники графика в области schedules.manage."""
+
+    def _schedule(self, actor):
+        from humotech.schedules.services import WorkScheduleService
+
+        return WorkScheduleService().create(actor, name="Пятидневка",
+                                            timezone="Asia/Tashkent",
+                                            weekly_minutes=2400)
+
+    def _assign(self, schedule, employee):
+        from humotech.schedules.models import EmployeeScheduleAssignment
+
+        EmployeeScheduleAssignment.objects.create(
+            organization=employee.organization, employee=employee,
+            schedule=schedule, valid_from=date.today() - timedelta(days=5))
+
+    def test_regional_hr_cannot_edit_schedule_used_in_other_region(
+            self, organization, region, other_region):
+        from humotech.schedules.services import WorkScheduleService
+
+        office_1 = make_office(organization, region, "M2S-1")
+        office_2 = make_office(organization, other_region, "M2S-2")
+        _, regional = create_actor(organization, region=region,
+                                   permissions=("schedules.read", "schedules.manage"))
+        schedule = self._schedule(regional)                      # создать — можно
+        self._assign(schedule, _employee(organization, office_1, "M2S-E1"))
+        WorkScheduleService().update(regional, schedule.id, name="Своя")  # свои — можно
+        self._assign(schedule, _employee(organization, office_2, "M2S-E2"))
+        with pytest.raises(PermissionDenied):
+            WorkScheduleService().update(regional, schedule.id, name="Чужая")
+        with pytest.raises(PermissionDenied):
+            WorkScheduleService().deactivate(regional, schedule.id)
+        # HR всей организации правит как прежде.
+        _, wide = create_actor(organization,
+                               permissions=("schedules.read", "schedules.manage"))
+        WorkScheduleService().update(wide, schedule.id, name="Общая")
+
+    def test_view_grant_does_not_count_as_whole_org(self, organization, region,
+                                                    other_region):
+        """Комбо: schedules.manage на регион + чтение всей организации."""
+        from humotech.schedules.services import WorkScheduleService
+
+        office_2 = make_office(organization, other_region, "M2S-C2")
+        user, actor = create_actor(organization, region=region,
+                                   permissions=("schedules.read", "schedules.manage"),
+                                   role_code="M2S_MANAGE_R1")
+        _add_grant(organization, user, permissions=("schedules.read",),
+                   role_code="M2S_READ_ORG")
+        schedule = self._schedule(actor)
+        self._assign(schedule, _employee(organization, office_2, "M2S-C2E"))
+        with pytest.raises(PermissionDenied):
+            WorkScheduleService().update(actor, schedule.id, name="x")
+
+
+class TestOrganizationWideObjects:
+
+    def _office_actor(self, organization, region, perms, tag):
+        office = make_office(organization, region, tag)
+        user, actor = create_actor(organization, office=office, permissions=perms,
+                                   role_code=f"{tag}_W")
+        # Плюс чтение всей организации — оно не должно засчитываться.
+        _add_grant(organization, user, permissions=("employees.read",),
+                   role_code=f"{tag}_R")
+        return office, actor
+
+    def test_settings_update_requires_whole_org(self, organization, region):
+        from humotech.organizations.settings_service import (
+            ORGANIZATION_DEFAULTS_KEY, OrganizationSettingsService,
+        )
+
+        _, scoped = self._office_actor(organization, region, ("settings.manage",), "M2ST")
+        with pytest.raises(PermissionDenied):
+            OrganizationSettingsService().update(scoped, ORGANIZATION_DEFAULTS_KEY,
+                                                 {"name": "Взлом"})
+
+    def test_absence_types_require_whole_org(self, organization, region):
+        from humotech.absences.types_service import AbsenceTypeService
+
+        _, scoped = self._office_actor(organization, region,
+                                       ("absences.read", "absences.manage_types"), "M2AT")
+        with pytest.raises(PermissionDenied):
+            AbsenceTypeService().create(scoped, name="Отгул")
+        _, wide = create_actor(organization,
+                               permissions=("absences.read", "absences.manage_types"))
+        assert AbsenceTypeService().create(wide, name="Отгул").name == "Отгул"
+
+    def test_positions_require_whole_org(self, organization, region):
+        from humotech.departments.services import PositionService
+
+        _, scoped = self._office_actor(organization, region, ("positions.manage",), "M2P")
+        with pytest.raises(PermissionDenied):
+            PositionService().create(scoped, name="Кассир")
+        _, wide = create_actor(organization, permissions=("positions.manage",))
+        assert PositionService().create(wide, name="Кассир").name == "Кассир"
+
+    def test_shared_department_requires_whole_org(self, organization, region):
+        from humotech.departments.services import DepartmentService
+
+        office, scoped = self._office_actor(organization, region,
+                                            ("departments.manage",), "M2D")
+        _, wide = create_actor(organization, permissions=("departments.manage",))
+        shared = DepartmentService().create(wide, name="Продажи")
+        with pytest.raises(PermissionDenied):
+            DepartmentService().update(scoped, shared.id, name="Взлом")
+        with pytest.raises(PermissionDenied):
+            DepartmentService().create(scoped, name="Общий")
+        # Отдел своего офиса — можно, как прежде.
+        own = DepartmentService().create(scoped, name="Склад", office_id=office.id)
+        DepartmentService().update(scoped, own.id, name="Склад 2")
+
+    def test_onboarding_program_and_policies_require_whole_org(self, organization,
+                                                                region):
+        from humotech.onboarding.services import OnboardingContentService, PolicyService
+
+        _, scoped = self._office_actor(
+            organization, region,
+            ("onboarding.read", "onboarding.manage", "policies.publish"), "M2O")
+        with pytest.raises(PermissionDenied):
+            OnboardingContentService().create_section(scoped, {"title": "Взлом",
+                                                               "body": "x"})
+        with pytest.raises(PermissionDenied):
+            PolicyService().create_document(scoped, {"code": "HACK", "title": "x"})

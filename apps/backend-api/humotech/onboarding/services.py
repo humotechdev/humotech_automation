@@ -759,7 +759,7 @@ class OnboardingContentService(BaseService):
         return list(progress_module.active_sections(program.id))
 
     def create_section(self, actor: Actor, data: dict) -> OnboardingSection:
-        self.access.require(actor, "onboarding.manage")
+        self.access.require_whole_organization(actor, "onboarding.manage")
         program = OnboardingService().program(actor.organization_id)
         position = data.get("position")
         if position is None:
@@ -806,7 +806,7 @@ class OnboardingContentService(BaseService):
         читал. Правка одной подписи кнопки редакцию не двигает — текст
         от неё не меняется.
         """
-        self.access.require(actor, "onboarding.manage")
+        self.access.require_whole_organization(actor, "onboarding.manage")
         row = self._require_section(actor, section_id)
         before = snapshot(row, SECTION_AUDIT_FIELDS)
 
@@ -843,7 +843,7 @@ class OnboardingContentService(BaseService):
         ознакомился», и вместе с ней исчезло бы свидетельство того, что
         человек её читал.
         """
-        self.access.require(actor, "onboarding.manage")
+        self.access.require_whole_organization(actor, "onboarding.manage")
         row = self._require_section(actor, section_id)
         if row.archived_at is not None:
             return row
@@ -960,7 +960,7 @@ class PolicyService(BaseService):
         return facts
 
     def create_document(self, actor: Actor, data: dict) -> PolicyDocument:
-        self.access.require(actor, "policies.publish")
+        self.access.require_whole_organization(actor, "policies.publish")
         code = (data.get("code") or "").strip().upper()
         if not code:
             raise ValidationFailed("Код документа обязателен",
@@ -991,7 +991,7 @@ class PolicyService(BaseService):
     def update_document(
         self, actor: Actor, document_id: uuid.UUID, data: dict
     ) -> PolicyDocument:
-        self.access.require(actor, "policies.publish")
+        self.access.require_whole_organization(actor, "policies.publish")
         row = self._require_document(actor, document_id)
         before = snapshot(row, DOCUMENT_AUDIT_FIELDS)
         fields: list[str] = []
@@ -1027,7 +1027,7 @@ class PolicyService(BaseService):
         Подтверждения прежних редакций остаются: человек действительно
         соглашался с ними, и архивирование документа это не отменяет.
         """
-        self.access.require(actor, "policies.publish")
+        self.access.require_whole_organization(actor, "policies.publish")
         row = self._require_document(actor, document_id)
         if row.archived_at is not None:
             return row
@@ -1051,7 +1051,7 @@ class PolicyService(BaseService):
         self, actor: Actor, document_id: uuid.UUID, data: dict
     ) -> PolicyDocumentVersion:
         """Новая редакция. Создаётся черновиком и никого не обязывает."""
-        self.access.require(actor, "policies.publish")
+        self.access.require_whole_organization(actor, "policies.publish")
         document = self._require_document(actor, document_id)
         number = (data.get("version") or "").strip()
         if not number:
@@ -1095,7 +1095,7 @@ class PolicyService(BaseService):
         записано, — а это ровно та подмена, ради невозможности которой
         документ вообще версионируется.
         """
-        self.access.require(actor, "policies.publish")
+        self.access.require_whole_organization(actor, "policies.publish")
         row = self._require_version(actor, version_id)
         if row.status != "DRAFT":
             raise Conflict(
@@ -1139,7 +1139,7 @@ class PolicyService(BaseService):
         как считается завершение: карточки проверяются по факту
         подтверждения, документы — по номеру действующей редакции.
         """
-        self.access.require(actor, "policies.publish")
+        self.access.require_whole_organization(actor, "policies.publish")
         row = self._require_version(actor, version_id)
         if row.status == "PUBLISHED":
             return row
@@ -1355,7 +1355,7 @@ class CategoryService(BaseService):
         return result
 
     def create(self, actor: Actor, data: dict) -> PolicyCategory:
-        self.access.require(actor, "policies.publish")
+        self.access.require_whole_organization(actor, "policies.publish")
         owner = self._owner(actor, data.get("owner_employee_id"))
         with self.atomic():
             row = PolicyCategory.objects.create(
@@ -1371,7 +1371,7 @@ class CategoryService(BaseService):
         return row
 
     def update(self, actor: Actor, category_id: uuid.UUID, data: dict) -> PolicyCategory:
-        self.access.require(actor, "policies.publish")
+        self.access.require_whole_organization(actor, "policies.publish")
         row = self._require(actor, category_id, live=True)
         before = snapshot(row, CATEGORY_AUDIT_FIELDS)
         fields = []
@@ -1397,7 +1397,7 @@ class CategoryService(BaseService):
 
     def archive(self, actor: Actor, category_id: uuid.UUID) -> PolicyCategory:
         """Убрать раздел. Только пустой: материалы сначала переносят."""
-        self.access.require(actor, "policies.publish")
+        self.access.require_whole_organization(actor, "policies.publish")
         row = self._require(actor, category_id, live=True)
         if PolicyDocument.objects.filter(category_id=row.id, archived_at__isnull=True).exists():
             raise Conflict("В разделе есть материалы: перенесите их в другой раздел")

@@ -19,7 +19,7 @@ from datetime import date, time, timedelta
 
 from django.db.models import Q
 
-from humotech.core.errors import Conflict, NotFound, ValidationFailed
+from humotech.core.errors import Conflict, NotFound, PermissionDenied, ValidationFailed
 from humotech.core.pagination import Page, paginate
 from humotech.core.rbac import Actor, snapshot
 from humotech.core.service import BaseService
@@ -157,6 +157,7 @@ class WorkScheduleService(BaseService):
         """
         self.access.require(actor, "schedules.manage")
         schedule = self.access.require_schedule(actor, schedule_id)
+        self._require_editable(actor, schedule)
 
         before = snapshot(schedule, AUDITED_FIELDS)
         if changes.get("name") is not None:
@@ -233,6 +234,7 @@ class WorkScheduleService(BaseService):
     ) -> WorkSchedule:
         self.access.require(actor, "schedules.manage")
         schedule = self.access.require_schedule(actor, schedule_id)
+        self._require_editable(actor, schedule)
         if schedule.status == status:
             raise Conflict(f"График уже в статусе {status}",
                            details={"status": status})
@@ -260,6 +262,7 @@ class WorkScheduleService(BaseService):
         """
         self.access.require(actor, "schedules.manage")
         schedule = self.access.require_schedule(actor, schedule_id)
+        self._require_editable(actor, schedule)
 
         used = EmployeeScheduleAssignment.objects.filter(
             schedule_id=schedule.id
@@ -465,6 +468,52 @@ class WorkScheduleService(BaseService):
         )
 
     # ------------------------------------------------------ внутренние правила
+
+    def _require_editable(self, actor: Actor, schedule: WorkSchedule) -> None:
+        """Менять общий график можно, только если все его сотрудники — в
+        области `schedules.manage` актора.
+
+        У графика нет офиса: он общий для организации. Без этой проверки
+        региональный HR правил дни и допуски графика, по которому работают
+        люди других регионов (аудит 11.10, M-2). Правило — решение
+        владельца 11.10.2026: создавать график можно всем с правом, а
+        менять, отключать и удалять — пока он не задевает никого вне
+        области. Учитываются действующие и будущие назначения графика;
+        офис сотрудника — по его действующему (или последнему) назначению.
+        """
+        from django.db.models import Q
+
+        from humotech.employees.models import EmployeeAssignment
+        from humotech.schedules.models import EmployeeScheduleAssignment
+
+        scope = self.access.scope_for(actor, "schedules.manage")
+        if scope.all_offices:
+            return
+        today = date.today()
+        people = set(
+            EmployeeScheduleAssignment.objects.filter(schedule_id=schedule.id)
+            .filter(Q(valid_to__isnull=True) | Q(valid_to__gte=today))
+            .values_list("employee_id", flat=True)
+        )
+        if not people:
+            return
+        rows = EmployeeAssignment.objects.filter(employee_id__in=people)
+        live = rows.filter(Q(valid_to__isnull=True) | Q(valid_to__gte=today))
+        offices: dict = {}
+        for employee_id, office_id in live.values_list("employee_id", "office_id"):
+            offices.setdefault(employee_id, set()).add(office_id)
+        for employee_id in people - set(offices):
+            last = rows.filter(employee_id=employee_id).order_by(
+                "-valid_from", "-created_at").values_list("office_id", flat=True).first()
+            offices[employee_id] = {last} if last else set()
+        outside = [str(employee_id) for employee_id, places in offices.items()
+                   if not places & scope.office_ids]
+        if outside:
+            raise PermissionDenied(
+                "По этому графику работают сотрудники вне вашей области",
+                details={"reason": "schedule_outside_scope",
+                         "employees_outside": len(outside)},
+            )
 
     def _require_employee(
         self, actor: Actor, employee_id: uuid.UUID, permission: str | None = None
