@@ -26,8 +26,8 @@
  * только просит сервер вернуть строку в очередь.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 
 import * as api from '../api/crm';
 import { ApiFailure, messageFor } from '../api/errors';
@@ -35,8 +35,8 @@ import { AppShell } from '../components/AppShell';
 import { AppIcon } from '../components/AppIcon';
 import { AppSegmentedControl, AppSelectField } from '../components/AppSelect';
 import { AppDateRangePicker } from '../components/DateRangePicker';
-import { FeedCard, FeedRow } from '../components/FeedParts';
-import { FEED_FILTERS, filterTitle } from '../features/notifications/feed-model';
+import { FeedBoard } from '../features/notifications/FeedBoard';
+import { PageCard, type PageView } from '../features/notifications/PageCard';
 import { useFeed } from '../features/live/feed';
 import {
   CHANNEL, STATUS, TABS, attemptTitle, cancelBlockedBecause, deliveryNote,
@@ -45,7 +45,7 @@ import {
 } from '../features/notifications/model';
 import { today, useBlock, type Block } from '../features/dashboard/data';
 import { clock, moment } from '../features/time/zone';
-import { useStickyState } from '../features/shell/sticky';
+import '../styles/notifications.css';
 
 const PAGE = '20';
 
@@ -219,21 +219,16 @@ export function NotificationsPage() {
     }
   }
 
-  const tabs = <AppSegmentedControl className="tabs tabs--page" role="tablist" label="Раздел уведомлений" value={onQueue ? 'delivery' : 'feed'}
-    options={[{ value: 'feed', label: 'Лента событий' }, { value: 'delivery', label: 'Очередь отправки' }]}
-    onChange={(value) => patch({ view: value === 'feed' ? null : 'delivery', id: null })} />;
+  const showView = (next: PageView) =>
+    patch({ view: next === 'feed' ? null : 'delivery', id: null });
 
   if (!onQueue) {
     return (
       <AppShell breadcrumb="Уведомления" section="notifications">
-        <header className="head head--tight">
-          <div>
-            <h1 className="head__title">Уведомления</h1>
-            <p className="head__sub">События, которые ждут кадровика</p>
-          </div>
-        </header>
-        {tabs}
-        <FeedBoard opened={picked} onOpen={(id) => patch({ id: id || null })} />
+        <div className="ntf-page">
+          <FeedBoard opened={picked} onOpenDetail={(id) => patch({ id: id || null })}
+                     onView={showView} />
+        </div>
       </AppShell>
     );
   }
@@ -241,67 +236,53 @@ export function NotificationsPage() {
   if (!mayRead) {
     return (
       <AppShell breadcrumb="Уведомления" section="notifications">
-        <header className="head head--tight">
-          <div>
-            <h1 className="head__title">Уведомления</h1>
-            <p className="head__sub">История сообщений сотрудникам и статусы отправки</p>
-          </div>
-        </header>
-        {tabs}
-        <p className="empty empty--bad">
-          Нет права на просмотр очереди отправки. В ней видно, что писали
-          конкретным людям, поэтому это отдельное разрешение — попросите его
-          у администратора.
-        </p>
+        <div className="ntf-page">
+          <PageCard view="delivery" count={null} onView={showView}>
+            <p className="ntf-empty ntf-empty--bad">
+              Нет права на просмотр очереди отправки. В ней видно, что писали
+              конкретным людям, поэтому это отдельное разрешение — попросите его
+              у администратора.
+            </p>
+          </PageCard>
+        </div>
       </AppShell>
     );
   }
 
+  const denied = live.state === 'denied';
+
   return (
     <AppShell breadcrumb="Уведомления" section="notifications">
-      <header className="head head--tight">
-        <div>
-          <h1 className="head__title">Уведомления</h1>
-          <p className="head__sub">История сообщений сотрудникам и статусы отправки</p>
-        </div>
-        <div className="head__actions">
-          <AppDateRangePicker className="head__date-range" label="Период уведомлений" now={today()} from={from} to={to}
-            onFromChange={(value) => patch({ date_from: value || null })}
-            onToChange={(value) => patch({ date_to: value || null })} />
-          <button type="button" className="tool" aria-label="Обновить список"
-                  onClick={refresh}>
-            <AppIcon name="refresh" size={18} />
-          </button>
-          <p className="head__stamp">
-            {/* Время двигается только после УДАЧНОГО ответа. */}
-            {updated
-              ? `Обновлено в ${clock(updated.toISOString(), zone)}${zone ? ` · ${zone}` : ''}`
-              : 'Загружаем…'}
-          </p>
-        </div>
-      </header>
-
-      {tabs}
-
-      <ul className="summary" aria-label="Сводка по состояниям">
-        <Tile icon="doc" title="Всего" value={counts?.total} />
-        <Tile icon="check" title="Отправлено" value={counts?.sent} />
-        <Tile icon="clock" title="В очереди" value={counts?.queued} />
-        <Tile icon="alert" title="С ошибкой" value={counts?.failed} />
-        <Tile icon="archive" title="Снято" value={counts?.cancelled} />
-      </ul>
-
-      <div className={picked ? 'split split--open' : 'split'}>
-        <section className="panel panel--list">
-          <div className="toolbar">
-            <label className="find find--wide">
+      <div className="ntf-page">
+        <PageCard
+          view="delivery"
+          count={denied ? null : counts?.total ?? null}
+          onView={showView}
+          action={(
+            <div className="ntf-stamp">
+              <button type="button" className="ntf-btn ntf-btn--outline" onClick={refresh}
+                      aria-label="Обновить список">
+                <AppIcon name="refresh" size={16} />
+                Обновить
+              </button>
+              <span className="ntf-stamp__text">
+                {/* Время двигается только после УДАЧНОГО ответа. */}
+                {updated
+                  ? `Обновлено в ${clock(updated.toISOString(), zone)}${zone ? ` · ${zone}` : ''}`
+                  : 'Загружаем…'}
+              </span>
+            </div>
+          )}
+        >
+          <div className="ntf-filters ntf-filters--queue">
+            <label className="ntf-search">
               <AppIcon name="search" size={16} />
               <input type="search" value={search}
                      placeholder="Поиск сообщения или сотрудника"
                      aria-label="Поиск сообщения или сотрудника"
                      onChange={(event) => patch({ search: event.target.value || null })} />
             </label>
-            <AppSelectField label="Регион" className="notifications-select" value={region}
+            <AppSelectField label="Регион" className="ntf-filters__select" value={region}
                       onChange={(value) =>
                         // Смена региона сбрасывает офис: показанное
                         // обязано совпадать с отправляемым.
@@ -311,7 +292,7 @@ export function NotificationsPage() {
                   <option key={item.id} value={item.id}>{item.name}</option>
                 ))}
             </AppSelectField>
-            <AppSelectField label="Офис" className="notifications-select" value={office}
+            <AppSelectField label="Офис" className="ntf-filters__select" value={office}
                       onChange={(value) => patch({ office_id: value || null })}>
                 <option value="">Все офисы</option>
                 {(region
@@ -321,116 +302,127 @@ export function NotificationsPage() {
                   <option key={item.id} value={item.id}>{item.name}</option>
                 ))}
             </AppSelectField>
+            <AppDateRangePicker className="ntf-filters__dates" label="Период уведомлений" now={today()} from={from} to={to}
+              onFromChange={(value) => patch({ date_from: value || null })}
+              onToChange={(value) => patch({ date_to: value || null })} />
           </div>
 
-          <AppSegmentedControl className="tabs" role="tablist" label="Состояние отправки" value={tab}
-            options={TABS.map((item) => ({ value: item.key, label: item.title, count: tabCount(item.key, counts) }))}
-            onChange={(key) => patch({ tab: key === 'all' ? null : key, id: null })} />
+          <div className="ntf-queueBar">
+            <AppSegmentedControl className="ntf-statusTabs" role="tablist" label="Состояние отправки" value={tab}
+              options={TABS.map((item) => ({ value: item.key, label: item.title, count: tabCount(item.key, counts) }))}
+              onChange={(key) => patch({ tab: key === 'all' ? null : key, id: null })} />
+            <ul className="ntf-summary" aria-label="Сводка по состояниям">
+              <Tile title="Всего" value={denied ? undefined : counts?.total} />
+              <Tile title="Отправлено" value={denied ? undefined : counts?.sent} />
+              <Tile title="В очереди" value={denied ? undefined : counts?.queued} />
+              <Tile title="С ошибкой" value={denied ? undefined : counts?.failed} />
+              <Tile title="Снято" value={denied ? undefined : counts?.cancelled} />
+            </ul>
+          </div>
 
-          {live.state === 'loading' && <p className="empty">Загружаем историю…</p>}
-          {live.state === 'denied' && (
-            <p className="empty">Сессия истекла. Войдите заново.</p>
-          )}
-          {live.state === 'error' && (
-            <p className="empty empty--bad">
-              Не удалось загрузить список. Это ошибка запроса, а не пустая история.{' '}
-              <button type="button" className="link" onClick={refresh}>
-                Повторить
-              </button>
-            </p>
-          )}
-
-          {live.state === 'ready' && (
-            <>
-              {live.stale && (
-                <p className="note note--dim" role="status">
-                  Данные не обновились — показано последнее удачное чтение.
+          <div className={picked ? 'ntf-split ntf-split--open' : 'ntf-split'}>
+            <div className="ntf-split__list">
+              {live.state === 'loading' && <p className="ntf-empty" role="status">Загружаем историю…</p>}
+              {denied && (
+                <p className="ntf-empty ntf-empty--bad" role="alert">Сессия истекла. Войдите заново.</p>
+              )}
+              {live.state === 'error' && (
+                <p className="ntf-empty ntf-empty--bad" role="alert">
+                  Не удалось загрузить список. Это ошибка запроса, а не пустая история.{' '}
+                  <button type="button" className="ntf-link" onClick={refresh}>
+                    Повторить
+                  </button>
                 </p>
               )}
-              {live.data.items.length === 0 ? (
-                <p className="empty">{emptyText(search, tab, Boolean(from || to))}</p>
-              ) : (
-                <div className="scroller">
-                  <table className="people table-cards">
-                    <thead>
-                      <tr>
-                        <th>Сообщение / получатель</th>
-                        <th>Офис</th>
-                        <th>Статус</th>
-                        <th>Создано</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {live.data.items.map((row) => (
-                        <tr key={row.id} tabIndex={0}
-                            className={row.id === picked ? 'row--on' : ''}
-                            onClick={() => patch({ id: row.id })}
-                            onKeyDown={(event) => {
-                              if (event.key === 'Enter' || event.key === ' ') {
-                                event.preventDefault();
-                                patch({ id: row.id });
-                              }
-                            }}>
-                          <td className="grid-table__name">
-                            <span className="who">
-                              <AppIcon name={eventIcon(row.notification_type)} size={16} />
-                              <span className="two">
-                                <b>{eventTitle(row)}</b>
-                                <span className="two__second">
-                                  {row.employee.full_name}
-                                </span>
-                              </span>
-                            </span>
-                          </td>
-                          <td data-label="Офис">{row.office_name ?? '—'}</td>
-                          <td data-label="Статус"><StatusPill status={row.status} /></td>
-                          <td className="num" data-label="Создано">{moment(row.created_at, zone, from === to && Boolean(from))}</td>
+
+              {live.state === 'ready' && (
+                <>
+                  {live.stale && (
+                    <p className="ntf-note" role="status">
+                      Данные не обновились — показано последнее удачное чтение.
+                    </p>
+                  )}
+                  {live.data.items.length === 0 ? (
+                    <p className="ntf-empty">{emptyText(search, tab, Boolean(from || to))}</p>
+                  ) : (
+                    <table className="ntf-qtable">
+                      <thead>
+                        <tr>
+                          <th>Сообщение / получатель</th>
+                          <th>Офис</th>
+                          <th>Статус</th>
+                          <th>Создано</th>
+                          <th><span className="ntf-sr">Действие</span></th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                      </thead>
+                      <tbody>
+                        {live.data.items.map((row) => (
+                          <tr key={row.id} tabIndex={0}
+                              className={row.id === picked ? 'ntf-qrow ntf-qrow--on' : 'ntf-qrow'}
+                              onClick={() => patch({ id: row.id })}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter' || event.key === ' ') {
+                                  event.preventDefault();
+                                  patch({ id: row.id });
+                                }
+                              }}>
+                            <td className="ntf-qrow__main">
+                              <span className="ntf-row__title"><b>{eventTitle(row)}</b></span>
+                              <span className="ntf-row__context">{row.employee.full_name}</span>
+                            </td>
+                            <td data-label="Офис">{row.office_name ?? '—'}</td>
+                            <td data-label="Статус"><StatusPill status={row.status} /></td>
+                            <td className="ntf-qrow__when" data-label="Создано">{moment(row.created_at, zone, from === to && Boolean(from))}</td>
+                            <td className="ntf-qrow__act">
+                              <span className="ntf-btn ntf-btn--small" aria-hidden="true">Открыть →</span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+
+                  <footer className="ntf-foot">
+                    <span className="ntf-foot__range">
+                      {shownLine(live.data.items.length, live.data.hasMore, tabCount(tab, counts))}
+                    </span>
+                    <span className="ntf-foot__right">
+                      {tail.kind && (
+                        <span className="ntf-foot__bad">Не удалось дочитать список</span>
+                      )}
+                      {live.data.hasMore && (
+                        <button type="button" className="ntf-btn ntf-btn--small" disabled={tail.busy}
+                                onClick={() => void loadMore()}>
+                          {tail.busy ? 'Читаем…' : 'Показать ещё'}
+                        </button>
+                      )}
+                      <span className="ntf-foot__lock">
+                        <AppIcon name="alert" size={16} />
+                        Статус отправки не подтверждает прочтение сотрудником
+                      </span>
+                    </span>
+                  </footer>
+                </>
               )}
+            </div>
 
-              <div className="sheet__foot">
-                <span className="muted">
-                  {shownLine(live.data.items.length, live.data.hasMore, tabCount(tab, counts))}
-                </span>
-                <span className="sheet__right">
-                  {tail.kind && (
-                    <span className="field__bad">Не удалось дочитать список</span>
-                  )}
-                  {live.data.hasMore && (
-                    <button type="button" className="btn btn--small" disabled={tail.busy}
-                            onClick={() => void loadMore()}>
-                      {tail.busy ? 'Читаем…' : 'Показать ещё'}
-                    </button>
-                  )}
-                  <span className="muted sheet__lock">
-                    <AppIcon name="alert" size={16} />
-                    Статус отправки не подтверждает прочтение сотрудником
-                  </span>
-                </span>
-              </div>
-            </>
-          )}
-        </section>
-
-        {picked && (
-          <section className="panel panel--view" aria-label="Выбранное уведомление">
-            <Card
-              block={card}
-              attempts={attempts}
-              zone={zone}
-              mayManage={mayManage}
-              acting={acting}
-              error={actionError}
-              onClose={() => patch({ id: null })}
-              onRetry={(row) => void act(() => api.retryNotification(row.id))}
-              onCancel={(row) => void act(() => api.cancelNotification(row.id))}
-            />
-          </section>
-        )}
+            {picked && (
+              <section className="ntf-split__view" aria-label="Выбранное уведомление">
+                <Card
+                  block={card}
+                  attempts={attempts}
+                  zone={zone}
+                  mayManage={mayManage}
+                  acting={acting}
+                  error={actionError}
+                  onClose={() => patch({ id: null })}
+                  onRetry={(row) => void act(() => api.retryNotification(row.id))}
+                  onCancel={(row) => void act(() => api.cancelNotification(row.id))}
+                />
+              </section>
+            )}
+          </div>
+        </PageCard>
       </div>
     </AppShell>
   );
@@ -605,211 +597,13 @@ function Attempts({ block, zone }: {
 
 // --- мелочи -----------------------------------------------------------------
 
-/**
- * Лента событий целиком — то же, что в колокольчике, но без потолка в
- * семь строк и с подгрузкой по курсору.
- *
- * Выбранное событие держится в адресе: ссылку на разбор можно переслать
- * коллеге, и она откроет ровно то же самое. Отметка прочтения ставится
- * при нажатии на строку, и только для того, кто нажал.
- */
-const BOARD_PAGE = '20';
-
-function FeedBoard({
-  opened,
-  onOpen,
-}: {
-  opened: string;
-  onOpen: (id: string) => void;
-}) {
-  const navigate = useNavigate();
-  const [filter, setFilter] = useStickyState<string>('notifications.filter', 'all');
-  const [page, setPage] = useState<api.FeedPage | null>(null);
-  const [rows, setRows] = useState<api.FeedEvent[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [failed, setFailed] = useState<string | null>(null);
-  const [note, setNote] = useState<string | null>(null);
-  const [tail, setTail] = useState(false);
-  const [card, setCard] = useState<api.FeedDetail | null>(null);
-  const [cardFailed, setCardFailed] = useState<string | null>(null);
-  const [attempt, setAttempt] = useState(0);
-
-  useEffect(() => {
-    const stop = new AbortController();
-    setLoading(true);
-    api
-      .feed({ scope: filter, limit: BOARD_PAGE }, stop.signal)
-      .then((data) => {
-        setPage(data);
-        setRows(data.items);
-        setFailed(null);
-      })
-      .catch((error: unknown) => {
-        if (stop.signal.aborted) return;
-        setFailed(messageFor(error));
-      })
-      .finally(() => {
-        if (!stop.signal.aborted) setLoading(false);
-      });
-    return () => stop.abort();
-  }, [filter, attempt]);
-
-  useEffect(() => {
-    if (!opened) {
-      setCard(null);
-      return;
-    }
-    const stop = new AbortController();
-    setCardFailed(null);
-    api
-      .feedEvent(opened, stop.signal)
-      .then(setCard)
-      .catch((error: unknown) => {
-        if (stop.signal.aborted) return;
-        setCard(null);
-        setCardFailed(
-          error instanceof ApiFailure && error.status === 404
-            ? 'Событие больше недоступно: запись изменилась или закрыта'
-            : messageFor(error),
-        );
-      });
-    return () => stop.abort();
-  }, [opened]);
-
-  function choose(event: api.FeedEvent) {
-    onOpen(event.id);
-    if (event.read_at) return;
-    const before = rows;
-    const moment = new Date().toISOString();
-    setRows((was) =>
-      was.map((one) => (one.id === event.id ? { ...one, read_at: moment } : one)),
-    );
-    setPage((was) =>
-      was ? { ...was, counts: { ...was.counts, unread: Math.max(0, was.counts.unread - 1) } } : was,
-    );
-    setNote(null);
-    void api.readFeedEvent(event.id).catch((error: unknown) => {
-      // Возврат к прежнему состоянию: показывать прочитанным то, что
-      // сервер прочитанным не считает, нельзя.
-      setRows(before);
-      setNote(messageFor(error));
-    });
-  }
-
-  function readAll() {
-    setNote(null);
-    void api
-      .readAllFeed()
-      .then(() => setAttempt((n) => n + 1))
-      .catch((error: unknown) => setNote(messageFor(error)));
-  }
-
-  function loadMore() {
-    const cursor = page?.next_cursor;
-    if (!cursor) return;
-    setTail(true);
-    api
-      .feed({ scope: filter, limit: BOARD_PAGE, cursor })
-      .then((data) => {
-        setPage(data);
-        setRows((was) => [...was, ...data.items]);
-      })
-      .catch((error: unknown) => setNote(messageFor(error)))
-      .finally(() => setTail(false));
-  }
-
-  const counts = page?.counts ?? null;
-  const unread = counts?.unread ?? 0;
-
+function Tile({ title, value }: { title: string; value: number | undefined }) {
   return (
-    <div className="nf nf--page">
-      <div className="nf__pageHead">
-        <div className="tabs" role="tablist" aria-label="Отбор событий">
-          {FEED_FILTERS.map((one) => {
-            const on = one.key === filter;
-            const count = counts ? counts[one.key] : null;
-            return (
-              <button key={one.key} type="button" role="tab" aria-selected={on}
-                      className={on ? 'tab tab--on' : 'tab'}
-                      onClick={() => setFilter(one.key)}>
-                {one.title}
-                {count !== null && <span className="tab__count">{count}</span>}
-              </button>
-            );
-          })}
-        </div>
-        <button type="button" className="nf__link nf__link--action"
-                onClick={readAll} disabled={unread === 0}>
-          Прочитать все
-        </button>
-      </div>
-
-      {note && <p className="nf__note">{note}</p>}
-
-      <div className="nf__body nf__body--page">
-        <div className="nf__list">
-          {loading && rows.length === 0 && <p className="nf__empty">Загружаем ленту…</p>}
-          {!loading && failed && rows.length === 0 && (
-            <p className="nf__empty nf__empty--bad">
-              {failed}
-              <button type="button" className="nf__retry"
-                      onClick={() => setAttempt((n) => n + 1)}>
-                Повторить
-              </button>
-            </p>
-          )}
-          {!loading && !failed && rows.length === 0 && (
-            <p className="nf__empty">
-              {filter === 'all'
-                ? `За последние ${page?.window_days ?? 30} дней событий не было`
-                : `В отборе «${filterTitle(filter)}» событий нет`}
-            </p>
-          )}
-
-          {rows.map((event) => (
-            <FeedRow key={event.id} event={event} active={event.id === opened}
-                     onPick={choose} />
-          ))}
-
-          {page?.has_more && (
-            <button type="button" className="btn btn--small nf__more"
-                    disabled={tail} onClick={loadMore}>
-              {tail ? 'Читаем…' : 'Показать ещё'}
-            </button>
-          )}
-        </div>
-
-        <div className="nf__card">
-          {cardFailed && <p className="nf__empty nf__empty--bad">{cardFailed}</p>}
-          {!cardFailed && !card && (
-            <p className="nf__empty">
-              {rows.length === 0 ? 'Событий нет' : 'Выберите событие слева'}
-            </p>
-          )}
-          {card && (
-            <FeedCard card={card} onFollow={(url) => navigate(url)} />
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-
-function Tile({ icon, title, value }: {
-  icon: Parameters<typeof AppIcon>[0]['name'];
-  title: string;
-  value: number | undefined;
-}) {
-  return (
-    <li className="tile">
-      <span className="tile__icon" aria-hidden="true"><AppIcon name={icon} size={20} /></span>
-      <span className="tile__text">
-        <span className="tile__title">{title}</span>
-        {/* Пока сводка не пришла — прочерк, а не ноль. Ноль означал бы,
-            что уведомлений нет. */}
-        <b className="tile__value">{value === undefined ? '—' : value}</b>
-      </span>
+    <li className="ntf-summary__item">
+      <span>{title}</span>
+      {/* Пока сводка не пришла — прочерк, а не ноль. Ноль означал бы,
+          что уведомлений нет. */}
+      <b>{value === undefined ? '—' : value}</b>
     </li>
   );
 }
@@ -827,14 +621,6 @@ function StatusPill({ status }: { status: string }) {
       {STATUS[status] ?? status}
     </span>
   );
-}
-
-function eventIcon(type: string): Parameters<typeof AppIcon>[0]['name'] {
-  if (type.startsWith('telegram.link.')) return 'lock';
-  if (type.startsWith('absence.')) return 'calendar';
-  if (type.startsWith('question.')) return 'chat';
-  if (type.startsWith('attendance.')) return 'pencil';
-  return 'doc';
 }
 
 /**
