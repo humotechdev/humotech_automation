@@ -18,7 +18,7 @@ import { Fragment, type ReactNode, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 
 import * as api from '../../api/crm';
-import { AppIcon, type AppIconName } from '../../components/AppIcon';
+import { Isx, type IsxName } from '../../components/Isx';
 import { AppDateRangePicker } from '../../components/DateRangePicker';
 import { FieldWorkControls } from '../../components/FieldWorkControls';
 import { useBlock } from '../dashboard/data';
@@ -153,7 +153,7 @@ export function Attendance({ id, name, rights, zone }: {
           // правами, что и раздел «Отчёты»; здесь только готовые фильтры.
           <Link className="ec-btn ec-btn--line"
                 to={`/reports?kind=sessions&employee_id=${id}&date_from=${range.first}&date_to=${range.last}`}>
-            <AppIcon name="download" size={18} />
+            <Isx name="download" size={18} />
             Экспорт
           </Link>
         )}
@@ -211,7 +211,7 @@ export function Attendance({ id, name, rights, zone }: {
       <section className="ec-more">
         <button type="button" className="ec-more__head" aria-expanded={extra}
                 onClick={() => setExtra((was) => !was)}>
-          <AppIcon name={extra ? 'chevron' : 'next'} size={18} />
+          <Isx name={extra ? 'chevron' : 'next'} size={18} />
           Дополнительная статистика
         </button>
         {extra && (
@@ -245,11 +245,11 @@ function placeholder(state: string): string {
 }
 
 function Stat({ icon, title, value, note }: {
-  icon: AppIconName; title: string; value: string; note: string;
+  icon: IsxName; title: string; value: string; note: string;
 }) {
   return (
     <div className="ec-stat">
-      <AppIcon name={icon} size={20} />
+      <Isx name={icon} size={20} />
       <span className="ec-stat__text">
         <span className="ec-stat__title">{title}</span>
         <strong className="ec-stat__value">{value}</strong>
@@ -292,14 +292,14 @@ function Metrics({ sums }: { sums: ReturnType<typeof stats> }) {
 }
 
 function Metric({ icon, title, value, tone }: {
-  icon: AppIconName;
+  icon: IsxName;
   title: string;
   value: string;
   tone?: 'warn' | 'green' | undefined;
 }) {
   return (
     <div className={tone ? `ea-metric ea-metric--${tone}` : 'ea-metric'}>
-      <AppIcon name={icon} size={20} />
+      <Isx name={icon} size={20} />
       <span className="ea-metric__text">
         <span>{title}</span>
         <strong>{value}</strong>
@@ -592,14 +592,14 @@ function Dist({ title, side, average, values, from, to, tone }: {
 }
 
 function Count({ icon, tone, title, value }: {
-  icon: AppIconName;
+  icon: IsxName;
   tone: 'ok' | 'warn';
   title: string;
   value: number;
 }) {
   return (
     <div className={`ea-count ea-count--${tone}`}>
-      <AppIcon name={icon} size={20} />
+      <Isx name={icon} size={20} />
       <span>
         <small>{title}</small>
         <strong>{value} {daysWord(value)}</strong>
@@ -722,7 +722,7 @@ const ANOMALY_TEXT: Record<string, string> = {
 function Check({ ok, yes, no }: { ok: boolean; yes: string; no: string }) {
   return (
     <span className={ok ? 'ec-check ec-check--ok' : 'ec-check'}>
-      <AppIcon name={ok ? 'check' : 'alert'} size={16} />
+      <Isx name={ok ? 'check' : 'alert'} size={16} />
       {ok ? yes : no}
     </span>
   );

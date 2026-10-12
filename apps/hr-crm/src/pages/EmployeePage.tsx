@@ -28,7 +28,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import * as api from '../api/crm';
 import { ApiFailure, messageFor, reasonFor } from '../api/errors';
 import { AppShell } from '../components/AppShell';
-import { AppIcon, type AppIconName } from '../components/AppIcon';
+import { Isx, type IsxName } from '../components/Isx';
 import { AppSelectField } from '../components/AppSelect';
 import { Attendance } from '../features/employee/Attendance';
 import { useSession } from '../features/auth/session';
@@ -207,7 +207,7 @@ function EmployeeCard({ id }: { id: string }) {
     >
       <div className="ec">
         <Link className="ec-back" to={back || '/employees'}>
-          <AppIcon name="back" size={16} />
+          <Isx name="back" size={16} />
           Все сотрудники
         </Link>
 
@@ -322,15 +322,15 @@ function Header({ person, id, canEdit }: { person: Person; id: string; canEdit: 
         </div>
         <ul className="ec-meta">
           <li className="ec-meta__main">
-            <AppIcon name="bag" size={16} />
+            <Isx name="bag" size={16} />
             <span>{first || 'Действующего назначения нет'}</span>
           </li>
           {second && (
-            <li><AppIcon name="building" size={16} /><span>{second}</span></li>
+            <li><Isx name="building" size={16} /><span>{second}</span></li>
           )}
           {hire && (
             <li>
-              <AppIcon name="calendar" size={16} />
+              <Isx name="calendar" size={16} />
               <span>{notYet ? `Выходит на работу ${dayMonthYear(hire)}` : `В компании с ${dayMonthYear(hire)}`}</span>
             </li>
           )}
@@ -338,7 +338,7 @@ function Header({ person, id, canEdit }: { person: Person; id: string; canEdit: 
       </div>
       {canEdit && (
         <Link className="ec-btn ec-btn--primary ec-head__edit" to={`/employees/${id}/edit`}>
-          <AppIcon name="pencil" size={16} />
+          <Isx name="pencil" size={16} />
           Редактировать
         </Link>
       )}
@@ -393,6 +393,20 @@ function Overview({ id, person, zone, rights, version, onGo, onChanged }: {
 
   return (
     <>
+      {pending && (
+        <div className="ec-notice">
+          <span className="ec-notice__icon" aria-hidden="true"><Isx name="doc" size={20} variant="Bulk" /></span>
+          <span className="ec-notice__text">
+            <b>{kindOf(pending).title} ожидает решения</b>
+            <span>{noticeLine(pending)}</span>
+          </span>
+          <button type="button" className="ec-btn ec-btn--primary"
+                  onClick={() => onGo('requests', { status: 'open', request: pending.id })}>
+            Рассмотреть
+          </button>
+        </div>
+      )}
+
       <div className="ec-band" aria-label="Показатели сотрудника">
         <Cell icon="clock" title="Сегодня" note={todayNote(journal, todayRow, report?.note ?? null, rights.attendance)}
               value={!rights.attendance ? '—'
@@ -425,66 +439,75 @@ function Overview({ id, person, zone, rights, version, onGo, onChanged }: {
 
       <div className="ec-split">
         <section className="ec-col" aria-labelledby="ec-main-title">
-          <h2 id="ec-main-title" className="ec-h2">Основные сведения</h2>
-          <dl className="ec-facts">
-            <Fact label="Офис" value={post
+          <h2 id="ec-main-title" className="ec-h2">
+            <Isx name="card" size={20} variant="Bulk" className="ec-h2__icon" />
+            Основные сведения
+          </h2>
+          <dl className="ec-info">
+            <Info icon="building" label="Офис" value={post
               ? [text(post, 'office_name'), text(post, 'region_name')].filter(Boolean).join(', ') || null
               : null} empty={post ? 'Не указан' : 'Нет назначения'} />
-            <Fact label="Отдел" value={post ? text(post, 'department_name') : null}
+            <Info icon="team" label="Отдел" value={post ? text(post, 'department_name') : null}
                   empty={post ? 'Не указано' : 'Нет назначения'} />
-            <Fact label="Должность" value={post ? text(post, 'position_name') : null}
+            <Info icon="bag" label="Должность" value={post ? text(post, 'position_name') : null}
                   empty={post ? 'Не указано' : 'Нет назначения'} />
-            <Fact label="Дата приёма" value={text(person, 'hire_date')
+            <Info icon="calendar" label="Дата приёма" value={text(person, 'hire_date')
               ? dayMonthYear(text(person, 'hire_date') as string) : null} />
-            <Fact label="График"
+            <Info icon="timer" label="График"
                   value={scheduleSummary(person['current_schedule'] as Parameters<typeof scheduleSummary>[0])}
                   empty="Не назначен" />
+            <Info icon="hash" label="Табельный номер" value={text(person, 'employee_number')} />
           </dl>
+
           <div className="ec-reveal">
-            <span>Контакты и личные данные</span>
+            <span className="ec-reveal__title">
+              <Isx name="user" size={18} />
+              Контакты и личные данные
+            </span>
             <button type="button" className="ec-link" aria-expanded={contacts}
                     onClick={() => setContacts((was) => !was)}>
               {contacts ? 'Скрыть' : 'Показать'}
               <span className={contacts ? 'ec-reveal__arrow ec-reveal__arrow--on' : 'ec-reveal__arrow'} aria-hidden="true">
-                <AppIcon name="chevron" size={16} />
+                <Isx name="chevron" size={16} />
               </span>
             </button>
           </div>
           {contacts && (
-            <dl className="ec-facts ec-facts--more">
-              <Fact label="Полное имя" value={text(person, 'full_name')} />
-              <Fact label="Табельный номер" value={text(person, 'employee_number')} />
-              <Fact label="Телефон" value={text(person, 'phone')} />
-              <Fact label="Рабочая почта" value={text(person, 'corporate_email')} />
-              <Fact label="Личная почта" value={text(person, 'personal_email')} />
-              <Fact label="Дата рождения" value={text(person, 'birth_date')
+            <dl className="ec-info ec-facts--more">
+              <Info icon="user" label="Полное имя" value={text(person, 'full_name')} />
+              <Info icon="phone" label="Телефон" value={text(person, 'phone')} />
+              <Info icon="mail" label="Рабочая почта" value={text(person, 'corporate_email')} />
+              <Info icon="mail" label="Личная почта" value={text(person, 'personal_email')} />
+              <Info icon="cake" label="Дата рождения" value={text(person, 'birth_date')
                 ? dayMonthYear(text(person, 'birth_date') as string) : null} />
-              <Fact label="Пол" value={GENDER[text(person, 'gender') ?? ''] ?? null} />
-              <Fact label="Семейное положение" value={MARITAL[text(person, 'marital_status') ?? ''] ?? null} />
+              <Info icon="user" label="Пол" value={GENDER[text(person, 'gender') ?? ''] ?? null} />
+              <Info icon="team" label="Семейное положение" value={MARITAL[text(person, 'marital_status') ?? ''] ?? null} />
             </dl>
           )}
         </section>
 
         <section className="ec-col ec-col--side" aria-labelledby="ec-link-title">
-          <h2 id="ec-link-title" className="ec-h2">Связь с сотрудником</h2>
+          <h2 id="ec-link-title" className="ec-h2">
+            <Isx name="send" size={20} variant="Bulk" className="ec-h2__icon" />
+            Связь с сотрудником
+          </h2>
           <TelegramBlock id={id} rights={rights} version={version} onChanged={onChanged} />
         </section>
       </div>
-
-      {pending && (
-        <div className="ec-notice">
-          <span className="ec-notice__icon" aria-hidden="true"><AppIcon name="doc" size={20} /></span>
-          <span className="ec-notice__text">
-            <b>{kindOf(pending).title} ожидает решения</b>
-            <span>{noticeLine(pending)}</span>
-          </span>
-          <button type="button" className="ec-btn ec-btn--primary"
-                  onClick={() => onGo('requests', { status: 'open', request: pending.id })}>
-            Рассмотреть
-          </button>
-        </div>
-      )}
     </>
+  );
+}
+
+/** Сведение с иконкой: подпись сверху, значение снизу — читается сеткой. */
+function Info({ icon, label, value, empty = 'Не указано' }: {
+  icon: IsxName; label: string; value: string | null; empty?: string;
+}) {
+  return (
+    <div className="ec-info__item">
+      <span className="ec-info__icon" aria-hidden="true"><Isx name={icon} size={18} /></span>
+      <dt>{label}</dt>
+      <dd className={value ? undefined : 'ec-muted'}>{value ?? empty}</dd>
+    </div>
   );
 }
 
@@ -517,14 +540,14 @@ function noticeLine(item: api.QueueItem): string {
 }
 
 function Cell({ icon, title, value, note, link, onRetry }: {
-  icon?: AppIconName; title: string; value: string; note: string;
+  icon?: IsxName; title: string; value: string; note: string;
   link?: { label: string; go: () => void } | undefined;
   onRetry?: (() => void) | undefined;
 }) {
   return (
     <div className="ec-cell">
       <span className="ec-cell__top">
-        {icon && <span className="ec-cell__icon" aria-hidden="true"><AppIcon name={icon} size={18} /></span>}
+        {icon && <span className="ec-cell__icon" aria-hidden="true"><Isx name={icon} size={20} variant="Bulk" /></span>}
         <span className="ec-cell__title">{title}</span>
       </span>
       <strong className="ec-cell__value">{value}</strong>
@@ -694,7 +717,10 @@ function TelegramBlock({ id, rights, version, onChanged }: {
         </div>
       )}
 
-      <h2 className="ec-h2 ec-h2--gap">Ознакомление</h2>
+      <h2 className="ec-h2 ec-h2--gap">
+        <Isx name="teach" size={20} variant="Bulk" className="ec-h2__icon" />
+        Ознакомление
+      </h2>
       {!rights.onboardingRead ? (
         <p className="ec-muted">Нет права на ознакомление.</p>
       ) : plan.state === 'loading' ? (
@@ -894,7 +920,7 @@ function Schedule({ id, zone }: { id: string; zone: string }) {
       <section className="ec-more">
         <button type="button" className="ec-more__head" aria-expanded={history}
                 onClick={() => setHistory((was) => !was)}>
-          <AppIcon name={history ? 'chevron' : 'next'} size={18} />
+          <Isx name={history ? 'chevron' : 'next'} size={18} />
           История назначений и графиков
         </button>
         {history && (
@@ -1159,9 +1185,9 @@ function Requests({ id, person, rights, zone, version, onChanged }: {
       <section className="ec-more">
         <button type="button" className="ec-more__head" aria-expanded={docs}
                 onClick={() => setDocs((was) => !was)}>
-          <AppIcon name="doc" size={18} />
+          <Isx name="doc" size={18} />
           Документы сотрудника · {documents.length}
-          <span className="ec-more__arrow"><AppIcon name={docs ? 'chevron' : 'next'} size={18} /></span>
+          <span className="ec-more__arrow"><Isx name={docs ? 'chevron' : 'next'} size={18} /></span>
         </button>
         {docs && (
           documents.length === 0 ? (
@@ -1175,7 +1201,7 @@ function Requests({ id, person, rights, zone, version, onChanged }: {
                 const state = String(row['status'] ?? '');
                 return (
                   <li key={key}>
-                    <AppIcon name="doc" size={18} />
+                    <Isx name="doc" size={18} />
                     <span className="ec-docs__title" title={title}>{title}</span>
                     {row['file_id'] && rights.manage ? (
                       // Файл отдаёт сервер с проверкой права и области при
@@ -1214,7 +1240,7 @@ function RequestRows({ item, open, state, onToggle, rights, zone, onDone }: {
         <td className="ec-chev">
           <button type="button" className="ec-icon-btn" aria-expanded={open}
                   aria-label={open ? 'Скрыть подробности' : 'Открыть подробности'} onClick={onToggle}>
-            <AppIcon name={open ? 'chevron' : 'next'} size={18} />
+            <Isx name={open ? 'chevron' : 'next'} size={18} />
           </button>
         </td>
         <td><b>{kind.title}</b></td>
