@@ -1174,3 +1174,238 @@ p.ec-diff { display: block; }
   .ec-reveal,
   .ec-att { transition: none; }
 }
+
+/* =============================================================================
+ * Редизайн 12.10: спокойная «премиальная» карточка. Цвета прежние (синий
+ * бренд), меняются форма и иерархия: шапка на мягкой подложке, показатели —
+ * три отдельные плитки с иконкой, вкладки — сегменты, блоки обзора —
+ * карточки со скруглением. Только CSS поверх прежних правил.
+ * ========================================================================== */
+
+.ec { padding: 20px 24px 28px; border-radius: 20px; }
+
+.ec-back {
+  padding: 6px 10px 6px 8px;
+  margin: 0 0 12px -8px;
+  border-radius: 999px;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.ec-back:hover { background: var(--ec-soft); }
+
+/* --- шапка --- */
+.ec-head {
+  grid-template-columns: 96px minmax(0, 1fr) auto;
+  gap: 24px;
+  padding: 24px 28px;
+  border: 1px solid #e4ecf7;
+  border-radius: 18px;
+  background:
+    radial-gradient(120% 140% at 100% 0%, rgba(31, 111, 224, 0.10) 0%, rgba(31, 111, 224, 0) 55%),
+    linear-gradient(180deg, #f7faff 0%, #fbfcfe 100%);
+}
+
+.ec-face-wrap { position: relative; display: inline-flex; width: 96px; height: 96px; }
+
+.ec-face {
+  width: 96px;
+  height: 96px;
+  border: 4px solid #fff;
+  background: linear-gradient(135deg, #dcebff 0%, #c6dcfb 100%);
+  box-shadow: 0 6px 18px rgba(19, 41, 90, 0.12);
+  font-size: 30px;
+  letter-spacing: 0.02em;
+}
+
+.ec-face__dot {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 16px;
+  height: 16px;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  background: #9aa8bc;
+}
+.ec-face__dot--green { background: #22a565; }
+.ec-face__dot--blue { background: var(--ec-blue); }
+.ec-face__dot--amber { background: #e59a1a; }
+.ec-face__dot--red { background: var(--ec-red); }
+
+.ec-name { font-size: 28px; letter-spacing: -0.01em; }
+
+.ec-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ec-meta li {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid #e1e9f4;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.85);
+  color: var(--ec-muted);
+  font-size: 14px;
+}
+.ec-meta li svg { flex: none; color: #8a9bb6; }
+.ec-meta__main { color: var(--ec-ink) !important; font-weight: 500; }
+.ec-meta__main svg { color: var(--ec-blue) !important; }
+
+.ec-head__edit { align-self: center; }
+
+.ec-btn {
+  min-height: 42px;
+  border-radius: 12px;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease,
+    box-shadow 0.15s ease, transform 0.12s ease;
+}
+.ec-btn--primary { box-shadow: 0 2px 8px rgba(31, 111, 224, 0.22); }
+.ec-btn--primary:hover { box-shadow: 0 4px 14px rgba(31, 111, 224, 0.30); }
+.ec-btn:active:not([disabled]) { transform: scale(0.98); }
+.ec-btn--line:hover { background: #f7faff; }
+
+/* --- вкладки-сегменты --- */
+.ec-tabs {
+  display: inline-flex;
+  gap: 4px;
+  max-width: 100%;
+  margin-top: 20px;
+  padding: 4px;
+  border: 0;
+  border-radius: 14px;
+  background: #f1f5fa;
+}
+
+.ec-tab {
+  margin: 0;
+  padding: 9px 16px;
+  border: 0;
+  border-radius: 10px;
+  font-size: 15px;
+  transition: background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+.ec-tab:hover { color: var(--ec-ink); background: rgba(255, 255, 255, 0.6); }
+.ec-tab--on,
+.ec-tab--on:hover {
+  background: #fff;
+  color: var(--ec-blue);
+  box-shadow: 0 1px 2px rgba(19, 41, 90, 0.08), 0 2px 8px rgba(19, 41, 90, 0.06);
+}
+
+.ec-body { padding-top: 20px; }
+
+/* --- показатели: три плитки --- */
+.ec-band {
+  gap: 14px;
+  padding: 0;
+  background: none;
+}
+.ec-band > * {
+  padding: 18px 20px;
+  border: 1px solid #e6edf6;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(19, 41, 90, 0.04);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.ec-band > * + * { border-left: 1px solid #e6edf6; }
+.ec-band > *:hover { border-color: #d3e1f3; box-shadow: 0 4px 16px rgba(19, 41, 90, 0.06); }
+
+.ec-cell { gap: 6px; }
+.ec-cell__top { display: inline-flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+.ec-cell__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: var(--ec-blue-soft);
+  color: var(--ec-blue);
+}
+.ec-band > :nth-child(2) .ec-cell__icon { background: var(--ec-green-soft); color: var(--ec-green); }
+.ec-band > :nth-child(3) .ec-cell__icon { background: var(--ec-amber-soft); color: var(--ec-amber); }
+.ec-cell__title { color: var(--ec-muted); font-size: 14px; font-weight: 500; }
+.ec-cell__value { font-size: 28px; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+
+/* --- две колонки — две карточки --- */
+.ec-split { gap: 16px; margin-top: 16px; }
+.ec-col,
+.ec-col--side {
+  padding: 20px 22px;
+  border: 1px solid #e6edf6;
+  border-radius: 16px;
+  background: #fff;
+}
+.ec-col--side { border-left: 1px solid #e6edf6; }
+.ec-h2 { font-size: 18px; margin-bottom: 6px; }
+
+.ec-fact { padding: 12px 0; border-bottom-color: #edf2f8; }
+.ec-facts > .ec-fact:last-child { border-bottom: 0; }
+.ec-fact dd { color: var(--ec-ink); font-weight: 500; }
+.ec-fact dd.ec-muted { color: var(--ec-muted); font-weight: 400; }
+
+.ec-reveal {
+  margin-top: 6px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--ec-soft);
+}
+.ec-reveal__arrow { display: inline-flex; transform: rotate(-90deg); transition: transform 0.18s ease; }
+.ec-reveal__arrow--on { transform: none; }
+
+/* --- заявка ждёт решения --- */
+.ec-notice {
+  margin-top: 16px;
+  padding: 16px 18px;
+  border: 1px solid #f3e0bb;
+  border-radius: 16px;
+  background: linear-gradient(90deg, #fff8ec 0%, #fffdf8 100%);
+}
+.ec-notice__icon { background: #ffeccc; color: var(--ec-amber); }
+
+/* --- блок недели и таблицы — та же мягкая форма --- */
+.ec-week { border: 1px solid #e6edf6; border-radius: 16px; background: #fbfcfe; }
+.ec-table th { background: #f4f7fb; }
+.ec-table tbody tr:not(.ec-row-more) { transition: background-color 0.12s ease; }
+.ec-table tbody tr.ec-row:hover td { background: #f9fbfe; }
+
+@media (max-width: 1100px) {
+  .ec-head { padding: 20px; }
+  .ec-split { grid-template-columns: minmax(0, 1fr); }
+  .ec-col--side { margin-top: 0; padding: 20px 22px; border: 1px solid #e6edf6; }
+}
+
+@media (max-width: 700px) {
+  .ec { padding: 14px 12px 18px; border-radius: 16px; }
+  .ec-head { grid-template-columns: 64px minmax(0, 1fr); gap: 14px; padding: 16px; border-radius: 16px; }
+  .ec-face-wrap, .ec-face { width: 64px; height: 64px; }
+  .ec-face { font-size: 21px; border-width: 3px; }
+  .ec-face__dot { right: 2px; bottom: 2px; width: 13px; height: 13px; }
+  .ec-name { font-size: 21px; }
+  .ec-meta li { font-size: 13px; min-height: 30px; }
+  .ec-head__edit { grid-column: 1 / -1; }
+  .ec-tabs { display: flex; overflow-x: auto; }
+  .ec-tab { font-size: 14px; padding: 8px 12px; }
+  .ec-band { grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 0; }
+  .ec-band > *, .ec-band > * + * { padding: 14px 16px; border: 1px solid #e6edf6; }
+  .ec-col, .ec-col--side { padding: 16px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ec-btn, .ec-tab, .ec-back, .ec-band > *, .ec-reveal__arrow { transition: none; }
+  .ec-btn:active:not([disabled]) { transform: none; }
+}
+
+@media (max-width: 700px) {
+  .ec-head { align-items: start; }
+  .ec-meta li { border-radius: 10px; padding: 5px 10px; line-height: 1.35; }
+  .ec-meta li svg { align-self: flex-start; margin-top: 1px; }
+}

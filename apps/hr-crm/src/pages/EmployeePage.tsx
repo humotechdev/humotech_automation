@@ -28,7 +28,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import * as api from '../api/crm';
 import { ApiFailure, messageFor, reasonFor } from '../api/errors';
 import { AppShell } from '../components/AppShell';
-import { AppIcon } from '../components/AppIcon';
+import { AppIcon, type AppIconName } from '../components/AppIcon';
 import { AppSelectField } from '../components/AppSelect';
 import { Attendance } from '../features/employee/Attendance';
 import { useSession } from '../features/auth/session';
@@ -302,13 +302,16 @@ function Header({ person, id, canEdit }: { person: Person; id: string; canEdit: 
 
   return (
     <header className="ec-head">
-      {hasPhoto ? (
-        <img className="ec-face" src={api.employeePhotoUrl(id)} alt="" />
-      ) : (
-        <span className="ec-face" aria-hidden="true">
-          {initials(text(person, 'first_name'), text(person, 'last_name'))}
-        </span>
-      )}
+      <span className="ec-face-wrap">
+        {hasPhoto ? (
+          <img className="ec-face" src={api.employeePhotoUrl(id)} alt="" />
+        ) : (
+          <span className="ec-face" aria-hidden="true">
+            {initials(text(person, 'first_name'), text(person, 'last_name'))}
+          </span>
+        )}
+        <i className={`ec-face__dot ec-face__dot--${STATUS_TONE[status] ?? 'grey'}`} aria-hidden="true" />
+      </span>
       <div className="ec-head__text">
         <div className="ec-head__line">
           <h1 className="ec-name" title={text(person, 'full_name') ?? undefined}>
@@ -317,14 +320,25 @@ function Header({ person, id, canEdit }: { person: Person; id: string; canEdit: 
           {title && <span className={`ec-pill ec-pill--${STATUS_TONE[status] ?? 'grey'}`}>{title}</span>}
           {archived && <span className="ec-pill ec-pill--grey">В архиве</span>}
         </div>
-        <p className="ec-sub">{first || 'Действующего назначения нет'}</p>
-        {second && <p className="ec-sub ec-sub--muted">{second}</p>}
-        {notYet && hire && (
-          <p className="ec-sub ec-sub--muted">Выходит на работу {dayMonthYear(hire)}</p>
-        )}
+        <ul className="ec-meta">
+          <li className="ec-meta__main">
+            <AppIcon name="bag" size={16} />
+            <span>{first || 'Действующего назначения нет'}</span>
+          </li>
+          {second && (
+            <li><AppIcon name="building" size={16} /><span>{second}</span></li>
+          )}
+          {hire && (
+            <li>
+              <AppIcon name="calendar" size={16} />
+              <span>{notYet ? `Выходит на работу ${dayMonthYear(hire)}` : `В компании с ${dayMonthYear(hire)}`}</span>
+            </li>
+          )}
+        </ul>
       </div>
       {canEdit && (
         <Link className="ec-btn ec-btn--primary ec-head__edit" to={`/employees/${id}/edit`}>
+          <AppIcon name="pencil" size={16} />
           Редактировать
         </Link>
       )}
@@ -380,11 +394,11 @@ function Overview({ id, person, zone, rights, version, onGo, onChanged }: {
   return (
     <>
       <div className="ec-band" aria-label="Показатели сотрудника">
-        <Cell title="Сегодня" note={todayNote(journal, todayRow, report?.note ?? null, rights.attendance)}
+        <Cell icon="clock" title="Сегодня" note={todayNote(journal, todayRow, report?.note ?? null, rights.attendance)}
               value={!rights.attendance ? '—'
                 : todayRow ? duration(todayRow.seconds) : journal.state === 'loading' ? '…' : '—'}
               onRetry={journal.state === 'error' ? reloadJournal : undefined} />
-        <Cell title={`Отработано ${monthIn(today)}`}
+        <Cell icon="chart" title={`Отработано ${monthIn(today)}`}
               value={!rights.attendance ? '—'
                 // Без назначения за период сервер отдаёт нули с пояснением:
                 // это «не с чем считать», а не подтверждённые «0 ч».
@@ -397,7 +411,7 @@ function Overview({ id, person, zone, rights, version, onGo, onChanged }: {
                     fieldSeconds > 0 ? `в т. ч. выезд ${duration(fieldSeconds)}` : '']
                     .filter(Boolean).join(' · ')}
               onRetry={journal.state === 'error' ? reloadJournal : undefined} />
-        <Cell title="Ждут решения"
+        <Cell icon="doc" title="Ждут решения"
               value={!rights.absences ? '—'
                 : open !== null ? `${open} ${plural(open, 'заявка', 'заявки', 'заявок')}`
                 : counts.state === 'loading' ? '…' : '—'}
@@ -431,6 +445,9 @@ function Overview({ id, person, zone, rights, version, onGo, onChanged }: {
             <button type="button" className="ec-link" aria-expanded={contacts}
                     onClick={() => setContacts((was) => !was)}>
               {contacts ? 'Скрыть' : 'Показать'}
+              <span className={contacts ? 'ec-reveal__arrow ec-reveal__arrow--on' : 'ec-reveal__arrow'} aria-hidden="true">
+                <AppIcon name="chevron" size={16} />
+              </span>
             </button>
           </div>
           {contacts && (
@@ -499,14 +516,17 @@ function noticeLine(item: api.QueueItem): string {
   return [days, paper].filter(Boolean).join(' · ') || 'Подробности — на вкладке заявок';
 }
 
-function Cell({ title, value, note, link, onRetry }: {
-  title: string; value: string; note: string;
+function Cell({ icon, title, value, note, link, onRetry }: {
+  icon?: AppIconName; title: string; value: string; note: string;
   link?: { label: string; go: () => void } | undefined;
   onRetry?: (() => void) | undefined;
 }) {
   return (
     <div className="ec-cell">
-      <span className="ec-cell__title">{title}</span>
+      <span className="ec-cell__top">
+        {icon && <span className="ec-cell__icon" aria-hidden="true"><AppIcon name={icon} size={18} /></span>}
+        <span className="ec-cell__title">{title}</span>
+      </span>
       <strong className="ec-cell__value">{value}</strong>
       {note && <span className="ec-cell__note">{note}</span>}
       {onRetry && <button type="button" className="ec-link" onClick={onRetry}>Повторить</button>}
