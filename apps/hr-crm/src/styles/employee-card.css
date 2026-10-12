@@ -1436,71 +1436,76 @@ p.ec-diff { display: block; }
 }
 
 /* =============================================================================
- * Редизайн 12.10 (v3): профиль слева, вкладки справа — на одном белом листе.
+ * Редизайн 12.10 (v4): обложка-градиент сверху листа, фото поверх обложки,
+ * крупное имя; ниже — широкая сетка сведений. Всё внутри одного белого листа.
  * ========================================================================== */
-.ec-layout {
-  display: grid;
-  grid-template-columns: 300px minmax(0, 1fr);
-  gap: 0;
-  align-items: start;
-}
-.ec-profile {
-  position: sticky;
-  top: 16px;
-  padding-right: 32px;
-  border-right: 1px solid var(--ec-line);
-}
-.ec-main { min-width: 0; padding-left: 36px; }
+.ec { position: relative; overflow: hidden; padding-top: 0; }
 
-.ec-profile .ec-head {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 16px;
-  padding-bottom: 24px;
-  border-bottom: 1px solid var(--ec-line);
+.ec-cover {
+  position: relative;
+  height: 148px;
+  margin: 0 -32px;
+  padding: 18px 32px 0;
+  background:
+    radial-gradient(circle at 85% -20%, rgba(255, 255, 255, 0.28) 0, rgba(255, 255, 255, 0) 45%),
+    radial-gradient(circle at 10% 130%, rgba(124, 196, 255, 0.55) 0, rgba(124, 196, 255, 0) 55%),
+    linear-gradient(118deg, #123f99 0%, #1f6fe0 55%, #46a3ff 100%);
 }
-.ec-profile .ec-face-wrap, .ec-profile .ec-face { width: 96px; height: 96px; }
-.ec-profile .ec-face { font-size: 30px; }
-.ec-profile .ec-face__dot { right: 4px; bottom: 4px; width: 18px; height: 18px; }
-.ec-profile .ec-name { margin: 0; font-size: 24px; line-height: 1.2; }
-.ec-role { margin: 6px 0 12px; color: var(--ec-muted); font-size: 14.5px; line-height: 1.4; }
-.ec-profile .ec-head__line { display: flex; flex-wrap: wrap; gap: 8px; }
-.ec-profile .ec-head__edit { align-self: stretch; justify-content: center; }
+.ec-cover .ec-back { margin: 0; color: rgba(255, 255, 255, 0.92); }
+.ec-cover .ec-back:hover { background: rgba(255, 255, 255, 0.14); color: #fff; }
 
-.ec-plabel {
-  margin: 22px 0 14px;
-  color: var(--ec-muted);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+.ec-head {
+  grid-template-columns: 120px minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 24px;
+  margin-top: -44px;
 }
-.ec-profile .ec-info { grid-template-columns: minmax(0, 1fr); gap: 16px; }
-.ec-profile .ec-reveal {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 22px;
-  padding-top: 16px;
+.ec-face-wrap, .ec-face { width: 120px; height: 120px; }
+.ec-face {
+  border: 5px solid #fff;
+  box-shadow: 0 8px 24px rgba(16, 42, 92, 0.18);
+  background: linear-gradient(140deg, #eaf2ff 0%, #cfe0fb 100%);
+  font-size: 36px;
+  box-sizing: border-box;
 }
-.ec-profile .ec-reveal__title { font-size: 14px; }
+.ec-face__dot { right: 8px; bottom: 8px; width: 20px; height: 20px; }
+.ec-head__text { padding-bottom: 4px; }
+.ec-name { font-size: 30px; letter-spacing: -0.02em; }
+.ec-meta { margin-top: 8px; }
+.ec-head__edit { align-self: end; margin-bottom: 4px; }
 
-.ec-main .ec-tabs { margin-top: 0; }
-.ec-link-sec { margin-top: 28px; }
+.ec-tabs { margin-top: 28px; }
+
+/* Числа крупнее, без подложек. */
+.ec-band { padding: 8px 0 26px; }
+.ec-cell__value { font-size: 34px; font-weight: 700; }
+.ec-cell__top { margin-bottom: 8px; }
+
+/* Сведения — на всю ширину, три колонки; связь — ниже, две колонки. */
+.ec-split { grid-template-columns: minmax(0, 1fr); margin-top: 30px; }
+.ec-col { padding-right: 0; }
+.ec-col--side {
+  margin-top: 30px;
+  padding: 28px 0 0;
+  border-top: 1px solid var(--ec-line);
+  border-left: 0;
+}
+.ec-info { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px 32px; }
 
 @media (max-width: 1100px) {
-  .ec-layout { grid-template-columns: minmax(0, 1fr); }
-  .ec-profile { position: static; padding-right: 0; border-right: 0; }
-  .ec-profile .ec-info { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .ec-main { padding-left: 0; margin-top: 28px; }
+  .ec-cover { margin: 0 -22px; padding: 16px 22px 0; }
+  .ec-info { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 700px) {
-  .ec-profile .ec-head { flex-direction: row; flex-wrap: wrap; align-items: center; }
-  .ec-profile .ec-face-wrap, .ec-profile .ec-face { width: 72px; height: 72px; }
-  .ec-profile .ec-face { font-size: 22px; }
-  .ec-profile .ec-head__text { flex: 1; min-width: 0; }
-  .ec-profile .ec-head__edit { flex-basis: 100%; }
-  .ec-profile .ec-info { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 12px; }
-  .ec-profile .ec-info.ec-facts--more { grid-template-columns: minmax(0, 1fr); }
+  .ec-cover { height: 112px; margin: 0 -14px; padding: 12px 14px 0; }
+  .ec-head { grid-template-columns: 88px minmax(0, 1fr); align-items: end; gap: 14px; margin-top: -40px; }
+  .ec-face-wrap, .ec-face { width: 88px; height: 88px; }
+  .ec-face { font-size: 26px; border-width: 4px; }
+  .ec-face__dot { right: 4px; bottom: 4px; width: 16px; height: 16px; }
+  .ec-name { font-size: 22px; }
+  .ec-head__text { grid-column: 1 / -1; }
+  .ec-head__edit { grid-column: 1 / -1; justify-content: center; }
+  .ec-cell__value { font-size: 24px; }
+  .ec-info { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 12px; }
+  .ec-info.ec-facts--more { grid-template-columns: minmax(0, 1fr); }
 }
