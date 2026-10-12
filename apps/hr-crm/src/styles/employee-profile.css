@@ -547,3 +547,60 @@
 @media (max-width: 760px) {
   .ec.pf { padding: 0 0 24px; }
 }
+
+/* --- смена вкладок: приезд со стороны выбранной -------------------------- */
+.pf-main { overflow-x: clip; }
+.pf .pf-slide--next { animation: pf-in-next 0.26s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.pf .pf-slide--prev { animation: pf-in-prev 0.26s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+@keyframes pf-in-next { from { opacity: 0; transform: translateX(36px); } to { opacity: 1; transform: none; } }
+@keyframes pf-in-prev { from { opacity: 0; transform: translateX(-36px); } to { opacity: 1; transform: none; } }
+
+/* --- заглушки вкладок по форме содержимого -------------------------------- */
+.pf-tsk { display: grid; gap: 12px; }
+.pf-tsk__head { height: 40px; border-radius: 10px; }
+.pf-tsk__row {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr 0.8fr 1fr;
+  gap: 18px;
+  align-items: center;
+  padding: 12px 4px;
+  border-bottom: 1px solid var(--pf-line);
+}
+.pf-tsk__row > i { height: 12px; }
+.pf-tsk__b { width: 70%; }
+.pf-tsk__c { width: 55%; }
+.pf-tsk__d { width: 80%; }
+.pf-tsk__title { width: 180px; height: 18px; margin-top: 6px; }
+.pf-tsk__week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; }
+.pf-tsk__day { height: 64px; border-radius: 12px; }
+
+.pf-tsk--card { min-height: 520px; }
+.pf-tsk__aside { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 28px 24px; }
+.pf-tsk__face { width: 96px; height: 96px; border-radius: 50%; }
+.pf-tsk__name { width: 70%; height: 22px; }
+.pf-tsk__role { width: 55%; height: 14px; }
+.pf-tsk__btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: 100%; margin-bottom: 12px; }
+.pf-tsk__btns > i { height: 40px; border-radius: 10px; }
+.pf-tsk__fact { width: 100%; height: 14px; }
+.pf-tsk__main { display: grid; align-content: start; gap: 16px; padding: 18px 28px; }
+.pf-tsk__tabs { width: 70%; height: 20px; }
+.pf-tsk__plate { height: 52px; border-radius: 12px; }
+.pf-tsk__stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.pf-tsk__stats > i { height: 86px; border-radius: 14px; }
+.pf-tsk__line { height: 14px; }
+.pf-tsk__line:nth-child(odd) { width: 80%; }
+
+@media (max-width: 760px) {
+  .pf-tsk__row { grid-template-columns: 1fr 1fr; }
+  .pf-tsk__row > :nth-child(n + 3) { display: none; }
+  .pf-tsk__week { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .pf-tsk__stats { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pf .pf-slide--next, .pf .pf-slide--prev { animation: none; }
+}
+
+/* Активная вкладка остаётся синей и под курсором. */
+.pf .pf-tabs .ec-tab--on,
+.pf .pf-tabs .ec-tab--on:hover { border-bottom-color: var(--pf-blue); color: var(--pf-blue); }

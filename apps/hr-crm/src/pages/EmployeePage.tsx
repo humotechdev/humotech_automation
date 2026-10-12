@@ -62,6 +62,7 @@ import {
 import { clock } from '../features/time/zone';
 import { internalPath } from '../utils/internal-path';
 import { ProfileOverview, tenure, type WorkPlan } from '../features/employee/ProfileOverview';
+import { TabSkeleton } from '../features/employee/TabSkeleton';
 import '@fontsource-variable/manrope';
 import '../styles/employee-card.css';
 import '../styles/employee-profile.css';
@@ -80,27 +81,6 @@ const assignmentOf = (person: Person): Person | null => {
   const value = person['current_assignment'];
   return value && typeof value === 'object' ? (value as Person) : null;
 };
-
-/** Заглушка карточки по её форме: шапка с фото, вкладки, два блока. */
-function CardSkeleton() {
-  return (
-    <div className="ec-sk" aria-hidden="true">
-      <div className="ec-sk__head">
-        <i className="ec-sk__block ec-sk__photo" />
-        <span className="ec-sk__lines">
-          <i className="ec-sk__block ec-sk__name" />
-          <i className="ec-sk__block ec-sk__line" />
-          <i className="ec-sk__block ec-sk__line ec-sk__short" />
-        </span>
-      </div>
-      <i className="ec-sk__block ec-sk__tabs" />
-      <div className="ec-sk__grid">
-        <i className="ec-sk__block ec-sk__panel" />
-        <i className="ec-sk__block ec-sk__panel" />
-      </div>
-    </div>
-  );
-}
 
 /** Ответ «нет такого сотрудника или он вне вашей области». */
 const MISSING = Symbol('missing');
@@ -163,6 +143,20 @@ function EmployeeCard({ id }: { id: string }) {
   // Счётчик изменений: решение по заявке, привязка, ознакомление —
   // и связанные сведения (счётчик ожиданий, уведомление, сегодняшний
   // день) перечитываются, а не остаются вчерашними.
+  /*
+   * Направление смены вкладки: правее прежней — содержимое приезжает
+   * справа, левее — слева. Замечается во время отрисовки, чтобы первый
+   * же кадр новой вкладки уже шёл со своей анимацией.
+   */
+  const [shownTab, setShownTab] = useState<Tab>(tab);
+  const [slide, setSlide] = useState<'next' | 'prev' | 'none'>('none');
+  if (shownTab !== tab) {
+    const was = TABS.findIndex((item) => item.key === shownTab);
+    const now = TABS.findIndex((item) => item.key === tab);
+    setSlide(now > was ? 'next' : 'prev');
+    setShownTab(tab);
+  }
+
   const [version, setVersion] = useState(0);
   const changed = useCallback(() => setVersion((n) => n + 1), []);
 
@@ -213,10 +207,7 @@ function EmployeeCard({ id }: { id: string }) {
         ) : null}
 
         {card.state === 'loading' && (
-          <>
-            <span className="visually-hidden" role="status">Открываем карточку…</span>
-            <CardSkeleton />
-          </>
+          <TabSkeleton kind="card" label="Открываем карточку…" />
         )}
         {card.state === 'denied' && (
           <p className="ec-empty ec-bad">Сессия закончилась или прав на карточки нет. Войдите заново.</p>
@@ -253,7 +244,7 @@ function EmployeeCard({ id }: { id: string }) {
 
               {/* Ключ — вкладка: при переключении содержимое проявляется,
                   а обновление данных внутри вкладки его не пересоздаёт. */}
-              <div className={tab === 'overview' ? 'ec-body pf-body pf-body--flush' : 'ec-body pf-body'}
+              <div className={`ec-body pf-body pf-slide--${slide}${tab === 'overview' ? ' pf-body--flush' : ''}`}
                    role="tabpanel" key={tab}>
                 {tab === 'overview' && (
                   <ProfileOverview id={id} zone={zone} version={version} onGo={open}
@@ -782,7 +773,7 @@ function Schedule({ id, zone }: { id: string; zone: string }) {
     Boolean(current?.schedule_id),
   );
 
-  if (data.state === 'loading') return <p className="ec-empty" role="status">Загружаем…</p>;
+  if (data.state === 'loading') return <TabSkeleton kind="schedule" label="Загружаем назначения…" />;
   if (data.state === 'denied') return <p className="ec-empty ec-bad">Назначения закрыты вашими правами.</p>;
   if (data.state === 'error') {
     return (
@@ -1072,7 +1063,7 @@ function Requests({ id, person, rights, zone, version, onChanged }: {
             <span className="ec-muted">{shownText}</span>
           </div>
 
-          {list.state === 'loading' && <p className="ec-empty" role="status">Загружаем заявки…</p>}
+          {list.state === 'loading' && <TabSkeleton kind="rows" label="Загружаем заявки…" />}
           {list.state === 'denied' && <p className="ec-empty ec-bad">Заявки закрыты вашими правами.</p>}
           {list.state === 'missing' && <p className="ec-empty">Сотрудник вне вашей области.</p>}
           {list.state === 'error' && (
@@ -1373,7 +1364,7 @@ function History({ id, rights, zone }: { id: string; rights: Rights; zone: strin
         </AppSelectField>
       </div>
 
-      {log.state === 'loading' && <p className="ec-empty" role="status">Загружаем…</p>}
+      {log.state === 'loading' && <TabSkeleton kind="rows" label="Загружаем историю…" />}
       {log.state === 'denied' && <p className="ec-empty ec-bad">Журнал закрыт вашими правами.</p>}
       {log.state === 'missing' && (
         <p className="ec-empty">История этого сотрудника вне области вашего права на журнал.</p>

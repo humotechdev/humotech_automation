@@ -22,6 +22,7 @@ import { Isx, type IsxName } from '../../components/Isx';
 import { AppDateRangePicker } from '../../components/DateRangePicker';
 import { FieldWorkControls } from '../../components/FieldWorkControls';
 import { useBlock } from '../dashboard/data';
+import { TabSkeleton } from './TabSkeleton';
 import { clock } from '../time/zone';
 import {
   type DayPoint,
@@ -737,7 +738,7 @@ function Journal({ days, opened, onToggle, loading, render }: {
   loading: boolean;
   render: (point: DayPoint) => ReactNode;
 }) {
-  if (loading) return <p className="ec-empty" role="status">Считаем журнал…</p>;
+  if (loading) return <TabSkeleton kind="rows" label="Считаем журнал…" />;
   if (days.length === 0) return <p className="ec-empty">За период прошедших дней нет.</p>;
 
   return (
