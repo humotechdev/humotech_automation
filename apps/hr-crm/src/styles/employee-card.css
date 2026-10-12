@@ -1417,3 +1417,20 @@ p.ec-diff { display: block; }
 /* Длинное значение в соседней ячейке не растаскивает подпись и значение. */
 .ec-info__item { align-self: start; align-content: start; }
 .ec-info__icon { align-self: start; }
+
+/* Иконки без подложек: только сам знак Iconsax в цвете. */
+.ec-cell__icon,
+.ec-info__icon,
+.ec-notice__icon {
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  background: none !important;
+}
+.ec-cell__icon { color: var(--ec-blue); }
+.ec-info__item { grid-template-columns: 22px minmax(0, 1fr); }
+.ec-info__icon { padding-top: 2px; color: #7d8fab; }
+.ec-notice__icon { color: #c27c00; }
+@media (max-width: 700px) {
+  .ec-band .ec-cell > :nth-child(n+3) { padding-left: 34px; }
+}
