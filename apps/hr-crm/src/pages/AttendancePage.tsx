@@ -760,6 +760,7 @@ function useWeekMode(active: boolean, ctx: Ctx): View {
   const office = params.get('office_id') ?? '';
   const region = params.get('region_id') ?? '';
   const department = params.get('department_id') ?? '';
+  const search = params.get('search') ?? '';
   const page = Math.max(1, Number(params.get('page') ?? '1'));
   const monday = weekStart(anchor);
   const days = Array.from({ length: 7 }, (_, i) => addDays(monday, i));
@@ -796,7 +797,20 @@ function useWeekMode(active: boolean, ctx: Ctx): View {
       }
     }
   }
-  const list = [...people.values()].sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+  // Поиск — тот же, что во вкладках «За день» и «Период»: по имени, с паузой
+  // в 300 мс, страница сбрасывается на первую.
+  const [draft, setDraft] = useState(search);
+  useEffect(() => setDraft(search), [search]);
+  useEffect(() => {
+    if (draft === search) return;
+    const timer = window.setTimeout(() => patch({ search: draft || null, page: null }), 300);
+    return () => window.clearTimeout(timer);
+  }, [draft, search, patch]);
+  const needle = search.trim().toLowerCase();
+
+  const list = [...people.values()]
+    .filter((one) => !needle || one.name.toLowerCase().includes(needle))
+    .sort((a, b) => a.name.localeCompare(b.name, 'ru'));
   const pages = Math.max(1, Math.ceil(list.length / WEEK_PAGE));
   const slice = list.slice((page - 1) * WEEK_PAGE, page * WEEK_PAGE);
   const totals = new Map((summary.state === 'ready' ? summary.data.employees : []).map((one) => [one.id, one]));
@@ -819,6 +833,11 @@ function useWeekMode(active: boolean, ctx: Ctx): View {
             <AppIcon name="next" size={16} />
           </button>
         </span>
+        <Dropdown label="Офис" empty="Все офисы" value={office}
+                  options={ctx.offices.map((one) => ({ id: one.id, name: one.name }))}
+                  onChange={(value) => patch({ office_id: value || null, region_id: null, page: null })} />
+        <Dropdown label="Отдел" empty="Все отделы" value={department} options={ctx.departments}
+                  onChange={(value) => patch({ department_id: value || null, page: null })} />
         <button type="button" className="at-btn" onClick={() => ctx.order({ from: monday, to: sunday })}>
           <AppIcon name="download" size={18} /> Экспорт
         </button>
@@ -852,6 +871,15 @@ function useWeekMode(active: boolean, ctx: Ctx): View {
               </span>
             );
           })}
+        </div>
+
+        <div className="at-filters">
+          <h2 className="at-part-title">Сотрудники за неделю</h2>
+          <label className="at-find">
+            <AppIcon name="search" size={16} />
+            <input type="search" value={draft} placeholder="Найти сотрудника" aria-label="Найти сотрудника"
+                   onChange={(event) => setDraft(event.target.value)} />
+          </label>
         </div>
 
         <div className="at-table at-table--week" role="table" aria-label="Неделя по сотрудникам">
