@@ -152,7 +152,10 @@ describe('панель «Отметка за день»: выездная раб
     // Прежнее содержимое карточки дня на месте.
     expect(within(card).getByRole('link', { name: /Открыть карточку/ })).toBeTruthy();
     expect(within(card).getByRole('button', { name: /Добавить отметку/ })).toBeTruthy();
-    expect(within(card).getByText('События сегодня')).toBeTruthy();
+    // День без отметок: пустой секции «События сегодня» и полосатой шкалы
+    // нет — «Нет отметки» уже сказано наверху (просьба владельца 12.10).
+    await waitFor(() => expect(within(card).queryByText('События сегодня')).toBeNull());
+    expect(card.querySelector('.day-bar__track--empty')).toBeNull();
     await waitFor(() => expect(document.activeElement).toBe(location));
     expect((location as HTMLInputElement).maxLength).toBe(200);
     expect((within(card).getByLabelText(/Рабочая задача/) as HTMLTextAreaElement).maxLength).toBe(1000);
