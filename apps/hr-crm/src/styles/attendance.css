@@ -777,6 +777,23 @@ a.at-row:hover { background: #f8fbff; }
 .day-card__state strong { min-width: 0; overflow-wrap: anywhere; }
 .day-card__plan { flex: none; color: #5577a6; font-variant-numeric: tabular-nums; }
 
+/* Тело панели — колонка с прокруткой: дети не должны сжиматься по
+   высоте, иначе кнопки внизу сплющиваются в полоски. */
+.day-card .side-panel__body > * { flex-shrink: 0; }
+.day-card .facts:empty { display: none; }
+.day-card .facts__row { align-items: baseline; }
+.day-card .facts dt { flex: 1 1 auto; white-space: nowrap; }
+.day-card .side-panel__go,
+.day-card .side-panel__body > .btn {
+  height: 40px;
+  min-height: 40px;
+  border-radius: 10px;
+  justify-content: center;
+  gap: 8px;
+  font-weight: 600;
+}
+.day-card .side-panel__go { margin: 4px 0 0; }
+
 /* --- узкие экраны ------------------------------------------------------------------ */
 
 @media (max-width: 1440px) {

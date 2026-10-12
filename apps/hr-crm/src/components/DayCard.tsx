@@ -113,10 +113,14 @@ export function DayCard({ row, day, timezone, canAdd, canFieldWork = false, star
                            onChanged={onChanged} />
 
         <dl className="facts">
-          <div className="facts__row">
-            <dt>{row.state === 'FIELD_WORK' ? 'Засчитано по графику' : 'В офисе за день'}</dt>
-            <dd>{row.seconds ? span(row.seconds) : '—'}</dd>
-          </div>
+          {/* Пустая строка «В офисе за день —» ничего не сообщает: что
+              отметок нет, уже сказано наверху. */}
+          {(row.seconds > 0 || row.state === 'FIELD_WORK') && (
+            <div className="facts__row">
+              <dt>{row.state === 'FIELD_WORK' ? 'Засчитано по графику' : 'В офисе за день'}</dt>
+              <dd>{row.seconds ? span(row.seconds) : '—'}</dd>
+            </div>
+          )}
           {row.late_minutes !== null && row.late_minutes > 0 && (
             <div className="facts__row">
               <dt>Пришёл позже</dt>
@@ -136,16 +140,19 @@ export function DayCard({ row, day, timezone, canAdd, canFieldWork = false, star
 
         {/* Та же шкала, что в строке таблицы, но крупнее: здесь на неё
             смотрят внимательно, а не мельком. */}
-        <div className="side-panel__bar">
-          <DayBar row={row} zone={timezone} big />
-        </div>
+        {/* Шкала — только когда на ней есть что показать: пустая
+            полосатая дорожка у дня без отметок только шумит. */}
+        {((row.intervals?.length ?? 0) > 0 || row.state === 'FIELD_WORK') && (
+          <div className="side-panel__bar">
+            <DayBar row={row} zone={timezone} big />
+          </div>
+        )}
 
-        <p className="side-panel__label">События сегодня</p>
         <Body block={detail} name="отметки">
           {(data) =>
-            data.events.length === 0 ? (
-              <p className="empty">Отметок за этот день нет.</p>
-            ) : (
+            data.events.length === 0 ? null : (
+              <>
+              <p className="side-panel__label">События сегодня</p>
               <ul className="marks">
                 {data.events.map((event) => (
                   <li key={event.id}>
@@ -172,6 +179,7 @@ export function DayCard({ row, day, timezone, canAdd, canFieldWork = false, star
                   </li>
                 )}
               </ul>
+              </>
             )
           }
         </Body>

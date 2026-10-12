@@ -48,8 +48,9 @@
 .fw--inline .fw__field textarea { min-height: 76px; resize: vertical; }
 .fw--inline .fw__field input::placeholder, .fw--inline .fw__field textarea::placeholder { color: #9aaecb; }
 .fw--inline .fw__field input:hover, .fw--inline .fw__field textarea:hover { border-color: #b9cde6; }
+.fw--inline .fw__field input:focus, .fw--inline .fw__field textarea:focus,
 .fw--inline .fw__field input:focus-visible, .fw--inline .fw__field textarea:focus-visible {
-  outline: none; border-color: var(--fw-blue); box-shadow: 0 0 0 3px rgba(8, 120, 239, 0.15); }
+  outline: none; border: 1px solid var(--fw-blue); box-shadow: 0 0 0 3px rgba(8, 120, 239, 0.12); }
 
 .fw--inline .fw__check { display: flex; gap: 10px; align-items: flex-start; margin: 2px 0 4px; padding: 12px 14px;
   border: 1px solid #d6e2f0; border-radius: 12px; background: #fff; font-size: 13.5px; line-height: 1.45;
