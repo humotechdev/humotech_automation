@@ -235,8 +235,9 @@ function EmployeeCard({ id }: { id: string }) {
 
         {card.state === 'ready' && card.data !== MISSING && (
           <>
-            <Header person={person} id={id} canEdit={rights.manage} />
-
+            <div className="ec-layout">
+              <Profile person={person} id={id} canEdit={rights.manage} />
+              <div className="ec-main">
             <div className="ec-tabs" role="tablist" aria-label="Разделы карточки">
               {TABS.map((item) => (
                 <button key={item.key} type="button" role="tab"
@@ -247,12 +248,11 @@ function EmployeeCard({ id }: { id: string }) {
                 </button>
               ))}
             </div>
-
             {/* Ключ — вкладка: при переключении содержимое проявляется,
                 а обновление данных внутри вкладки его не пересоздаёт. */}
             <div className="ec-body" role="tabpanel" key={tab}>
               {tab === 'overview' && (
-                <Overview id={id} person={person} zone={zone} rights={rights}
+                <Overview id={id} zone={zone} rights={rights}
                           version={version} onGo={open} onChanged={changed} />
               )}
               {tab === 'attendance' && (
@@ -266,6 +266,8 @@ function EmployeeCard({ id }: { id: string }) {
                           version={version} onChanged={changed} />
               )}
               {tab === 'history' && <History id={id} rights={rights} zone={zone} />}
+            </div>
+              </div>
             </div>
           </>
         )}
@@ -286,63 +288,90 @@ const STATUS_TONE: Record<string, string> = {
   ON_LEAVE: 'amber', SUSPENDED: 'amber', TERMINATED: 'grey', ARCHIVED: 'grey',
 };
 
-function Header({ person, id, canEdit }: { person: Person; id: string; canEdit: boolean }) {
+function Profile({ person, id, canEdit }: { person: Person; id: string; canEdit: boolean }) {
   const status = text(person, 'employment_status') ?? '';
   const title = text(person, 'employment_status_title') ?? status;
   const hasPhoto = person['photo'] !== null && person['photo'] !== undefined;
   const post = assignmentOf(person);
-  const first = [post && text(post, 'position_name'), post && text(post, 'department_name')]
-    .filter(Boolean).join(' · ');
-  const second = [post && text(post, 'office_name'), post && text(post, 'region_name')]
+  const role = [post && text(post, 'position_name'), post && text(post, 'department_name')]
     .filter(Boolean).join(' · ');
   const hire = text(person, 'hire_date');
   const archived = text(person, 'archived_at');
   const zone = (post && text(post, 'office_timezone')) || 'UTC';
   const notYet = hire !== null && hire > todayIn(zone);
+  const [contacts, setContacts] = useState(false);
 
   return (
-    <header className="ec-head">
-      <span className="ec-face-wrap">
-        {hasPhoto ? (
-          <img className="ec-face" src={api.employeePhotoUrl(id)} alt="" />
-        ) : (
-          <span className="ec-face" aria-hidden="true">
-            {initials(text(person, 'first_name'), text(person, 'last_name'))}
-          </span>
-        )}
-        <i className={`ec-face__dot ec-face__dot--${STATUS_TONE[status] ?? 'grey'}`} aria-hidden="true" />
-      </span>
-      <div className="ec-head__text">
-        <div className="ec-head__line">
+    <aside className="ec-profile" aria-label="Профиль сотрудника">
+      <header className="ec-head">
+        <span className="ec-face-wrap">
+          {hasPhoto ? (
+            <img className="ec-face" src={api.employeePhotoUrl(id)} alt="" />
+          ) : (
+            <span className="ec-face" aria-hidden="true">
+              {initials(text(person, 'first_name'), text(person, 'last_name'))}
+            </span>
+          )}
+          <i className={`ec-face__dot ec-face__dot--${STATUS_TONE[status] ?? 'grey'}`} aria-hidden="true" />
+        </span>
+        <div className="ec-head__text">
           <h1 className="ec-name" title={text(person, 'full_name') ?? undefined}>
             {shortName(text(person, 'full_name')) || 'Без имени'}
           </h1>
-          {title && <span className={`ec-pill ec-pill--${STATUS_TONE[status] ?? 'grey'}`}>{title}</span>}
-          {archived && <span className="ec-pill ec-pill--grey">В архиве</span>}
+          <p className="ec-role">{role || 'Действующего назначения нет'}</p>
+          <div className="ec-head__line">
+            {title && <span className={`ec-pill ec-pill--${STATUS_TONE[status] ?? 'grey'}`}>{title}</span>}
+            {archived && <span className="ec-pill ec-pill--grey">В архиве</span>}
+          </div>
         </div>
-        <ul className="ec-meta">
-          <li className="ec-meta__main">
-            <Isx name="bag" size={16} />
-            <span>{first || 'Действующего назначения нет'}</span>
-          </li>
-          {second && (
-            <li><Isx name="building" size={16} /><span>{second}</span></li>
-          )}
-          {hire && (
-            <li>
-              <Isx name="calendar" size={16} />
-              <span>{notYet ? `Выходит на работу ${dayMonthYear(hire)}` : `В компании с ${dayMonthYear(hire)}`}</span>
-            </li>
-          )}
-        </ul>
+        {canEdit && (
+          <Link className="ec-btn ec-btn--line ec-head__edit" to={`/employees/${id}/edit`}>
+            <Isx name="pencil" size={16} />
+            Редактировать
+          </Link>
+        )}
+      </header>
+
+      <h2 className="ec-plabel">Работа</h2>
+      <dl className="ec-info">
+        <Info icon="building" label="Офис" value={post
+          ? [text(post, 'office_name'), text(post, 'region_name')].filter(Boolean).join(', ') || null
+          : null} empty={post ? 'Не указан' : 'Нет назначения'} />
+        <Info icon="team" label="Отдел" value={post ? text(post, 'department_name') : null}
+              empty={post ? 'Не указано' : 'Нет назначения'} />
+        <Info icon="bag" label="Должность" value={post ? text(post, 'position_name') : null}
+              empty={post ? 'Не указано' : 'Нет назначения'} />
+        <Info icon="calendar" label={notYet ? 'Выходит на работу' : 'Дата приёма'}
+              value={hire ? dayMonthYear(hire) : null} />
+        <Info icon="timer" label="График"
+              value={scheduleSummary(person['current_schedule'] as Parameters<typeof scheduleSummary>[0])}
+              empty="Не назначен" />
+        <Info icon="hash" label="Табельный номер" value={text(person, 'employee_number')} />
+      </dl>
+
+      <div className="ec-reveal">
+        <span className="ec-reveal__title">Контакты и личные данные</span>
+        <button type="button" className="ec-link" aria-expanded={contacts}
+                onClick={() => setContacts((was) => !was)}>
+          {contacts ? 'Скрыть' : 'Показать'}
+          <span className={contacts ? 'ec-reveal__arrow ec-reveal__arrow--on' : 'ec-reveal__arrow'} aria-hidden="true">
+            <Isx name="chevron" size={16} />
+          </span>
+        </button>
       </div>
-      {canEdit && (
-        <Link className="ec-btn ec-btn--primary ec-head__edit" to={`/employees/${id}/edit`}>
-          <Isx name="pencil" size={16} />
-          Редактировать
-        </Link>
+      {contacts && (
+        <dl className="ec-info ec-facts--more">
+          <Info icon="user" label="Полное имя" value={text(person, 'full_name')} />
+          <Info icon="phone" label="Телефон" value={text(person, 'phone')} />
+          <Info icon="mail" label="Рабочая почта" value={text(person, 'corporate_email')} />
+          <Info icon="mail" label="Личная почта" value={text(person, 'personal_email')} />
+          <Info icon="cake" label="Дата рождения" value={text(person, 'birth_date')
+            ? dayMonthYear(text(person, 'birth_date') as string) : null} />
+          <Info icon="user" label="Пол" value={GENDER[text(person, 'gender') ?? ''] ?? null} />
+          <Info icon="team" label="Семейное положение" value={MARITAL[text(person, 'marital_status') ?? ''] ?? null} />
+        </dl>
       )}
-    </header>
+    </aside>
   );
 }
 
@@ -357,14 +386,12 @@ const MARITAL: Record<string, string> = {
   WIDOWED: 'Вдовец / вдова',
 };
 
-function Overview({ id, person, zone, rights, version, onGo, onChanged }: {
-  id: string; person: Person; zone: string; rights: Rights; version: number;
+function Overview({ id, zone, rights, version, onGo, onChanged }: {
+  id: string; zone: string; rights: Rights; version: number;
   onGo: (tab: Tab, extra?: Record<string, string>) => void; onChanged: () => void;
 }) {
   const today = todayIn(zone);
   const first = monthStartOf(today);
-  const post = assignmentOf(person);
-  const [contacts, setContacts] = useState(false);
 
   const [journal, reloadJournal] = useBlock(
     (signal) => api.attendanceDaily({ employee_id: id, date_from: first, date_to: today }, signal),
@@ -437,56 +464,8 @@ function Overview({ id, person, zone, rights, version, onGo, onChanged }: {
               onRetry={counts.state === 'error' ? reloadCounts : undefined} />
       </div>
 
-      <div className="ec-split">
-        <section className="ec-col" aria-labelledby="ec-main-title">
-          <h2 id="ec-main-title" className="ec-h2">
-            <Isx name="card" size={20} variant="Bulk" className="ec-h2__icon" />
-            Основные сведения
-          </h2>
-          <dl className="ec-info">
-            <Info icon="building" label="Офис" value={post
-              ? [text(post, 'office_name'), text(post, 'region_name')].filter(Boolean).join(', ') || null
-              : null} empty={post ? 'Не указан' : 'Нет назначения'} />
-            <Info icon="team" label="Отдел" value={post ? text(post, 'department_name') : null}
-                  empty={post ? 'Не указано' : 'Нет назначения'} />
-            <Info icon="bag" label="Должность" value={post ? text(post, 'position_name') : null}
-                  empty={post ? 'Не указано' : 'Нет назначения'} />
-            <Info icon="calendar" label="Дата приёма" value={text(person, 'hire_date')
-              ? dayMonthYear(text(person, 'hire_date') as string) : null} />
-            <Info icon="timer" label="График"
-                  value={scheduleSummary(person['current_schedule'] as Parameters<typeof scheduleSummary>[0])}
-                  empty="Не назначен" />
-            <Info icon="hash" label="Табельный номер" value={text(person, 'employee_number')} />
-          </dl>
-
-          <div className="ec-reveal">
-            <span className="ec-reveal__title">
-              <Isx name="user" size={18} />
-              Контакты и личные данные
-            </span>
-            <button type="button" className="ec-link" aria-expanded={contacts}
-                    onClick={() => setContacts((was) => !was)}>
-              {contacts ? 'Скрыть' : 'Показать'}
-              <span className={contacts ? 'ec-reveal__arrow ec-reveal__arrow--on' : 'ec-reveal__arrow'} aria-hidden="true">
-                <Isx name="chevron" size={16} />
-              </span>
-            </button>
-          </div>
-          {contacts && (
-            <dl className="ec-info ec-facts--more">
-              <Info icon="user" label="Полное имя" value={text(person, 'full_name')} />
-              <Info icon="phone" label="Телефон" value={text(person, 'phone')} />
-              <Info icon="mail" label="Рабочая почта" value={text(person, 'corporate_email')} />
-              <Info icon="mail" label="Личная почта" value={text(person, 'personal_email')} />
-              <Info icon="cake" label="Дата рождения" value={text(person, 'birth_date')
-                ? dayMonthYear(text(person, 'birth_date') as string) : null} />
-              <Info icon="user" label="Пол" value={GENDER[text(person, 'gender') ?? ''] ?? null} />
-              <Info icon="team" label="Семейное положение" value={MARITAL[text(person, 'marital_status') ?? ''] ?? null} />
-            </dl>
-          )}
-        </section>
-
-        <section className="ec-col ec-col--side" aria-labelledby="ec-link-title">
+      <div className="ec-link-sec">
+        <section aria-labelledby="ec-link-title">
           <h2 id="ec-link-title" className="ec-h2">
             <Isx name="send" size={20} variant="Bulk" className="ec-h2__icon" />
             Связь с сотрудником
