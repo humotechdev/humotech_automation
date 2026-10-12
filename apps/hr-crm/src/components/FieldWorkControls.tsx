@@ -227,7 +227,7 @@ export function FieldWorkControls({ employeeId, employeeName, day, scheduledStar
                   placeholder="Кратко опишите работу вне офиса"
                   onChange={(e) => setDescription(e.target.value)} />
       </label>
-      <label className="fw__check">
+      <label className={`fw__check${managerConfirmed ? ' fw__check--on' : ''}`}>
         <input type="checkbox" checked={managerConfirmed} disabled={busy}
                aria-describedby={`${ids}-attest`}
                onChange={(e) => setManagerConfirmed(e.target.checked)} />
@@ -244,20 +244,28 @@ export function FieldWorkControls({ employeeId, employeeName, day, scheduledStar
   if (inline) {
     return (
       <section className="fw fw--inline" aria-labelledby={`${ids}-title`}>
-        <h3 id={`${ids}-title`} className="fw__title">Выездная работа</h3>
-        <p className="fw__subtitle">Запрос на подтверждение сотруднику</p>
+        <header className="fw__head">
+          <h3 id={`${ids}-title`} className="fw__title">Выездная работа</h3>
+          {scheduledStart && scheduledEnd && (
+            <span className="fw__chip" title="График дня">{schedule}</span>
+          )}
+        </header>
 
         {loading && !status && <p role="status" className="fw__muted">Проверяем запрос…</p>}
 
         {status && !open && (
           <div className={`fw__state fw__state--${status.toLowerCase()}`}>
-            <p className="fw__status" role="status">{LABEL[status] ?? status}</p>
+            <p className="fw__status" role="status"><i className="fw__dot" aria-hidden="true" />{LABEL[status] ?? status}</p>
             {hours && <p className="fw__line">{hours}</p>}
             {status === 'PENDING' && sent && (
               <p className={`fw__line fw__delivery${sent.bad ? ' fw__delivery--bad' : ''}`}>{sent.text}</p>
             )}
-            {request?.work_location && <p className="fw__line">Объект: {request.work_location}</p>}
-            {request?.work_description && <p className="fw__line fw__wrap">Задача: {request.work_description}</p>}
+            {(request?.work_location || request?.work_description) && (
+              <dl className="fw__facts">
+                {request?.work_location && (<><dt>Объект</dt><dd>{request.work_location}</dd></>)}
+                {request?.work_description && (<><dt>Задача</dt><dd className="fw__wrap">{request.work_description}</dd></>)}
+              </dl>
+            )}
           </div>
         )}
         {!status && state === 'FIELD_WORK' && (
@@ -271,16 +279,19 @@ export function FieldWorkControls({ employeeId, employeeName, day, scheduledStar
         )}
 
         {canCorrect && request?.status === 'PENDING' && !open && (
-          <div className="fw__row">
+          <div className="fw__row fw__row--start">
             {request.delivery_status === 'FAILED' && (
-              <button type="button" className="btn" disabled={busy} onClick={() => void act('retry')}>Повторить отправку</button>
+              <button type="button" className="fw__primary" disabled={busy} onClick={() => void act('retry')}>Повторить отправку</button>
             )}
-            <button type="button" className="btn" disabled={busy} onClick={() => void act('cancel')}>Отменить запрос</button>
+            <button type="button" className="fw__ghost" disabled={busy} onClick={() => void act('cancel')}>Отменить запрос</button>
           </div>
         )}
 
         {canStart && !open && (
-          <button ref={startRef} type="button" className="btn btn--dark fw__start" onClick={() => setOpen(true)}>
+          <button ref={startRef} type="button" className="fw__primary fw__start" onClick={() => setOpen(true)}>
+            <svg className="fw__icon" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M8 1.5a4.5 4.5 0 0 0-4.5 4.5c0 3.2 4.5 8.5 4.5 8.5s4.5-5.3 4.5-8.5A4.5 4.5 0 0 0 8 1.5Zm0 6.3A1.8 1.8 0 1 1 8 4.2a1.8 1.8 0 0 1 0 3.6Z" />
+            </svg>
             {status ? 'Отправить новый запрос' : 'Запросить подтверждение'}
           </button>
         )}
@@ -294,16 +305,17 @@ export function FieldWorkControls({ employeeId, employeeName, day, scheduledStar
                  closeForm();
                }}>
             <p className="fw__note">
-              После отправки сотрудник получит запрос в Telegram. До его ответа день не засчитывается.
-              {' '}График: {schedule}.
+              <svg className="fw__icon" viewBox="0 0 16 16" aria-hidden="true">
+                <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1Zm.9 10.6H7.1V7h1.8v4.6ZM8 5.9a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z" />
+              </svg>
+              <span>Сотрудник получит запрос в Telegram. До его ответа день не засчитывается.</span>
             </p>
             {fields}
             {formError && <p className="fw__error" role="alert">{formError}</p>}
             <div className="fw__footer">
-              <p className="fw__hint">Запрос можно отменить, пока сотрудник не ответил.</p>
               <div className="fw__row">
-                <button type="button" className="btn" disabled={busy} onClick={closeForm}>Отмена</button>
-                <button type="button" className="btn btn--dark" disabled={!managerConfirmed || busy}
+                <button type="button" className="fw__ghost" disabled={busy} onClick={closeForm}>Отмена</button>
+                <button type="button" className="fw__primary" disabled={!managerConfirmed || busy}
                         aria-busy={busy} onClick={() => void act('create')}>
                   {busy ? 'Отправляем…' : 'Отправить сотруднику'}
                 </button>
