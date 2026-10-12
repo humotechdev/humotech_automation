@@ -137,12 +137,29 @@ export function RequestsPage() {
         signal,
       ).then((body) => {
         setUpdated(new Date());
-        return body;
+        // Чей это ответ: пока новая вкладка грузится, прежний состав
+        // не выдаёт себя за её содержимое — вместо него скелетон.
+        return { ...body, forTab: tab.key };
       }),
     `${tab.key}|${status}|${cursor}|${base}`,
   );
 
   const [counts] = useBlock((signal) => api.queueCounts(common, signal), `counts|${base}`);
+
+  /*
+   * Направление смены вкладки: правее выбранной — содержимое приезжает
+   * справа, левее — слева. Замечается во время отрисовки, чтобы первый
+   * же кадр новой вкладки уже был со своей анимацией.
+   */
+  const [shownTab, setShownTab] = useState<string>(tab.key);
+  const [slide, setSlide] = useState<'next' | 'prev' | 'none'>('none');
+  if (shownTab !== tab.key) {
+    const was = TABS.findIndex((one) => one.key === shownTab);
+    const now = TABS.findIndex((one) => one.key === tab.key);
+    setSlide(now > was ? 'next' : 'prev');
+    setShownTab(tab.key);
+  }
+  const switching = list.state === 'ready' && list.data.forTab !== tab.key;
 
   /*
    * Выбранная вкладка всегда на виду.
@@ -183,7 +200,7 @@ export function RequestsPage() {
    * не нажимаются, в шапке — «обновляем…». Так прежний ответ не
    * выдаёт себя за результат нового фильтра.
    */
-  const refreshing = list.state === 'ready' && listRefresh.busy;
+  const refreshing = list.state === 'ready' && listRefresh.busy && !switching;
   /** Состав страницы: меняется — строки проявляются и прокрутка уходит наверх. */
   const page = items.map((item) => item.id).join(',');
   useEffect(() => {
@@ -334,7 +351,8 @@ export function RequestsPage() {
                 пустым телом — самое заметное, что было на этой
                 странице, и самое бесполезное. */}
             <div className="rq-rows" ref={rowsBox}>
-              <Rows block={list}>
+              <div key={tab.key} className={`rq-slide rq-slide--${slide}`}>
+              <Rows block={switching ? { state: 'loading' } : list}>
                 {(data) => (
                   /* Новый состав — строки проявляются разом, без очереди
                      по одной. Фоновое обновление того же состава ничего
@@ -361,12 +379,13 @@ export function RequestsPage() {
                   </div>
                 )}
               </Rows>
+              </div>
             </div>
 
             {/* Листалка появляется, только когда есть что листать:
                 две неактивные кнопки под пустым списком — обещание
                 страниц, которых нет. */}
-            {list.state === 'ready' && (list.data.has_more || cursor) && (
+            {list.state === 'ready' && !switching && (list.data.has_more || cursor) && (
               <footer className="rq-pager">
                 <button type="button" className="rq-pager__btn" disabled={!cursor} ref={firstBtn}
                         onFocus={() => { pagerFocus.current = true; }}

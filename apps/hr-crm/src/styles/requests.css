@@ -2309,3 +2309,21 @@ a.rq-row__go:hover {
   .rq-rows,
   .rq-list--busy .rq-rows { transition: none; }
 }
+
+/* Смена вкладки: содержимое (сначала скелетон, затем строки) приезжает
+   со стороны выбранной вкладки — правее справа, левее слева. */
+.rq-rows { overflow-x: hidden; }
+.rq-slide--next { animation: rq-slide-next 0.24s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.rq-slide--prev { animation: rq-slide-prev 0.24s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+@keyframes rq-slide-next { from { opacity: 0; transform: translateX(32px); } to { opacity: 1; transform: none; } }
+@keyframes rq-slide-prev { from { opacity: 0; transform: translateX(-32px); } to { opacity: 1; transform: none; } }
+/* Скелетон переливается, пока ждём ответ. */
+.rq-row--sk .rq-sk {
+  background: linear-gradient(90deg, #eef2f8 0%, #f7f9fc 50%, #eef2f8 100%);
+  background-size: 200% 100%;
+  animation: rq-shimmer 1.1s linear infinite;
+}
+@keyframes rq-shimmer { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .rq-slide--next, .rq-slide--prev, .rq-row--sk .rq-sk { animation: none; }
+}
