@@ -301,6 +301,21 @@ export function QuestionsPage() {
   const [assignees] = useBlock((signal) => api.questionAssignees(signal), 'question-assignees', canRead);
 
   const items = list.state === 'ready' ? list.data.items : [];
+  // Чей ответ сейчас в очереди. До ответа новой вкладке или фильтру
+  // `useBlock` держит прежний список; показывать его под новым именем
+  // нельзя — вместо него заглушка, пока не придёт свой ответ (или он
+  // уже есть в памяти). Ответ узнаётся по ссылке: первым его видит
+  // отбор, при котором он пришёл, — прежние запросы к этому времени
+  // уже отменены. Поиск, офис и ответственный по-прежнему держат
+  // прежний список с приглушением, как раньше.
+  const slideKey = `${status}|${quick}`;
+  const listOwners = useRef(new WeakMap<object, string>());
+  if (list.state === 'ready' && !listOwners.current.has(list.data)) {
+    listOwners.current.set(list.data, slideKey);
+  }
+  const listPending = list.state === 'ready' && listOwners.current.get(list.data) !== slideKey;
+  // Не удалось — прежний экран ошибки, а не вечная заглушка.
+  const listPendingFailed = listPending && listRefresh.failed && !listRefresh.busy;
   // Без выбора в адресе открыто первое обращение очереди: на широком
   // экране пустая середина при полной очереди — лишний клик. Выбранное так
   // обращение закрепляется: иначе сообщение в другом чате, поднявшее его
@@ -609,7 +624,7 @@ export function QuestionsPage() {
                 <button key={tab.key} type="button" role="tab" aria-selected={status === tab.key}
                         className={status === tab.key ? 'tk-tab tk-tab--on' : 'tk-tab'}
                         onClick={() => {
-                          clickRow(0);
+                          if (tab.key !== status || quick !== 'all') clickRow(0);
                           patch({ status: tab.key === 'NEW' ? null : tab.key, quick: null, id: null });
                         }}>
                   {tab.title}
@@ -637,7 +652,7 @@ export function QuestionsPage() {
                       <button key={one.key} type="button" aria-pressed={quick === one.key}
                               className={`tk-chip tk-chip--${one.key}${quick === one.key ? ' tk-chip--on' : ''}`}
                               onClick={() => {
-                                clickRow(1);
+                                if (one.key !== quick) clickRow(1);
                                 patch({ quick: one.key === 'all' ? null : one.key, id: null });
                               }}>
                         {one.title}
@@ -648,23 +663,24 @@ export function QuestionsPage() {
                 </div>
               </div>
 
-              <QueueSlide values={[status, quick]} clicked={slideClick} content={list} busy={listRefresh.busy}
-                          className={listRefresh.busy && list.state === 'ready' ? 'tk-list tk-list--busy' : 'tk-list'}>
-                {list.state === 'loading' && <QueueSkeleton />}
+              <QueueSlide values={[status, quick]} clicked={slideClick}
+                          pending={listPending && !listPendingFailed}
+                          className={listRefresh.busy && list.state === 'ready' && !listPending ? 'tk-list tk-list--busy' : 'tk-list'}>
+                {(list.state === 'loading' || (listPending && !listPendingFailed)) && <QueueSkeleton />}
                 {list.state === 'denied' && <p className="tk-empty">Нет доступа к обращениям.</p>}
-                {list.state === 'error' && (
+                {(list.state === 'error' || listPendingFailed) && (
                   <div className="tk-empty">
                     <p>Не удалось загрузить очередь.</p>
                     <button type="button" className="tk-link" onClick={reloadList}>Повторить</button>
                   </div>
                 )}
-                {list.state === 'ready' && items.length === 0 && (
+                {list.state === 'ready' && !listPending && items.length === 0 && (
                   <div className="tk-empty tk-empty--queue">
                     <AppIcon name={filtered ? 'blank-search' : 'chat'} size={20} />
                     <p>{filtered ? 'По этим условиям обращений нет' : 'В этой очереди обращений нет'}</p>
                   </div>
                 )}
-                {items.length > 0 && (
+                {!listPending && items.length > 0 && (
                   <ul className="tk-rows">
                     {items.map((item) => (
                       <QueueRow key={item.id} row={item} on={item.id === currentId}
@@ -787,89 +803,81 @@ const SLIDE_MS = 260;
 
 /** Какой ряд нажат: 0 — вкладки состояния, 1 — быстрые фильтры. */
 type SlideClick = { row: 0 | 1; n: number };
-type SlideWait = { row: 0 | 1; content: unknown; armed: boolean };
 type SlideOut = { node: ReactNode; dir: 1 | -1; gen: number; scroll: number };
+
+/** Смена заглушки на пришедший список — короткое проявление на месте. */
+const SETTLE_MS = 120;
 
 /**
  * Очередь с переходом при смене вкладки или быстрого фильтра.
  *
- * Нажато правее показанного — прежний список уходит влево, новый
+ * Нажато правее выбранного — прежний список уходит влево, новый
  * приходит справа; левее — наоборот. Ряды считаются отдельно: вкладка
  * сравнивается с вкладкой, фильтр — с фильтром.
  *
- * Переход начинается не по нажатию, а когда на экране появляются
- * данные нового отбора: до ответа сервера `useBlock` держит прежний
- * список, и сдвинуть его означало бы показать старое под новым именем.
- * Первый же новый ответ (или ответ из памяти) — один переход; повторное
- * чтение того же отбора уже не двигает ничего. Запрос не удался —
- * переход отменяется, как и не начинался.
+ * Переход начинается сразу по нажатию, не дожидаясь сервера: если
+ * ответа для нового отбора ещё нет, въезжает заглушка в виде списка
+ * чатов, и пришедшие строки проявляются на её месте — без второго
+ * сдвига. Ответ уже в памяти — въезжает сразу список.
  *
  * Слоя не больше двух: живой список (тот же элемент, та же прокрутка)
  * и снимок уходящего поверх него, скрытый от фокуса и средств чтения.
  * Быстрые нажатия: уходящий снимок заменяется тем, что было на экране,
- * живой список начинает вход заново. Направление — от показанного
- * отбора к итоговому: «Новые → В работе → Закрытые» до ответа сервера —
- * один переход вправо, «туда и обратно» — ни одного.
+ * живой список начинает вход заново; прерванный вход уходит с того
+ * места, где его застали. Повторное нажатие на выбранное — без движения.
  *
  * Без движения (просьба системы, нет Web Animations) — мгновенная смена.
  */
-function QueueSlide({ values, clicked, content, busy, className, children }: {
+function QueueSlide({ values, clicked, pending, className, children }: {
   /** Выбранные значения рядов: [вкладка, быстрый фильтр]. */
   values: readonly [string, string];
   /** Последнее нажатие в рядах; переход бывает только после нажатия. */
   clicked: SlideClick | null;
-  /** Показанные данные очереди: смена ссылки — пришёл ответ. */
-  content: unknown;
-  busy: boolean;
+  /** На месте списка заглушка: ответа для этого отбора ещё нет. */
+  pending: boolean;
   className: string;
   children: ReactNode;
 }) {
   const key = values.join('|');
   const [seenKey, setSeenKey] = useState(key);
-  const [shown, setShown] = useState<readonly string[]>(values);
+  const [seen, setSeen] = useState<readonly string[]>(values);
   const [used, setUsed] = useState(clicked?.n ?? 0);
-  const [wait, setWait] = useState<SlideWait | null>(null);
   const [leaving, setLeaving] = useState<SlideOut | null>(null);
   const [gen, setGen] = useState(0);
   const live = useRef<HTMLDivElement>(null);
+  const body = useRef<HTMLDivElement>(null);
   const ghost = useRef<HTMLDivElement>(null);
   const lastBody = useRef<ReactNode>(children);
   const lastScroll = useRef(0);
+  const wasPending = useRef(pending);
 
   // Решение принимается во время отрисовки: иначе был бы кадр с новым
-  // списком без уходящего — то самое мигание.
+  // содержимым без уходящего — то самое мигание.
   if (key !== seenKey) {
     setSeenKey(key);
+    setSeen(values);
     if (clicked && clicked.n !== used) {
       setUsed(clicked.n);
-      setWait({ row: clicked.row, content, armed: busy });
-    } else {
-      setWait(null);
-      setShown(values);
-    }
-  } else if (wait) {
-    if (content !== wait.content) {
-      const dir = tabDirection(SLIDE_ORDERS[wait.row], shown[wait.row] ?? '', values[wait.row]);
-      setWait(null);
-      setShown(values);
+      const dir = tabDirection(SLIDE_ORDERS[clicked.row], seen[clicked.row] ?? '', values[clicked.row]);
       if (dir !== 0 && canAnimate()) {
         setLeaving({ node: lastBody.current, dir, gen: gen + 1, scroll: lastScroll.current });
         setGen(gen + 1);
-      } else {
-        setLeaving(null);
       }
-    } else if (busy && !wait.armed) {
-      setWait({ ...wait, armed: true });
-    } else if (!busy && wait.armed) {
-      // Запрос закончился, а данные те же — ответа не было (ошибка).
-      setWait(null);
-      setShown(values);
     }
   }
 
   useLayoutEffect(() => {
     lastBody.current = children;
   });
+
+  // Заглушку сменили настоящие строки — короткое проявление на месте.
+  useLayoutEffect(() => {
+    const settled = wasPending.current && !pending;
+    wasPending.current = pending;
+    if (settled && body.current && canAnimate()) {
+      body.current.animate([{ opacity: 0 }, { opacity: 1 }], { duration: SETTLE_MS, easing: EASE });
+    }
+  }, [pending]);
 
   useLayoutEffect(() => {
     if (!leaving) return;
@@ -918,9 +926,9 @@ function QueueSlide({ values, clicked, content, busy, className, children }: {
   return (
     <div className={leaving ? 'tk-slide tk-slide--moving' : 'tk-slide'}
          data-direction={leaving ? (leaving.dir > 0 ? 'forward' : 'backward') : undefined}>
-      <div ref={live} className={className}
+      <div ref={live} className={className} aria-busy={pending || undefined}
            onScroll={(event) => { lastScroll.current = event.currentTarget.scrollTop; }}>
-        {children}
+        <div ref={body} className="tk-slide__body">{children}</div>
       </div>
       {leaving && (
         <div key={leaving.gen} ref={ghost} className="tk-list tk-list--leaving"
@@ -969,15 +977,36 @@ function QueueRow({ row, on, fresh = false, onPick }: {
   );
 }
 
+/** Ширины строк заглушки: разные, чтобы она читалась как список чатов. */
+const SKELETON_ROWS = [
+  [52, 78, 46], [64, 70, 58], [44, 82, 40], [58, 66, 52],
+  [48, 74, 62], [60, 80, 44], [54, 68, 56],
+] as const;
+
+/**
+ * Заглушка очереди — те же строки, что настоящие: фото, имя со временем
+ * справа, тема, начало последнего сообщения. Высота строки та же, поэтому
+ * пришедший список встаёт на её место без скачка.
+ */
 function QueueSkeleton() {
   return (
-    <ul className="tk-rows" aria-label="Загрузка очереди">
-      {[0, 1, 2, 3].map((one) => (
-        <li key={one} className="tk-row tk-row--ghost">
-          <span className="tk-ghost tk-ghost--round" />
-          <span className="tk-row__main">
-            <span className="tk-ghost" />
-            <span className="tk-ghost tk-ghost--short" />
+    <ul className="tk-rows tk-rows--ghost" aria-label="Загрузка очереди">
+      {SKELETON_ROWS.map(([name, topic, snip], one) => (
+        <li key={one}>
+          <span className="tk-row tk-row--ghost">
+            <span className="tk-ghost tk-ghost--face" />
+            <span className="tk-row__main">
+              <span className="tk-sk-row tk-sk-row--name">
+                <span className="tk-ghost" style={{ width: `${name}%` }} />
+                <span className="tk-ghost tk-ghost--time" />
+              </span>
+              <span className="tk-sk-row tk-sk-row--topic">
+                <span className="tk-ghost" style={{ width: `${topic}%` }} />
+              </span>
+              <span className="tk-sk-row tk-sk-row--snip">
+                <span className="tk-ghost tk-ghost--thin" style={{ width: `${snip}%` }} />
+              </span>
+            </span>
           </span>
         </li>
       ))}

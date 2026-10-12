@@ -3,8 +3,8 @@
  *
  * jsdom не раскладывает страницу и не проигрывает анимации: здесь
  * проверяется ЛОГИКА — направление по порядку в ряду, что переход
- * начинается, когда на экране новые данные (а не по нажатию), что
- * повторное нажатие и «туда и обратно» ничего не двигают, что быстрые
+ * начинается сразу по нажатию, а до ответа въезжает заглушка, что
+ * повторное нажатие на выбранное ничего не двигает, что быстрые
  * нажатия дают не больше двух слоёв, что без движения смена мгновенная,
  * и что отбор и запросы остались прежними. Плавность и отсутствие
  * мигания видны только в настоящем браузере.
@@ -61,10 +61,10 @@ const LIST = /\/knowledge\/escalations\/(\?|$)/;
 
 /**
  * Сервер очереди. Пока `hold` включён, ответы списка ждут `release()` —
- * так видно, что до ответа ничего не едет.
+ * так видна заглушка до ответа. Отбор из `fail` отвечает ошибкой.
  */
 function server() {
-  const control = { hold: false, waiting: [] as (() => void)[] };
+  const control = { hold: false, waiting: [] as (() => void)[], fail: new Set<string>() };
   const calls = fakeNetwork((path, call: Call) => {
     if (path.includes('/auth/')) return json(200, HR);
     if (path.includes('/knowledge/escalations/counts')) return json(200, COUNTS);
@@ -74,6 +74,7 @@ function server() {
     if (LIST.test(path)) {
       const query = new URL(path, 'http://x').searchParams;
       const key = `${query.get('status') ?? 'NEW'}|${query.get('quick') ?? 'all'}`;
+      if (control.fail.has(key)) return json(500, {});
       const body = { items: ROWS[key] ?? [], next_cursor: null, has_more: false };
       if (!control.hold) return json(200, body);
       return new Promise<Response>((resolve) => {
@@ -163,32 +164,31 @@ async function open(path: string, name: string) {
 
 // --- направление ------------------------------------------------------------
 
+const skeleton = (box: HTMLElement) => box.querySelector('[aria-label="Загрузка очереди"]');
+
 describe('направление по порядку в ряду', () => {
-  test('вкладка правее: новый список приходит справа, старый уходит влево', async () => {
+  test('вкладка правее: сразу по нажатию новый приходит справа, старый уходит влево', async () => {
     const { slides } = motionEnvironment();
-    const { control, release } = server();
+    const { control } = server();
     await open('/questions', 'Новый Алишер');
 
     control.hold = true;
     fireEvent.click(tab(/В работе/));
-    // До ответа сервера ничего не едет и прежний список не выдаётся за новый.
-    expect(slides()).toHaveLength(0);
-    expect(leavingLayers()).toHaveLength(0);
-
-    await release();
-    await within(liveList()).findByText('Рабочий Ислом');
+    // Движение начинается сразу, не дожидаясь сервера.
+    expect(slides()).toHaveLength(2);
     const { enter, leave } = lastPair(slides());
     expect(enter?.keyframes[0]?.transform).toBe('translateX(14%)');
     expect(enter?.keyframes[1]?.transform).toBe('translateX(0)');
     expect(leave?.keyframes[1]?.transform).toBe('translateX(-14%)');
-    expect(slides()).toHaveLength(2);
 
-    // Уходит именно то, что было на экране, и он скрыт от фокуса.
+    // Уходит то, что было на экране, и он скрыт от фокуса.
     const ghost = leavingLayers()[0] as HTMLElement;
     expect(within(ghost).getByText('Новый Алишер')).toBeTruthy();
     expect(ghost.getAttribute('aria-hidden')).toBe('true');
     expect(ghost.hasAttribute('inert')).toBe(true);
+    // Въезжает заглушка, а не прежний список под новым именем.
     expect(within(liveList()).queryByText('Новый Алишер')).toBeNull();
+    expect(skeleton(liveList())).not.toBeNull();
 
     await act(async () => {
       for (const one of slides()) one.finish();
@@ -202,10 +202,10 @@ describe('направление по порядку в ряду', () => {
     server();
     await open('/questions?status=WAITING_EMPLOYEE', 'Ждущий Жасур');
     fireEvent.click(tab(/Новые/));
-    await within(liveList()).findByText('Новый Алишер');
     const { enter, leave } = lastPair(slides());
     expect(enter?.keyframes[0]?.transform).toBe('translateX(-14%)');
     expect(leave?.keyframes[1]?.transform).toBe('translateX(14%)');
+    await within(liveList()).findByText('Новый Алишер');
   });
 
   test('прыжок через несколько вкладок — то же направление, один переход', async () => {
@@ -224,14 +224,86 @@ describe('направление по порядку в ряду', () => {
     await open('/questions', 'Новый Алишер');
 
     fireEvent.click(chip(/^Срочные/));
-    await within(liveList()).findByText('Срочный Сардор');
     expect(lastPair(slides()).enter?.keyframes[0]?.transform).toBe('translateX(14%)');
+    await within(liveList()).findByText('Срочный Сардор');
 
     fireEvent.click(chip(/^Без ответа/));
-    await within(liveList()).findByText('Безответный Бобур');
     expect(lastPair(slides()).enter?.keyframes[0]?.transform).toBe('translateX(-14%)');
+    await within(liveList()).findByText('Безответный Бобур');
     // Не больше двух слоёв даже при незавершённых переходах.
     expect(leavingLayers()).toHaveLength(1);
+  });
+});
+
+// --- заглушка и ответ ------------------------------------------------------------
+
+describe('заглушка, пока нет ответа', () => {
+  test('заглушка похожа на список чатов и сменяется строками без второго сдвига', async () => {
+    const { fakes, slides } = motionEnvironment();
+    const { control, release } = server();
+    await open('/questions', 'Новый Алишер');
+    control.hold = true;
+    fireEvent.click(tab(/В работе/));
+
+    const ghostList = skeleton(liveList()) as HTMLElement;
+    expect(ghostList).not.toBeNull();
+    const rows = ghostList.querySelectorAll('.tk-row--ghost');
+    expect(rows.length).toBeGreaterThanOrEqual(6);
+    expect(rows.length).toBeLessThanOrEqual(8);
+    expect(rows[0]?.querySelector('.tk-ghost--face')).not.toBeNull();
+    expect(rows[0]?.querySelector('.tk-ghost--time')).not.toBeNull();
+    expect(liveList().getAttribute('aria-busy')).toBe('true');
+
+    await release();
+    await within(liveList()).findByText('Рабочий Ислом');
+    expect(skeleton(liveList())).toBeNull();
+    expect(liveList().hasAttribute('aria-busy')).toBe(false);
+    // Сдвиг был один — по нажатию; строки только проявились на месте.
+    expect(slides()).toHaveLength(2);
+    const settle = fakes.filter((one) => one.element.classList.contains('tk-slide__body'));
+    expect(settle).toHaveLength(1);
+    expect(settle[0]?.keyframes[0]?.opacity).toBe(0);
+  });
+
+  test('ответ уже в памяти — сразу список, без заглушки', async () => {
+    motionEnvironment();
+    server();
+    await open('/questions', 'Новый Алишер');
+    fireEvent.click(tab(/В работе/));
+    await within(liveList()).findByText('Рабочий Ислом');
+
+    fireEvent.click(tab(/Новые/));
+    expect(within(liveList()).getByText('Новый Алишер')).toBeTruthy();
+    expect(skeleton(liveList())).toBeNull();
+  });
+
+  test('запоздалый ответ прежнего отбора не подменяет текущий', async () => {
+    motionEnvironment();
+    const { control, release } = server();
+    await open('/questions', 'Новый Алишер');
+    control.hold = true;
+    fireEvent.click(tab(/В работе/));
+    // Второе нажатие отменяет первый запрос; его ответ приходит, но поздно.
+    fireEvent.click(tab(/Ждут сотрудника/));
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(within(liveList()).queryByText('Рабочий Ислом')).toBeNull();
+    expect(skeleton(liveList())).not.toBeNull();
+
+    await release();
+    await within(liveList()).findByText('Ждущий Жасур');
+    expect(within(liveList()).queryByText('Рабочий Ислом')).toBeNull();
+  });
+
+  test('ошибка загрузки — прежний экран ошибки, а не вечная заглушка', async () => {
+    motionEnvironment();
+    const { control } = server();
+    await open('/questions', 'Новый Алишер');
+    control.fail.add('IN_PROGRESS|all');
+    fireEvent.click(tab(/В работе/));
+    await within(liveList()).findByText('Не удалось загрузить очередь.');
+    expect(skeleton(liveList())).toBeNull();
+    expect(within(liveList()).queryByText('Новый Алишер')).toBeNull();
   });
 });
 
@@ -249,6 +321,7 @@ describe('повторные нажатия', () => {
     await act(async () => { await Promise.resolve(); });
     expect(slides()).toHaveLength(0);
     expect(leavingLayers()).toHaveLength(0);
+    expect(skeleton(liveList())).toBeNull();
     expect(calls.filter((one) => LIST.test(one.url)).length).toBe(before);
   });
 
@@ -262,42 +335,43 @@ describe('повторные нажатия', () => {
     expect(leavingLayers()).toHaveLength(0);
   });
 
-  test('«туда и обратно» до ответа сервера — ни одного перехода', async () => {
+  test('«туда и обратно» до ответа: два сдвига, на месте сразу прежний список', async () => {
     const { slides } = motionEnvironment();
-    const { control, release } = server();
+    const { control } = server();
     await open('/questions', 'Новый Алишер');
     control.hold = true;
     fireEvent.click(tab(/В работе/));
     fireEvent.click(tab(/Новые/));
-    await release();
-    await release();
-    await within(liveList()).findByText('Новый Алишер');
-    expect(slides()).toHaveLength(0);
-    expect(leavingLayers()).toHaveLength(0);
+    expect(slides()).toHaveLength(4);
+    expect(lastPair(slides()).enter?.keyframes[0]?.transform).toBe('translateX(-14%)');
+    expect(within(liveList()).getByText('Новый Алишер')).toBeTruthy();
+    expect(skeleton(liveList())).toBeNull();
   });
 });
 
 // --- быстрые нажатия -------------------------------------------------------------
 
 describe('быстрые нажатия', () => {
-  test('несколько вкладок до ответа: один переход к итоговой, уходит показанная', async () => {
+  test('несколько вкладок до ответа: слоёв два, уходит показанное, итог — последний отбор', async () => {
     const { slides } = motionEnvironment();
     const { control, release } = server();
     await open('/questions', 'Новый Алишер');
     control.hold = true;
     fireEvent.click(tab(/В работе/));
+    const first = lastPair(slides());
     fireEvent.click(tab(/Ждут сотрудника/));
-    await release();
+
+    expect(first.enter?.cancelled).toBe(true);
+    expect(leavingLayers()).toHaveLength(1);
+    expect(lastPair(slides()).enter?.keyframes[0]?.transform).toBe('translateX(14%)');
+    // Уходит то, что было на экране в момент нажатия, — заглушка.
+    expect(skeleton(leavingLayers()[0] as HTMLElement)).not.toBeNull();
+
     await release();
     await within(liveList()).findByText('Ждущий Жасур');
-    expect(slides()).toHaveLength(2);
-    expect(lastPair(slides()).enter?.keyframes[0]?.transform).toBe('translateX(14%)');
-    const ghost = leavingLayers()[0] as HTMLElement;
-    expect(within(ghost).getByText('Новый Алишер')).toBeTruthy();
-    expect(within(ghost).queryByText('Рабочий Ислом')).toBeNull();
   });
 
-  test('новое нажатие во время перехода: прежний отменён, слоёв не больше двух', async () => {
+  test('новое нажатие во время перехода: завершение старого не снимает новый слой', async () => {
     const { slides } = motionEnvironment();
     server();
     await open('/questions', 'Новый Алишер');
@@ -307,13 +381,11 @@ describe('быстрые нажатия', () => {
     const first = lastPair(slides());
 
     fireEvent.click(tab(/Закрытые/));
-    await within(liveList()).findByText('Закрытый Камол');
     expect(first.enter?.cancelled).toBe(true);
     expect(leavingLayers()).toHaveLength(1);
-    const ghost = leavingLayers()[0] as HTMLElement;
-    expect(within(ghost).getByText('Рабочий Ислом')).toBeTruthy();
+    expect(within(leavingLayers()[0] as HTMLElement).getByText('Рабочий Ислом')).toBeTruthy();
+    await within(liveList()).findByText('Закрытый Камол');
 
-    // Завершение старого перехода не снимает новый слой.
     await act(async () => {
       first.leave?.finish();
       await Promise.resolve();
@@ -327,39 +399,24 @@ describe('быстрые нажатия', () => {
     await waitFor(() => expect(leavingLayers()).toHaveLength(0));
     expect(within(liveList()).getByText('Закрытый Камол')).toBeTruthy();
   });
-
-  test('возврат на вкладку из памяти: переход один, свежий ответ не двигает снова', async () => {
-    const { slides } = motionEnvironment();
-    server();
-    await open('/questions', 'Новый Алишер');
-    fireEvent.click(tab(/В работе/));
-    await within(liveList()).findByText('Рабочий Ислом');
-    await act(async () => {
-      for (const one of slides()) one.finish();
-      await Promise.resolve();
-    });
-    const before = slides().length;
-
-    fireEvent.click(tab(/Новые/));
-    await within(liveList()).findByText('Новый Алишер');
-    await act(async () => { await Promise.resolve(); });
-    await act(async () => { await Promise.resolve(); });
-    expect(slides().length - before).toBe(2);
-  });
 });
 
 // --- без движения ------------------------------------------------------------------
 
 describe('просьба уменьшить движение', () => {
-  test('смена мгновенная, анимаций и второго слоя нет', async () => {
-    const { slides } = motionEnvironment({ reduce: true });
-    server();
+  test('смена мгновенная: ни анимаций, ни второго слоя, заглушка — пока нет ответа', async () => {
+    const { fakes } = motionEnvironment({ reduce: true });
+    const { control, release } = server();
     await open('/questions', 'Новый Алишер');
+    control.hold = true;
     fireEvent.click(tab(/В работе/));
+    expect(skeleton(liveList())).not.toBeNull();
+    await release();
     await within(liveList()).findByText('Рабочий Ислом');
+    control.hold = false;
     fireEvent.click(chip(/^Срочные/));
     await within(liveList()).findByText('Рабочий срочный Умид');
-    expect(slides()).toHaveLength(0);
+    expect(fakes).toHaveLength(0);
     expect(leavingLayers()).toHaveLength(0);
   });
 });

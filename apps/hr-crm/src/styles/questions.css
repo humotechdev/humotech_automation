@@ -331,6 +331,8 @@ body.tk-type .app-popover {
   overflow: hidden;
   pointer-events: none;
 }
+/* Подсветка свежей строки не повторяется в уходящем снимке. */
+.tk-list--leaving .tk-row--fresh { animation: none; }
 .tk-rows { margin: 0; padding: 0; list-style: none; }
 .tk-rows > li { border-bottom: 1px solid #e8eef5; }
 
@@ -1023,6 +1025,31 @@ a.tk-person__name:hover { color: var(--tk-blue); }
 .tk-ghost-block .tk-ghost:last-child { flex: 1; }
 
 @keyframes tk-ghost { to { background-position: -200% 0; } }
+
+/*
+ * Заглушка очереди — по размерам настоящей строки (отступы, фото 48 px,
+ * три строки текста), чтобы пришедший список встал на место без
+ * скачка. Здесь, в отличие от остальных заглушек, мягкое мерцание:
+ * она видна сразу после нажатия и должна читаться как «грузится».
+ */
+.tk-rows--ghost .tk-row--ghost:hover { background: none; }
+.tk-rows--ghost .tk-row__main { gap: 4px; padding-top: 0; }
+.tk-sk-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.tk-sk-row--name { height: 20px; }
+.tk-sk-row--topic { height: 19px; }
+.tk-sk-row--snip { height: 18px; }
+.tk-ghost--face { width: 48px; height: 48px; border-radius: 50%; }
+.tk-ghost--time { flex: 0 0 34px; height: 10px; margin-left: auto; }
+.tk-ghost--thin { height: 10px; }
+.tk-sheet .tk-rows--ghost .tk-ghost {
+  background: linear-gradient(90deg, #edf2f8 0%, #f7f9fc 50%, #edf2f8 100%);
+  background-size: 200% 100%;
+  animation: tk-ghost 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tk-sheet .tk-rows--ghost .tk-ghost { animation: none; background: #edf2f8; }
+}
 
 /* --- закрытие ------------------------------------------------------------- */
 
