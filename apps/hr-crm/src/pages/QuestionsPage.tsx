@@ -33,6 +33,7 @@ import { ApiFailure, messageFor } from '../api/errors';
 import { AppShell, initials } from '../components/AppShell';
 import { AppIcon, type AppIconName } from '../components/AppIcon';
 import { AppPopover, AppSelectField } from '../components/AppSelect';
+import { EASE, TAB_SHIFT, canAnimate, tabDirection } from '../features/admin/motion';
 import { useSession } from '../features/auth/session';
 import { useBlock, type Block } from '../features/dashboard/data';
 import { liveState, liveSupported, onLive, onLiveState, type LiveState } from '../features/realtime/events';
@@ -269,6 +270,11 @@ export function QuestionsPage() {
   );
   const filterKey = JSON.stringify(filters);
   const listKey = `${filterKey}|${status}|${quick}`;
+
+  // Какой ряд нажат последним — для направления перехода очереди.
+  // На отбор и запросы не влияет.
+  const [slideClick, setSlideClick] = useState<SlideClick | null>(null);
+  const clickRow = (row: 0 | 1) => setSlideClick((was) => ({ row, n: (was?.n ?? 0) + 1 }));
 
   const [pages, setPages] = useState(1);
   useEffect(() => setPages(1), [listKey]);
@@ -602,7 +608,10 @@ export function QuestionsPage() {
               return (
                 <button key={tab.key} type="button" role="tab" aria-selected={status === tab.key}
                         className={status === tab.key ? 'tk-tab tk-tab--on' : 'tk-tab'}
-                        onClick={() => patch({ status: tab.key === 'NEW' ? null : tab.key, quick: null, id: null })}>
+                        onClick={() => {
+                          clickRow(0);
+                          patch({ status: tab.key === 'NEW' ? null : tab.key, quick: null, id: null });
+                        }}>
                   {tab.title}
                   {count !== null && <span className="tk-tab__n">{count}</span>}
                 </button>
@@ -627,7 +636,10 @@ export function QuestionsPage() {
                     return (
                       <button key={one.key} type="button" aria-pressed={quick === one.key}
                               className={`tk-chip tk-chip--${one.key}${quick === one.key ? ' tk-chip--on' : ''}`}
-                              onClick={() => patch({ quick: one.key === 'all' ? null : one.key, id: null })}>
+                              onClick={() => {
+                                clickRow(1);
+                                patch({ quick: one.key === 'all' ? null : one.key, id: null });
+                              }}>
                         {one.title}
                         {count !== null && <span className="tk-chip__n">{count}</span>}
                       </button>
@@ -636,7 +648,8 @@ export function QuestionsPage() {
                 </div>
               </div>
 
-              <div className={listRefresh.busy && list.state === 'ready' ? 'tk-list tk-list--busy' : 'tk-list'}>
+              <QueueSlide values={[status, quick]} clicked={slideClick} content={list} busy={listRefresh.busy}
+                          className={listRefresh.busy && list.state === 'ready' ? 'tk-list tk-list--busy' : 'tk-list'}>
                 {list.state === 'loading' && <QueueSkeleton />}
                 {list.state === 'denied' && <p className="tk-empty">Нет доступа к обращениям.</p>}
                 {list.state === 'error' && (
@@ -660,7 +673,7 @@ export function QuestionsPage() {
                     ))}
                   </ul>
                 )}
-              </div>
+              </QueueSlide>
 
               <footer className="tk-queue__foot">
                 <span>
@@ -763,6 +776,161 @@ export function QuestionsPage() {
 }
 
 // --- очередь -------------------------------------------------------------------
+
+/** Порядок вкладок и быстрых фильтров слева направо — по нему направление. */
+const SLIDE_ORDERS: readonly [readonly string[], readonly string[]] = [
+  TABS.map((tab) => tab.key),
+  QUICK.map((one) => one.key),
+];
+/** Длительность смены очереди: короче вкладок «Администрирования». */
+const SLIDE_MS = 260;
+
+/** Какой ряд нажат: 0 — вкладки состояния, 1 — быстрые фильтры. */
+type SlideClick = { row: 0 | 1; n: number };
+type SlideWait = { row: 0 | 1; content: unknown; armed: boolean };
+type SlideOut = { node: ReactNode; dir: 1 | -1; gen: number; scroll: number };
+
+/**
+ * Очередь с переходом при смене вкладки или быстрого фильтра.
+ *
+ * Нажато правее показанного — прежний список уходит влево, новый
+ * приходит справа; левее — наоборот. Ряды считаются отдельно: вкладка
+ * сравнивается с вкладкой, фильтр — с фильтром.
+ *
+ * Переход начинается не по нажатию, а когда на экране появляются
+ * данные нового отбора: до ответа сервера `useBlock` держит прежний
+ * список, и сдвинуть его означало бы показать старое под новым именем.
+ * Первый же новый ответ (или ответ из памяти) — один переход; повторное
+ * чтение того же отбора уже не двигает ничего. Запрос не удался —
+ * переход отменяется, как и не начинался.
+ *
+ * Слоя не больше двух: живой список (тот же элемент, та же прокрутка)
+ * и снимок уходящего поверх него, скрытый от фокуса и средств чтения.
+ * Быстрые нажатия: уходящий снимок заменяется тем, что было на экране,
+ * живой список начинает вход заново. Направление — от показанного
+ * отбора к итоговому: «Новые → В работе → Закрытые» до ответа сервера —
+ * один переход вправо, «туда и обратно» — ни одного.
+ *
+ * Без движения (просьба системы, нет Web Animations) — мгновенная смена.
+ */
+function QueueSlide({ values, clicked, content, busy, className, children }: {
+  /** Выбранные значения рядов: [вкладка, быстрый фильтр]. */
+  values: readonly [string, string];
+  /** Последнее нажатие в рядах; переход бывает только после нажатия. */
+  clicked: SlideClick | null;
+  /** Показанные данные очереди: смена ссылки — пришёл ответ. */
+  content: unknown;
+  busy: boolean;
+  className: string;
+  children: ReactNode;
+}) {
+  const key = values.join('|');
+  const [seenKey, setSeenKey] = useState(key);
+  const [shown, setShown] = useState<readonly string[]>(values);
+  const [used, setUsed] = useState(clicked?.n ?? 0);
+  const [wait, setWait] = useState<SlideWait | null>(null);
+  const [leaving, setLeaving] = useState<SlideOut | null>(null);
+  const [gen, setGen] = useState(0);
+  const live = useRef<HTMLDivElement>(null);
+  const ghost = useRef<HTMLDivElement>(null);
+  const lastBody = useRef<ReactNode>(children);
+  const lastScroll = useRef(0);
+
+  // Решение принимается во время отрисовки: иначе был бы кадр с новым
+  // списком без уходящего — то самое мигание.
+  if (key !== seenKey) {
+    setSeenKey(key);
+    if (clicked && clicked.n !== used) {
+      setUsed(clicked.n);
+      setWait({ row: clicked.row, content, armed: busy });
+    } else {
+      setWait(null);
+      setShown(values);
+    }
+  } else if (wait) {
+    if (content !== wait.content) {
+      const dir = tabDirection(SLIDE_ORDERS[wait.row], shown[wait.row] ?? '', values[wait.row]);
+      setWait(null);
+      setShown(values);
+      if (dir !== 0 && canAnimate()) {
+        setLeaving({ node: lastBody.current, dir, gen: gen + 1, scroll: lastScroll.current });
+        setGen(gen + 1);
+      } else {
+        setLeaving(null);
+      }
+    } else if (busy && !wait.armed) {
+      setWait({ ...wait, armed: true });
+    } else if (!busy && wait.armed) {
+      // Запрос закончился, а данные те же — ответа не было (ошибка).
+      setWait(null);
+      setShown(values);
+    }
+  }
+
+  useLayoutEffect(() => {
+    lastBody.current = children;
+  });
+
+  useLayoutEffect(() => {
+    if (!leaving) return;
+    const inn = live.current;
+    const out = ghost.current;
+    if (!inn || !out) {
+      setLeaving(null);
+      return;
+    }
+    // Прерванный вход продолжается уходом с того места, где его застали.
+    const now = getComputedStyle(inn);
+    const startTransform = now.transform && now.transform !== 'none' ? now.transform : 'translateX(0)';
+    const startOpacity = now.opacity === '' ? 1 : Number(now.opacity);
+    for (const running of inn.getAnimations?.() ?? []) running.cancel();
+    out.scrollTop = leaving.scroll;
+
+    const timing = { duration: SLIDE_MS, easing: EASE };
+    const away = leaving.dir > 0 ? `-${TAB_SHIFT}` : TAB_SHIFT;
+    const from = leaving.dir > 0 ? TAB_SHIFT : `-${TAB_SHIFT}`;
+    const moves = [
+      out.animate(
+        [{ transform: startTransform, opacity: startOpacity },
+         { transform: `translateX(${away})`, opacity: 0 }],
+        { ...timing, fill: 'forwards' },
+      ),
+      inn.animate(
+        [{ transform: `translateX(${from})`, opacity: 0 },
+         { transform: 'translateX(0)', opacity: 1 }],
+        timing,
+      ),
+    ];
+    let current = true;
+    const mine = leaving.gen;
+    Promise.all(moves.map((one) => one.finished)).then(
+      () => {
+        if (current) setLeaving((was) => (was && was.gen === mine ? null : was));
+      },
+      // Отменённая анимация — не ошибка: её сменил следующий переход.
+      () => undefined,
+    );
+    return () => {
+      current = false;
+    };
+  }, [leaving]);
+
+  return (
+    <div className={leaving ? 'tk-slide tk-slide--moving' : 'tk-slide'}
+         data-direction={leaving ? (leaving.dir > 0 ? 'forward' : 'backward') : undefined}>
+      <div ref={live} className={className}
+           onScroll={(event) => { lastScroll.current = event.currentTarget.scrollTop; }}>
+        {children}
+      </div>
+      {leaving && (
+        <div key={leaving.gen} ref={ghost} className="tk-list tk-list--leaving"
+             aria-hidden="true" inert>
+          {leaving.node}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function QueueRow({ row, on, fresh = false, onPick }: {
   row: api.QuestionRow; on: boolean; fresh?: boolean; onPick: (id: string) => void;
