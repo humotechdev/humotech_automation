@@ -6,7 +6,7 @@
  */
 import {
   ArrowDown2, ArrowLeft, ArrowRight2, Briefcase, Building, Cake, Calendar, Call, Chart2,
-  Clock, Danger, DocumentDownload, DocumentText, Edit2, Hashtag, Login, Logout, Personalcard,
+  Clock, Danger, DocumentDownload, DocumentText, Edit2, Hashtag, Lock, Login, Logout, Personalcard,
   Profile2User, Send2, Sms, TaskSquare, Teacher, TickCircle, Timer1, User,
   type Icon, type IconProps,
 } from 'iconsax-react';
@@ -38,6 +38,7 @@ const ICONS = {
   team: Profile2User,
   task: TaskSquare,
   timer: Timer1,
+  lock: Lock,
 } satisfies Record<string, Icon>;
 
 export type IsxName = keyof typeof ICONS;

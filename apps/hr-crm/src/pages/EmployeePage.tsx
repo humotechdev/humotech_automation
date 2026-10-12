@@ -28,15 +28,13 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import * as api from '../api/crm';
 import { ApiFailure, messageFor, reasonFor } from '../api/errors';
 import { AppShell } from '../components/AppShell';
-import { Isx, type IsxName } from '../components/Isx';
+import { Isx } from '../components/Isx';
 import { AppSelectField } from '../components/AppSelect';
 import { Attendance } from '../features/employee/Attendance';
 import { useSession } from '../features/auth/session';
-import { useBlock, type Block } from '../features/dashboard/data';
+import { useBlock } from '../features/dashboard/data';
 import {
   TABS,
-  dayState,
-  duration,
   initials,
   isTab,
   type Tab,
@@ -48,8 +46,6 @@ import {
   dayMonth,
   dayMonthYear,
   dayRange,
-  monthIn,
-  monthStartOf,
   plural,
   scheduleSummary,
   todayIn,
@@ -63,9 +59,12 @@ import {
   missingText,
   statusOf,
 } from '../features/requests/model';
-import { clock, clockOnDay } from '../features/time/zone';
+import { clock } from '../features/time/zone';
 import { internalPath } from '../utils/internal-path';
+import { ProfileOverview, tenure, type WorkPlan } from '../features/employee/ProfileOverview';
+import '@fontsource-variable/manrope';
 import '../styles/employee-card.css';
+import '../styles/employee-profile.css';
 
 type Person = Record<string, unknown>;
 
@@ -205,13 +204,13 @@ function EmployeeCard({ id }: { id: string }) {
         TABS.find((item) => item.key === tab)?.title ?? ''].filter(Boolean).join(' / ')}
       section="employees"
     >
-      <div className="ec">
-        <div className="ec-cover">
-          <Link className="ec-back" to={back || '/employees'}>
+      <div className="ec pf">
+        {card.state !== 'ready' || card.data === MISSING ? (
+          <Link className="pf-back" to={back || '/employees'}>
             <Isx name="back" size={16} />
             Все сотрудники
           </Link>
-        </div>
+        ) : null}
 
         {card.state === 'loading' && (
           <>
@@ -236,40 +235,46 @@ function EmployeeCard({ id }: { id: string }) {
         )}
 
         {card.state === 'ready' && card.data !== MISSING && (
-          <>
-            <Header person={person} id={id} canEdit={rights.manage} />
+          <div className="pf-sheet">
+            <ProfileAside person={person} id={id} rights={rights} back={back || '/employees'}
+                          zone={zone} version={version} onChanged={changed} />
 
-            <div className="ec-tabs" role="tablist" aria-label="Разделы карточки">
-              {TABS.map((item) => (
-                <button key={item.key} type="button" role="tab"
-                        aria-selected={tab === item.key}
-                        className={tab === item.key ? 'ec-tab ec-tab--on' : 'ec-tab'}
-                        onClick={() => open(item.key)}>
-                  {item.title}
-                </button>
-              ))}
-            </div>
+            <div className="pf-main">
+              <div className="ec-tabs pf-tabs" role="tablist" aria-label="Разделы карточки">
+                {TABS.map((item) => (
+                  <button key={item.key} type="button" role="tab"
+                          aria-selected={tab === item.key}
+                          className={tab === item.key ? 'ec-tab ec-tab--on' : 'ec-tab'}
+                          onClick={() => open(item.key)}>
+                    {item.title}
+                  </button>
+                ))}
+              </div>
 
-            {/* Ключ — вкладка: при переключении содержимое проявляется,
-                а обновление данных внутри вкладки его не пересоздаёт. */}
-            <div className="ec-body" role="tabpanel" key={tab}>
-              {tab === 'overview' && (
-                <Overview id={id} person={person} zone={zone} rights={rights}
-                          version={version} onGo={open} onChanged={changed} />
-              )}
-              {tab === 'attendance' && (
-                <Attendance id={id} name={name} zone={zone}
-                            rights={{ attendance: rights.attendance, export: rights.export,
-                              correct: rights.correct }} />
-              )}
-              {tab === 'schedule' && <Schedule id={id} zone={zone} />}
-              {tab === 'requests' && (
-                <Requests id={id} person={person} rights={rights} zone={zone}
-                          version={version} onChanged={changed} />
-              )}
-              {tab === 'history' && <History id={id} rights={rights} zone={zone} />}
+              {/* Ключ — вкладка: при переключении содержимое проявляется,
+                  а обновление данных внутри вкладки его не пересоздаёт. */}
+              <div className={tab === 'overview' ? 'ec-body pf-body pf-body--flush' : 'ec-body pf-body'}
+                   role="tabpanel" key={tab}>
+                {tab === 'overview' && (
+                  <ProfileOverview id={id} zone={zone} version={version} onGo={open}
+                                   plan={person['current_schedule'] as WorkPlan}
+                                   rights={{ attendance: rights.attendance, absences: rights.absences,
+                                     audit: rights.audit, manual: rights.manual }} />
+                )}
+                {tab === 'attendance' && (
+                  <Attendance id={id} name={name} zone={zone}
+                              rights={{ attendance: rights.attendance, export: rights.export,
+                                correct: rights.correct }} />
+                )}
+                {tab === 'schedule' && <Schedule id={id} zone={zone} />}
+                {tab === 'requests' && (
+                  <Requests id={id} person={person} rights={rights} zone={zone}
+                            version={version} onChanged={changed} />
+                )}
+                {tab === 'history' && <History id={id} rights={rights} zone={zone} />}
+              </div>
             </div>
-          </>
+          </div>
         )}
       </div>
     </AppShell>
@@ -288,63 +293,191 @@ const STATUS_TONE: Record<string, string> = {
   ON_LEAVE: 'amber', SUSPENDED: 'amber', TERMINATED: 'grey', ARCHIVED: 'grey',
 };
 
-function Header({ person, id, canEdit }: { person: Person; id: string; canEdit: boolean }) {
+// --- колонка «кто это» ----------------------------------------------------
+
+/** Офис и регион без повтора: «город Ташкент, город Ташкент» → один раз. */
+function placeOf(post: Person | null): string | null {
+  if (!post) return null;
+  const parts = [text(post, 'office_name'), text(post, 'region_name')]
+    .filter((one): one is string => Boolean(one));
+  const unique = parts.filter((one, at) =>
+    parts.findIndex((other) => other.trim().toLowerCase() === one.trim().toLowerCase()) === at);
+  return unique.join(', ') || null;
+}
+
+function ProfileAside({ person, id, rights, back, zone, version, onChanged }: {
+  person: Person; id: string; rights: Rights; back: string; zone: string;
+  version: number; onChanged: () => void;
+}) {
   const status = text(person, 'employment_status') ?? '';
   const title = text(person, 'employment_status_title') ?? status;
   const hasPhoto = person['photo'] !== null && person['photo'] !== undefined;
   const post = assignmentOf(person);
-  const first = [post && text(post, 'position_name'), post && text(post, 'department_name')]
-    .filter(Boolean).join(' · ');
-  const second = [post && text(post, 'office_name'), post && text(post, 'region_name')]
+  const role = [post && text(post, 'position_name'), post && text(post, 'department_name')]
     .filter(Boolean).join(' · ');
   const hire = text(person, 'hire_date');
   const archived = text(person, 'archived_at');
-  const zone = (post && text(post, 'office_timezone')) || 'UTC';
-  const notYet = hire !== null && hire > todayIn(zone);
+  const today = todayIn(zone);
+  const notYet = hire !== null && hire > today;
+  const tone = STATUS_TONE[status] ?? 'grey';
+  const [contacts, setContacts] = useState(false);
+  const [panel, setPanel] = useState<'telegram' | 'onboarding' | null>(null);
+
+  const [telegram] = useBlock(
+    (signal) => api.employeeTelegram(id, signal),
+    `aside-telegram|${id}|${version}`,
+    rights.telegramRead,
+  );
+  const link = telegram.state === 'ready' ? telegram.data : null;
+  const username = link?.state === 'ACTIVE' ? link.account?.telegram_username ?? null : null;
+  const tgState = !rights.telegramRead ? 'Нет права на просмотр'
+    : telegram.state === 'loading' ? 'Проверяем подключение…'
+    : telegram.state === 'error' ? 'Статус не получен'
+    : link?.state ? TELEGRAM_STATE[link.state]?.title ?? link.state : 'Не привязан';
+
+  const toggle = (next: 'telegram' | 'onboarding') => setPanel((was) => (was === next ? null : next));
 
   return (
-    <header className="ec-head">
-      <span className="ec-face-wrap">
-        {hasPhoto ? (
-          <img className="ec-face" src={api.employeePhotoUrl(id)} alt="" />
-        ) : (
-          <span className="ec-face" aria-hidden="true">
-            {initials(text(person, 'first_name'), text(person, 'last_name'))}
-          </span>
-        )}
-        <i className={`ec-face__dot ec-face__dot--${STATUS_TONE[status] ?? 'grey'}`} aria-hidden="true" />
-      </span>
-      <div className="ec-head__text">
-        <div className="ec-head__line">
-          <h1 className="ec-name" title={text(person, 'full_name') ?? undefined}>
-            {shortName(text(person, 'full_name')) || 'Без имени'}
-          </h1>
-          {title && <span className={`ec-pill ec-pill--${STATUS_TONE[status] ?? 'grey'}`}>{title}</span>}
-          {archived && <span className="ec-pill ec-pill--grey">В архиве</span>}
-        </div>
-        <ul className="ec-meta">
-          <li className="ec-meta__main">
-            <Isx name="bag" size={16} />
-            <span>{first || 'Действующего назначения нет'}</span>
-          </li>
-          {second && (
-            <li><Isx name="building" size={16} /><span>{second}</span></li>
-          )}
-          {hire && (
-            <li>
-              <Isx name="calendar" size={16} />
-              <span>{notYet ? `Выходит на работу ${dayMonthYear(hire)}` : `В компании с ${dayMonthYear(hire)}`}</span>
-            </li>
-          )}
-        </ul>
-      </div>
-      {canEdit && (
-        <Link className="ec-btn ec-btn--primary ec-head__edit" to={`/employees/${id}/edit`}>
-          <Isx name="pencil" size={16} />
-          Редактировать
+    <aside className="pf-aside" aria-label="Профиль сотрудника">
+      <header className="pf-id">
+        <Link className="pf-back" to={back}>
+          <Isx name="back" size={16} />
+          Все сотрудники
         </Link>
-      )}
-    </header>
+        <span className="pf-face">
+          {hasPhoto ? (
+            <img className="pf-face__img" src={api.employeePhotoUrl(id)} alt="" />
+          ) : (
+            <span className="pf-face__img" aria-hidden="true">
+              {initials(text(person, 'first_name'), text(person, 'last_name'))}
+            </span>
+          )}
+          <i className={`pf-face__dot pf-face__dot--${tone}`} aria-hidden="true" />
+        </span>
+        <h1 className="pf-name" title={text(person, 'full_name') ?? undefined}>
+          {shortName(text(person, 'full_name')) || 'Без имени'}
+        </h1>
+        <p className="pf-role">{role || 'Действующего назначения нет'}</p>
+        <div className="pf-pills">
+          {title && <span className={`pf-pill pf-pill--${tone}`}>{title}</span>}
+          {archived && <span className="pf-pill pf-pill--grey">В архиве</span>}
+        </div>
+        <div className="pf-id__actions">
+          {username ? (
+            <a className="pf-btn pf-btn--line" href={`https://t.me/${encodeURIComponent(username)}`}
+               target="_blank" rel="noreferrer noopener">
+              <Isx name="send" size={16} />
+              Написать
+            </a>
+          ) : (
+            <button type="button" className="pf-btn pf-btn--line" onClick={() => setPanel('telegram')}
+                    title="Telegram не привязан — откроется подключение">
+              <Isx name="send" size={16} />
+              Написать
+            </button>
+          )}
+          {rights.manage ? (
+            <Link className="pf-btn pf-btn--primary" to={`/employees/${id}/edit`}>
+              <Isx name="pencil" size={16} />
+              Изменить
+            </Link>
+          ) : (
+            <span />
+          )}
+        </div>
+      </header>
+
+      <section className="pf-block" aria-labelledby="pf-facts">
+        <h2 id="pf-facts" className="pf-block__title">Основные сведения</h2>
+        <dl className="pf-facts">
+          <Row label="Табельный номер" value={text(person, 'employee_number')} mono />
+          <Row label="Отдел" value={post ? text(post, 'department_name') : null} />
+          <Row label="Должность" value={post ? text(post, 'position_name') : null} />
+          <Row label="Офис" value={placeOf(post)} />
+          <Row label="График"
+               value={scheduleSummary(person['current_schedule'] as Parameters<typeof scheduleSummary>[0])} />
+          <Row label={notYet ? 'Выходит на работу' : 'Дата приёма'} value={hire ? dayMonthYear(hire) : null} />
+          <Row label="Стаж" value={tenure(hire, today)} />
+        </dl>
+      </section>
+
+      <section className="pf-block" aria-labelledby="pf-private">
+        <h2 id="pf-private" className="pf-block__title">Контакты и личные данные</h2>
+        <button type="button" className={contacts ? 'pf-act pf-act--on' : 'pf-act'}
+                aria-expanded={contacts} onClick={() => setContacts((was) => !was)}>
+          <span className="pf-act__icon" aria-hidden="true"><Isx name="lock" size={18} /></span>
+          <span className="pf-act__text">
+            <b>{contacts ? 'Скрыть' : 'Показать'}</b>
+            <small>Просмотр записывается в историю</small>
+          </span>
+          <Isx name="chevron" size={16} className="pf-act__arrow" />
+        </button>
+        {contacts && (
+          <dl className="pf-facts pf-facts--more">
+            <Row label="Полное имя" value={text(person, 'full_name')} />
+            <Row label="Телефон" value={text(person, 'phone')} />
+            <Row label="Рабочая почта" value={text(person, 'corporate_email')} />
+            <Row label="Личная почта" value={text(person, 'personal_email')} />
+            <Row label="Дата рождения" value={text(person, 'birth_date')
+              ? dayMonthYear(text(person, 'birth_date') as string) : null} />
+            <Row label="Пол" value={GENDER[text(person, 'gender') ?? ''] ?? null} />
+            <Row label="Семейное положение" value={MARITAL[text(person, 'marital_status') ?? ''] ?? null} />
+          </dl>
+        )}
+      </section>
+
+      <section className="pf-block pf-block--last" aria-labelledby="pf-link">
+        <h2 id="pf-link" className="pf-block__title">Связь с сотрудником</h2>
+        <button type="button" className={panel === 'telegram' ? 'pf-act pf-act--on' : 'pf-act'}
+                aria-expanded={panel === 'telegram'} onClick={() => toggle('telegram')}>
+          <span className="pf-act__icon" aria-hidden="true"><Isx name="send" size={18} /></span>
+          <span className="pf-act__text">
+            <b>Telegram-бот</b>
+            <small>{tgState}{username ? ` · @${username}` : ''}</small>
+          </span>
+          <Isx name="chevron" size={16} className="pf-act__arrow" />
+        </button>
+        {panel === 'telegram' && (
+          <div className="pf-panel">
+            <TelegramBlock id={id} rights={rights} version={version} onChanged={onChanged} part="telegram" />
+          </div>
+        )}
+        <button type="button" className={panel === 'onboarding' ? 'pf-act pf-act--on' : 'pf-act'}
+                aria-expanded={panel === 'onboarding'} onClick={() => toggle('onboarding')}>
+          <span className="pf-act__icon" aria-hidden="true"><Isx name="doc" size={18} /></span>
+          <span className="pf-act__text">
+            <b>Отправить на ознакомление</b>
+            <small>Документ с подписью</small>
+          </span>
+          <Isx name="chevron" size={16} className="pf-act__arrow" />
+        </button>
+        {panel === 'onboarding' && (
+          <div className="pf-panel">
+            <TelegramBlock id={id} rights={rights} version={version} onChanged={onChanged} part="onboarding" />
+          </div>
+        )}
+        <Link className="pf-act" to="/surveys">
+          <span className="pf-act__icon" aria-hidden="true"><Isx name="task" size={18} /></span>
+          <span className="pf-act__text">
+            <b>Назначить опрос</b>
+            <small>Из списка опросов компании</small>
+          </span>
+          <Isx name="next" size={16} className="pf-act__arrow" />
+        </Link>
+      </section>
+    </aside>
+  );
+}
+
+/** Строка «подпись — значение»; пустое — «—». */
+function Row({ label, value, mono = false }: { label: string; value: string | null; mono?: boolean }) {
+  return (
+    <div className="pf-facts__row">
+      <dt>{label}</dt>
+      <dd className={[mono && value ? 'pf-mono' : '', value ? '' : 'pf-dash'].filter(Boolean).join(' ') || undefined}>
+        {value ?? '—'}
+      </dd>
+    </div>
   );
 }
 
@@ -358,209 +491,6 @@ const MARITAL: Record<string, string> = {
   DIVORCED: 'Разведён(а)',
   WIDOWED: 'Вдовец / вдова',
 };
-
-function Overview({ id, person, zone, rights, version, onGo, onChanged }: {
-  id: string; person: Person; zone: string; rights: Rights; version: number;
-  onGo: (tab: Tab, extra?: Record<string, string>) => void; onChanged: () => void;
-}) {
-  const today = todayIn(zone);
-  const first = monthStartOf(today);
-  const post = assignmentOf(person);
-  const [contacts, setContacts] = useState(false);
-
-  const [journal, reloadJournal] = useBlock(
-    (signal) => api.attendanceDaily({ employee_id: id, date_from: first, date_to: today }, signal),
-    `overview-journal|${id}|${first}|${today}|${version}`,
-    rights.attendance,
-  );
-  const [counts, reloadCounts] = useBlock(
-    (signal) => api.queueCounts({ employee_id: id }, signal),
-    `overview-counts|${id}|${version}`,
-    rights.absences,
-  );
-  const [waiting] = useBlock(
-    (signal) => api.queue({ employee_id: id, status: 'SUBMITTED,IN_REVIEW', limit: '1' }, signal),
-    `overview-waiting|${id}|${version}`,
-    rights.absences,
-  );
-
-  const report = journal.state === 'ready' ? journal.data : null;
-  const todayRow = report?.days.find((row) => row.day === today) ?? null;
-  const fieldSeconds = (report?.days ?? [])
-    .filter((row) => row.state === 'FIELD_WORK')
-    .reduce((sum, row) => sum + row.seconds, 0);
-  const open = counts.state === 'ready' ? counts.data['open'] ?? null : null;
-  const pending = waiting.state === 'ready' ? waiting.data.items[0] ?? null : null;
-  const unplaced = Boolean(report?.note) && (report?.days.length ?? 0) === 0;
-
-  return (
-    <>
-      {pending && (
-        <div className="ec-notice">
-          <span className="ec-notice__icon" aria-hidden="true"><Isx name="doc" size={20} variant="Bulk" /></span>
-          <span className="ec-notice__text">
-            <b>{kindOf(pending).title} ожидает решения</b>
-            <span>{noticeLine(pending)}</span>
-          </span>
-          <button type="button" className="ec-btn ec-btn--primary"
-                  onClick={() => onGo('requests', { status: 'open', request: pending.id })}>
-            Рассмотреть
-          </button>
-        </div>
-      )}
-
-      <div className="ec-band" aria-label="Показатели сотрудника">
-        <Cell icon="clock" title="Сегодня" note={todayNote(journal, todayRow, report?.note ?? null, rights.attendance)}
-              value={!rights.attendance ? '—'
-                : todayRow ? duration(todayRow.seconds) : journal.state === 'loading' ? '…' : '—'}
-              onRetry={journal.state === 'error' ? reloadJournal : undefined} />
-        <Cell icon="chart" title={`Отработано ${monthIn(today)}`}
-              value={!rights.attendance ? '—'
-                // Без назначения за период сервер отдаёт нули с пояснением:
-                // это «не с чем считать», а не подтверждённые «0 ч».
-                : report && unplaced ? '—'
-                : report ? duration(report.totals.seconds) : journal.state === 'loading' ? '…' : '—'}
-              note={!rights.attendance ? 'Нет права на посещаемость'
-                : journal.state === 'error' ? 'Не удалось получить'
-                : unplaced ? 'Нет назначения за этот период'
-                : [dayRange(first, today),
-                    fieldSeconds > 0 ? `в т. ч. выезд ${duration(fieldSeconds)}` : '']
-                    .filter(Boolean).join(' · ')}
-              onRetry={journal.state === 'error' ? reloadJournal : undefined} />
-        <Cell icon="doc" title="Ждут решения"
-              value={!rights.absences ? '—'
-                : open !== null ? `${open} ${plural(open, 'заявка', 'заявки', 'заявок')}`
-                : counts.state === 'loading' ? '…' : '—'}
-              note={!rights.absences ? 'Нет права на заявки'
-                : counts.state === 'error' ? 'Не удалось получить' : ''}
-              link={rights.absences && open !== null
-                ? { label: 'Открыть заявки', go: () => onGo('requests', open > 0 ? { status: 'open' } : {}) }
-                : undefined}
-              onRetry={counts.state === 'error' ? reloadCounts : undefined} />
-      </div>
-
-      <div className="ec-split">
-        <section className="ec-col" aria-labelledby="ec-main-title">
-          <h2 id="ec-main-title" className="ec-h2">
-            <Isx name="card" size={20} variant="Bulk" className="ec-h2__icon" />
-            Основные сведения
-          </h2>
-          <dl className="ec-info">
-            <Info icon="building" label="Офис" value={post
-              ? [text(post, 'office_name'), text(post, 'region_name')].filter(Boolean).join(', ') || null
-              : null} empty={post ? 'Не указан' : 'Нет назначения'} />
-            <Info icon="team" label="Отдел" value={post ? text(post, 'department_name') : null}
-                  empty={post ? 'Не указано' : 'Нет назначения'} />
-            <Info icon="bag" label="Должность" value={post ? text(post, 'position_name') : null}
-                  empty={post ? 'Не указано' : 'Нет назначения'} />
-            <Info icon="calendar" label="Дата приёма" value={text(person, 'hire_date')
-              ? dayMonthYear(text(person, 'hire_date') as string) : null} />
-            <Info icon="timer" label="График"
-                  value={scheduleSummary(person['current_schedule'] as Parameters<typeof scheduleSummary>[0])}
-                  empty="Не назначен" />
-            <Info icon="hash" label="Табельный номер" value={text(person, 'employee_number')} />
-          </dl>
-
-          <div className="ec-reveal">
-            <span className="ec-reveal__title">
-              <Isx name="user" size={18} />
-              Контакты и личные данные
-            </span>
-            <button type="button" className="ec-link" aria-expanded={contacts}
-                    onClick={() => setContacts((was) => !was)}>
-              {contacts ? 'Скрыть' : 'Показать'}
-              <span className={contacts ? 'ec-reveal__arrow ec-reveal__arrow--on' : 'ec-reveal__arrow'} aria-hidden="true">
-                <Isx name="chevron" size={16} />
-              </span>
-            </button>
-          </div>
-          {contacts && (
-            <dl className="ec-info ec-facts--more">
-              <Info icon="user" label="Полное имя" value={text(person, 'full_name')} />
-              <Info icon="phone" label="Телефон" value={text(person, 'phone')} />
-              <Info icon="mail" label="Рабочая почта" value={text(person, 'corporate_email')} />
-              <Info icon="mail" label="Личная почта" value={text(person, 'personal_email')} />
-              <Info icon="cake" label="Дата рождения" value={text(person, 'birth_date')
-                ? dayMonthYear(text(person, 'birth_date') as string) : null} />
-              <Info icon="user" label="Пол" value={GENDER[text(person, 'gender') ?? ''] ?? null} />
-              <Info icon="team" label="Семейное положение" value={MARITAL[text(person, 'marital_status') ?? ''] ?? null} />
-            </dl>
-          )}
-        </section>
-
-        <section className="ec-col ec-col--side" aria-labelledby="ec-link-title">
-          <h2 id="ec-link-title" className="ec-h2">
-            <Isx name="send" size={20} variant="Bulk" className="ec-h2__icon" />
-            Связь с сотрудником
-          </h2>
-          <TelegramBlock id={id} rights={rights} version={version} onChanged={onChanged} />
-        </section>
-      </div>
-    </>
-  );
-}
-
-/** Сведение с иконкой: подпись сверху, значение снизу — читается сеткой. */
-function Info({ icon, label, value, empty = 'Не указано' }: {
-  icon: IsxName; label: string; value: string | null; empty?: string;
-}) {
-  return (
-    <div className="ec-info__item">
-      <span className="ec-info__icon" aria-hidden="true"><Isx name={icon} size={18} /></span>
-      <dt>{label}</dt>
-      <dd className={value ? undefined : 'ec-muted'}>{value ?? empty}</dd>
-    </div>
-  );
-}
-
-function todayNote(
-  journal: Block<api.DailyReport>, row: api.DailyRow | null, note: string | null, allowed: boolean,
-): string {
-  if (!allowed) return 'Нет права на посещаемость';
-  if (journal.state === 'loading') return 'Загружаем…';
-  if (journal.state === 'error') return 'Не удалось получить';
-  if (journal.state === 'denied') return 'Закрыто правами';
-  if (note) return note;
-  if (!row) return 'Нет данных за сегодня';
-  const zone = row.timezone;
-  if (row.state === 'IN_OFFICE' && row.first_entry_at) {
-    return `В офисе с ${clockOnDay(row.first_entry_at, zone, row.day)}`;
-  }
-  if (row.state === 'LEFT' && row.last_exit_at) {
-    return `Ушёл в ${clockOnDay(row.last_exit_at, zone, row.day)}`;
-  }
-  return dayState(row);
-}
-
-function noticeLine(item: api.QueueItem): string {
-  const absence = item.absence;
-  const days = absence?.first_day
-    ? dayRange(absence.first_day, absence.last_day ?? absence.first_day) : '';
-  const paper = absence?.requires_document
-    ? (certificateOf(item) ? 'справка приложена' : 'справки нет') : '';
-  return [days, paper].filter(Boolean).join(' · ') || 'Подробности — на вкладке заявок';
-}
-
-function Cell({ icon, title, value, note, link, onRetry }: {
-  icon?: IsxName; title: string; value: string; note: string;
-  link?: { label: string; go: () => void } | undefined;
-  onRetry?: (() => void) | undefined;
-}) {
-  return (
-    <div className="ec-cell">
-      <span className="ec-cell__top">
-        {icon && <span className="ec-cell__icon" aria-hidden="true"><Isx name={icon} size={20} variant="Bulk" /></span>}
-        <span className="ec-cell__title">{title}</span>
-      </span>
-      <strong className="ec-cell__value">{value}</strong>
-      {note && <span className="ec-cell__note">{note}</span>}
-      {onRetry && <button type="button" className="ec-link" onClick={onRetry}>Повторить</button>}
-      {link && !onRetry && (
-        <button type="button" className="ec-link" onClick={link.go}>{link.label}</button>
-      )}
-    </div>
-  );
-}
 
 function Fact({ label, value, empty = 'Не указано' }: {
   label: string; value: string | null; empty?: string;
@@ -600,9 +530,13 @@ const TELEGRAM_STATE: Record<string, { title: string; tone: string }> = {
  * лежит хеш токена, и достать её оттуда нельзя. Потерянная отзывается
  * и выпускается заново.
  */
-function TelegramBlock({ id, rights, version, onChanged }: {
+function TelegramBlock({ id, rights, version, onChanged, part = 'all' }: {
   id: string; rights: Rights; version: number; onChanged: () => void;
+  /** Строки «Связи с сотрудником» раскрывают каждая свою половину. */
+  part?: 'all' | 'telegram' | 'onboarding';
 }) {
+  const showTelegram = part !== 'onboarding';
+  const showOnboarding = part !== 'telegram';
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
   const [error, setError] = useState<string | null>(null);
@@ -666,6 +600,7 @@ function TelegramBlock({ id, rights, version, onChanged }: {
 
   return (
     <div className="ec-tg">
+      {showTelegram && (<>
       <div className="ec-fact ec-fact--pill">
         <dt>Telegram</dt>
         <dd>
@@ -707,7 +642,7 @@ function TelegramBlock({ id, rights, version, onChanged }: {
         </div>
       )}
 
-      {rights.telegramManage && !card && !linked && !awaiting && !rights.onboardingManage && (
+      {rights.telegramManage && !linked && !awaiting && (part === 'telegram' || (!card && !rights.onboardingManage)) && (
         <div className="ec-actions">
           <button type="button" className="ec-btn ec-btn--line" disabled={busy}
                   onClick={() => run(() => api.inviteToTelegram(id), (made) => {
@@ -719,10 +654,15 @@ function TelegramBlock({ id, rights, version, onChanged }: {
         </div>
       )}
 
-      <h2 className="ec-h2 ec-h2--gap">
-        <Isx name="teach" size={20} variant="Bulk" className="ec-h2__icon" />
-        Ознакомление
-      </h2>
+      </>)}
+
+      {showOnboarding && (<>
+      {part === 'all' && (
+        <h2 className="ec-h2 ec-h2--gap">
+          <Isx name="teach" size={20} variant="Bulk" className="ec-h2__icon" />
+          Ознакомление
+        </h2>
+      )}
       {!rights.onboardingRead ? (
         <p className="ec-muted">Нет права на ознакомление.</p>
       ) : plan.state === 'loading' ? (
@@ -789,6 +729,8 @@ function TelegramBlock({ id, rights, version, onChanged }: {
           )}
         </div>
       )}
+
+      </>)}
 
       {issued && (
         <div className="ec-issued">

@@ -1,0 +1,549 @@
+/* =============================================================================
+ * Профиль сотрудника, вариант B: один белый лист — слева «кто это»,
+ * справа вкладки и рабочая часть. Цвета — те же белый и синий CRM;
+ * все значения — токенами на корне `.pf`, в разметке цветов нет.
+ * ========================================================================== */
+
+.ec.pf {
+  --pf-page: #eef2f7;
+  --pf-card: #ffffff;
+  --pf-fill: #f4f7fb;
+  --pf-hover: #eef4fb;
+  --pf-picked: #e6f0fc;
+  --pf-head: #16335e;
+  --pf-text: #33455f;
+  --pf-muted: #556883;
+  --pf-faint: #6b7f99;
+  --pf-blue: #1f6fd0;
+  --pf-blue-hover: #1a5eb4;
+  --pf-blue-soft: #e8f1fc;
+  --pf-line: #dde5ee;
+  --pf-edge: #c9d6e6;
+  --pf-field: #788da8;
+  --pf-ok: #0f7a56;
+  --pf-ok-soft: #e2f5ed;
+  --pf-warn: #9a5a00;
+  --pf-warn-soft: #fdf2df;
+  --pf-bad: #b3261e;
+  --pf-bad-soft: #fdecea;
+  --pf-dash: #a9c4e8;
+  --pf-font: 'Manrope Variable', 'Manrope', 'Segoe UI', system-ui, sans-serif;
+  --pf-mono: SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+  --pf-focus: 0 0 0 3px rgba(31, 111, 208, 0.28);
+
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 24px 32px 48px;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--pf-text);
+  font-family: var(--pf-font);
+}
+
+.pf :where(button, a, input, select, textarea):focus-visible {
+  outline: 2px solid var(--pf-blue);
+  outline-offset: 2px;
+  box-shadow: var(--pf-focus);
+}
+
+.pf-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  margin: 0 0 14px;
+  padding: 4px 6px 4px 2px;
+  border-radius: 8px;
+  color: var(--pf-muted);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.pf-back:hover { background: var(--pf-hover); color: var(--pf-head); }
+
+/* --- лист ---------------------------------------------------------------- */
+.pf-sheet {
+  display: flex;
+  flex-wrap: wrap;
+  overflow: hidden;
+  border: 1px solid var(--pf-edge);
+  border-radius: 20px;
+  background: var(--pf-card);
+  box-shadow: 0 1px 2px rgba(16, 42, 77, 0.06), 0 8px 28px rgba(16, 42, 77, 0.06);
+}
+
+/* --- левая колонка ------------------------------------------------------- */
+.pf-aside {
+  flex: 0 0 316px;
+  width: 316px;
+  border-right: 1px solid var(--pf-line);
+}
+
+.pf-id {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px 24px 24px;
+  border-bottom: 1px solid var(--pf-line);
+  background: linear-gradient(180deg, #f3f8fe 0, var(--pf-card) 120px);
+  text-align: center;
+}
+.pf-id .pf-back { margin-bottom: 10px; }
+
+.pf-face { position: relative; display: inline-flex; width: 96px; height: 96px; }
+.pf-face__img {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  background: var(--pf-blue);
+  box-shadow: 0 0 0 6px #fff, 0 0 0 7px var(--pf-edge);
+  color: #fff;
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  object-fit: cover;
+}
+.pf-face__dot {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 20px;
+  height: 20px;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  background: #8a9ab0;
+}
+.pf-face__dot--green { background: var(--pf-ok); }
+.pf-face__dot--blue { background: var(--pf-blue); }
+.pf-face__dot--amber { background: #c98200; }
+.pf-face__dot--red { background: var(--pf-bad); }
+
+.pf-name {
+  margin: 18px 0 4px;
+  color: var(--pf-head);
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 28px;
+  letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
+}
+.pf-role { margin: 0 0 10px; color: var(--pf-muted); font-size: 14px; font-weight: 600; }
+.pf-pills { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
+
+.pf-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: var(--pf-fill);
+  color: var(--pf-muted);
+  font-size: 12.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.pf-pill::before { width: 7px; height: 7px; border-radius: 50%; background: currentColor; content: ''; }
+.pf-pill--green { background: var(--pf-ok-soft); color: var(--pf-ok); }
+.pf-pill--blue { background: var(--pf-blue-soft); color: var(--pf-blue); }
+.pf-pill--amber { background: var(--pf-warn-soft); color: var(--pf-warn); }
+.pf-pill--red { background: var(--pf-bad-soft); color: var(--pf-bad); }
+
+.pf-id__actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  width: 100%;
+  margin-top: 18px;
+}
+
+/* --- кнопки -------------------------------------------------------------- */
+.pf-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--pf-field);
+  border-radius: 10px;
+  background: var(--pf-card);
+  color: var(--pf-head);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.pf-btn:hover { background: var(--pf-hover); }
+.pf-btn--primary { border-color: var(--pf-blue); background: var(--pf-blue); color: #fff; }
+.pf-btn--primary:hover { border-color: var(--pf-blue-hover); background: var(--pf-blue-hover); }
+.pf-btn--sm { min-height: 34px; padding: 0 12px; font-size: 13px; }
+
+.pf-link, .pf-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--pf-blue);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.pf-link:hover, .pf-more:hover { color: var(--pf-blue-hover); text-decoration: underline; }
+
+/* --- блоки колонки ------------------------------------------------------- */
+.pf-block { padding: 22px 24px; border-bottom: 1px solid var(--pf-line); }
+.pf-block--last { border-bottom: 0; }
+.pf-block__title { margin: 0 0 12px; color: var(--pf-muted); font-size: 12px; font-weight: 700; }
+
+.pf-facts { display: grid; gap: 10px; margin: 0; }
+.pf-facts__row { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; }
+.pf-facts__row dt { flex: none; color: var(--pf-muted); }
+.pf-facts__row dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--pf-head);
+  font-weight: 700;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.pf-facts__row dd.pf-dash { color: var(--pf-faint); font-weight: 500; }
+.pf-mono { font-family: var(--pf-mono); font-size: 13px; }
+.pf-facts--more { margin-top: 14px; }
+
+.pf-act {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin: 0 0 4px;
+  padding: 10px 8px;
+  border: 0;
+  border-radius: 12px;
+  background: none;
+  color: var(--pf-text);
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+.pf-act:hover { background: var(--pf-hover); }
+.pf-act--on, .pf-act--on:hover { background: var(--pf-picked); }
+.pf-act__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  background: var(--pf-blue-soft);
+  color: var(--pf-blue);
+}
+.pf-act__text { display: grid; gap: 2px; min-width: 0; }
+.pf-act__text b { color: var(--pf-head); font-size: 14px; font-weight: 700; }
+.pf-act__text small { color: var(--pf-muted); font-size: 12px; line-height: 1.35; }
+.pf-act__arrow { color: var(--pf-faint); transition: transform 0.18s ease; }
+.pf-act--on .pf-act__arrow { transform: rotate(180deg); }
+
+.pf-panel { margin: 4px 0 12px; padding: 12px; border-radius: 12px; background: var(--pf-fill); font-size: 14px; }
+.pf-panel .ec-fact { padding: 4px 0; border: 0; }
+.pf-panel .ec-actions { margin-top: 10px; }
+
+/* --- правая часть -------------------------------------------------------- */
+.pf-main { flex: 1 1 520px; min-width: 0; }
+
+.pf .pf-tabs {
+  display: flex;
+  gap: 24px;
+  margin: 0;
+  padding: 0 28px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--pf-line);
+  scrollbar-width: none;
+}
+.pf .pf-tabs::-webkit-scrollbar { display: none; }
+.pf .pf-tabs .ec-tab {
+  flex: none;
+  padding: 16px 0 14px;
+  border-bottom: 2px solid transparent;
+  color: var(--pf-muted);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.pf .pf-tabs .ec-tab:hover { color: var(--pf-head); }
+.pf .pf-tabs .ec-tab--on { border-bottom-color: var(--pf-blue); color: var(--pf-blue); }
+
+.pf .pf-body { padding: 24px 28px; }
+.pf .pf-body--flush { padding: 0; }
+
+.pf-sec { padding: 24px 28px; border-bottom: 1px solid var(--pf-line); }
+.pf-sec:last-child { border-bottom: 0; }
+.pf-sec__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.pf-sec__title { margin: 0; color: var(--pf-head); font-size: 18px; font-weight: 700; letter-spacing: -0.01em; }
+.pf-sec__aside { color: var(--pf-muted); font-size: 13px; font-weight: 700; }
+
+.pf-quiet { margin: 0; color: var(--pf-muted); font-size: 14px; }
+.pf-failed { margin: 0; color: var(--pf-bad); font-size: 14px; }
+
+/* плашка состояния дня */
+.pf-plate {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: var(--pf-fill);
+  color: var(--pf-text);
+}
+.pf-plate__icon { flex: none; color: var(--pf-muted); }
+.pf-plate__text { flex: 1; min-width: 0; margin: 0; font-size: 14px; line-height: 1.45; }
+.pf-plate__text b { color: var(--pf-head); }
+.pf-plate--ok { background: var(--pf-ok-soft); }
+.pf-plate--ok .pf-plate__icon, .pf-plate--ok b { color: var(--pf-ok); }
+.pf-plate--warn { background: var(--pf-warn-soft); }
+.pf-plate--warn .pf-plate__icon, .pf-plate--warn b { color: var(--pf-warn); }
+
+/* шкала рабочего дня */
+.pf-scale { margin: 26px 0 18px; }
+.pf-scale__track {
+  position: relative;
+  height: 10px;
+  border: 1px dashed var(--pf-dash);
+  border-radius: 6px;
+  background: repeating-linear-gradient(135deg, var(--pf-blue-soft) 0 6px, var(--pf-fill) 6px 12px);
+}
+.pf-scale__done { position: absolute; top: -1px; bottom: -1px; border-radius: 6px; background: var(--pf-blue); }
+.pf-scale__now { position: absolute; top: -8px; bottom: -8px; width: 2px; margin-left: -1px; background: var(--pf-blue); }
+.pf-scale__time {
+  position: absolute;
+  bottom: calc(100% + 2px);
+  left: 50%;
+  transform: translateX(-50%);
+  color: var(--pf-blue);
+  font-family: var(--pf-mono);
+  font-size: 11px;
+  font-weight: 700;
+}
+.pf-scale__marks {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 8px;
+  color: var(--pf-muted);
+  font-family: var(--pf-mono);
+  font-size: 12px;
+}
+
+/* показатели */
+.pf-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.pf-stat {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1px solid var(--pf-line);
+  border-radius: 14px;
+}
+.pf-stat__title { color: var(--pf-muted); font-size: 13px; font-weight: 600; }
+.pf-stat__line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+.pf-stat__value { color: var(--pf-head); font-family: var(--pf-mono); font-size: 24px; font-weight: 700; letter-spacing: -0.02em; }
+.pf-stat__of { color: var(--pf-muted); font-size: 13px; }
+.pf-stat__note { color: var(--pf-muted); font-size: 12.5px; }
+
+/* неделя */
+.pf-week { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.pf-week__row { display: grid; grid-template-columns: 64px minmax(0, 1fr) 72px; align-items: center; gap: 12px; font-size: 13px; }
+.pf-week__day { color: var(--pf-text); font-weight: 600; }
+.pf-week__row--today .pf-week__day { color: var(--pf-blue); font-weight: 800; }
+.pf-week__bar {
+  display: block;
+  height: 10px;
+  overflow: hidden;
+  border: 1px solid var(--pf-line);
+  border-radius: 6px;
+  background: var(--pf-fill);
+}
+.pf-week__bar > span { display: block; height: 100%; border-radius: 6px; background: var(--pf-blue); }
+.pf-week__num { color: var(--pf-muted); font-family: var(--pf-mono); font-size: 12px; text-align: right; white-space: nowrap; }
+
+/* заявки */
+.pf-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.pf-list__row {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--pf-line);
+  border-radius: 12px;
+  background: var(--pf-card);
+  color: var(--pf-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+.pf-list__row:hover { background: var(--pf-hover); }
+.pf-list__icon, .pf-empty__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--pf-blue-soft);
+  color: var(--pf-blue);
+}
+.pf-list__text, .pf-empty__text { display: grid; gap: 2px; min-width: 0; }
+.pf-list__text b, .pf-empty__text b { color: var(--pf-head); font-size: 14px; }
+.pf-list__text small, .pf-empty__text small { color: var(--pf-muted); font-size: 12.5px; }
+
+.pf-empty {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px;
+  border: 1px dashed var(--pf-edge);
+  border-radius: 14px;
+}
+
+/* последние изменения */
+.pf-feed { display: grid; gap: 16px; margin: 0; padding: 0; list-style: none; }
+.pf-feed__item { position: relative; display: grid; gap: 3px; padding-left: 26px; }
+.pf-feed__dot {
+  position: absolute;
+  top: 4px;
+  left: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--pf-blue);
+  box-shadow: 0 0 0 4px var(--pf-blue-soft);
+}
+.pf-feed__item b { color: var(--pf-head); font-size: 14px; }
+.pf-feed__item small { color: var(--pf-muted); font-size: 12.5px; }
+
+/* скелетоны в размер настоящих элементов */
+.pf-sk {
+  display: block;
+  border-radius: 8px;
+  background: linear-gradient(90deg, #eef2f8 0%, #f7f9fc 50%, #eef2f8 100%);
+  background-size: 200% 100%;
+  animation: pf-shimmer 1.1s linear infinite;
+}
+.pf-sk--num { width: 96px; height: 30px; }
+.pf-sk--plate { height: 52px; margin-bottom: 18px; border-radius: 12px; }
+.pf-sk--bar { height: 10px; border-radius: 6px; }
+.pf-sk--row { height: 58px; margin-bottom: 6px; border-radius: 12px; }
+@keyframes pf-shimmer { to { background-position: -200% 0; } }
+
+/* --- адаптив ------------------------------------------------------------- */
+@media (max-width: 1100px) {
+  .ec.pf { padding: 20px 20px 40px; }
+  .pf-stats { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+}
+
+@media (max-width: 760px) {
+  .ec.pf { padding: 16px 16px 32px; }
+  .pf-aside { flex: 1 1 100%; width: auto; border-right: 0; border-bottom: 1px solid var(--pf-line); }
+  .pf-main { flex: 1 1 100%; }
+  .pf .pf-tabs { padding: 0 16px; gap: 20px; }
+  .pf .pf-body { padding: 20px 16px; }
+  .pf .pf-body--flush { padding: 0; }
+  .pf-sec { padding: 20px 16px; }
+  .pf-block { padding: 20px 16px; }
+  .pf-stats { grid-template-columns: minmax(0, 1fr); }
+  .pf-plate { flex-wrap: wrap; }
+  .pf-sec__head { flex-wrap: wrap; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-sk { animation: none; }
+  .pf-btn, .pf-act, .pf-act__arrow, .pf-list__row { transition: none; }
+}
+
+/* =============================================================================
+ * Ширина и высота: на большом мониторе лист во всю рабочую область, а не
+ * узкой полосой по центру; на ноутбуке «Обзор» раскладывается в две
+ * колонки, а колонка «кто это» стоит на месте, пока листается правая.
+ * ========================================================================== */
+.ec.pf { max-width: none; padding: 20px 24px 32px; }
+.pf-sheet { overflow: clip; align-items: flex-start; }
+.pf-aside {
+  position: sticky;
+  top: 12px;
+  align-self: flex-start;
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+  border-right: 0;
+  scrollbar-width: thin;
+}
+.pf-main { align-self: stretch; border-left: 1px solid var(--pf-line); }
+.pf-id { padding: 16px 22px 20px; }
+.pf-block { padding: 18px 22px; }
+.pf-facts { gap: 8px; }
+
+.pf-sec { padding: 20px 24px; }
+.pf-sec__head { margin-bottom: 14px; }
+.pf-scale { margin: 22px 0 14px; }
+.pf-plate { margin-bottom: 14px; padding: 12px 14px; }
+
+@media (min-width: 1180px) {
+  .pf-overview {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas:
+      'today today'
+      'week  requests'
+      'week  changes';
+    grid-template-rows: auto auto 1fr;
+  }
+  .pf-overview > :nth-child(1) { grid-area: today; }
+  .pf-overview > :nth-child(2) { grid-area: week; border-right: 1px solid var(--pf-line); border-bottom: 0; }
+  .pf-overview > :nth-child(3) { grid-area: requests; }
+  .pf-overview > :nth-child(4) { grid-area: changes; border-bottom: 0; }
+}
+
+@media (max-width: 760px) {
+  .pf-aside { position: static; max-height: none; overflow: visible; border-bottom: 1px solid var(--pf-line); }
+  .pf-main { border-left: 0; }
+}
+
+/* Подпись «сейчас» — одной строкой; крупные числа — Manrope с цифрами
+   одной ширины (моноширинный запасной шрифт делал «ч» и слова рваными),
+   моноширинный остаётся для времени шкалы и табельного номера. */
+.ec.pf { --pf-mono: ui-monospace, 'Cascadia Mono', SFMono-Regular, Menlo, Consolas, 'Roboto Mono', monospace; }
+.pf-scale__time { white-space: nowrap; }
+.pf-stat__value { font-family: var(--pf-font); font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.pf-week__num { font-family: var(--pf-font); font-variant-numeric: tabular-nums; font-weight: 600; }
+
+/* Лист не шире своей колонки: иначе ряд вкладок без переноса раздувал
+   его на телефоне шире экрана. */
+.ec.pf { box-sizing: border-box; width: 100%; min-width: 0; max-width: 100%; }
+.pf-sheet { min-width: 0; }
+
+@media (max-width: 760px) {
+  .ec.pf { padding: 0 0 24px; }
+}
