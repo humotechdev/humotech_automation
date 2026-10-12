@@ -541,7 +541,7 @@ a.at-row:hover { background: #f8fbff; }
   align-items: center;
   gap: 6px;
   height: 30px;
-  padding: 0 12px 0 10px;
+  padding: 0 14px;
   border: 1px solid #c9dcf5;
   border-radius: 999px;
   background: var(--at-blue-soft);

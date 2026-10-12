@@ -289,9 +289,6 @@ export function FieldWorkControls({ employeeId, employeeName, day, scheduledStar
 
         {canStart && !open && (
           <button ref={startRef} type="button" className="fw__primary fw__start" onClick={() => setOpen(true)}>
-            <svg className="fw__icon" viewBox="0 0 16 16" aria-hidden="true">
-              <path d="M8 1.5a4.5 4.5 0 0 0-4.5 4.5c0 3.2 4.5 8.5 4.5 8.5s4.5-5.3 4.5-8.5A4.5 4.5 0 0 0 8 1.5Zm0 6.3A1.8 1.8 0 1 1 8 4.2a1.8 1.8 0 0 1 0 3.6Z" />
-            </svg>
             {status ? 'Отправить новый запрос' : 'Запросить подтверждение'}
           </button>
         )}
@@ -305,9 +302,6 @@ export function FieldWorkControls({ employeeId, employeeName, day, scheduledStar
                  closeForm();
                }}>
             <p className="fw__note">
-              <svg className="fw__icon" viewBox="0 0 16 16" aria-hidden="true">
-                <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1Zm.9 10.6H7.1V7h1.8v4.6ZM8 5.9a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z" />
-              </svg>
               <span>Сотрудник получит запрос в Telegram. До его ответа день не засчитывается.</span>
             </p>
             {fields}

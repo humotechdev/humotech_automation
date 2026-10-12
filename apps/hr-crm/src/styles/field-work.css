@@ -102,3 +102,17 @@
   .fw__primary, .fw__ghost, .fw--inline .fw__check, .fw--inline .fw__field input, .fw--inline .fw__field textarea { transition: none; }
   .fw__primary:active:not(:disabled), .fw__ghost:active:not(:disabled) { transform: none; }
 }
+
+/* --- мягкая карточка (просьба владельца 12.10: «блок выглядит квадратно») --- */
+.fw--inline { padding: 16px; border: 1px solid #e6edf6; border-radius: 16px; background: #fff;
+  box-shadow: 0 1px 2px rgba(16, 42, 84, 0.04), 0 6px 18px rgba(16, 42, 84, 0.05); }
+.fw--inline .fw__head { margin-bottom: 10px; }
+.fw--inline .fw__note { margin-bottom: 14px; padding: 10px 12px; border-radius: 12px; background: #f5f8fc; }
+.fw--inline .fw__field input, .fw--inline .fw__field textarea { border-radius: 12px; background: #fbfcfe; }
+.fw--inline .fw__field input:focus, .fw--inline .fw__field textarea:focus { background: #fff; }
+.fw--inline .fw__check { border-radius: 14px; background: #fbfcfe; }
+.fw--inline .fw__check--on { background: #eef5ff; }
+.fw--inline .fw__footer { position: static; margin: 14px 0 0; padding: 0; border-top: 0; background: none; }
+.fw--inline .fw__row .fw__primary, .fw--inline .fw__row .fw__ghost { flex: 1 1 0; }
+.fw__primary, .fw__ghost { height: 40px; border-radius: 12px; }
+.fw__state { border-radius: 14px; }
