@@ -173,6 +173,13 @@ const COUNTS = {
   statuses: { NEW: 2, IN_PROGRESS: 3, WAITING_EMPLOYEE: 1, CLOSED: 24 },
   total: 30,
   quick: { all: 4, unanswered: 2, mine: 1, urgent: 1, unread: 1 },
+  // ?counts=12,14 — крупные счётчики быстрых фильтров (проверка ширины ряда).
+  ...(new URLSearchParams(window.location.search).get('counts')
+    ? (() => {
+      const [unanswered, urgent] = new URLSearchParams(window.location.search).get('counts')!.split(',').map(Number);
+      return { quick: { all: 4, unanswered: unanswered ?? 0, mine: 1, urgent: urgent ?? 0, unread: 1 } };
+    })()
+    : {}),
 };
 
 const answer = (body: unknown) =>

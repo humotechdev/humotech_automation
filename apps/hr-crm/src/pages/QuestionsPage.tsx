@@ -691,8 +691,10 @@ export function QuestionsPage() {
                                 if (one.key !== quick) clickRow(1);
                                 patch({ quick: one.key === 'all' ? null : one.key, id: null });
                               }}>
-                        {one.title}
-                        {count !== null && <span className="tk-chip__n">{count}</span>}
+                        <span className="tk-chip__text">{one.title}</span>
+                        {/* Счётчик: убрать — удалить эту строку. Больше 99 — «99+»:
+                            ряд чипов должен помещаться в колонку очереди. */}
+                        {count !== null && <span className="tk-chip__n" title={String(count)}>{count > 99 ? '99+' : count}</span>}
                       </button>
                     );
                   })}

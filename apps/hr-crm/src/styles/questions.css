@@ -181,9 +181,9 @@ body.tk-type .app-popover {
   flex: 1 1 0;
   min-height: 0;
   display: grid;
-  /* Очередь не уже 296px: в ней целиком, без прокрутки вбок, должны
-     стоять быстрые фильтры со счётчиками. */
-  grid-template-columns: minmax(296px, 25fr) minmax(0, 53fr) minmax(290px, 22fr);
+  /* Очередь не уже 304px: в ней целиком, без прокрутки вбок, должны
+     стоять быстрые фильтры с двузначными счётчиками. */
+  grid-template-columns: minmax(304px, 25fr) minmax(0, 53fr) minmax(290px, 22fr);
   margin: 0 -24px;
 }
 
@@ -374,7 +374,7 @@ body.tk-type .app-popover {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
@@ -388,12 +388,13 @@ body.tk-type .app-popover {
  */
 .tk-chip {
   display: inline-flex;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   align-items: center;
   justify-content: center;
   gap: 6px;
+  min-width: 0;
   height: 32px;
-  padding: 0 9px;
+  padding: 0 8px;
   border: 0;
   border-radius: 8px;
   background: #eef2f7;
@@ -406,6 +407,12 @@ body.tk-type .app-popover {
 }
 
 .tk-chip:hover { background: #e6ecf4; }
+
+/* Счётчик не сжимается никогда; при крайней нехватке места (трёхзначные
+   числа) укорачивается подпись, а не обрезается кружок. */
+.tk-chip__text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tk-chip__n,
+.tk-chip--all { flex-shrink: 0; }
 
 /* Рамка фокуса — внутри кнопки: снаружи её срезал бы край прокрутки. */
 .tk-chip:focus-visible { outline: 2px solid var(--tk-blue); outline-offset: -2px; }
@@ -1271,7 +1278,7 @@ a.tk-person__name:hover { color: var(--tk-blue); }
 /* Правая зона уезжает в выдвижную панель: очереди и переписке нужна
    ширина, а контекст смотрят по требованию. */
 @media (max-width: 1279px) {
-  .tk-work { grid-template-columns: minmax(250px, 32fr) minmax(0, 68fr); }
+  .tk-work { grid-template-columns: minmax(300px, 32fr) minmax(0, 68fr); }
   .tk-only-narrow { display: inline-grid; }
 
   .tk-side {
