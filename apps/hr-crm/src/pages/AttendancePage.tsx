@@ -192,6 +192,16 @@ export function AttendancePage() {
     refresh: () => setAttempt((n) => n + 1),
   };
 
+  // Вкладка правее прежней — содержимое приезжает справа, левее — слева.
+  const [shownMode, setShownMode] = useState<Mode>(mode);
+  const [slide, setSlide] = useState<'next' | 'prev' | 'none'>('none');
+  if (shownMode !== mode) {
+    const was = MODES.findIndex((one) => one.key === shownMode);
+    const now = MODES.findIndex((one) => one.key === mode);
+    setSlide(now > was ? 'next' : 'prev');
+    setShownMode(mode);
+  }
+
   const views: Record<Mode, View> = {
     day: useDayMode(mode === 'day', ctx),
     log: useLogMode(mode === 'log', ctx),
@@ -222,7 +232,9 @@ export function AttendancePage() {
             )}
           </header>
 
-          <div className="at-strip">{view.strip}</div>
+          <div className="at-strip">
+            <div key={mode} className={`at-slide at-slide--${slide}`}>{view.strip}</div>
+          </div>
 
           <SlideTabs
             label="Режим посещаемости"
@@ -233,7 +245,7 @@ export function AttendancePage() {
           />
 
           <div className="at-place">
-            <div key={mode} className="at-pane" role="tabpanel" aria-label={MODES.find((one) => one.key === mode)?.title}>
+            <div key={mode} className={`at-pane at-slide--${slide}`} role="tabpanel" aria-label={MODES.find((one) => one.key === mode)?.title}>
               {view.body}
             </div>
           </div>
@@ -281,7 +293,7 @@ function useDayMode(active: boolean, ctx: Ctx): View {
   }), [day, office, region, department]);
   const key = `${JSON.stringify(scope)}|${attempt}`;
 
-  const [cards] = useBlock((signal) => api.dashboard(scope, signal), key, active);
+  const [cards, , cardsNow] = useBlock((signal) => api.dashboard(scope, signal), key, active);
   // Сдвиг явки к прошлому дню — посчитан сервером одним правилом.
   const [shift] = useBlock(
     (signal) => api.analyticsOverview({
@@ -293,7 +305,7 @@ function useDayMode(active: boolean, ctx: Ctx): View {
     key,
     active,
   );
-  const [roster] = useBlock((signal) => api.presenceDay(scope, signal), key, active);
+  const [roster, , rosterNow] = useBlock((signal) => api.presenceDay(scope, signal), key, active);
 
   useEffect(() => {
     if (!active) return;
@@ -363,7 +375,7 @@ function useDayMode(active: boolean, ctx: Ctx): View {
       </>
     ),
     strip: (
-      <Guard block={cards} name="показатели дня" strip>
+      <Guard block={cards} stale={cardsNow.stale} name="показатели дня" strip="day">
         {() => (
           <div className="at-facts">
             <div className="at-fact at-fact--main">
@@ -443,7 +455,7 @@ function useDayMode(active: boolean, ctx: Ctx): View {
             <span role="columnheader" className="at-right">Действие</span>
           </div>
           <div className="at-table__body">
-            <Guard block={roster} name="сотрудников">
+            <Guard block={roster} stale={rosterNow.stale} name="сотрудников" cols={DAY_COLS}>
               {(data) => (
                 <>
                   {data.truncated && <p className="at-warn">Показаны не все сотрудники: состав больше одного ответа. Сузьте фильтры.</p>}
@@ -569,7 +581,7 @@ function useLogMode(active: boolean, ctx: Ctx): View {
 
   // Весь день целиком, страницами по 200: счётчики, активность по часам и
   // поиск считаются по всему дню, а не по первой странице.
-  const [log] = useBlock(async (signal) => {
+  const [log, , logNow] = useBlock(async (signal) => {
     const items: api.EventRow[] = [];
     let cursor = '';
     let more = true;
@@ -634,7 +646,7 @@ function useLogMode(active: boolean, ctx: Ctx): View {
       </>
     ),
     strip: (
-      <Guard block={log} name="журнал" strip>
+      <Guard block={log} stale={logNow.stale} name="журнал" strip="three">
         {() => (
           <div className="at-facts at-facts--three">
             <Big icon="doc" value={all.length} title={plural(all.length, ['событие', 'события', 'событий'])} note={isToday ? 'за сегодня' : 'за день'} />
@@ -694,7 +706,7 @@ function useLogMode(active: boolean, ctx: Ctx): View {
             <span role="columnheader" className="at-right">Действие</span>
           </div>
           <div className="at-table__body">
-            <Guard block={log} name="журнал">
+            <Guard block={log} stale={logNow.stale} name="журнал" cols={LOG_COLS}>
               {(data) => (
                 <>
                   {data.capped && <p className="at-warn">Показаны первые {LOG_CAP} событий дня. Сузьте отбор по офису.</p>}
@@ -773,12 +785,12 @@ function useWeekMode(active: boolean, ctx: Ctx): View {
   const now = today();
 
   // Ячейки — состояния, которые сервер отдал по каждому дню недели.
-  const [grid] = useBlock(
+  const [grid, , gridNow] = useBlock(
     (signal) => Promise.all(days.map((d) => (d > now ? Promise.resolve(null) : api.presenceDay({ date: d, ...place }, signal)))),
     key, active,
   );
   // Полоса и «Итого» — сводка сервера за неделю, со сравнением с прошлой.
-  const [summary] = useBlock(
+  const [summary, , summaryNow] = useBlock(
     (signal) => api.analyticsOverview({ date_from: monday, date_to: sunday, ...place, people_limit: '2000' }, signal),
     key, active,
   );
@@ -844,7 +856,7 @@ function useWeekMode(active: boolean, ctx: Ctx): View {
       </>
     ),
     strip: (
-      <Guard block={summary} name="сводку недели" strip>
+      <Guard block={summary} stale={summaryNow.stale} name="сводку недели" strip="four">
         {(data) => (
           <div className="at-facts at-facts--four">
             <Share label="Явка за неделю" share={data.summary.attendance} diff={data.summary.difference_points} against="к прошлой неделе" />
@@ -866,7 +878,10 @@ function useWeekMode(active: boolean, ctx: Ctx): View {
             return (
               <span key={d} className="at-daysline__cell">
                 <small>{weekdayOf(d)}</small>
-                <b>{d > now ? '—' : value === null ? '—' : `${Math.round(value)}%`}</b>
+                {/* Пока сводка в пути — заготовка, а не прочерк: прочерк значит «данных нет». */}
+                {summary.state === 'loading' || summaryNow.stale
+                  ? <i className="at-ghost at-sk-pct" aria-hidden="true" />
+                  : <b>{d > now ? '—' : value === null ? '—' : `${Math.round(value)}%`}</b>}
                 <span className="at-meter at-meter--thin"><i style={{ width: `${value ?? 0}%` }} /></span>
               </span>
             );
@@ -894,7 +909,7 @@ function useWeekMode(active: boolean, ctx: Ctx): View {
             <span role="columnheader" className="at-center">Итого</span>
           </div>
           <div className="at-table__body">
-            <Guard block={grid} name="неделю">
+            <Guard block={grid} stale={gridNow.stale} name="неделю" cols={WEEK_COLS}>
               {(data) => (
                 <>
                   {data.some((one) => one?.truncated) && <p className="at-warn">Показаны не все сотрудники: состав больше одного ответа. Сузьте фильтры.</p>}
@@ -991,7 +1006,7 @@ function usePeriodMode(active: boolean, ctx: Ctx): View {
   };
   const key = `${from}|${to}|${office}|${region}|${department}|${attempt}`;
 
-  const [overview] = useBlock(
+  const [overview, , overviewNow] = useBlock(
     (signal) => api.analyticsOverview({ date_from: from, date_to: to, ...place, people_limit: '2000' }, signal),
     key, active,
   );
@@ -1037,7 +1052,7 @@ function usePeriodMode(active: boolean, ctx: Ctx): View {
       </>
     ),
     strip: (
-      <Guard block={overview} name="сводку периода" strip>
+      <Guard block={overview} stale={overviewNow.stale} name="сводку периода" strip="four">
         {(data) => {
           const s = data.summary;
           const absences = s.vacation_days + s.sick_leave_days + s.other_absence_days;
@@ -1086,7 +1101,7 @@ function usePeriodMode(active: boolean, ctx: Ctx): View {
               <span role="columnheader" />
             </div>
             <div className="at-table__body">
-              <Guard block={overview} name="сотрудников">
+              <Guard block={overview} stale={overviewNow.stale} name="сотрудников" cols={PERIOD_COLS}>
                 {() => slice.length === 0 ? <p className="at-empty">{people.length === 0 ? 'За период по графику никого не ждали.' : 'По этим условиям никого нет.'}</p> : slice.map((one) => {
                   const percent = one.attendance.percent;
                   const absent = (one.vacation_days ?? 0) + (one.sick_days ?? 0) + (one.other_days ?? 0);
@@ -1118,7 +1133,7 @@ function usePeriodMode(active: boolean, ctx: Ctx): View {
         </section>
 
         <aside className="at-split__side" aria-label="Аналитика периода">
-          <Guard block={overview} name="аналитику">
+          <Guard block={overview} stale={overviewNow.stale} name="аналитику" side>
             {(data) => (
               <>
                 <section className="at-side-part">
@@ -1287,38 +1302,98 @@ function Footer({ text, page, pages, onGo }: { text: string; page: number; pages
   );
 }
 
+/** Ячейка заготовки: какой формы будет то, что придёт в эту колонку. */
+type GhostCell = 'who' | 'text' | 'short' | 'time' | 'num' | 'pill' | 'btn' | 'cell' | 'bar' | 'none';
+
+// Колонки заготовок — те же, что у таблиц режимов, и стоят в той же сетке.
+const DAY_COLS: GhostCell[] = ['who', 'text', 'short', 'time', 'time', 'short', 'pill', 'btn'];
+const LOG_COLS: GhostCell[] = ['time', 'who', 'text', 'text', 'short', 'pill', 'btn'];
+const WEEK_COLS: GhostCell[] = ['who', 'text', 'cell', 'cell', 'cell', 'cell', 'cell', 'cell', 'cell', 'short'];
+const PERIOD_COLS: GhostCell[] = ['who', 'num', 'num', 'bar', 'num', 'num', 'num', 'num', 'none'];
+
+const STRIP_CLASS = { day: 'at-facts', three: 'at-facts at-facts--three', four: 'at-facts at-facts--four' };
+
 /**
- * Обёртка блока: загрузка — заготовкой строк, ошибка и отказ — словами.
- * Ни одно из состояний не выглядит как ноль.
+ * Обёртка блока: загрузка — заготовкой той же формы, что и данные,
+ * ошибка и отказ — словами. Ни одно из состояний не выглядит как ноль.
+ *
+ * При входе в режим блок может держать ответ прошлого фильтра (другой
+ * день, другой офис). Такие числа не показываются — до свежего ответа
+ * стоит заготовка. После него смена фильтра оставляет прежние данные на
+ * месте, как и везде: таблица не схлопывается на каждый запрос.
  */
-function Guard<T>({ block, name, children, strip }: {
+function Guard<T>({ block, name, children, strip, cols, side = false, stale = false }: {
   block: Block<T>;
   name: string;
   children: (data: T) => ReactNode;
-  strip?: boolean;
+  strip?: keyof typeof STRIP_CLASS;
+  cols?: GhostCell[];
+  side?: boolean;
+  stale?: boolean;
 }) {
-  if (block.state === 'ready') return <>{children(block.data)}</>;
-  if (block.state === 'loading') {
-    return strip ? (
-      <div className="at-facts at-facts--ghost" aria-label={`Загружаем ${name}`}>
-        {[0, 1, 2].map((one) => <span key={one} className="at-ghost at-ghost--block" />)}
-      </div>
-    ) : (
-      <div className="at-skeleton" aria-label={`Загружаем ${name}`}>
-        {[0, 1, 2, 3, 4, 5].map((one) => (
-          <span key={one} className="at-skeleton__row">
-            <span className="at-ghost at-ghost--round" />
-            <span className="at-ghost" />
-            <span className="at-ghost at-ghost--short" />
-          </span>
-        ))}
-      </div>
+  const fresh = block.state !== 'loading' && !stale;
+  const [settled, setSettled] = useState(fresh);
+  if (!settled && fresh) setSettled(true);
+  const waiting = block.state === 'loading' || (!settled && stale);
+
+  if (block.state === 'ready' && !waiting) return <>{children(block.data)}</>;
+  if (waiting) {
+    return (
+      <>
+        <span className="visually-hidden" role="status">Загружаем {name}…</span>
+        {strip ? <GhostStrip shape={strip} /> : side ? <GhostSide /> : <GhostRows cols={cols ?? DAY_COLS} />}
+      </>
     );
   }
   const text = block.state === 'denied'
     ? `Нет доступа: ${name}.`
     : `Не удалось загрузить ${name}. Данные не показаны — это не ноль.`;
   return <p className={strip ? 'at-empty at-empty--strip' : 'at-empty at-empty--bad'}>{text}</p>;
+}
+
+function GhostStrip({ shape }: { shape: keyof typeof STRIP_CLASS }) {
+  const count = shape === 'four' ? 4 : 3;
+  return (
+    <div className={`${STRIP_CLASS[shape]} at-facts--sk`} aria-hidden="true">
+      {Array.from({ length: count }, (_, n) => (
+        <div key={n} className="at-fact">
+          <i className="at-ghost at-sk-label" />
+          <i className="at-ghost at-sk-big" />
+          <i className="at-ghost at-sk-line" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function GhostRows({ cols }: { cols: GhostCell[] }) {
+  return (
+    <div className="at-sk-rows" aria-hidden="true">
+      {[0, 1, 2, 3, 4, 5, 6, 7].map((row) => (
+        <div key={row} className="at-row at-row--sk">
+          {cols.map((cell, n) => (
+            <span key={n} className={`at-sk at-sk--${cell}`}>
+              {cell === 'who' && <i className="at-ghost at-ghost--round" />}
+              {cell !== 'none' && <i className="at-ghost" />}
+            </span>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function GhostSide() {
+  return (
+    <div className="at-sk-side" aria-hidden="true">
+      {['at-sk-chart', 'at-sk-bars', 'at-sk-list'].map((shape) => (
+        <section key={shape} className="at-side-part">
+          <i className="at-ghost at-sk-label" />
+          <i className={`at-ghost ${shape}`} />
+        </section>
+      ))}
+    </div>
+  );
 }
 
 // --- мелочи ---------------------------------------------------------------------------

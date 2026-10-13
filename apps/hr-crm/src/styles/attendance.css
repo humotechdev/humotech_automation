@@ -295,23 +295,34 @@ body:has(.at) .cal,
 
 /* --- место под режим ------------------------------------------------------------ */
 
-.at-place { position: relative; flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+.at-place { position: relative; flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; overflow-x: clip; }
 
 .at-pane {
   flex: 1 1 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  animation: at-in 140ms ease-out;
 }
 
-@keyframes at-in {
-  from { opacity: 0; transform: translateY(4px); }
+/* Режим приезжает со стороны выбранной вкладки: правее — справа, левее — слева.
+   Полоса показателей едет вместе с ним. Первое открытие — без движения. */
+.at-strip { overflow-x: clip; }
+.at-slide { height: 100%; }
+.at-slide--next { animation: at-in-next 240ms cubic-bezier(0.2, 0, 0, 1); }
+.at-slide--prev { animation: at-in-prev 240ms cubic-bezier(0.2, 0, 0, 1); }
+
+@keyframes at-in-next {
+  from { opacity: 0; transform: translateX(32px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes at-in-prev {
+  from { opacity: 0; transform: translateX(-32px); }
   to { opacity: 1; transform: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .at-pane { animation: none; }
+  .at-slide--next, .at-slide--prev { animation: none; }
   .at-tabs__ink--move { transition: none; }
 }
 
@@ -745,6 +756,39 @@ a.at-row:hover { background: #f8fbff; }
 .at-ghost--block { height: 100%; border-radius: 12px; }
 
 @keyframes at-ghost { to { background-position: -200% 0; } }
+
+/* Заготовки по форме данных: полоса — те же ячейки, строки — та же сетка
+   колонок, что у таблицы режима, правая колонка периода — её три части. */
+.at-facts--sk .at-fact { gap: 9px; }
+.at-sk-label { width: 42%; height: 9px; }
+.at-sk-big { width: 34%; height: 22px; border-radius: 8px; }
+.at-sk-line { width: 72%; height: 8px; }
+
+.at-row--sk { pointer-events: none; }
+.at-sk { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.at-sk > .at-ghost:not(.at-ghost--round) { flex: 1 1 auto; max-width: 80%; }
+.at-sk--who > .at-ghost--round { flex: 0 0 30px; }
+.at-sk--who > .at-ghost:last-child { max-width: 140px; }
+.at-sk--short > .at-ghost { max-width: 60%; }
+.at-sk--time > .at-ghost { max-width: 44px; }
+.at-sk--num { justify-content: center; }
+.at-sk--num > .at-ghost { max-width: 26px; }
+.at-sk--pill > .at-ghost { height: 22px; max-width: 120px; border-radius: 11px; }
+.at-sk--btn { justify-content: flex-end; }
+.at-sk--btn > .at-ghost { height: 26px; max-width: 64px; border-radius: 8px; }
+.at-sk--cell > .at-ghost { height: 30px; max-width: none; border-radius: 8px; }
+.at-sk--bar > .at-ghost { height: 6px; max-width: none; }
+
+.at-sk-pct { justify-self: end; width: 30px; height: 10px; }
+
+.at-sk-side .at-side-part { display: flex; flex-direction: column; gap: 12px; }
+.at-sk-chart { height: 90px; border-radius: 10px; }
+.at-sk-bars { height: 70px; border-radius: 10px; }
+.at-sk-list { height: 110px; border-radius: 10px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .at-ghost { animation: none; }
+}
 
 /* --- карточка дня ------------------------------------------------------------------ */
 

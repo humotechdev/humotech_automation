@@ -156,11 +156,15 @@ function events(day: string) {
 const answer = (body: unknown) =>
   new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
 
+// `?delay=1200` — данные режимов приходят с задержкой, чтобы видеть заготовки.
+const DELAY = Number(new URLSearchParams(window.location.search).get('delay') ?? '0');
+
 window.fetch = async (input: RequestInfo | URL) => {
   const url = new URL(String(input), 'http://x');
   const q = url.searchParams;
   const path = url.pathname;
   if (path.includes('/auth/')) return answer(HR);
+  if (DELAY > 0) await new Promise((done) => window.setTimeout(done, DELAY));
   if (path.includes('/offices')) return answer({ items: [{ id: 'o-1', code: 'HQ', name: 'Главный офис', status: 'ACTIVE', region_id: 'r-1' }, { id: 'o-2', code: 'RG', name: 'Региональный офис', status: 'ACTIVE', region_id: 'r-1' }] });
   if (path.includes('/departments')) return answer({ items: ['Sales', 'Support', 'HR', 'Finance', 'IT', 'Logistics'].map((name, i) => ({ id: `d-${i}`, name })), next_cursor: null, has_more: false });
   if (path.includes('/dashboard')) return answer(dashboard(q.get('date') ?? TODAY));
