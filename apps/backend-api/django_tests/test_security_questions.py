@@ -360,8 +360,9 @@ class TestReplyContent:
         hr.post(f"{URL}/{question.id}/reply/", {"text": text}, format="json")
 
         body = Notification.objects.get().body
-        assert body.endswith(text)
-        assert "Вопрос {number} {0} %(x)s {{7*7}}" in body
+        assert body == f"HR ответил на ваш вопрос\n\n{text}"
+        # Вопрос в уведомление больше не цитируется вовсе.
+        assert "Вопрос {number}" not in body
         assert "49" not in body
 
     def test_reply_fits_telegram_message_limit(self, hr, employee, linked_account):
@@ -375,7 +376,7 @@ class TestReplyContent:
         # Предел Telegram — 4096 единиц UTF-16 на сообщение.
         assert len(body.encode("utf-16-le")) // 2 <= 4096
         assert body.endswith(text)
-        assert body.startswith(f"💬 Ответ HR по обращению №{question.number}")
+        assert body.startswith("HR ответил на ваш вопрос")
 
     def test_emoji_reply_fits_telegram_message_limit(self, hr, employee, linked_account):
         question = ask(employee)
@@ -398,12 +399,14 @@ class TestReplyContent:
         assert not Notification.objects.exists()
         assert not QuestionMessage.objects.filter(question=question, kind="HR").exists()
 
-    def test_short_reply_keeps_quote(self, hr, employee, linked_account):
+    def test_reply_does_not_quote_the_question(self, hr, employee, linked_account):
+        # Цитата вопроса снята: первое сообщение приходит в ответ на только
+        # что заданный вопрос, а последующие — продолжение разговора.
         question = ask(employee, "Как перенести отпуск?")
 
         hr.post(f"{URL}/{question.id}/reply/", {"text": "Можно."}, format="json")
 
-        assert "Вы спрашивали: «Как перенести отпуск?»" in Notification.objects.get().body
+        assert Notification.objects.get().body == "HR ответил на ваш вопрос\n\nМожно."
 
     def test_html_is_passed_as_plain_text(self, hr, employee, linked_account):
         """Сервер не превращает текст в разметку: экранирование — дело отправщика.

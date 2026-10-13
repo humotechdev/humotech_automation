@@ -131,6 +131,11 @@ class EscalateRequestSerializer(serializers.Serializer):
         required=False, allow_null=True,
         help_text="Повтор той же отправки не даёт второго обращения",
     )
+    starts_question = serializers.BooleanField(
+        required=False, default=False,
+        help_text="Человек сам нажал «Написать HR»: с этого сообщения "
+                  "начинается новый вопрос. Ответ на сообщение HR — false",
+    )
 
 
 class EscalateResultSerializer(serializers.Serializer):
@@ -161,6 +166,7 @@ class EscalateView(EmployeeSelfView):
             self.context,
             text=data["text"],
             telegram_message_id=data.get("telegram_message_id"),
+            starts_question=data.get("starts_question", False),
         )
         return Response(
             {

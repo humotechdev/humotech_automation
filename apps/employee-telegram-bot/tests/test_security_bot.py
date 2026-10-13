@@ -108,8 +108,11 @@ class TestEscaping:
         body = text.ask_answered(EVIL, [EVIL, "Правила <внутренние>"])
         assert_no_injection(body)
 
-    def test_ask_hr_number(self):
-        assert_no_injection(text.ask_hr_sent({"created": True, "number": EVIL}))
+    def test_ask_hr_confirmation_carries_no_server_data(self):
+        # Подтверждение отправки — постоянная строка: ни номер, ни что-либо
+        # ещё из ответа backend в разметку чата не подставляется.
+        assert text.ASK_HR_SENT == "Сообщение отправлено HR."
+        assert_no_injection(text.ASK_HR_SENT)
 
     def test_welcome_after_recognize(self):
         body = link_text.welcome({

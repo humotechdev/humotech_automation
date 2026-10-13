@@ -297,10 +297,9 @@ def test_the_whole_road(
         notification_type="question.reply"
     ).first()
     assert reply is not None
-    # Ответ узнаётся по номеру и по цитате: человек с тремя вопросами
-    # иначе не поймёт, на какой именно ему ответили.
-    assert f"№{question.number}" in reply.body
-    assert "2-НДФЛ" in reply.body
+    # Первое сообщение HR после вопроса — ответ на него; старый вопрос в
+    # уведомлении не повторяется (`test_question_reply_headings.py`).
+    assert reply.body == "HR ответил на ваш вопрос\n\nВ бухгалтерии, кабинет 204."
 
     # --- 11. Работающий виден в составе смены и в численности ------------
     employee.refresh_from_db()

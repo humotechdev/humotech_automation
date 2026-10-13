@@ -70,7 +70,7 @@ from humotech.core.pagination import Page, normalize_limit
 from humotech.core.rbac import Actor, snapshot
 from humotech.core.service import BaseService
 from humotech.core.validation import clean_text
-from humotech.employees.models import EmployeeAssignment
+from humotech.employees.models import Employee, EmployeeAssignment
 from humotech.employees.selectors import require_visible_employee
 from humotech.notifications import outbox
 from humotech.notifications.service import RETRYABLE
@@ -94,10 +94,27 @@ SLA = {
 #: Сколько после закрытия сообщение сотрудника возвращает то же обращение.
 REOPEN_WINDOW = timedelta(days=3)
 
-#: Первая строка ответа HR в Telegram. По ней человек видит, на какое
-#: обращение ответ, а бот узнаёт ответ HR, когда на него отвечают.
-#: Бот держит тот же префикс (`REPLY_PREFIX` в его текстах).
-REPLY_HEADER = "💬 Ответ HR по обращению №{number}"
+#: Первая строка сообщения HR в Telegram.
+#:
+#: Ответом называется только ПЕРВОЕ сообщение HR после вопроса
+#: сотрудника. Дальше в том же вопросе — просто сообщения: «ответ на
+#: ваш вопрос» над уточнением, которое кадровик сам спрашивает, сбивает
+#: человека с толку, а повтор старого вопроса в каждом уведомлении
+#: прячет то, что HR написал сейчас.
+#:
+#: По этим строкам бот узнаёт сообщение HR, когда на него отвечают
+#: (`HR_HEADERS` в его тексте) — держать вровень.
+ANSWER_HEADER = "HR ответил на ваш вопрос"
+MESSAGE_HEADER = "Сообщение от HR"
+
+#: Пометка на сообщении сотрудника: с него начинается новый вопрос.
+#: Ставится при заведении обращения, при его переоткрытии сообщением
+#: сотрудника и когда человек сам нажал «Написать HR». Ответ на
+#: сообщение HR (reply в Telegram) — продолжение разговора, не вопрос.
+STARTS_QUESTION = "starts_question"
+#: Каким сообщение HR ушло в чат — сохраняется в строке ленты, чтобы
+#: разбор видел то же, что видел человек.
+HEADING = "heading"
 
 #: Предел сообщения Telegram — в единицах UTF-16, а не в символах Python.
 TELEGRAM_TEXT_LIMIT = 4096
@@ -647,7 +664,13 @@ class InboxService(BaseService):
                     "Telegram сотрудника не подключён — сообщение не отправлено",
                     details={"reason": telegram["reason"]},
                 )
-            if _telegram_length(_reply_body(question, body)) > TELEGRAM_TEXT_LIMIT:
+            # Ответ или продолжение — по сохранённой ленте и под блокировкой
+            # строки обращения: второй кадровик, ответивший одновременно,
+            # ждёт здесь и уже видит первый ответ, а не считает свой первым.
+            # Повторная доставка берёт готовое тело из очереди и тип не
+            # пересчитывает.
+            first = _answers_question(question)
+            if _telegram_length(reply_body(body, first=first)) > TELEGRAM_TEXT_LIMIT:
                 # 4000 символов проходят проверку формы, но эмодзи и
                 # редкие знаки Telegram считает за два: такой ответ он не
                 # принял бы, а в CRM висел бы «в очереди» навсегда.
@@ -687,10 +710,9 @@ class InboxService(BaseService):
                 organization_id=question.organization_id,
                 employee_id=question.employee_id,
                 notification_type=REPLY_FILE_TYPE if stored else "question.reply",
-                title=f"Ответ на обращение №{question.number}",
-                # В ленте CRM — чистый текст, в чат — с заголовком: без
-                # номера человек с двумя обращениями не поймёт, о каком речь.
-                body=_reply_body(question, body),
+                title=ANSWER_HEADER if first else MESSAGE_HEADER,
+                # В ленте CRM — чистый текст, в чат — с заголовком.
+                body=reply_body(body, first=first),
                 # Ключ — по сообщению, а не по обращению: у переписки
                 # ответов несколько, и ключ по обращению вернул бы второму
                 # ответу первое уведомление, так и не отправив его.
@@ -705,6 +727,7 @@ class InboxService(BaseService):
                 kind="HR",
                 source="CRM",
                 body=body,
+                details={HEADING: "ANSWER" if first else "MESSAGE"},
                 author_user_id=actor.user_id,
                 notification=notification,
                 attachment=stored,
@@ -752,32 +775,44 @@ class InboxService(BaseService):
         *,
         text: str,
         telegram_message_id: int | None = None,
+        starts_question: bool = False,
         now: datetime | None = None,
     ) -> tuple[EmployeeQuestion, bool]:
         """Сообщение сотрудника из Telegram.
 
         Возвращает обращение и признак «заведено новое». Повтор того же
-        сообщения Telegram (бот переотправил после сбоя сети) новой строки
-        не даёт.
+        сообщения Telegram (бот переотправил после сбоя сети или потерял
+        ответ сервера) новой строки не даёт. Сверка — по номеру сообщения,
+        не по тексту: два разных сообщения с одинаковыми словами — два
+        сообщения.
+
+        `starts_question` — человек сам нажал «Написать HR»: с этого
+        сообщения начинается новый вопрос, и первое сообщение HR после
+        него придёт как ответ.
         """
         employee = context.employee
         body = clean_text(text, field="text", required=True)
         moment = now or timezone.now()
 
-        if telegram_message_id is not None:
-            existing = (
-                QuestionMessage.objects.select_related("question")
-                .filter(
-                    question__employee_id=employee.id,
-                    telegram_message_id=telegram_message_id,
-                )
-                .first()
-            )
-            if existing is not None:
-                return existing.question, False
-
         created = False
         with self.atomic():
+            # Все сообщения одного сотрудника — по очереди. Иначе два
+            # одновременных повтора одного сообщения оба не нашли бы друг
+            # друга и легли бы дважды, а два первых сообщения завели бы
+            # два обращения.
+            Employee.objects.select_for_update().filter(id=employee.id).first()
+            if telegram_message_id is not None:
+                existing = (
+                    QuestionMessage.objects.select_related("question")
+                    .filter(
+                        question__employee_id=employee.id,
+                        telegram_message_id=telegram_message_id,
+                    )
+                    .first()
+                )
+                if existing is not None:
+                    return existing.question, False
+
             question = (
                 EmployeeQuestion.objects.select_for_update()
                 .filter(employee_id=employee.id)
@@ -794,6 +829,7 @@ class InboxService(BaseService):
             if not usable:
                 question = self._create(employee, body, moment)
                 created = True
+                starts_question = True
                 before = None
             else:
                 before = snapshot(question, QUESTION_FIELDS)
@@ -801,6 +837,9 @@ class InboxService(BaseService):
                     self._reopen(
                         question, author_user_id=None, by="employee", at=moment
                     )
+                    # Закрытое обращение человек открыл новым сообщением —
+                    # это новый вопрос, а не дописка к решённому.
+                    starts_question = True
                 elif question.status == "WAITING_EMPLOYEE":
                     question.status = "IN_PROGRESS"
                     self._event(
@@ -815,6 +854,7 @@ class InboxService(BaseService):
                 kind="EMPLOYEE",
                 source="TELEGRAM",
                 body=body,
+                details={STARTS_QUESTION: True} if starts_question else None,
                 author_employee_id=employee.id,
                 telegram_message_id=telegram_message_id,
                 # На микросекунду позже события: лента упорядочена по
@@ -1070,13 +1110,18 @@ class InboxService(BaseService):
         `questions.answer`, поэтому область берётся в разрезе этого права.
         """
         self._require(actor, question_id, "questions.answer")
-        return (
-            EmployeeQuestion.objects.select_for_update(of=("self",))
-            .select_related(
-                "employee", "assigned_to_user__employee", "closed_by_user__employee"
-            )
-            .get(id=question_id)
-        )
+        # Сначала блокировка, потом чтение со связями — двумя запросами.
+        # Одним нельзя: тот, кто ждал блокировку, получает от Postgres свежую
+        # строку обращения, но присоединённые строки из старого снимка. У
+        # второго кадровика, ответившего одновременно, «ответственный» был
+        # уже назначен первым, а сам пользователь приходил пустым — и ответ
+        # падал на сборке карточки.
+        EmployeeQuestion.objects.select_for_update(of=("self",)).filter(
+            id=question_id
+        ).values_list("id", flat=True).get()
+        return EmployeeQuestion.objects.select_related(
+            "employee", "assigned_to_user__employee", "closed_by_user__employee"
+        ).get(id=question_id)
 
 
 # --- черновик ассистента ----------------------------------------------------
@@ -1515,29 +1560,43 @@ def employee_reply_file(context, message_id: uuid.UUID):
     return open_stored(row.attachment), row.attachment
 
 
-def _reply_body(question, answer: str) -> str:
-    """Ответ HR так, как его увидит человек в чате.
+def reply_body(answer: str, *, first: bool) -> str:
+    """Сообщение HR так, как его увидит человек в чате: заголовок и текст.
 
-    Номер обращения и цитата вопроса — не украшение. Человек задал
-    вопрос неделю назад, с тех пор написал ещё два и получил ответ на
-    один из них: без цитаты он не поймёт, о каком именно речь, и
-    переспросит — то есть заведёт кадровику ещё одну работу.
-
-    Цитата короткая: полный вопрос человек и так помнит, а стена текста
-    в чате прячет сам ответ.
+    Старый вопрос не цитируется: первое сообщение приходит в ответ на
+    только что заданный, а последующие — продолжение разговора, и
+    цитата в каждом из них прятала бы то, что HR написал сейчас.
+    Текст идёт без разметки (очередь шлёт обычным текстом), поэтому
+    экранировать в нём нечего и подменить ссылку нельзя.
     """
-    asked = " ".join((question.question_text or "").split())
-    head = REPLY_HEADER.format(number=question.number)
-    if asked:
-        short = asked if len(asked) <= 120 else asked[:117].rstrip() + "…"
-        quoted = head + f"\n\nВы спрашивали: «{short}»"
-        # Ответ кадровика до 4000 символов плюс шапка и цитата вылезали за
-        # предел сообщения Telegram, и ответ не доходил вовсе. Цитата —
-        # подсказка, ответ — суть: при нехватке места жертвуем цитатой.
-        if not answer or _telegram_length(f"{quoted}\n\n{answer}") <= TELEGRAM_TEXT_LIMIT:
-            head = quoted
-    # Файл без слов: подпись к документу — только шапка с номером.
+    head = ANSWER_HEADER if first else MESSAGE_HEADER
+    # Файл без слов: подпись к документу — только заголовок.
     return f"{head}\n\n{answer}" if answer else head
+
+
+
+def _answers_question(question: EmployeeQuestion) -> bool:
+    """Будет ли следующее сообщение HR ответом на вопрос сотрудника.
+
+    Да, если после начала последнего вопроса HR ещё не писал. Начало —
+    последнее сообщение сотрудника с пометкой `STARTS_QUESTION`; у
+    обращений, заведённых до пометок, — само заведение. Дописка к ещё
+    не отвеченному вопросу пометки не несёт и ответов не множит;
+    переоткрытие кадровиком из CRM вопросом не считается — сотрудник
+    ничего не спрашивал.
+    """
+    start = (
+        QuestionMessage.objects.filter(
+            question=question, kind="EMPLOYEE",
+            **{f"details__{STARTS_QUESTION}": True},
+        )
+        .order_by("-created_at")
+        .values_list("created_at", flat=True)
+        .first()
+    ) or question.created_at
+    return not QuestionMessage.objects.filter(
+        question=question, kind="HR", created_at__gt=start
+    ).exists()
 
 
 def _telegram_length(text: str) -> int:

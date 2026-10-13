@@ -39,7 +39,9 @@ from humotech.files.models import File
 from humotech.files.storage import private_storage, store
 from humotech.knowledge.models import KnowledgeSource
 from humotech.notifications.models import Notification
-from humotech.questions.inbox import REPLY_HEADER, SLA, _person, next_number
+from humotech.questions.inbox import (
+    ANSWER_HEADER, MESSAGE_HEADER, SLA, _person, next_number, reply_body,
+)
 from humotech.questions.models import EmployeeQuestion, QuestionMessage
 from humotech.telegram.models import TelegramAccount, TelegramLinkInvitation
 
@@ -513,6 +515,9 @@ def _question(org, employee, item: DemoQuestion, number, now, reviewer, sources)
         ))
 
     previous = None
+    # Первое сообщение HR в ветке — ответ на вопрос, остальные — сообщения,
+    # как и в настоящей переписке (`InboxService.reply`).
+    answered = False
     for at, (who, text) in zip(moments, item.thread):
         if who == "E":
             if previous == "W":
@@ -533,8 +538,8 @@ def _question(org, employee, item: DemoQuestion, number, now, reviewer, sources)
                 employee=employee,
                 channel="TELEGRAM",
                 notification_type="question.reply",
-                title=f"Ответ на обращение №{number}",
-                body=f"{REPLY_HEADER.format(number=number)}\n\n{text}",
+                title=MESSAGE_HEADER if answered else ANSWER_HEADER,
+                body=reply_body(text, first=not answered),
                 status="READ" if read else "SENT",
                 sent_at=at + timedelta(seconds=20),
                 read_at=at + timedelta(minutes=4) if read else None,
@@ -546,7 +551,9 @@ def _question(org, employee, item: DemoQuestion, number, now, reviewer, sources)
                 id=message_id, organization=org, question=question, kind="HR",
                 source="CRM", body=text, author_user=reviewer,
                 notification=notification, created_at=at,
+                details={"heading": "MESSAGE" if answered else "ANSWER"},
             ))
+            answered = True
             if who == "W":
                 rows.append(_event(
                     question, "WAITING_EMPLOYEE", at + timedelta(seconds=1),

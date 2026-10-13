@@ -272,14 +272,17 @@ class SelfServiceClient:
         )
 
     async def escalate(
-        self, telegram_id: int, *, text: str, message_id: int | None = None
+        self, telegram_id: int, *, text: str, message_id: int | None = None,
+        starts_question: bool = False,
     ) -> dict:
-        """Передать вопрос HR — только по явному нажатию человека.
+        """Сообщение в отдел кадров — только то, что человек сам написал HR.
 
-        Уходит ИСХОДНЫЙ вопрос, а не ответ ассистента: кадровик должен
-        прочитать то, что написал сотрудник.
+        `message_id` — номер сообщения в Telegram: повтор с ним же backend
+        не кладёт второй раз (потерянный ответ, повтор обработки).
+        `starts_question` — сообщение после «Написать HR», то есть новый
+        вопрос; ответ на сообщение HR — продолжение разговора.
         """
-        body: dict = {"text": text}
+        body: dict = {"text": text, "starts_question": starts_question}
         if message_id is not None:
             body["telegram_message_id"] = message_id
         return await self._request(

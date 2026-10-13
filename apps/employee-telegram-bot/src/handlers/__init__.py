@@ -14,6 +14,7 @@ HR-панель — сняты: часть из них была заглушка
 from aiogram import Router
 
 from src.handlers.absence_document import router as absence_document_router
+from src.handlers.ask_hr import guard_router as ask_hr_guard_router
 from src.handlers.ask_hr import router as ask_hr_router
 from src.handlers.attendance import router as attendance_router
 from src.handlers.attendance.sticker import router as sticker_router
@@ -49,10 +50,14 @@ def build_root_router() -> Router:
     # кнопки не перехватывают — подписи не пересекаются, — но порядок
     # проверяется здесь, а не памятью того, кто будет их править.
     root.include_router(onboarding_router)
+    # Перед меню: кнопка меню или команда во время ввода сообщения HR
+    # снимает ожидание и идёт дальше своим путём — иначе следующий
+    # посторонний текст ушёл бы HR.
+    root.include_router(ask_hr_guard_router)
     root.include_router(menu_router)
-    # После меню: кнопка меню, нажатая во время ввода вопроса, остаётся
-    # кнопкой меню и не уходит в HR текстом. До `fallback`: он ловит
-    # любой текст без состояния, в том числе ответ на сообщение HR.
+    # После меню: кнопка меню, нажатая во время ввода сообщения, остаётся
+    # кнопкой меню и не уходит в HR текстом. До `fallback`: здесь любой
+    # текст без состояния — ответ на сообщение HR или вопрос ассистенту.
     root.include_router(ask_hr_router)
     root.include_router(fallback_router)   # обязан быть последним
     return root

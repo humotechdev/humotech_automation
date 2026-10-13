@@ -1,3 +1,3 @@
-from src.handlers.ask_hr.router import router
+from src.handlers.ask_hr.router import guard_router, router
 
-__all__ = ["router"]
+__all__ = ["guard_router", "router"]

@@ -288,13 +288,10 @@ class TestReply:
         assert body["due_at"] is None and body["awaiting_reply"] is False
 
         notification = Notification.objects.get()
-        # В чат — с номером обращения и цитатой вопроса, в ленте — чистый
-        # текст. Цитата нужна не для красоты: человек задал вопрос неделю
-        # назад, с тех пор написал ещё два и без неё не поймёт, на какой
-        # именно пришёл ответ.
+        # В чат — с заголовком первого ответа и без цитаты вопроса, в
+        # ленте — чистый текст (`test_question_reply_headings.py`).
         assert notification.body == (
-            f"💬 Ответ HR по обращению №{question.number}\n\n"
-            "Вы спрашивали: «Как перенести отпуск?»\n\n"
+            "HR ответил на ваш вопрос\n\n"
             "Даты можно изменить до начала отпуска."
         )
         assert reply[0]["body"] == "Даты можно изменить до начала отпуска."
@@ -525,7 +522,7 @@ class TestReplyFile:
         notification = Notification.objects.get()
         assert notification.notification_type == "question.reply.file"
         assert str(notification.related_entity_id) == reply[0]["id"]
-        assert notification.body.startswith(f"💬 Ответ HR по обращению №{question.number}")
+        assert notification.body == "HR ответил на ваш вопрос"
 
     def test_empty_reply_without_file_is_refused(self, hr, employee, linked_account):
         question = ask(employee)

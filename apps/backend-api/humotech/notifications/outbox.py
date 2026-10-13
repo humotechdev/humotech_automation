@@ -189,6 +189,30 @@ def enqueue(
     return row
 
 
+#: Сообщения HR в обращении: у них порядок — часть смысла.
+QUESTION_REPLY_TYPES = ("question.reply", "question.reply.file")
+#: На сколько отложить следующее, пока предыдущее не ушло.
+REPLY_ORDER_STEP = timedelta(seconds=2)
+
+
+def _earlier_reply(row: Notification, taken: set) -> Notification | None:
+    """Более раннее сообщение HR тому же человеку, ещё не доставленное.
+
+    Взятые в текущую пачку не считаются: они уйдут первыми.
+    """
+    return (
+        Notification.objects.filter(
+            employee_id=row.employee_id,
+            notification_type__in=QUESTION_REPLY_TYPES,
+            status__in=("PENDING", "RUNNING"),
+            created_at__lt=row.created_at,
+        )
+        .exclude(id__in=taken)
+        .order_by("created_at")
+        .first()
+    )
+
+
 def claim(*, limit: int = 20, now: datetime | None = None) -> list[Outgoing]:
     """Захватить пачку сообщений для отправки.
 
@@ -213,7 +237,22 @@ def claim(*, limit: int = 20, now: datetime | None = None) -> list[Outgoing]:
             .order_by("next_attempt_at", "created_at")[:limit]
         )
 
+        taken: set = set()
         for row in rows:
+            if row.notification_type in QUESTION_REPLY_TYPES:
+                ahead = _earlier_reply(row, taken)
+                if ahead is not None:
+                    # Сообщения HR одному человеку уходят по порядку: если
+                    # «HR ответил на ваш вопрос» ждёт повтора, следующее
+                    # «Сообщение от HR» не обгоняет его. Срок — сразу за
+                    # повтором предыдущего; уборка зависших RUNNING
+                    # (`reclaim_stale`) не даёт ожиданию стать вечным.
+                    due = ahead.next_attempt_at if (
+                        ahead.next_attempt_at and ahead.next_attempt_at > moment
+                    ) else moment
+                    row.next_attempt_at = due + REPLY_ORDER_STEP
+                    row.save(update_fields=["next_attempt_at", "updated_at"])
+                    continue
             if row.notification_type == "attendance.field_work_request":
                 from humotech.attendance.models import FieldWorkRequest
 
@@ -279,6 +318,9 @@ def claim(*, limit: int = 20, now: datetime | None = None) -> list[Outgoing]:
             row.status = "RUNNING"
             row.locked_at = moment
             row.save(update_fields=["status", "locked_at", "updated_at"])
+            # Взятое в эту же пачку уходит раньше: отправщик шлёт пачку по
+            # порядку, и следующее сообщение того же человека его не ждёт.
+            taken.add(row.id)
             ready.append(
                 Outgoing(
                     id=str(row.id),
