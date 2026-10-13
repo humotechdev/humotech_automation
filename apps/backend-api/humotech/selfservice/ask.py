@@ -50,6 +50,10 @@ ANSWERED = (AnswerStatus.EXACT_FAQ, AnswerStatus.RAG_ANSWERED)
 #: который кадровику показали бы как сомнительный.
 SURE_ENOUGH = (ScoreBand.HIGH, ScoreBand.MEDIUM)
 
+#: Статус ответа, когда ассистент выключен (`AI_ASSISTANT_ENABLED=false`).
+#: Бот держит ту же строку.
+ASSISTANT_OFF = "AI_DISABLED"
+
 
 class AskRequestSerializer(serializers.Serializer):
     # Граница та же, что у ассистента (`AI_QUERY_MAX_LENGTH`). Раньше здесь
@@ -94,6 +98,14 @@ class AskView(EmployeeSelfView):
         employee = self.context.employee
 
         container = build_container()
+        if not getattr(container.answer, "enabled", True):
+            # Рубильник AI выключен — это решение, а не сбой. Бот говорит
+            # «ассистент пока не отвечает» и сразу предлагает написать HR,
+            # не выдавая это за «я поискал и не нашёл».
+            return Response({
+                "answered": False, "answer": None, "sources": [],
+                "status": ASSISTANT_OFF,
+            })
         answer = container.answer.execute(
             AnswerRequest(
                 employee_id=employee.id,

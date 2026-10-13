@@ -502,6 +502,21 @@ def test_without_a_binding_nothing_reaches_hr():
     assert person.client.asked == []
 
 
+def test_a_switched_off_assistant_says_so_and_offers_hr():
+    person = Person(client=FakeClient(answer={
+        "answered": False, "answer": None, "sources": [], "status": "AI_DISABLED",
+    }))
+
+    person.say("Спасибо")
+
+    assert person.last == "Ассистент пока не отвечает. Можно написать HR."
+    button = person.session.sent[-1].reply_markup.inline_keyboard[0][0]
+    assert button.text == "Написать HR"
+    person.press(button.callback_data)
+    person.say("Нужна справка с места работы")
+    assert [one["text"] for one in person.client.calls] == ["Нужна справка с места работы"]
+
+
 def test_a_broken_assistant_still_offers_hr():
     person = Person(client=FakeClient(ask_error=ApiError(503, "unavailable", "нет связи")))
 

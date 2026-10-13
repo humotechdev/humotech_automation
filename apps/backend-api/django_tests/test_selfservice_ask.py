@@ -168,9 +168,29 @@ def test_disabled_assistant_answers_without_falling(
                           **bot_headers(TG_ID))
 
     # Не 500: выключенный модуль — штатное состояние, и человек получает
-    # понятный ответ, после которого бот предложит HR.
+    # понятный ответ, после которого бот предложит HR. Отдельный статус —
+    # чтобы бот сказал «ассистент пока не отвечает», а не «не нашёл».
     assert got.status_code == 200, got.content
     assert got.json()["answered"] is False
+    assert got.json()["status"] == "AI_DISABLED"
+    from humotech.ai_assistant.models import UnansweredQuestion
+
+    assert not UnansweredQuestion.objects.exists()
+
+
+def test_real_container_without_ai_says_off_and_records_nothing(bot_client, context):
+    # Без подмены: в тестовом окружении ключа провайдера нет, и модуль
+    # собирается выключенным — как на стенде с AI_ASSISTANT_ENABLED=false.
+    from humotech.ai_assistant.models import UnansweredQuestion
+
+    for text in ("Спасибо", "Как оформить отпуск?"):
+        body = bot_client.post(ASK, {"text": text}, format="json",
+                               **bot_headers(TG_ID)).json()
+        assert body["status"] == "AI_DISABLED"
+        assert body["answered"] is False
+
+    assert not UnansweredQuestion.objects.exists()
+    assert not EmployeeQuestion.objects.exists()
 
 
 # --- передача HR -------------------------------------------------------------

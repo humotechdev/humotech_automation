@@ -68,6 +68,10 @@ LEGACY_HR_HEADER = "💬 Ответ HR по обращению №"
 
 ASK_BUTTONS = (kb.BTN_ASK_HR, kb.BTN_ASK_HR_LEGACY)
 
+#: Статус `/me/ask`, когда ассистент выключен. Вровень с backend
+#: (`selfservice/ask.py`, `ASSISTANT_OFF`).
+ASSISTANT_OFF = "AI_DISABLED"
+
 #: Где в данных состояния лежит неотправленное сообщение для повтора.
 PENDING = "hr_pending"
 
@@ -315,8 +319,9 @@ async def forward(message: Message, employee, denial, client: SelfServiceClient)
 
     # Ответа нет — и придумывать его нельзя. Решение писать HR — за
     # человеком.
+    off = bool(answer) and answer.get("status") == ASSISTANT_OFF
     await message.answer(
-        text.ASK_NO_ANSWER,
+        text.ASK_ASSISTANT_OFF if off else text.ASK_NO_ANSWER,
         reply_markup=escalate_markup(message.message_id),
     )
 
