@@ -30,7 +30,8 @@ from humotech.notifications.models import Notification
 from humotech.questions.inbox import InboxService
 from humotech.questions.models import EmployeeQuestion, QuestionMessage
 
-from .conftest import bot_headers
+from .conftest import bot_headers, link_telegram
+from .test_questions_inbox import other_employee  # noqa: F401 — фикстура
 
 API = "/api/v1"
 URL = f"{API}/knowledge/escalations"
@@ -282,6 +283,25 @@ class TestEmployeeSide:
         assert response.status_code in (401, 403, 404)
         assert EmployeeQuestion.objects.count() == 0
 
+    def test_the_answer_goes_to_the_author_and_nobody_else(
+        self, hr, bot_client, linked_account, other_employee,
+    ):
+        link_telegram(other_employee, telegram_user_id=777_000_222, username="shahnoza")
+        mine = employee_writes(bot_client, "Мой вопрос", message_id=1)["question_id"]
+        theirs = bot_client.post(
+            f"{API}/me/ask/escalate",
+            {"text": "Чужой вопрос", "telegram_message_id": 1, "starts_question": True},
+            format="json", **bot_headers(telegram_user_id=777_000_222),
+        ).json()["question_id"]
+        assert theirs != mine
+
+        hr_writes(hr, mine, "Ответ автору")
+        delivered = outbox.claim()
+
+        assert [(one.chat_id, one.text) for one in delivered] == [
+            (linked_account.telegram_chat_id, f"{ANSWER_HEAD}\n\nОтвет автору"),
+        ]
+
     def test_a_foreign_organization_cannot_answer(
         self, api_client, make_user, other_organization, bot_client, linked_account,
     ):
@@ -343,6 +363,25 @@ class TestConcurrency:
         assert sorted(body.split("\n")[0] for body in chat(qid)) == sorted(
             [ANSWER_HEAD, MESSAGE_HEAD]
         )
+
+    def test_a_repeated_message_gives_one_live_signal(self, linked_account):
+        # CRM обновляется по сигналам SSE: повтор того же сообщения Telegram
+        # не должен ни лечь второй строкой, ни разбудить ленту второй раз.
+        from humotech.telegram.identity import resolve_account
+
+        from .test_realtime import Listener
+
+        listener = Listener()
+        try:
+            context = resolve_account(linked_account)
+            InboxService().receive(context, text="Раз", telegram_message_id=77)
+            InboxService().receive(context, text="Раз", telegram_message_id=77)
+            events = [one for one in listener.drain() if one["t"] == "question"]
+        finally:
+            listener.close()
+
+        assert len(events) == 1
+        assert QuestionMessage.objects.filter(kind="EMPLOYEE").count() == 1
 
     def test_the_same_telegram_message_at_once_is_one_row(self, linked_account):
         from humotech.telegram.identity import resolve_account
