@@ -2,7 +2,10 @@
  * Только для разработки: «Посещаемость» на подставных данных.
  *
  * Сеть подменяется целиком — ни одного запроса к серверу, ни входа, ни
- * учётных данных. Режим — из адреса страницы: `?tab=log|week|period`.
+ * учётных данных. Режим — из адреса страницы: `?tab=log|week|compare`.
+ * Сравнение: `?tab=compare&cmp=office|region|employee|staff`; у каждого офиса,
+ * региона и сотрудника своя явка, чтобы линии расходились. `?fail=o-2` —
+ * ответ по этому объекту падает (видно, что ошибка не обнуляет соседей).
  */
 
 import { StrictMode } from 'react';
@@ -98,21 +101,43 @@ function dashboard(day: string) {
   };
 }
 
-function overview(from: string, to: string) {
+const OFFICES = [
+  { id: 'o-1', code: 'HQ', name: 'Главный офис', status: 'ACTIVE', region_id: 'r-1', region_name: 'город Ташкент' },
+  { id: 'o-2', code: 'RG', name: 'Региональный офис', status: 'ACTIVE', region_id: 'r-1', region_name: 'город Ташкент' },
+  { id: 'o-3', code: 'CH', name: 'Чиланзар', status: 'ACTIVE', region_id: 'r-1', region_name: 'город Ташкент' },
+  { id: 'o-4', code: 'BK', name: 'Бухара-центр', status: 'ACTIVE', region_id: 'r-2', region_name: 'Бухарская область' },
+  { id: 'o-5', code: 'SM', name: 'Самарканд', status: 'ACTIVE', region_id: 'r-3', region_name: 'Самаркандская область' },
+];
+
+/** Своя «явка» у каждого объекта — линии сравнения не совпадают. */
+function biasOf(id: string | null): number {
+  if (!id) return 0;
+  let n = 0;
+  for (const ch of id) n = (n * 31 + ch.charCodeAt(0)) % 997;
+  return (n % 7) - 3;
+}
+
+function overview(from: string, to: string, q: URLSearchParams = new URLSearchParams()) {
   const days: string[] = [];
   for (let d = new Date(`${from}T12:00:00`); iso(d) <= to; d.setDate(d.getDate() + 1)) days.push(iso(d));
+  const who = q.get('employee_id') ?? q.get('office_id') ?? q.get('region_id');
+  const bias = biasOf(who);
+  const single = Boolean(q.get('employee_id'));
   const dayRows = days.map((day, n) => {
     const weekend = [0, 6].includes(new Date(`${day}T12:00:00`).getDay());
-    const expected = weekend ? 0 : 9;
-    const attended = weekend ? 0 : 7 + (n % 3 === 0 ? 1 : 0);
+    const expected = weekend ? 0 : single ? 1 : 30;
+    const wobble = ((n * 7 + bias * 3) % 5) - 2;
+    const attended = weekend ? 0 : single ? ((n + bias + 9) % 6 === 0 ? 0 : 1) : Math.max(0, Math.min(30, 26 + bias + wobble));
     return {
       day, weekday: 1, working: !weekend, future: day > TODAY, in_detail: true, expected, attended,
       percent: expected ? Math.round((attended / expected) * 1000) / 10 : null, on_time: attended, on_time_percent: null,
       late: n % 4 === 0 ? 1 : 0, missed: expected - attended, vacation: 1, sick_leave: 1, other_absence: 0, average_seconds: 27700,
     };
   });
-  const employees = PEOPLE.map(([name], i) => ({
-    id: `e-${i}`, name, attendance: { numerator: 16 - (i % 4), denominator: 17, percent: Math.round(((16 - (i % 4)) / 17) * 1000) / 10 },
+  const roster = q.get('employee_id') ? PEOPLE.map((one, i) => [one, i] as const).filter(([, i]) => `e-${i}` === q.get('employee_id'))
+    : PEOPLE.map((one, i) => [one, i] as const);
+  const employees = roster.map(([[name], i]) => ({
+    id: `e-${i}`, name, attendance: { numerator: 17 - ((i * 5) % 7), denominator: 17, percent: Math.round(((17 - ((i * 5) % 7)) / 17) * 1000) / 10 },
     late_days: i % 3 === 1 ? 2 : 0, late_minutes: 30, missed_days: i % 4 === 3 ? 1 : 0, seconds: (16 - (i % 4)) * 27700,
     vacation_days: i === 4 ? 4 : 0, sick_days: i === 7 ? 2 : 0, other_days: 0, office_id: 'o-1',
     missed_dates: i % 4 === 3 ? [days[Math.max(0, days.length - 4 - i)] ?? from] : [],
@@ -122,9 +147,13 @@ function overview(from: string, to: string) {
     period: { first: from, last: to, days: days.length }, previous_period: { first: from, last: to }, weekday: null,
     generated_at: new Date().toISOString(), timezones: ['Asia/Tashkent'],
     summary: {
-      attendance: { numerator: 138, denominator: 160, percent: 86.3 }, previous_attendance: { numerator: 1, denominator: 1, percent: 84 },
-      difference_points: 2.3, on_time: { numerator: 129, denominator: 138, percent: 93.5 }, late: { numerator: 9, denominator: 138, percent: 6.5 },
-      average_seconds: 27720, open_sessions: 0, missed_days: 3, vacation_days: 4, sick_leave_days: 2, other_absence_days: 0,
+      attendance: (() => {
+        const expected = dayRows.reduce((sum, one) => sum + one.expected, 0);
+        const attended = dayRows.reduce((sum, one) => sum + one.attended, 0);
+        return { numerator: attended, denominator: expected, percent: expected ? Math.round((attended / expected) * 1000) / 10 : null };
+      })(), previous_attendance: { numerator: 1, denominator: 1, percent: 84 },
+      difference_points: Math.round((bias * 1.3 + 0.8) * 10) / 10, on_time: { numerator: 129, denominator: 138, percent: 93.5 }, late: { numerator: Math.max(0, 6 + bias * 2), denominator: 138, percent: 6.5 },
+      average_seconds: 27720 + bias * 600, open_sessions: 0, missed_days: Math.max(0, 3 - bias), vacation_days: 4, sick_leave_days: 2, other_absence_days: 0,
     },
     days: dayRows, previous_days: [], offices: [], regions: [], employees,
     arrivals: { bucket_minutes: 10, from_minutes: -60, to_minutes: 90, buckets: [], start_time: '09:00', uniform_start: true, median_minutes: 540, after_start: 0, late: { numerator: 0, denominator: 0, percent: null } },
@@ -158,6 +187,7 @@ const answer = (body: unknown) =>
 
 // `?delay=1200` — данные режимов приходят с задержкой, чтобы видеть заготовки.
 const DELAY = Number(new URLSearchParams(window.location.search).get('delay') ?? '0');
+const FAIL = (new URLSearchParams(window.location.search).get('fail') ?? '').split(',').filter(Boolean);
 
 window.fetch = async (input: RequestInfo | URL) => {
   const url = new URL(String(input), 'http://x');
@@ -165,10 +195,14 @@ window.fetch = async (input: RequestInfo | URL) => {
   const path = url.pathname;
   if (path.includes('/auth/')) return answer(HR);
   if (DELAY > 0) await new Promise((done) => window.setTimeout(done, DELAY));
-  if (path.includes('/offices')) return answer({ items: [{ id: 'o-1', code: 'HQ', name: 'Главный офис', status: 'ACTIVE', region_id: 'r-1' }, { id: 'o-2', code: 'RG', name: 'Региональный офис', status: 'ACTIVE', region_id: 'r-1' }] });
+  if (path.includes('/offices')) return answer({ items: OFFICES });
   if (path.includes('/departments')) return answer({ items: ['Sales', 'Support', 'HR', 'Finance', 'IT', 'Logistics'].map((name, i) => ({ id: `d-${i}`, name })), next_cursor: null, has_more: false });
   if (path.includes('/dashboard')) return answer(dashboard(q.get('date') ?? TODAY));
-  if (path.includes('/analytics/overview')) return answer(overview(q.get('date_from') ?? TODAY, q.get('date_to') ?? TODAY));
+  if (path.includes('/analytics/overview')) {
+    const one = q.get('employee_id') ?? q.get('office_id') ?? q.get('region_id');
+    if (one && FAIL.includes(one)) return new Response('{}', { status: 500, headers: { 'Content-Type': 'application/json' } });
+    return answer(overview(q.get('date_from') ?? TODAY, q.get('date_to') ?? TODAY, q));
+  }
   if (path.includes('/attendance/presence')) return answer(presence(q.get('date') ?? TODAY));
   if (path.includes('/attendance/events')) return answer(events(q.get('date_from') ?? TODAY));
   return answer({ items: [], next_cursor: null, has_more: false });

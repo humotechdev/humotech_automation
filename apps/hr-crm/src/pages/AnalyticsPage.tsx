@@ -763,7 +763,7 @@ function useAttendanceTab(active: boolean, ctx: Ctx): View {
           </Guard>
         </Section>
         <Section title="Сотрудники" sub="Худшая явка сверху · статус — на сейчас" className="ax-sec--line"
-                 action={<Link className="ax-link" to={`/attendance?tab=period&from=${scope.from}&to=${scope.to}`}>Все сотрудники <AppIcon name="arrow" size={16} /></Link>}>
+                 action={<Link className="ax-link" to={`/attendance?tab=compare&cmp=staff&from=${scope.from}&to=${scope.to}${scope.office ? `&cmp_office=${scope.office}` : ''}`}>Все сотрудники <AppIcon name="arrow" size={16} /></Link>}>
           <Guard block={joined(overview, presence)} rows={5}>
             {([data, day]) => {
               const rows = data.employees.slice(0, 5);

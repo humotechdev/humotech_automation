@@ -1,6 +1,6 @@
 /**
  * «Посещаемость»: один экран, четыре режима — за день, журнал отметок,
- * неделя и период.
+ * неделя и сравнение.
  *
  * Лист, шапка, информационная полоса, вкладки и место под содержимое —
  * постоянные: при смене режима они не пересоздаются и не меняют высоту.
@@ -14,41 +14,53 @@
  * наступил, не может быть «без отметки».
  */
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 
 import * as api from '../api/crm';
 import { messageFor } from '../api/errors';
 import { AppShell, initials } from '../components/AppShell';
 import { AppIcon, type AppIconName } from '../components/AppIcon';
-import { Dropdown } from '../components/AppSelect';
+import { AppMultiSelect, Dropdown } from '../components/AppSelect';
 import { DatePicker } from '../components/DatePicker';
 import { DayCard } from '../components/DayCard';
 import { useSession } from '../features/auth/session';
 import { SlideTabs } from '../components/SlideTabs';
-import { longDate, today, useBlock, type Block } from '../features/dashboard/data';
+import {
+  COMPARE_LIMIT, NONE, chartFloor, colorOf, compareSpan, daysOf, idsOf, kindOf, seriesOf, useEach,
+  type CompareKind, type LineKind, type Slot,
+} from '../features/attendance/compare';
+import { longDate, shortDate, today, useBlock, type Block } from '../features/dashboard/data';
 import { clock, clockOnDay } from '../features/time/zone';
 import '../styles/attendance.css';
 
-type Mode = 'day' | 'log' | 'week' | 'period';
+type Mode = 'day' | 'log' | 'week' | 'compare';
 
 const MODES: { key: Mode; title: string }[] = [
   { key: 'day', title: 'За день' },
   { key: 'log', title: 'Журнал отметок' },
   { key: 'week', title: 'Неделя' },
-  { key: 'period', title: 'Период' },
+  { key: 'compare', title: 'Сравнение' },
 ];
 
 const MONTHS = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
 const WEEKDAYS = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
 
-/** Режим из адреса. Старые ссылки (`tab=log`, `period=week|month|range`) открывают свой режим. */
-function modeOf(params: URLSearchParams): Mode {
+/**
+ * Режим из адреса. Старые ссылки открывают свой режим: `period=week` —
+ * неделю, а бывший «Период» (`tab=period`, `period=month|range`) —
+ * «Сравнение» с теми же датами и сразу всеми сотрудниками. «Период» был
+ * таблицей людей за выбранные даты; «Неделя» дат не сохранила бы — она
+ * всегда семь дней, — а «все сотрудники» в «Сравнении» показывают тех же
+ * людей с теми же числами за тот же период.
+ */
+export function modeOf(params: URLSearchParams): Mode {
   const tab = params.get('tab');
-  if (tab === 'log' || tab === 'week' || tab === 'period' || tab === 'day') return tab;
+  if (tab === 'log' || tab === 'week' || tab === 'compare' || tab === 'day') return tab;
+  if (tab === 'period') return 'compare';
   const period = params.get('period');
   if (period === 'week') return 'week';
-  if (period === 'month' || period === 'range') return 'period';
+  if (period === 'month' || period === 'range') return 'compare';
   return 'day';
 }
 
@@ -103,8 +115,11 @@ type Ctx = {
   patch: (changes: Record<string, string | null>) => void;
   attempt: number;
   offices: api.Office[];
+  /** Справочник офисов: пока он в пути, сравнению по умолчанию нечего показать. */
+  directory: Block<unknown>['state'];
   departments: { id: string; name: string }[];
-  order: (span: { from: string; to: string }) => void;
+  /** Выгрузка периода. `office` — своя область сравнения вместо фильтров страницы. */
+  order: (span: { from: string; to: string }, office?: string) => void;
   openDay: (row: api.PresenceRow, day: string, zone: string) => void;
   openFieldWork: (row: api.PresenceRow, day: string, zone: string) => void;
   canFieldWork: boolean;
@@ -165,12 +180,12 @@ export function AttendancePage() {
   const office = params.get('office_id') ?? '';
   const region = params.get('region_id') ?? '';
   const department = params.get('department_id') ?? '';
-  const order = useCallback((span: { from: string; to: string }) => {
+  const order = useCallback((span: { from: string; to: string }, own?: string) => {
     setOrdered(null);
     api.orderExport({
       kind: 'attendance', fmt: 'xlsx', date_from: span.from, date_to: span.to,
-      ...(office ? { office_id: office } : region ? { region_id: region } : {}),
-      ...(department ? { department_id: department } : {}),
+      ...(own !== undefined ? (own ? { office_id: own } : {})
+        : { ...(office ? { office_id: office } : region ? { region_id: region } : {}), ...(department ? { department_id: department } : {}) }),
     })
       .then(() => setOrdered('Выгрузка поставлена в очередь'))
       .catch((error) => setOrdered(messageFor(error)));
@@ -184,6 +199,7 @@ export function AttendancePage() {
     patch,
     attempt,
     offices: directory.state === 'ready' ? directory.data.offices : [],
+    directory: directory.state,
     departments: directory.state === 'ready' ? directory.data.departments : [],
     order,
     openDay: (row, day, zone) => setOpened({ row, day, zone, field: false }),
@@ -206,7 +222,7 @@ export function AttendancePage() {
     day: useDayMode(mode === 'day', ctx),
     log: useLogMode(mode === 'log', ctx),
     week: useWeekMode(mode === 'week', ctx),
-    period: usePeriodMode(mode === 'period', ctx),
+    compare: useCompareMode(mode === 'compare', ctx),
   };
   const view = views[mode];
 
@@ -809,7 +825,7 @@ function useWeekMode(active: boolean, ctx: Ctx): View {
       }
     }
   }
-  // Поиск — тот же, что во вкладках «За день» и «Период»: по имени, с паузой
+  // Поиск — тот же, что во вкладках «За день» и «Сравнение»: по имени, с паузой
   // в 300 мс, страница сбрасывается на первую.
   const [draft, setDraft] = useState(search);
   useEffect(() => setDraft(search), [search]);
@@ -982,34 +998,103 @@ function weekCell(row: api.PresenceRow | undefined, future: boolean, zone: strin
   }
 }
 
-// --- Период -------------------------------------------------------------------------
+// --- Сравнение ----------------------------------------------------------------------
 
-const PERIOD_PAGE = 10;
+const KIND_TABS: { key: Exclude<CompareKind, 'staff'>; title: string }[] = [
+  { key: 'employee', title: 'Сотрудники' },
+  { key: 'office', title: 'Офисы' },
+  { key: 'region', title: 'Регионы' },
+];
 
-function usePeriodMode(active: boolean, ctx: Ctx): View {
+const STAFF_PAGE = 12;
+/** Столбцов «все сотрудники» на графике: остальные — в таблице под ним. */
+const STAFF_BARS = 200;
+
+/** Объект сравнения: кто он, его цвет и что пришло по нему с сервера. */
+type Entry = { id: string; name: string; note: string | null; color: string; slot: Slot<api.Overview> };
+
+const ready = (entry: Entry): api.Overview | null =>
+  entry.slot.block.state === 'ready' && !entry.slot.stale ? entry.slot.block.data : null;
+
+function useCompareMode(active: boolean, ctx: Ctx): View {
   const { params, patch, attempt } = ctx;
   const now = today();
-  const period = params.get('period');
-  const anchor = params.get('date') ?? now;
-  const monthStart = `${anchor.slice(0, 8)}01`;
-  const from = params.get('from') ?? (period === 'month' || !params.get('from') ? monthStart : anchor);
-  const to = params.get('to') ?? (period === 'month' ? monthEnd(anchor) : anchor);
-  const office = params.get('office_id') ?? '';
-  const region = params.get('region_id') ?? '';
-  const department = params.get('department_id') ?? '';
-  const view = params.get('who') === 'attention' ? 'attention' : 'all';
+  const { from, to } = compareSpan(params, now);
+  // Старая ссылка на «Период» (`tab=period`, `period=month|range`) вела к
+  // сотрудникам за период — её открывают «все сотрудники» за те же даты.
+  const legacy = params.get('tab') === 'period' || params.get('period') === 'month' || params.get('period') === 'range';
+  const kind: CompareKind = kindOf(params.get('cmp')) ?? (legacy ? 'staff' : 'office');
+  const explicit = params.has('cmp_ids');
+  const chosen = idsOf(params.get('cmp_ids'));
+  const office = params.get('cmp_office') ?? (legacy ? params.get('office_id') ?? '' : '');
+  const region = params.get('cmp_region') ?? '';
+  const worstFirst = params.get('cmp_sort') === 'worst';
+  // Явка одного человека за день — 0 или 100 %; для людей по умолчанию
+  // линия нарастающим итогом, для офисов и регионов — по дням.
+  const line: LineKind = params.get('cmp_line') === 'total' || params.get('cmp_line') === 'day'
+    ? params.get('cmp_line') as LineKind
+    : kind === 'employee' ? 'total' : 'day';
   const search = params.get('search') ?? '';
   const page = Math.max(1, Number(params.get('page') ?? '1'));
-  const place = {
-    ...(office ? { office_id: office } : region ? { region_id: region } : {}),
-    ...(department ? { department_id: department } : {}),
-  };
-  const key = `${from}|${to}|${office}|${region}|${department}|${attempt}`;
+  const span = `${from}|${to}|${attempt}`;
 
-  const [overview, , overviewNow] = useBlock(
-    (signal) => api.analyticsOverview({ date_from: from, date_to: to, ...place, people_limit: '2000' }, signal),
-    key, active,
+  // Любое изменение записывает выбор полностью: период, вид и офис. Старая
+  // ссылка после первого щелчка становится обычной ссылкой «Сравнения».
+  const set = (changes: Record<string, string | null>) => patch({
+    tab: 'compare', period: null, from, to, cmp: kind, cmp_office: office || null, ...changes,
+  });
+  const choose = (ids: string[]) => set({ cmp_ids: ids.length ? ids.slice(0, COMPARE_LIMIT).join(',') : NONE });
+
+  const officeName = new Map(ctx.offices.map((one) => [one.id, one.name]));
+  const regionList = [...new Map(ctx.offices.filter((one) => one.region_id)
+    .map((one) => [one.region_id!, one.region_name ?? 'Регион'])).entries()]
+    .map(([id, name]) => ({ id, name }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+  const officeList = ctx.offices.filter((one) => !region || one.region_id === region);
+
+  // Состав для выбора сотрудников и для «всех сотрудников» — одна сводка
+  // сервера за период; её же строки и есть числа по людям.
+  const rosterOn = active && (kind === 'employee' || kind === 'staff');
+  const [roster, , rosterNow] = useBlock(
+    (signal) => api.analyticsOverview({
+      date_from: from, date_to: to, ...(office ? { office_id: office } : {}), people_limit: '2000',
+    }, signal),
+    `${span}|${office}`, rosterOn,
   );
+  const people = roster.state === 'ready' ? roster.data.employees : [];
+
+  // Без выбора офисы и регионы показываются сразу — первые восемь; людей
+  // по умолчанию не выбирают: «первые восемь сотрудников» ничего не значат.
+  const targets = kind === 'staff' ? []
+    : explicit || kind === 'employee' ? chosen
+      : (kind === 'office' ? officeList : regionList).slice(0, COMPARE_LIMIT).map((one) => one.id);
+  const more = kind === 'office' ? officeList.length : kind === 'region' ? regionList.length : 0;
+  // Офисы и регионы по умолчанию берутся из справочника: пока его нет —
+  // заготовка, а не «выберите офисы»; не загрузился — так и сказано.
+  const listing = (kind === 'office' || kind === 'region') && !explicit ? ctx.directory : 'ready';
+
+  const slots = useEach(
+    targets,
+    (id, signal) => api.analyticsOverview({
+      date_from: from, date_to: to, people_limit: '1',
+      ...(kind === 'employee' ? { employee_id: id } : kind === 'office' ? { office_id: id } : { region_id: id }),
+    }, signal),
+    `${kind}|${span}`,
+    active && kind !== 'staff',
+  );
+
+  const entries: Entry[] = targets.map((id, i) => {
+    const slot = slots[id] ?? { block: { state: 'loading' as const }, stale: false };
+    const person = people.find((one) => one.id === id);
+    const own = slot.block.state === 'ready' ? slot.block.data.employees[0] : undefined;
+    const name = kind === 'office' ? officeName.get(id) ?? 'Офис'
+      : kind === 'region' ? regionList.find((one) => one.id === id)?.name ?? 'Регион'
+        : person?.name ?? own?.name ?? 'Сотрудник';
+    const home = person?.office_id ?? own?.office_id;
+    const note = kind === 'office' ? ctx.offices.find((one) => one.id === id)?.region_name ?? null
+      : kind === 'employee' && home ? officeName.get(home) ?? null : null;
+    return { id, name, note, color: colorOf(i), slot };
+  });
 
   const [draft, setDraft] = useState(search);
   useEffect(() => setDraft(search), [search]);
@@ -1019,219 +1104,570 @@ function usePeriodMode(active: boolean, ctx: Ctx): View {
     return () => window.clearTimeout(timer);
   }, [draft, search, patch]);
 
-  const people = overview.state === 'ready' ? overview.data.employees : [];
-  const troubled = (one: api.OverviewPerson) => one.missed_days > 0 || one.late_days > 0;
   const needle = search.trim().toLowerCase();
-  const shown = people
-    .filter((one) => view === 'all' || troubled(one))
+  const staff = people
     .filter((one) => !needle || one.name.toLowerCase().includes(needle))
     .sort((a, b) => a.name.localeCompare(b.name, 'ru'));
-  const pages = Math.max(1, Math.ceil(shown.length / PERIOD_PAGE));
-  const slice = shown.slice((page - 1) * PERIOD_PAGE, page * PERIOD_PAGE);
+  const pages = Math.max(1, Math.ceil(staff.length / STAFF_PAGE));
+  const slice = staff.slice((page - 1) * STAFF_PAGE, page * STAFF_PAGE);
+  const scopeName = office ? officeName.get(office) ?? 'офис' : 'все офисы';
+
+  const kindPicker = (
+    <div className="at-chips at-cmp__kinds" role="group" aria-label="Что сравниваем">
+      {KIND_TABS.map(({ key, title }) => {
+        const on = kind === key || (key === 'employee' && kind === 'staff');
+        return (
+          <button key={key} type="button" aria-pressed={on} className={on ? 'at-chip at-chip--on' : 'at-chip'}
+                  onClick={() => set({ cmp: key, cmp_ids: null, page: null, search: null })}>
+            {title}
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  const controls = (
+    <div className="at-filters at-cmp__controls">
+      {kindPicker}
+      {kind === 'office' && (
+        <>
+          <Dropdown label="Регион" empty="Все регионы" value={region} options={regionList}
+                    onChange={(value) => set({ cmp_region: value || null, cmp_ids: null })} />
+          <AppMultiSelect className="at-cmp__pick" label="Офисы" title="Офисы" heading={`Офисы — до ${COMPARE_LIMIT}`}
+                          findLabel="Найти офис" empty="Выберите офисы" value={targets}
+                          options={officeList.map((one) => ({ value: one.id, label: one.name, ...(one.region_name ? { note: one.region_name } : {}) }))}
+                          onChange={choose} />
+        </>
+      )}
+      {kind === 'region' && (
+        <AppMultiSelect className="at-cmp__pick" label="Регионы" title="Регионы" heading={`Регионы — до ${COMPARE_LIMIT}`}
+                        findLabel="Найти регион" empty="Выберите регионы" value={targets}
+                        options={regionList.map((one) => ({ value: one.id, label: one.name }))}
+                        onChange={choose} />
+      )}
+      {(kind === 'employee' || kind === 'staff') && (
+        <>
+          <Dropdown label="Офис" empty="Все офисы" value={office}
+                    options={ctx.offices.map((one) => ({ id: one.id, name: one.name }))}
+                    onChange={(value) => set({ cmp_office: value || null, page: null })} />
+          {kind === 'employee' && (
+            <AppMultiSelect className="at-cmp__pick" label="Сотрудники" title="Сотрудники" heading={`Сотрудники — до ${COMPARE_LIMIT}`}
+                            findLabel="Найти сотрудника" value={chosen}
+                            empty={roster.state === 'loading' ? 'Загружаем список…' : roster.state === 'ready' ? 'Выберите сотрудников' : 'Список не загрузился'}
+                            disabled={roster.state !== 'ready'}
+                            options={[
+                              ...people.map((one) => ({ value: one.id, label: one.name, ...(one.office_id && officeName.get(one.office_id) ? { note: officeName.get(one.office_id)! } : {}) })),
+                              // Выбранные в другом офисе остаются в списке — их можно снять.
+                              ...entries.filter((one) => !people.some((p) => p.id === one.id)).map((one) => ({ value: one.id, label: one.name })),
+                            ].sort((a, b) => a.label.localeCompare(b.label, 'ru'))}
+                            onChange={choose} />
+          )}
+          {kind === 'employee' ? (
+            <button type="button" className="at-btn at-btn--main" onClick={() => set({ cmp: 'staff', page: null })}>
+              <AppIcon name="users" size={18} /> {office ? 'Сравнить всех сотрудников офиса' : 'Сравнить всех сотрудников'}
+            </button>
+          ) : (
+            <button type="button" className="at-btn" onClick={() => set({ cmp: 'employee', page: null, search: null })}>
+              <AppIcon name="user" size={18} /> Выбрать отдельных
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+
+  if (kind === 'staff') {
+    return {
+      title: 'Посещаемость',
+      sub: <>{rangeTitle(from, to)} · Сравнение: все сотрудники, {scopeName}</>,
+      tools: (
+        <>
+          <CompareRange from={from} to={to} now={now} onChange={(changes) => set({ ...changes, page: null })} />
+          <button type="button" className="at-btn" onClick={() => ctx.order({ from, to }, office)}>
+            <AppIcon name="download" size={18} /> Экспорт
+          </button>
+        </>
+      ),
+      strip: (
+        <Guard block={roster} stale={rosterNow.stale} name="сводку периода" strip="four">
+          {(data) => {
+            const s = data.summary;
+            const absences = s.vacation_days + s.sick_leave_days + s.other_absence_days;
+            return (
+              <div className="at-facts at-facts--four">
+                <Share label={office ? 'Явка офиса за период' : 'Явка за период'} share={s.attendance} diff={s.difference_points} against="к прошлому периоду" />
+                <Big icon="clock" value={s.average_seconds === null ? '—' : duration(s.average_seconds)} title="" note="среднее время в день" />
+                <Big icon="alert" tone="warn" value={s.late.numerator} title={plural(s.late.numerator, ['опоздание', 'опоздания', 'опозданий'])} note="за весь период" />
+                <Big icon="calendar" value={absences} title="дней отсутствий"
+                     note={`${s.vacation_days} отпуск · ${s.sick_leave_days} больничный`} />
+              </div>
+            );
+          }}
+        </Guard>
+      ),
+      body: (
+        <div className="at-cmp">
+          {controls}
+          <section className="at-cmp__card" aria-label="Явка сотрудников">
+            <header className="at-cmp__head">
+              <h2 className="at-part-title">Явка сотрудников</h2>
+              <div className="at-chips" role="group" aria-label="Порядок">
+                {([['best', 'Сначала лучшие'], ['worst', 'Сначала худшие']] as const).map(([value, title]) => (
+                  <button key={value} type="button" aria-pressed={worstFirst === (value === 'worst')}
+                          className={worstFirst === (value === 'worst') ? 'at-chip at-chip--on' : 'at-chip'}
+                          onClick={() => set({ cmp_sort: value === 'worst' ? 'worst' : null })}>
+                    {title}
+                  </button>
+                ))}
+              </div>
+            </header>
+            <Guard block={roster} stale={rosterNow.stale} name="сотрудников" cols={BAR_COLS}>
+              {(data) => <StaffBars people={data.employees} average={data.summary.attendance.percent} worstFirst={worstFirst} office={Boolean(office)} />}
+            </Guard>
+          </section>
+
+          <section className="at-cmp__card" aria-label="Сотрудники за период">
+            <header className="at-cmp__head">
+              <h2 className="at-part-title">По цифрам</h2>
+              <label className="at-find">
+                <AppIcon name="search" size={16} />
+                <input type="search" value={draft} placeholder="Найти сотрудника" aria-label="Найти сотрудника"
+                       onChange={(event) => setDraft(event.target.value)} />
+              </label>
+            </header>
+            <div className="at-table at-table--staff" role="table" aria-label="Сотрудники за период">
+              <div className="at-table__head" role="row">
+                <span role="columnheader">Сотрудник</span>
+                <span role="columnheader" className="at-center">Рабочих дней</span>
+                <span role="columnheader" className="at-center">Присутствовал</span>
+                <span role="columnheader">Явка</span>
+                <span role="columnheader" className="at-center">Отработано</span>
+                <span role="columnheader" className="at-center">Опоздания</span>
+                <span role="columnheader" className="at-center">Нет отметки</span>
+                <span role="columnheader" className="at-center">Отсутствия</span>
+                <span role="columnheader" />
+              </div>
+              <div className="at-table__body">
+                <Guard block={roster} stale={rosterNow.stale} name="сотрудников" cols={STAFF_COLS}>
+                  {() => slice.length === 0 ? <p className="at-empty">{people.length === 0 ? 'За период по графику никого не ждали.' : 'По этим условиям никого нет.'}</p> : slice.map((one) => {
+                    const percent = one.attendance.percent;
+                    const absent = (one.vacation_days ?? 0) + (one.sick_days ?? 0) + (one.other_days ?? 0);
+                    return (
+                      <Link key={one.id} role="row" className="at-row" to={`/employees/${one.id}?tab=attendance`}>
+                        <span role="cell" className="at-who">
+                          <span className="at-face" aria-hidden="true">{initials(one.name)}</span>
+                          <b>{one.name}</b>
+                        </span>
+                        <span role="cell" className="at-center at-num" data-label="Рабочих дней">{one.attendance.denominator}</span>
+                        <span role="cell" className="at-center at-num" data-label="Присутствовал">{one.attendance.numerator}</span>
+                        <span role="cell" className="at-share" data-label="Явка">
+                          <span className="at-meter at-meter--thin"><i style={{ width: `${percent ?? 0}%` }} /></span>
+                          <b>{percent === null ? '—' : `${Math.round(percent)}%`}</b>
+                        </span>
+                        <span role="cell" className="at-center at-num" data-label="Отработано">{one.seconds ? duration(one.seconds) : '—'}</span>
+                        <span role="cell" className={one.late_days > 0 ? 'at-center at-num at-num--warn' : 'at-center at-num'} data-label="Опоздания">{one.late_days}</span>
+                        <span role="cell" className={one.missed_days > 0 ? 'at-center at-num at-num--bad' : 'at-center at-num'} data-label="Нет отметки">{one.missed_days}</span>
+                        <span role="cell" className="at-center at-num" data-label="Отсутствия" title={absent ? `${one.vacation_days ?? 0} отпуск · ${one.sick_days ?? 0} больничный` : undefined}>{absent}</span>
+                        <AppIcon name="next" size={16} className="at-go" />
+                      </Link>
+                    );
+                  })}
+                </Guard>
+              </div>
+            </div>
+            <Footer text={roster.state === 'ready' ? shownLine(page, STAFF_PAGE, staff.length, 'сотрудник') : ''}
+                    page={page} pages={pages} onGo={(next) => patch({ page: next === 1 ? null : String(next) })} />
+          </section>
+        </div>
+      ),
+    };
+  }
+
+  const what = kind === 'office' ? 'офисы' : kind === 'region' ? 'регионы' : 'сотрудников';
+  const loaded = entries.map(ready).filter((one): one is api.Overview => one !== null);
+  const waiting = entries.some((one) => one.slot.block.state === 'loading' || one.slot.stale);
 
   return {
     title: 'Посещаемость',
-    sub: <>{rangeTitle(from, to)} · Сводка за период</>,
-    tools: (
+    sub: <>{rangeTitle(from, to)} · Сравнение: {kind === 'office' ? 'офисы' : kind === 'region' ? 'регионы' : 'сотрудники'}</>,
+    tools: <CompareRange from={from} to={to} now={now} onChange={(changes) => set(changes)} />,
+    strip: listing === 'loading' ? <GhostStrip shape="four" />
+      : listing !== 'ready' ? <p className="at-empty at-empty--strip">Не удалось загрузить список офисов — сравнение не показано.</p>
+      : entries.length === 0 ? (
+      <p className="at-empty at-empty--strip at-empty--hint">
+        {kind === 'employee' ? 'Выберите сотрудников — до восьми — или сравните всех сотрудников офиса.' : `Выберите ${what} для сравнения.`}
+      </p>
+    ) : waiting ? (
       <>
-        <span className="at-range">
-          <DatePicker label="Начало периода" value={from} now={now} max={to}
-                      onChange={(value) => patch({ from: value || null, period: null, page: null })} />
-          <span aria-hidden="true">—</span>
-          <DatePicker label="Конец периода" value={to} now={now} min={from} max={now}
-                      onChange={(value) => patch({ to: value || null, period: null, page: null })} />
-        </span>
-        <Dropdown label="Офис" empty="Все офисы" value={office}
-                  options={ctx.offices.map((one) => ({ id: one.id, name: one.name }))}
-                  onChange={(value) => patch({ office_id: value || null, region_id: null, page: null })} />
-        <Dropdown label="Отдел" empty="Все отделы" value={department} options={ctx.departments}
-                  onChange={(value) => patch({ department_id: value || null, page: null })} />
-        <button type="button" className="at-btn" onClick={() => ctx.order({ from, to })}>
-          <AppIcon name="download" size={18} /> Экспорт
-        </button>
+        <span className="visually-hidden" role="status">Загружаем сравнение…</span>
+        <GhostStrip shape="four" />
       </>
-    ),
-    strip: (
-      <Guard block={overview} stale={overviewNow.stale} name="сводку периода" strip="four">
-        {(data) => {
-          const s = data.summary;
-          const absences = s.vacation_days + s.sick_leave_days + s.other_absence_days;
-          return (
-            <div className="at-facts at-facts--four">
-              <Share label="Явка за период" share={s.attendance} diff={s.difference_points} against="к прошлому периоду" />
-              <Big icon="clock" value={s.average_seconds === null ? '—' : duration(s.average_seconds)} title="" note="среднее время в день" />
-              <Big icon="alert" tone="warn" value={s.late.numerator} title={plural(s.late.numerator, ['опоздание', 'опоздания', 'опозданий'])} note="за весь период" />
-              <Big icon="calendar" value={absences} title="дней отсутствий"
-                   note={`${s.vacation_days} отпуск · ${s.sick_leave_days} больничный`} />
-            </div>
-          );
-        }}
-      </Guard>
+    ) : loaded.length === 0 ? (
+      <p className="at-empty at-empty--strip">Не удалось загрузить сравнение. Данные не показаны — это не ноль.</p>
+    ) : (
+      <CompareLeaders entries={entries} />
     ),
     body: (
-      <div className="at-split">
-        <section className="at-split__main" aria-label="Сотрудники за период">
-          <div className="at-filters">
-            <h2 className="at-part-title">Сотрудники за период</h2>
-            <label className="at-find">
-              <AppIcon name="search" size={16} />
-              <input type="search" value={draft} placeholder="Найти сотрудника" aria-label="Найти сотрудника"
-                     onChange={(event) => setDraft(event.target.value)} />
-            </label>
-            <div className="at-chips" role="group" aria-label="Отбор сотрудников">
-              {([['all', 'Все сотрудники', people.length], ['attention', 'Требуют внимания', people.filter(troubled).length]] as const).map(([value, title, count]) => (
-                <button key={value} type="button" aria-pressed={view === value}
-                        className={view === value ? 'at-chip at-chip--on' : 'at-chip'}
-                        onClick={() => patch({ who: value === 'all' ? null : value, page: null })}>
-                  {title}<span className="at-chip__n">{overview.state === 'ready' ? count : '·'}</span>
+      <div className="at-cmp">
+        {controls}
+        {kind !== 'employee' && !explicit && more > COMPARE_LIMIT && (
+          <p className="at-cmp__note">
+            Показаны первые {COMPARE_LIMIT} из {more}: больше линий на графике не различить. Остальные можно выбрать в списке.
+          </p>
+        )}
+        <section className="at-cmp__card" aria-label="График явки">
+          <header className="at-cmp__head">
+            <h2 className="at-part-title">{line === 'total' ? 'Явка нарастающим итогом' : 'Явка по дням'}</h2>
+            <div className="at-chips at-cmp__line" role="group" aria-label="Линия">
+              {([['day', 'По дням'], ['total', 'Нарастающим итогом']] as const).map(([value, title]) => (
+                <button key={value} type="button" aria-pressed={line === value}
+                        className={line === value ? 'at-chip at-chip--on' : 'at-chip'}
+                        onClick={() => set({ cmp_line: value })}>
+                  {title}
                 </button>
               ))}
             </div>
-          </div>
-          <div className="at-table at-table--period" role="table" aria-label="Сотрудники за период">
+            <span className="at-cmp__sub">
+              {line === 'total' ? 'Пришедшие от ожидаемых по графику — с начала периода по день' : 'Доля пришедших от ожидаемых по графику'}
+            </span>
+          </header>
+          {listing === 'loading' ? <i className="at-ghost at-cmp__ghost" aria-hidden="true" />
+            : listing !== 'ready' ? <p className="at-empty at-empty--bad">Не удалось загрузить список офисов.</p>
+              : <CompareChart days={daysOf(from, to)} entries={entries} line={line} />}
+        </section>
+
+        <section className="at-cmp__card" aria-label="Сравнение по цифрам">
+          <header className="at-cmp__head">
+            <h2 className="at-part-title">По цифрам</h2>
+            <span className="at-cmp__sub">Отсутствия — только подтверждённые</span>
+          </header>
+          <div className="at-table at-table--cmp" role="table" aria-label="Сравнение по цифрам">
             <div className="at-table__head" role="row">
-              <span role="columnheader">Сотрудник</span>
-              <span role="columnheader" className="at-center">Рабочих дней</span>
-              <span role="columnheader" className="at-center">Присутствовал</span>
+              <span role="columnheader">{kind === 'office' ? 'Офис' : kind === 'region' ? 'Регион' : 'Сотрудник'}</span>
               <span role="columnheader">Явка</span>
-              <span role="columnheader" className="at-center">Отработано</span>
+              <span role="columnheader" className="at-center">Дней явки</span>
+              <span role="columnheader" className="at-center">К прошлому периоду</span>
+              <span role="columnheader" className="at-center">В среднем за день</span>
               <span role="columnheader" className="at-center">Опоздания</span>
               <span role="columnheader" className="at-center">Нет отметки</span>
               <span role="columnheader" className="at-center">Отсутствия</span>
               <span role="columnheader" />
             </div>
             <div className="at-table__body">
-              <Guard block={overview} stale={overviewNow.stale} name="сотрудников" cols={PERIOD_COLS}>
-                {() => slice.length === 0 ? <p className="at-empty">{people.length === 0 ? 'За период по графику никого не ждали.' : 'По этим условиям никого нет.'}</p> : slice.map((one) => {
-                  const percent = one.attendance.percent;
-                  const absent = (one.vacation_days ?? 0) + (one.sick_days ?? 0) + (one.other_days ?? 0);
-                  return (
-                    <Link key={one.id} role="row" className="at-row" to={`/employees/${one.id}?tab=attendance`}>
-                      <span role="cell" className="at-who">
-                        <span className="at-face" aria-hidden="true">{initials(one.name)}</span>
-                        <b>{one.name}</b>
-                      </span>
-                      <span role="cell" className="at-center at-num">{one.attendance.denominator}</span>
-                      <span role="cell" className="at-center at-num">{one.attendance.numerator}</span>
-                      <span role="cell" className="at-share">
-                        <span className="at-meter at-meter--thin"><i style={{ width: `${percent ?? 0}%` }} /></span>
-                        <b>{percent === null ? '—' : `${Math.round(percent)}%`}</b>
-                      </span>
-                      <span role="cell" className="at-center at-num">{one.seconds ? duration(one.seconds) : '—'}</span>
-                      <span role="cell" className={one.late_days > 0 ? 'at-center at-num at-num--warn' : 'at-center at-num'}>{one.late_days}</span>
-                      <span role="cell" className={one.missed_days > 0 ? 'at-center at-num at-num--bad' : 'at-center at-num'}>{one.missed_days}</span>
-                      <span role="cell" className="at-center at-num" title={absent ? `${one.vacation_days ?? 0} отпуск · ${one.sick_days ?? 0} больничный` : undefined}>{absent}</span>
-                      <AppIcon name="next" size={16} className="at-go" />
-                    </Link>
-                  );
-                })}
-              </Guard>
+              {listing === 'loading' ? (
+                <>
+                  <span className="visually-hidden" role="status">Загружаем сравнение…</span>
+                  <GhostRows cols={['who', ...CMP_COLS, 'none']} />
+                </>
+              ) : listing !== 'ready' ? (
+                <p className="at-empty at-empty--bad">Не удалось загрузить список офисов. Данные не показаны — это не ноль.</p>
+              ) : entries.length === 0 ? (
+                <p className="at-empty">Пока сравнивать нечего.</p>
+              ) : entries.map((entry) => (
+                <CompareRow key={entry.id} entry={entry} kind={kind} onRetry={ctx.refresh}
+                            onRemove={() => choose(targets.filter((one) => one !== entry.id))} />
+              ))}
             </div>
           </div>
-          <Footer text={overview.state === 'ready' ? shownLine(page, PERIOD_PAGE, shown.length, 'сотрудник') : ''}
-                  page={page} pages={pages} onGo={(next) => patch({ page: next === 1 ? null : String(next) })} />
         </section>
-
-        <aside className="at-split__side" aria-label="Аналитика периода">
-          <Guard block={overview} stale={overviewNow.stale} name="аналитику" side>
-            {(data) => (
-              <>
-                <section className="at-side-part">
-                  <h2 className="at-part-title">
-                    Динамика явки
-                    <b>{data.summary.attendance.percent === null ? '—' : `${Math.round(data.summary.attendance.percent)}%`}</b>
-                  </h2>
-                  <MiniLine days={data.days} />
-                </section>
-                <section className="at-side-part">
-                  <h2 className="at-part-title">Причины отсутствий</h2>
-                  <Bars rows={[
-                    ['Отпуск', data.summary.vacation_days, 'violet'],
-                    ['Больничный', data.summary.sick_leave_days, 'blue'],
-                    ['Прочее', data.summary.other_absence_days, 'grey'],
-                  ]} />
-                </section>
-                <section className="at-side-part">
-                  <h2 className="at-part-title">Требуют внимания</h2>
-                  <AttentionList people={data.employees} onOpen={(employee, day) => patch({ tab: null, date: day, employee, from: null, to: null, period: null, page: null })} />
-                </section>
-              </>
-            )}
-          </Guard>
-        </aside>
       </div>
     ),
   };
 }
 
-function MiniLine({ days }: { days: api.OverviewDay[] }) {
-  // Нерабочие дни (без графика) линию не рвут — их просто нет на ней.
-  const points = days.filter((one) => !one.future && one.percent !== null);
-  if (points.length === 0) {
-    return <p className="at-empty at-empty--small">За период по графику никого не ждали.</p>;
-  }
-  const width = 280;
-  const height = 90;
-  const x = (i: number) => (points.length > 1 ? (i / (points.length - 1)) * (width - 8) + 4 : width / 2);
-  // Шкала — от чуть ниже минимума до 100: колебания явки видны, а не
-  // прижаты к верхнему краю.
-  const floor = Math.max(0, Math.floor((Math.min(...points.map((one) => one.percent ?? 0)) - 10) / 10) * 10);
-  const y = (v: number) => height - 6 - ((v - floor) / (100 - floor || 1)) * (height - 14);
-  const d = points.map((one, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(one.percent ?? 0).toFixed(1)}`).join(' ');
+function CompareRange({ from, to, now, onChange }: {
+  from: string; to: string; now: string; onChange: (changes: Record<string, string | null>) => void;
+}) {
   return (
-    <div className="at-mini">
-      <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" role="img"
-           aria-label={`Явка по дням: ${points.map((one) => `${one.day.slice(8)}.${one.day.slice(5, 7)} — ${Math.round(one.percent ?? 0)}%`).join(', ')}`}>
-        {[0.25, 0.5, 0.75].map((k) => {
-          const v = floor + (100 - floor) * k;
-          return <line key={k} x1={0} x2={width} y1={y(v)} y2={y(v)} className="at-mini__grid" />;
-        })}
-        <path d={d} className="at-mini__line" />
-      </svg>
-      <div className="at-mini__axis">
-        <span>{points[0] ? `${Number(points[0].day.slice(8))} ${MONTHS[Number(points[0].day.slice(5, 7)) - 1]}` : ''}</span>
-        <span>{points.length ? `${Number(points[points.length - 1]!.day.slice(8))} ${MONTHS[Number(points[points.length - 1]!.day.slice(5, 7)) - 1]}` : ''}</span>
-      </div>
+    <span className="at-range">
+      <DatePicker label="Начало периода" value={from} now={now} max={to}
+                  onChange={(value) => onChange({ from: value || null })} />
+      <span aria-hidden="true">—</span>
+      <DatePicker label="Конец периода" value={to} now={now} min={from} max={now}
+                  onChange={(value) => onChange({ to: value || null })} />
+    </span>
+  );
+}
+
+/** Полоса сравнения: кто выше всех, кто ниже, разрыв и опоздания — по ответам сервера. */
+function CompareLeaders({ entries }: { entries: Entry[] }) {
+  const known = entries
+    .map((entry) => ({ entry, data: ready(entry) }))
+    .filter((one): one is { entry: Entry; data: api.Overview } => one.data !== null);
+  const rated = known.filter((one) => one.data.summary.attendance.percent !== null)
+    .sort((a, b) => (b.data.summary.attendance.percent ?? 0) - (a.data.summary.attendance.percent ?? 0));
+  const best = rated[0];
+  const worst = rated.length > 1 ? rated[rated.length - 1] : undefined;
+  const late = [...known].sort((a, b) => b.data.summary.late.numerator - a.data.summary.late.numerator)[0];
+  const pct = (one: { data: api.Overview } | undefined) =>
+    one?.data.summary.attendance.percent == null ? '—' : `${Math.round(one.data.summary.attendance.percent)}%`;
+  const gap = best && worst ? (best.data.summary.attendance.percent ?? 0) - (worst.data.summary.attendance.percent ?? 0) : null;
+  return (
+    <div className="at-facts at-facts--four">
+      <Leader label="Выше всех" value={pct(best)} who={best?.entry} note={best ? `${best.data.summary.attendance.numerator} из ${best.data.summary.attendance.denominator} дней` : 'Рабочих дней не было'} />
+      <Leader label="Ниже всех" value={pct(worst)} who={worst?.entry} note={worst ? `${worst.data.summary.attendance.numerator} из ${worst.data.summary.attendance.denominator} дней` : 'Сравнивать не с чем'} />
+      <Leader label="Разрыв" value={gap === null ? '—' : `${(Math.round(gap * 10) / 10).toLocaleString('ru-RU')} п.п.`} note="между лучшей и худшей явкой" />
+      <Leader label="Больше всего опозданий" value={late ? String(late.data.summary.late.numerator) : '—'}
+              who={late && late.data.summary.late.numerator > 0 ? late.entry : undefined}
+              note={late && late.data.summary.late.numerator > 0 ? 'после допуска' : 'Опозданий нет'} tone={late && late.data.summary.late.numerator > 0 ? 'warn' : undefined} />
     </div>
   );
 }
 
-function Bars({ rows }: { rows: [string, number, string][] }) {
-  const top = Math.max(1, ...rows.map(([, n]) => n));
+function Leader({ label, value, who, note, tone }: { label: string; value: string; who?: Entry | undefined; note: string; tone?: 'warn' | undefined }) {
   return (
-    <ul className="at-bars">
-      {rows.map(([title, n, tone]) => (
-        <li key={title}>
-          <span>{title}</span>
-          <span className="at-bars__track"><i className={`at-bars__fill at-bars__fill--${tone}`} style={{ width: `${(n / top) * 100}%` }} /></span>
-          <b>{n}</b>
-        </li>
-      ))}
-    </ul>
+    <div className="at-fact at-lead">
+      <span className="at-fact__label">{label}</span>
+      <span className="at-fact__line">
+        <b className={tone ? `at-fact__big at-fact__big--${tone}` : 'at-fact__big'}>{value}</b>
+        {who && (
+          <span className="at-lead__who">
+            <i className="at-swatch" style={{ background: who.color }} aria-hidden="true" />
+            <span>{who.name}</span>
+          </span>
+        )}
+      </span>
+      <small className="at-fact__note">{note}</small>
+    </div>
   );
 }
 
-function AttentionList({ people, onOpen }: { people: api.OverviewPerson[]; onOpen: (employee: string, day: string) => void }) {
-  const items = people.flatMap((one) => [
-    ...(one.missed_dates ?? []).map((day) => ({ id: one.id, name: one.name, day, text: 'Нет отметки', tone: 'bad' })),
-    ...(one.late_dates ?? []).map((late) => ({ id: one.id, name: one.name, day: late.day, text: `Опоздание ${late.minutes} мин`, tone: 'warn' })),
-  ]).sort((a, b) => b.day.localeCompare(a.day)).slice(0, 5);
-  if (items.length === 0) return <p className="at-empty at-empty--small">За период никто не требует внимания.</p>;
+function CompareRow({ entry, kind, onRemove, onRetry }: { entry: Entry; kind: CompareKind; onRemove: () => void; onRetry: () => void }) {
+  const { block, stale } = entry.slot;
+  const name = (
+    <span role="cell" className="at-who at-cmp__who">
+      <i className="at-swatch" style={{ background: entry.color }} aria-hidden="true" />
+      <span className="at-two">
+        {kind === 'employee'
+          ? <Link to={`/employees/${entry.id}?tab=attendance`} className="at-cmp__name">{entry.name}</Link>
+          : <b>{entry.name}</b>}
+        {entry.note && <small>{entry.note}</small>}
+      </span>
+    </span>
+  );
+  const remove = (
+    <span role="cell" className="at-right">
+      <button type="button" className="at-cmp__remove" aria-label={`Убрать «${entry.name}» из сравнения`} onClick={onRemove}>
+        <AppIcon name="close" size={16} />
+      </button>
+    </span>
+  );
+  if (block.state === 'loading' || (block.state === 'ready' && stale)) {
+    return (
+      <div role="row" className="at-row at-row--sk" aria-busy="true">
+        {name}
+        {CMP_COLS.map((cell, n) => (
+          <span key={n} className={`at-sk at-sk--${cell}`}><i className="at-ghost" /></span>
+        ))}
+        {remove}
+      </div>
+    );
+  }
+  if (block.state !== 'ready') {
+    return (
+      <div role="row" className="at-row at-row--bad">
+        {name}
+        <span role="cell" className="at-cmp__fail">
+          {block.state === 'denied' ? 'Нет доступа.' : 'Не удалось загрузить. Данные не показаны — это не ноль.'}
+          {block.state !== 'denied' && <button type="button" className="at-link" onClick={onRetry}>Повторить</button>}
+        </span>
+        {remove}
+      </div>
+    );
+  }
+  const s = block.data.summary;
+  const percent = s.attendance.percent;
+  const absent = s.vacation_days + s.sick_leave_days + s.other_absence_days;
+  const diff = s.difference_points;
   return (
-    <ul className="at-attention">
-      {items.map((one) => (
-        <li key={`${one.id}-${one.day}-${one.text}`}>
-          <button type="button" onClick={() => onOpen(one.id, one.day)}>
-            <span className="at-face at-face--sm" aria-hidden="true">{initials(one.name)}</span>
-            <span className="at-attention__text">
-              <b>{one.name}</b>
-              <small className={`at-state--${one.tone}`}><i className={`at-dot at-dot--${one.tone}`} />{one.text}</small>
+    <div role="row" className="at-row">
+      {name}
+      <span role="cell" className="at-share" data-label="Явка">
+        <span className="at-meter at-meter--thin"><i style={{ width: `${percent ?? 0}%`, background: entry.color }} /></span>
+        <b>{percent === null ? '—' : `${Math.round(percent)}%`}</b>
+      </span>
+      <span role="cell" className="at-center at-num" data-label="Дней явки">
+        {s.attendance.denominator > 0 ? `${s.attendance.numerator} из ${s.attendance.denominator}` : '—'}
+      </span>
+      <span role="cell" data-label="К прошлому периоду"
+            className={diff === null ? 'at-center at-num' : diff >= 0 ? 'at-center at-num at-delta--up' : 'at-center at-num at-delta--down'}>
+        {diff === null ? '—' : `${diff >= 0 ? '+' : '−'}${Math.abs(diff).toLocaleString('ru-RU')} п.п.`}
+      </span>
+      <span role="cell" className="at-center at-num" data-label="В среднем за день">{s.average_seconds === null ? '—' : duration(s.average_seconds)}</span>
+      <span role="cell" className={s.late.numerator > 0 ? 'at-center at-num at-num--warn' : 'at-center at-num'} data-label="Опоздания">{s.late.numerator}</span>
+      <span role="cell" className={s.missed_days > 0 ? 'at-center at-num at-num--bad' : 'at-center at-num'} data-label="Нет отметки">{s.missed_days}</span>
+      <span role="cell" className="at-center at-num" data-label="Отсутствия"
+            title={absent ? `${s.vacation_days} отпуск · ${s.sick_leave_days} больничный · ${s.other_absence_days} прочее` : undefined}>{absent}</span>
+      {remove}
+    </div>
+  );
+}
+
+/**
+ * Линии явки — по одной на объект, на общей оси дат; по дням или
+ * нарастающим итогом (`seriesOf`).
+ *
+ * Дни без графика (выходные) линию не рвут: точки на них просто нет.
+ * Наведение показывает значения всех линий за один день; наведение на
+ * пункт легенды приглушает остальные линии.
+ */
+function CompareChart({ days, entries, line }: { days: string[]; entries: Entry[]; line: LineKind }) {
+  const [hover, setHover] = useState<number | null>(null);
+  const [focus, setFocus] = useState<string | null>(null);
+  const lines = entries.flatMap((entry) => {
+    const data = ready(entry);
+    if (!data) return [];
+    return [{ entry, values: seriesOf(days, data.days, line) }];
+  });
+
+  if (entries.length === 0) return <p className="at-empty">Выберите, что сравнить, — здесь появятся линии явки.</p>;
+  if (lines.length === 0 && entries.some((one) => one.slot.block.state === 'loading' || one.slot.stale)) {
+    return (
+      <>
+        <span className="visually-hidden" role="status">Загружаем график…</span>
+        <i className="at-ghost at-cmp__ghost" aria-hidden="true" />
+      </>
+    );
+  }
+
+  const W = 720;
+  const H = 220;
+  const floor = chartFloor(lines.flatMap((one) => one.values));
+  const step = 100 - floor > 40 ? 20 : 10;
+  // Деления — от 100 вниз: верхняя граница шкалы всегда подписана.
+  const ticks = Array.from({ length: Math.floor((100 - floor) / step) + 1 }, (_, i) => 100 - i * step);
+  const x = (i: number) => (days.length > 1 ? (i / (days.length - 1)) * W : W / 2);
+  const y = (v: number) => H - ((v - floor) / (100 - floor || 1)) * H;
+  const path = (values: (number | null)[]) => {
+    let d = '';
+    let count = 0;
+    values.forEach((v, i) => {
+      if (v === null) return;
+      d += `${count ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`;
+      count += 1;
+    });
+    // Одна точка — короткий штрих, чтобы её было видно.
+    return count === 1 ? `${d}h0.1` : d;
+  };
+  const marks = days.length <= 1 ? [0] : [...new Set([0, 0.25, 0.5, 0.75, 1].map((k) => Math.round(k * (days.length - 1))))];
+  const nothing = lines.every((one) => one.values.every((v) => v === null));
+
+  const onMove = (event: ReactMouseEvent<HTMLDivElement>) => {
+    const box = event.currentTarget.getBoundingClientRect();
+    if (box.width <= 0) return;
+    const share = Math.min(1, Math.max(0, (event.clientX - box.left) / box.width));
+    setHover(Math.round(share * (days.length - 1)));
+  };
+  const at = hover !== null ? days[hover] : undefined;
+
+  return (
+    <div className="at-cmp-chart">
+      <div className="at-cmp-chart__frame">
+        <div className="at-cmp-chart__y" aria-hidden="true">
+          {ticks.map((v) => <span key={v} style={{ top: `${(y(v) / H) * 100}%` }}>{v}%</span>)}
+        </div>
+        <div className="at-cmp-chart__plot" onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
+          <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img"
+               aria-label={`Явка по дням: ${lines.map((one) => `${one.entry.name} — ${ready(one.entry)?.summary.attendance.percent ?? '—'}%`).join(', ')}`}>
+            {ticks.map((v) => <line key={v} x1={0} x2={W} y1={y(v)} y2={y(v)} className="at-cmp-chart__grid" />)}
+            {lines.map((one) => (
+              <path key={one.entry.id} d={path(one.values)} stroke={one.entry.color}
+                    className={focus && focus !== one.entry.id ? 'at-cmp-chart__line at-cmp-chart__line--dim' : 'at-cmp-chart__line'} />
+            ))}
+            {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={0} y2={H} className="at-cmp-chart__guide" />}
+          </svg>
+          {nothing && <p className="at-cmp-chart__none">За период по графику никого не ждали.</p>}
+          {at && hover !== null && (
+            <div className={`at-cmp-tip${x(hover) > W * 0.6 ? ' at-cmp-tip--left' : ''}`} style={{ left: `${(x(hover) / W) * 100}%` }}>
+              <b>{weekdayOf(at)}, {shortDate(at)}</b>
+              {lines.every((one) => one.values[hover] == null) && <small>По графику никого не ждали</small>}
+              {lines.map((one) => (
+                <span key={one.entry.id}>
+                  <i className="at-swatch" style={{ background: one.entry.color }} />
+                  <span className="at-cmp-tip__name">{one.entry.name}</span>
+                  <b>{one.values[hover] == null ? '—' : `${Math.round(one.values[hover]!)}%`}</b>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="at-cmp-chart__x" aria-hidden="true">
+          {marks.map((i, n) => (
+            <span key={i} style={{ left: `${(x(i) / W) * 100}%` }}
+                  className={i === 0 && days.length > 1 ? 'at-cmp-chart__x--first'
+                    : i === days.length - 1 && days.length > 1 ? 'at-cmp-chart__x--last'
+                      // Промежуточные деления на узком экране прячутся — подписи не наезжают.
+                      : n % 2 === 1 ? 'at-cmp-chart__x--minor' : undefined}>
+              {shortDate(days[i]!)}
             </span>
-            <time dateTime={one.day}>{Number(one.day.slice(8))} {MONTHS[Number(one.day.slice(5, 7)) - 1]}</time>
-          </button>
-        </li>
-      ))}
-    </ul>
+          ))}
+        </div>
+      </div>
+      <ul className="at-cmp-legend" aria-label="Легенда">
+        {entries.map((entry) => {
+          const data = ready(entry);
+          const state = data ? (data.summary.attendance.percent === null ? '—' : `${Math.round(data.summary.attendance.percent)}%`)
+            : entry.slot.block.state === 'loading' || entry.slot.stale ? 'загружаем…'
+              : entry.slot.block.state === 'denied' ? 'нет доступа' : 'не загрузилось';
+          return (
+            <li key={entry.id}>
+              <button type="button" className={focus === entry.id ? 'at-cmp-legend__item at-cmp-legend__item--on' : 'at-cmp-legend__item'}
+                      onMouseEnter={() => setFocus(entry.id)} onMouseLeave={() => setFocus(null)}
+                      onFocus={() => setFocus(entry.id)} onBlur={() => setFocus(null)}
+                      aria-label={`${entry.name}: ${state}`}>
+                <i className="at-swatch" style={{ background: entry.color }} />
+                <span className="at-cmp-legend__name">{entry.name}</span>
+                <b className={data ? undefined : 'at-cmp-legend__state'}>{state}</b>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * Все сотрудники офиса — горизонтальными столбцами, лучшие или худшие
+ * сверху. Отметка на дорожке — явка офиса в целом, тоже из сводки
+ * сервера: видно, кто ниже средней, без второго правила явки.
+ */
+function StaffBars({ people, average, worstFirst, office }: { people: api.OverviewPerson[]; average: number | null; worstFirst: boolean; office: boolean }) {
+  const rated = people.filter((one) => one.attendance.percent !== null)
+    .sort((a, b) => (worstFirst ? 1 : -1) * ((a.attendance.percent ?? 0) - (b.attendance.percent ?? 0)) || a.name.localeCompare(b.name, 'ru'));
+  const unrated = people.filter((one) => one.attendance.percent === null);
+  const shown = rated.slice(0, STAFF_BARS);
+  if (people.length === 0) return <p className="at-empty">За период по графику никого не ждали.</p>;
+  return (
+    <>
+      <p className="at-cmp-bars__key">
+        <span><i className="at-swatch" style={{ background: 'var(--at-blue)' }} />не ниже средней</span>
+        <span><i className="at-swatch" style={{ background: '#f2a93b' }} />ниже средней</span>
+        {average !== null && <span><i className="at-cmp-bars__tick" />средняя {office ? 'по офису' : 'по всем'} — {Math.round(average)}%</span>}
+      </p>
+      <ul className="at-cmp-bars" aria-label="Явка сотрудников">
+        {shown.map((one) => {
+          const percent = one.attendance.percent ?? 0;
+          const below = average !== null && percent < average;
+          return (
+            <li key={one.id}>
+              <Link to={`/employees/${one.id}?tab=attendance`} className="at-cmp-bars__name" title={one.name}>{one.name}</Link>
+              <span className="at-cmp-bars__track">
+                <i className={below ? 'at-cmp-bars__fill at-cmp-bars__fill--below' : 'at-cmp-bars__fill'} style={{ width: `${percent}%` }} />
+                {average !== null && <i className="at-cmp-bars__avg" style={{ left: `${average}%` }} aria-hidden="true" />}
+              </span>
+              <b>{Math.round(percent)}%</b>
+            </li>
+          );
+        })}
+      </ul>
+      {(rated.length > STAFF_BARS || unrated.length > 0) && (
+        <p className="at-cmp__note">
+          {rated.length > STAFF_BARS && `На графике ${STAFF_BARS} из ${rated.length}; все — в таблице ниже. `}
+          {unrated.length > 0 && `${unrated.length} ${plural(unrated.length, ['сотрудник', 'сотрудника', 'сотрудников'])} без рабочих дней в периоде (например, весь период в отпуске) — явки у них нет, они только в таблице.`}
+        </p>
+      )}
+    </>
   );
 }
 
@@ -1309,7 +1745,10 @@ type GhostCell = 'who' | 'text' | 'short' | 'time' | 'num' | 'pill' | 'btn' | 'c
 const DAY_COLS: GhostCell[] = ['who', 'text', 'short', 'time', 'time', 'short', 'pill', 'btn'];
 const LOG_COLS: GhostCell[] = ['time', 'who', 'text', 'text', 'short', 'pill', 'btn'];
 const WEEK_COLS: GhostCell[] = ['who', 'text', 'cell', 'cell', 'cell', 'cell', 'cell', 'cell', 'cell', 'short'];
-const PERIOD_COLS: GhostCell[] = ['who', 'num', 'num', 'bar', 'num', 'num', 'num', 'num', 'none'];
+const STAFF_COLS: GhostCell[] = ['who', 'num', 'num', 'bar', 'num', 'num', 'num', 'num', 'none'];
+/** Строка сравнения в пути: имя уже известно, ждут только числа. */
+const CMP_COLS: GhostCell[] = ['bar', 'num', 'num', 'num', 'num', 'num', 'num'];
+const BAR_COLS: GhostCell[] = ['text', 'bar', 'num'];
 
 const STRIP_CLASS = { day: 'at-facts', three: 'at-facts at-facts--three', four: 'at-facts at-facts--four' };
 
@@ -1322,13 +1761,12 @@ const STRIP_CLASS = { day: 'at-facts', three: 'at-facts at-facts--three', four: 
  * стоит заготовка. После него смена фильтра оставляет прежние данные на
  * месте, как и везде: таблица не схлопывается на каждый запрос.
  */
-function Guard<T>({ block, name, children, strip, cols, side = false, stale = false }: {
+function Guard<T>({ block, name, children, strip, cols, stale = false }: {
   block: Block<T>;
   name: string;
   children: (data: T) => ReactNode;
   strip?: keyof typeof STRIP_CLASS;
   cols?: GhostCell[];
-  side?: boolean;
   stale?: boolean;
 }) {
   const fresh = block.state !== 'loading' && !stale;
@@ -1341,7 +1779,7 @@ function Guard<T>({ block, name, children, strip, cols, side = false, stale = fa
     return (
       <>
         <span className="visually-hidden" role="status">Загружаем {name}…</span>
-        {strip ? <GhostStrip shape={strip} /> : side ? <GhostSide /> : <GhostRows cols={cols ?? DAY_COLS} />}
+        {strip ? <GhostStrip shape={strip} /> : <GhostRows cols={cols ?? DAY_COLS} />}
       </>
     );
   }
@@ -1378,19 +1816,6 @@ function GhostRows({ cols }: { cols: GhostCell[] }) {
             </span>
           ))}
         </div>
-      ))}
-    </div>
-  );
-}
-
-function GhostSide() {
-  return (
-    <div className="at-sk-side" aria-hidden="true">
-      {['at-sk-chart', 'at-sk-bars', 'at-sk-list'].map((shape) => (
-        <section key={shape} className="at-side-part">
-          <i className="at-ghost at-sk-label" />
-          <i className={`at-ghost ${shape}`} />
-        </section>
       ))}
     </div>
   );
@@ -1455,14 +1880,6 @@ function addDays(iso: string, days: number): string {
 function weekStart(iso: string): string {
   const weekday = parseDay(iso).getUTCDay();
   return addDays(iso, -((weekday + 6) % 7));
-}
-
-function monthEnd(iso: string): string {
-  const date = parseDay(`${iso.slice(0, 8)}01`);
-  date.setUTCMonth(date.getUTCMonth() + 1);
-  date.setUTCDate(0);
-  const last = isoOf(date);
-  return last > today() ? today() : last;
 }
 
 function weekdayOf(iso: string): string {
