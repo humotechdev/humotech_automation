@@ -105,6 +105,24 @@ const PRIORITY_TITLE: Record<api.QuestionPriority, string> = {
   URGENT: 'Срочный',
 };
 
+// Порядок пунктов меню и фильтра — порядок перечислений сервера
+// (QUESTION_PRIORITIES, QUESTION_CATEGORIES). Других значений сервер не
+// примет: и меню, и фильтр строятся только из этих двух словарей.
+const PRIORITY_KEYS = Object.keys(PRIORITY_TITLE) as api.QuestionPriority[];
+const CATEGORY_KEYS = Object.keys(CATEGORY_TITLE) as api.QuestionCategory[];
+
+/**
+ * Выбранные значения фильтра из адреса — только известные, в порядке
+ * словаря. Устаревшее или опечатанное значение в ссылке молча
+ * отбрасывается: сервер ответил бы на него 400, и очередь не открылась бы
+ * вовсе.
+ */
+function pickList<T extends string>(raw: string | null, known: readonly T[]): T[] {
+  if (!raw) return [];
+  const asked = new Set(raw.split(','));
+  return known.filter((one) => asked.has(one));
+}
+
 /**
  * Состояние доставки ответа — ровно то, что известно.
  *
@@ -221,6 +239,14 @@ export function QuestionsPage() {
   const search = params.get('q') ?? '';
   const quick: QuickKey = QUICK.find((one) => one.key === params.get('quick'))?.key ?? 'all';
   const picked = params.get('id') ?? '';
+  // Фильтр по приоритету и категории: несколько значений через запятую —
+  // так их принимает сервер (`priority=HIGH,URGENT`).
+  const priorityRaw = params.get('priority');
+  const categoryRaw = params.get('category');
+  const priorities = useMemo(() => pickList(priorityRaw, PRIORITY_KEYS), [priorityRaw]);
+  const categories = useMemo(() => pickList(categoryRaw, CATEGORY_KEYS), [categoryRaw]);
+  const priority = priorities.join(',');
+  const category = categories.join(',');
 
   const patch = useCallback(
     (changes: Record<string, string | null>) => {
@@ -265,8 +291,10 @@ export function QuestionsPage() {
       ...(office ? { office_id: office } : {}),
       ...(assignee ? { assignee } : {}),
       ...(search ? { search } : {}),
+      ...(priority ? { priority } : {}),
+      ...(category ? { category } : {}),
     }),
-    [office, assignee, search],
+    [office, assignee, search, priority, category],
   );
   const filterKey = JSON.stringify(filters);
   const listKey = `${filterKey}|${status}|${quick}`;
@@ -563,7 +591,7 @@ export function QuestionsPage() {
   const quickCount = (key: QuickKey) =>
     counts.state === 'ready' && key !== 'all' ? counts.data.quick[key] : null;
   const total = counts.state === 'ready' ? counts.data.quick.all : null;
-  const filtered = Boolean(search || office || assignee || quick !== 'all');
+  const filtered = Boolean(search || office || assignee || priority || category || quick !== 'all');
 
   const closeWith = async (reason: string) => {
     if (!detail) return;
@@ -609,6 +637,14 @@ export function QuestionsPage() {
                   ))}
                 </AppSelectField>
               </span>
+              {/* Приоритет и категория — рядом с офисом и ответственным: все
+                  отборы очереди в одном месте, колонка очереди узкая. */}
+              <QueueFilter priorities={priorities} categories={categories}
+                           onChange={(next) => patch({
+                             priority: next.priorities.join(',') || null,
+                             category: next.categories.join(',') || null,
+                             id: null,
+                           })} />
               <button type="button"
                       className={listRefresh.busy ? 'tk-icon tk-icon--spin' : 'tk-icon'}
                       aria-label="Обновить" onClick={() => setTick((n) => n + 1)}>
@@ -940,6 +976,101 @@ function QueueSlide({ values, clicked, pending, className, children }: {
   );
 }
 
+/**
+ * «Фильтр» очереди: приоритет и категория, по нескольку значений сразу.
+ *
+ * Отбор применяется сразу по нажатию — очередь слева сужается, пока окно
+ * открыто, «Готово» только закрывает его. Выбор живёт в адресе
+ * (`priority=HIGH,URGENT&category=SALARY`), поэтому ссылка и кнопка
+ * «Назад» его сохраняют. Состояния здесь нет: ими управляют вкладки
+ * над очередью, второй переключатель того же спорил бы с ними.
+ */
+function QueueFilter({ priorities, categories, onChange }: {
+  priorities: api.QuestionPriority[];
+  categories: api.QuestionCategory[];
+  onChange: (next: { priorities: api.QuestionPriority[]; categories: api.QuestionCategory[] }) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const button = useRef<HTMLButtonElement | null>(null);
+  const body = useRef<HTMLDivElement | null>(null);
+  const count = priorities.length + categories.length;
+
+  // Окно рисуется в портале у body, вне порядка табуляции страницы:
+  // фокус переводится в него при открытии и возвращается на кнопку,
+  // если закрыли с клавиатуры (Esc, «Готово»).
+  useEffect(() => {
+    if (!open) return;
+    const first = body.current?.querySelector<HTMLElement>('input, button');
+    first?.focus();
+  }, [open]);
+  const close = useCallback(() => {
+    const inside = body.current?.contains(document.activeElement) ?? false;
+    setOpen(false);
+    if (inside) button.current?.focus();
+  }, []);
+
+  const toggle = <T extends string>(list: T[], key: T, order: readonly T[]): T[] =>
+    order.filter((one) => (one === key ? !list.includes(key) : list.includes(one)));
+
+  return (
+    <span className="tk-pop">
+      <button ref={button} type="button"
+              className={count > 0 ? 'tk-filter-btn tk-filter-btn--on' : 'tk-filter-btn'}
+              aria-haspopup="dialog" aria-expanded={open}
+              aria-label={count > 0 ? `Фильтр, выбрано: ${count}` : 'Фильтр'}
+              onClick={() => setOpen((was) => !was)}>
+        <AppIcon name="filter" size={16} />
+        <span className="tk-filter-btn__text">Фильтр</span>
+        {count > 0 && <span className="tk-filter-btn__n" aria-hidden="true">{count}</span>}
+      </button>
+      <AppPopover open={open} onClose={close} className="tk-filter-pop" label="Фильтр обращений">
+        <div ref={body}
+             onBlur={(event) => {
+               // Ушли табуляцией за пределы окна — закрыть. Клик по пустому
+               // месту внутри окна фокус никуда не переносит (null) и окно
+               // не закрывает.
+               const next = event.relatedTarget as Node | null;
+               if (next && !body.current?.contains(next) && next !== button.current) setOpen(false);
+             }}>
+          <fieldset className="tk-filter-pop__group">
+            <legend className="tk-filter-pop__label">Приоритет</legend>
+            <div className="tk-filter-pop__options">
+              {PRIORITY_KEYS.map((key) => (
+                <label key={key} className="tk-option">
+                  <input type="checkbox" checked={priorities.includes(key)}
+                         onChange={() => onChange({ priorities: toggle(priorities, key, PRIORITY_KEYS), categories })} />
+                  <span>{PRIORITY_TITLE[key]}</span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          <fieldset className="tk-filter-pop__group">
+            <legend className="tk-filter-pop__label">Категория</legend>
+            <div className="tk-filter-pop__options">
+              {CATEGORY_KEYS.map((key) => (
+                <label key={key} className="tk-option">
+                  <input type="checkbox" checked={categories.includes(key)}
+                         onChange={() => onChange({ priorities, categories: toggle(categories, key, CATEGORY_KEYS) })} />
+                  <span>{CATEGORY_TITLE[key]}</span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          <div className="tk-filter-pop__foot">
+            <button type="button" className="tk-link" disabled={count === 0}
+                    onClick={() => onChange({ priorities: [], categories: [] })}>
+              Сбросить
+            </button>
+            <button type="button" className="tk-btn tk-btn--main tk-filter-pop__done" onClick={close}>
+              Готово
+            </button>
+          </div>
+        </div>
+      </AppPopover>
+    </span>
+  );
+}
+
 function QueueRow({ row, on, fresh = false, onPick }: {
   row: api.QuestionRow; on: boolean; fresh?: boolean; onPick: (id: string) => void;
 }) {
@@ -1214,10 +1345,17 @@ function Conversation({
               {actions.priority && (
                 <div className="tk-menu__group" role="group" aria-label="Приоритет">
                   <span className="tk-menu__label">Приоритет</span>
-                  {(Object.keys(PRIORITY_TITLE) as api.QuestionPriority[]).map((key) => (
+                  {PRIORITY_KEYS.map((key) => (
                     <button key={key} type="button" role="menuitemradio" aria-checked={question.priority === key}
-                            disabled={busy !== null || question.priority === key}
-                            onClick={() => { setMenu(false); void act('priority', () => api.setQuestionPriority(id, key)); }}>
+                            disabled={busy !== null}
+                            onClick={() => {
+                              setMenu(false);
+                              // Уже выбранное — просто закрыть меню: запрос
+                              // ничего бы не изменил. Пункт при этом не
+                              // серый — серый читался как «не работает».
+                              if (question.priority === key) return;
+                              void act('priority', () => api.setQuestionPriority(id, key), `Приоритет: ${PRIORITY_TITLE[key]}`);
+                            }}>
                       {PRIORITY_TITLE[key]}
                       {question.priority === key && <AppIcon name="tick" size={16} />}
                     </button>
@@ -1227,10 +1365,14 @@ function Conversation({
               {actions.category && (
                 <div className="tk-menu__group" role="group" aria-label="Категория">
                   <span className="tk-menu__label">Категория</span>
-                  {(Object.keys(CATEGORY_TITLE) as api.QuestionCategory[]).map((key) => (
+                  {CATEGORY_KEYS.map((key) => (
                     <button key={key} type="button" role="menuitemradio" aria-checked={question.category === key}
-                            disabled={busy !== null || question.category === key}
-                            onClick={() => { setMenu(false); void act('category', () => api.setQuestionCategory(id, key)); }}>
+                            disabled={busy !== null}
+                            onClick={() => {
+                              setMenu(false);
+                              if (question.category === key) return;
+                              void act('category', () => api.setQuestionCategory(id, key), `Категория: ${CATEGORY_TITLE[key]}`);
+                            }}>
                       {CATEGORY_TITLE[key]}
                       {question.category === key && <AppIcon name="tick" size={16} />}
                     </button>

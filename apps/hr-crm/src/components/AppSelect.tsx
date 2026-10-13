@@ -293,10 +293,10 @@ export function AppSegmentedControl<T extends string | number>({ label, value, o
   return <div className={`app-segmented ${className}`} role={role} aria-label={label}>{options.map((option) => <button key={option.value} type="button" role={role === 'tablist' ? 'tab' : undefined} aria-selected={role === 'tablist' ? value === option.value : undefined} aria-pressed={role === 'group' ? value === option.value : undefined} className={value === option.value ? 'app-segmented__button app-segmented__button--active' : 'app-segmented__button'} onClick={() => onChange(option.value)}>{option.icon && <AppIcon name={option.icon} size={18} />}{option.label}{option.count !== undefined && <span className="app-segmented__count">{option.count}</span>}</button>)}</div>;
 }
 
-export function AppPopover({ open, onClose, children, className = '' }: { open: boolean; onClose: () => void; children: ReactNode; className?: string }) {
+export function AppPopover({ open, onClose, children, className = '', label }: { open: boolean; onClose: () => void; children: ReactNode; className?: string; label?: string }) {
   const marker = useRef<HTMLSpanElement>(null);
   const popup = useRef<HTMLDivElement>(null);
-  const [place, setPlace] = useState({ top: 0, left: 0 });
+  const [place, setPlace] = useState({ top: 0, left: 0, maxHeight: 0 });
   useLayoutEffect(() => {
     if (!open) return;
     const placePopover = () => {
@@ -304,10 +304,21 @@ export function AppPopover({ open, onClose, children, className = '' }: { open: 
       const card = popup.current;
       if (!anchor) return;
       const width = card?.getBoundingClientRect().width || 300;
-      const height = card?.getBoundingClientRect().height || 220;
-      const room = window.innerHeight - anchor.bottom;
-      const top = room >= height + 8 || anchor.top < height + 8 ? anchor.bottom + 6 : Math.max(8, anchor.top - height - 6);
-      setPlace({ top, left: Math.max(12, Math.min(anchor.left, window.innerWidth - width - 12)) });
+      // Высота содержимого целиком, а не уже срезанного окна: иначе после
+      // первого ограничения окно никогда не вернулось бы к полной высоте.
+      const height = card?.scrollHeight || 220;
+      // Окно целиком внутри экрана. Раньше оно открывалось вниз от кнопки
+      // с пределом «высота экрана», и нижние пункты длинного меню уходили
+      // за край — нажать их было нельзя. Теперь: где помещается целиком —
+      // там и открывается; не помещается нигде — на сторону, где места
+      // больше, с прокруткой внутри.
+      const below = window.innerHeight - anchor.bottom - 6 - 8;
+      const above = anchor.top - 6 - 8;
+      const down = height <= below || (height > above && below >= above);
+      const room = Math.max(120, down ? below : above);
+      const shown = Math.min(height, room);
+      const top = down ? anchor.bottom + 6 : Math.max(8, anchor.top - 6 - shown);
+      setPlace({ top, left: Math.max(12, Math.min(anchor.left, window.innerWidth - width - 12)), maxHeight: room });
     };
     placePopover();
     window.addEventListener('resize', placePopover);
@@ -326,6 +337,6 @@ export function AppPopover({ open, onClose, children, className = '' }: { open: 
   }, [open, onClose]);
   return <>
     <span ref={marker} className="app-popover-anchor" aria-hidden="true" />
-    {open && createPortal(<div ref={popup} className={`app-popover ${className}`} role="dialog" data-positioning="true" style={{ position: 'fixed', top: place.top, left: place.left, maxHeight: 'calc(100vh - 16px)', overflowY: 'auto' }}>{children}</div>, document.body)}
+    {open && createPortal(<div ref={popup} className={`app-popover ${className}`} role="dialog" aria-label={label} data-positioning="true" style={{ position: 'fixed', top: place.top, left: place.left, maxHeight: place.maxHeight || 'calc(100vh - 16px)', overflowY: 'auto' }}>{children}</div>, document.body)}
   </>;
 }

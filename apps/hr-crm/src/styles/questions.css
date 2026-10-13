@@ -181,7 +181,9 @@ body.tk-type .app-popover {
   flex: 1 1 0;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(270px, 25fr) minmax(0, 53fr) minmax(290px, 22fr);
+  /* Очередь не уже 296px: в ней целиком, без прокрутки вбок, должны
+     стоять быстрые фильтры со счётчиками. */
+  grid-template-columns: minmax(296px, 25fr) minmax(0, 53fr) minmax(290px, 22fr);
   margin: 0 -24px;
 }
 
@@ -205,6 +207,135 @@ body.tk-type .app-popover {
   gap: 14px;
   padding: 16px 14px 14px;
 }
+
+.tk-filter-btn {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  height: 42px;
+  padding: 0 14px;
+  border: 1px solid var(--tk-line);
+  border-radius: 9px;
+  background: #ffffff;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  color: #3f5173;
+  cursor: pointer;
+}
+
+.tk-filter-btn:hover { border-color: #b9d0ec; color: var(--tk-blue); }
+.tk-filter-btn:focus-visible { outline: 2px solid var(--tk-blue); outline-offset: 2px; }
+.tk-filter-btn[aria-expanded='true'] { border-color: #9fc0ea; color: var(--tk-blue); }
+.tk-filter-btn--on { border-color: #b9d0ec; background: var(--tk-soft); color: var(--tk-blue); }
+
+.tk-filter-btn__n {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--tk-blue);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 18px;
+  color: #ffffff;
+}
+
+/* Окно фильтра — мягкая белая карточка, варианты — пилюли с галочкой. */
+.app-popover.tk-filter-pop {
+  width: min(320px, calc(100vw - 24px));
+  padding: 14px 14px 12px;
+  border: 1px solid var(--tk-line);
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 16px 40px rgba(19, 41, 90, 0.14);
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  color: var(--tk-text);
+}
+
+.tk-filter-pop__group { min-width: 0; margin: 0; padding: 0; border: 0; }
+.tk-filter-pop__group + .tk-filter-pop__group { margin-top: 14px; }
+
+.tk-filter-pop__label {
+  margin-bottom: 8px;
+  padding: 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #8a99b1;
+}
+
+.tk-filter-pop__options { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.tk-option { position: relative; display: inline-flex; cursor: pointer; }
+
+/* Сам флажок невидим, но остаётся в порядке табуляции и у экранных дикторов. */
+.tk-option input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.tk-option span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid #e2eaf3;
+  border-radius: 999px;
+  background: #f6f9fd;
+  font-size: 13px;
+  line-height: 20px;
+  white-space: nowrap;
+  color: #33466a;
+  transition: background-color 0.14s ease, border-color 0.14s ease, color 0.14s ease;
+}
+
+.tk-option:hover span { border-color: #b9d0ec; }
+.tk-option input:focus-visible + span { outline: 2px solid var(--tk-blue); outline-offset: 2px; }
+
+.tk-option input:checked + span {
+  border-color: #9fc0ea;
+  background: var(--tk-soft);
+  font-weight: 500;
+  color: var(--tk-blue);
+}
+
+/* Галочка у выбранного — рисуется рамкой, без картинки. */
+.tk-option input:checked + span::before {
+  content: '';
+  width: 4px;
+  height: 8px;
+  margin: -2px 1px 0 0;
+  border: solid currentColor;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.tk-filter-pop__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid #edf2f8;
+}
+
+.tk-filter-pop__foot .tk-link:disabled { color: #a5b2c5; cursor: default; }
+.tk-filter-pop__done { height: 36px; padding: 0 18px; font-size: 13.5px; }
 
 .tk-find {
   display: flex;
@@ -243,18 +374,24 @@ body.tk-type .app-popover {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
   overscroll-behavior-x: contain;
 }
 
+/*
+ * Чип — ровная «таблетка»: текст и счётчик на одной оси по центру.
+ * Высота строки задана в пикселях, а не `1`: у Inter при line-height: 1
+ * строчные буквы садились ниже центра, а цифры в кружке — выше.
+ */
 .tk-chip {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
-  gap: 5px;
+  justify-content: center;
+  gap: 6px;
   height: 32px;
   padding: 0 9px;
   border: 0;
@@ -262,7 +399,7 @@ body.tk-type .app-popover {
   background: #eef2f7;
   font: inherit;
   font-size: 13px;
-  line-height: 1;
+  line-height: 20px;
   white-space: nowrap;
   color: #33466a;
   cursor: pointer;
@@ -281,16 +418,18 @@ body.tk-type .app-popover {
 }
 
 .tk-chip__n {
-  display: inline-grid;
-  place-items: center;
-  min-width: 19px;
-  height: 19px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
   padding: 0 5px;
   border-radius: 999px;
   background: #dfe6ef;
-  font-size: 11.5px;
+  font-size: 11px;
   font-weight: 600;
-  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  line-height: 18px;
 }
 
 .tk-chip--unanswered .tk-chip__n { background: var(--tk-red); color: #ffffff; }
@@ -401,23 +540,28 @@ body.tk-type .app-popover {
 
 /* --- статусы и пометки ---------------------------------------------------- */
 
+/*
+ * Состояние обращения — цветной текст без плашки. В строке очереди и в
+ * шапке переписки рядом и так стоят метки и кнопки: ещё одна заливка
+ * спорила с ними. Цвет — тот же, что был у текста плашки.
+ */
 .tk-status {
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
   height: 24px;
-  padding: 0 10px;
-  border-radius: 6px;
+  padding: 0;
+  background: none;
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   white-space: nowrap;
 }
 
-.tk-status--NEW { background: var(--tk-soft-2); color: var(--tk-blue); }
-.tk-status--IN_PROGRESS { background: #fdf0d8; color: #9a5b07; }
-.tk-status--WAITING_EMPLOYEE { background: #eef1f5; color: #5d6f8a; }
-.tk-status--CLOSED { background: var(--tk-green-soft); color: var(--tk-green); }
-.tk-status--lg { height: 34px; padding: 0 20px; border-radius: 8px; font-size: 14px; font-weight: 600; }
+.tk-status--NEW { color: var(--tk-blue); }
+.tk-status--IN_PROGRESS { color: #9a5b07; }
+.tk-status--WAITING_EMPLOYEE { color: #5d6f8a; }
+.tk-status--CLOSED { color: var(--tk-green); }
+.tk-status--lg { height: 34px; font-size: 14px; }
 
 .tk-flag {
   display: inline-flex;
@@ -1285,7 +1429,8 @@ a.tk-person__name:hover { color: var(--tk-blue); }
 .tk-sk-field { height: 38px; border-radius: 9px; }
 
 /* Меню раздела (рисуются у body, класс свой): короткое раскрытие. */
-.app-popover.tk-menu { animation: tk-drop 0.14s ease-out backwards; }
+.app-popover.tk-menu,
+.app-popover.tk-filter-pop { animation: tk-drop 0.14s ease-out backwards; }
 
 /* Окно закрытия: затемнение проявляется, карточка мягко поднимается;
    при отмене — коротко обратно, клики сквозь уходящее окно не ловятся. */
@@ -1356,6 +1501,7 @@ a.tk-person__name:hover { color: var(--tk-blue); }
   .tk-side__body,
   .tk-msg--new,
   .app-popover.tk-menu,
+  .app-popover.tk-filter-pop,
   .tk-modal__card,
   .tk-notice { animation: tk-fade 0.12s linear backwards; animation-delay: 0s; }
   .tk-modal--leaving,

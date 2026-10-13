@@ -10,6 +10,7 @@
  *   ?long=1             — длинная история переписки;
  *   ?replyfail=offline  — отправка ответа обрывается, ответ не сохранён;
  *   ?replyfail=lost     — обрывается, но сервер ответ сохранил.
+ *   ?filter=1           — сразу с отбором «Высокий, Срочный» в адресе.
  *
  * Поток событий — подменённый EventSource: `window.__push(id, text)`
  * добавляет сообщение сотрудника и шлёт странице тот же сигнал
@@ -255,9 +256,27 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     if (replyFail === 'lost') throw new TypeError('Failed to fetch');
     return answer(questionOf(id));
   }
+  // Приоритет и категория — как на сервере: значение меняется у строки
+  // очереди, в ответ — обращение целиком.
+  const change = url.match(/\/escalations\/(q-\d+)\/(priority|category)\/?$/);
+  if (change && method === 'POST') {
+    const row = ROWS.find((item) => item.id === change[1]);
+    const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, string>;
+    if (row) Object.assign(row, { [change[2]!]: body[change[2]!] });
+    return answer(questionOf(change[1]!));
+  }
   const one = url.match(/\/escalations\/(q-\d+)\/?(\?|$)/);
   if (one) return answer(questionOf(one[1]!));
-  if (/\/escalations\/?(\?|$)/.test(url)) return answer({ items: rowsNow(), next_cursor: null, has_more: false });
+  if (/\/escalations\/?(\?|$)/.test(url)) {
+    // Фильтр «Приоритет» и «Категория»: несколько значений через запятую.
+    const asked = new URL(url, window.location.origin).searchParams;
+    const within = (key: 'priority' | 'category', value: string) => {
+      const list = asked.get(key);
+      return !list || list.split(',').includes(value);
+    };
+    const items = rowsNow().filter((row) => within('priority', row.priority) && within('category', row.category));
+    return answer({ items, next_cursor: null, has_more: false });
+  }
   if (url.includes('/offices')) return answer({ items: [{ ...OFFICE, status: 'ACTIVE', region_id: 'r-1' }] });
   if (url.includes('/photo')) return new Response('', { status: 404 });
   return answer({ items: [], next_cursor: null, has_more: false });
@@ -300,7 +319,7 @@ const root = document.getElementById('root');
 if (root) {
   createRoot(root).render(
     <StrictMode>
-      <MemoryRouter initialEntries={['/questions?id=q-1']}>
+      <MemoryRouter initialEntries={[mode.get('filter') === '1' ? '/questions?id=q-1&priority=HIGH,URGENT' : '/questions?id=q-1']}>
         <SessionProvider>
           <App />
         </SessionProvider>
