@@ -59,6 +59,27 @@ const SERIES = [2, 3, 2, 1, 2, 1, 0].map((attended, i) => ({
   day: iso(back(6 - i)), worked_seconds: 0, attended, expected: 4 - (i === 6 ? 3 : 0), late: 0,
 }));
 
+/*
+ * Ряд за запрошенный период: воскресенье — выходной (никого не ждали),
+ * суббота через неделю рабочая — так видно, что ось пропускает дни по
+ * данным, а не по дню недели.
+ */
+const ATTENDED = [4, 3, 4, 2, 4, 3, 1, 4, 4, 2, 3];
+function seriesFor(url: string) {
+  const params = new URL(url, 'http://x').searchParams;
+  const from = params.get('date_from');
+  const to = params.get('date_to');
+  if (!from || !to) return SERIES;
+  const out = [];
+  for (let d = new Date(`${from}T00:00:00Z`), n = 0; iso(d) <= to; d.setUTCDate(d.getUTCDate() + 1), n += 1) {
+    const weekday = d.getUTCDay();
+    const week = Math.floor(d.getTime() / (7 * 86400000));
+    const off = weekday === 0 || (weekday === 6 && week % 2 === 0);
+    out.push({ day: iso(d), worked_seconds: 0, attended: off ? 0 : ATTENDED[n % ATTENDED.length]!, expected: off ? 0 : 4, late: 0 });
+  }
+  return out;
+}
+
 const absence = (id: string, name: string, code: string, typeName: string, stage: string, status = 'SUBMITTED', reviewed?: Date) => ({
   kind: 'absence', id, created_at: back(1).toISOString(),
   place: { office_name: 'Ташкент (HQ)', department_name: 'Sales' },
@@ -133,7 +154,7 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   if (url.includes('/dashboard')) return answer(DASHBOARD);
   if (url.includes('/regions')) return answer({ items: [{ id: 'r-1', name: 'Ташкент' }, { id: 'r-2', name: 'Самарканд' }, { id: 'r-3', name: 'Бухара' }] });
   if (url.includes('/offices')) return answer({ items: OFFICES });
-  if (url.includes('/analytics')) return answer({ period: { first: SERIES[0]!.day, last: SERIES[6]!.day, timezone: 'Asia/Tashkent' }, headcount: 5, series: SERIES });
+  if (url.includes('/analytics')) return answer({ period: { first: SERIES[0]!.day, last: SERIES[6]!.day, timezone: 'Asia/Tashkent' }, headcount: 5, series: seriesFor(url) });
   if (url.includes('/attendance/presence')) {
     const office = new URL(url, 'http://x').searchParams.get('office_id') ?? 'o-1';
     return answer({ date: iso(new Date()), timezone: 'Asia/Tashkent', counts: PRESENCE[office] ?? {}, total: 0, truncated: false, items: [] });

@@ -7,6 +7,7 @@
  * — ошибка блока не превращается в ноль и не гасит соседние блоки;
  * — регион и офис доходят до каждого запроса;
  * — переключение периода трогает только «Ритм дня», и прежняя линия не исчезает;
+ * — на оси «Ритма дня» только дни, в которые кого-то ждали по графику;
  * — «Отсутствуют» — только подтверждённые отпуск, больничный и иное;
  * — «Фокус HR» собран по стадиям заявок, а пустой — говорит об этом словами;
  * — лента событий сужается выбранным офисом.
@@ -309,15 +310,108 @@ describe('ритм дня', () => {
     expect(screen.getByRole('button', { name: 'Повторить' })).toBeTruthy();
   });
 
-  test('день без графика — разрыв, а не ноль процентов', async () => {
+  test('день без графика выброшен с оси, а не показан нулём или провалом', async () => {
     network();
     renderApp('/');
 
     const chart = await screen.findByRole('img', { name: /Явка по дням/ });
     const label = chart.getAttribute('aria-label') ?? '';
-    expect(label).toContain('22.09 — 75 %');
-    expect(label).toContain('23.09 — нет графика');
-    expect(label).toContain('24.09 — 25 %');
+    expect(label).toBe('Явка по дням: 22.09 — 75 %, 24.09 — 25 %');
+    expect(label).not.toContain('23.09');
+  });
+
+  test('выходные пропущены по данным, рабочая суббота осталась; подписи — настоящие даты', async () => {
+    const day = (iso: string, attended: number, expected: number) =>
+      ({ day: iso, worked_seconds: 0, attended, expected, late: 0 });
+    network((path) => (path.includes('/analytics') ? json(200, {
+      period: { first: '2026-09-25', last: '2026-09-29', timezone: 'Asia/Tashkent' },
+      headcount: 5,
+      series: [
+        day('2026-09-25', 4, 4), // пятница
+        day('2026-09-26', 1, 2), // суббота — по графику ждали двоих
+        day('2026-09-27', 0, 0), // воскресенье — никого не ждали
+        day('2026-09-28', 3, 4), // понедельник
+        day('2026-09-29', 0, 0), // вторник — праздник, никого не ждали
+      ],
+    }) : null));
+    renderApp('/');
+
+    const chart = await screen.findByRole('img', { name: /Явка по дням/ });
+    expect(chart.getAttribute('aria-label')).toBe('Явка по дням: 25.09 — 100 %, 26.09 — 50 %, 28.09 — 75 %');
+
+    // Под точками — даты подряд без пустых мест: за субботой сразу понедельник.
+    const axis = [...chart.querySelectorAll('text tspan:first-child')].map((t) => t.textContent);
+    expect(axis).toEqual(['25.09', '26.09', '28.09']);
+    const days = [...chart.querySelectorAll('text tspan:last-child')].map((t) => t.textContent);
+    expect(days).toEqual(['Пт', 'Сб', 'Пн']);
+    const tips = [...chart.querySelectorAll('circle title')].map((t) => t.textContent);
+    expect(tips).toEqual(['25.09, Пт: 4 из 4 (100 %)', '26.09, Сб: 1 из 2 (50 %)', '28.09, Пн: 3 из 4 (75 %)']);
+
+    // Точки стоят через равный шаг — пропущенное воскресенье места не занимает.
+    const xs = [...chart.querySelectorAll('circle')].map((c) => Number(c.getAttribute('cx')));
+    expect(xs[1]! - xs[0]!).toBeCloseTo(xs[2]! - xs[1]!);
+
+    const line = chart.querySelector('.hm-rhythm__line')?.getAttribute('d') ?? '';
+    expect(line).toMatch(/^M/);
+    expect(line).not.toMatch(/NaN|Infinity|undefined/);
+    expect(chart.querySelector('.hm-rhythm__area')?.getAttribute('d')).not.toMatch(/NaN/);
+  });
+
+  test('весь период без графика — слова вместо пустого холста', async () => {
+    network((path) => (path.includes('/analytics') ? json(200, {
+      period: { first: '2026-09-26', last: '2026-09-27', timezone: 'Asia/Tashkent' },
+      headcount: 5,
+      series: [
+        { day: '2026-09-26', worked_seconds: 0, attended: 0, expected: 0, late: 0 },
+        { day: '2026-09-27', worked_seconds: 0, attended: 0, expected: 0, late: 0 },
+      ],
+    }) : null));
+    renderApp('/');
+
+    expect(await screen.findByText(/По графику никто не работал|по графику никто не работал/)).toBeTruthy();
+    expect(screen.queryByRole('img', { name: /Явка по дням/ })).toBeNull();
+  });
+
+  test('подложка переключателя одна и сдвигается под выбранный период', async () => {
+    network();
+    renderApp('/');
+    await screen.findByRole('img', { name: /Явка по дням/ });
+
+    const group = screen.getByRole('group', { name: 'Период' });
+    expect(group.querySelectorAll('.hm-switch__thumb')).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: '14 дней' }));
+
+    expect(screen.getByRole('button', { name: '14 дней' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: '7 дней' }).getAttribute('aria-pressed')).toBe('false');
+    expect(group.querySelectorAll('.hm-switch__thumb')).toHaveLength(1);
+  });
+
+  test('новый период рисует линию заново: у рисунка новый ключ, холст тот же', async () => {
+    let calls = 0;
+    network((path) => {
+      if (!path.includes('/analytics')) return null;
+      calls += 1;
+      return json(200, {
+        period: { first: '2026-09-22', last: '2026-09-24', timezone: 'Asia/Tashkent' },
+        headcount: 5,
+        series: calls === 1
+          ? [{ day: '2026-09-22', worked_seconds: 0, attended: 3, expected: 4, late: 0 },
+             { day: '2026-09-24', worked_seconds: 0, attended: 1, expected: 4, late: 0 }]
+          : [{ day: '2026-09-15', worked_seconds: 0, attended: 2, expected: 4, late: 0 },
+             { day: '2026-09-24', worked_seconds: 0, attended: 4, expected: 4, late: 0 }],
+      });
+    });
+    renderApp('/');
+    const chart = await screen.findByRole('img', { name: /Явка по дням/ });
+    const before = chart.querySelector('.hm-rhythm__draw');
+
+    fireEvent.click(screen.getByRole('button', { name: '14 дней' }));
+
+    await waitFor(() => expect(chart.getAttribute('aria-label')).toContain('15.09'));
+    const after = chart.querySelector('.hm-rhythm__draw');
+    expect(after).not.toBeNull();
+    expect(after).not.toBe(before);
+    expect(screen.getByRole('img', { name: /Явка по дням/ })).toBe(chart);
   });
 });
 

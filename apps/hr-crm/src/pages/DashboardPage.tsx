@@ -16,7 +16,7 @@
  * в ноль — у блока своё состояние, и показывается оно.
  */
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 
 import * as api from '../api/crm';
@@ -25,6 +25,7 @@ import { AppIcon, type AppIconName } from '../components/AppIcon';
 import { DatePicker } from '../components/DatePicker';
 import { Dropdown } from '../components/Dropdown';
 import { longDate, shift, today, useBlock, type Block, type Refresh } from '../features/dashboard/data';
+import { smoothPath, workdays, type RhythmPoint } from '../features/dashboard/rhythm';
 import { useStickyState } from '../features/shell/sticky';
 import '../styles/home.css';
 
@@ -233,15 +234,7 @@ export function DashboardPage() {
                      aria-busy={busy(chart, chartRefresh)}>
               <div className="hm-part__head">
                 <h2 className="hm-part__title">Ритм дня</h2>
-                <div className="hm-switch" role="group" aria-label="Период">
-                  {RANGES.map((item) => (
-                    <button key={item.key} type="button" aria-pressed={item.key === range.key}
-                            className={item.key === range.key ? 'hm-switch__on' : undefined}
-                            onClick={() => setRange(item)}>
-                      {item.title}
-                    </button>
-                  ))}
-                </div>
+                <PeriodSwitch value={range} onPick={setRange} />
               </div>
               {chartRefresh.failed && chart.state === 'ready' && (
                 <p className="hm-retry" role="status">
@@ -251,14 +244,10 @@ export function DashboardPage() {
               )}
               <Guard block={chart} name="явку" skeleton={<div className="hm-sk-chart" />}>
                 {(series) => {
-                  const points = series.map((one) => ({
-                    day: one.day,
-                    attended: one.attended,
-                    expected: one.expected,
-                    value: one.expected > 0 ? Math.round((one.attended / one.expected) * 100) : null,
-                  }));
+                  // На оси — только дни, в которые кого-то ждали по графику.
+                  const points = workdays(series);
                   const to = '/attendance' + api.query({ period: 'range', from, to: day, ...place });
-                  return points.every((p) => p.value === null) ? (
+                  return points.length === 0 ? (
                     <p className="hm-empty">За выбранный период по графику никто не работал — явку не с чем сравнить.</p>
                   ) : (
                     <Link className="hm-chart-link" to={to} aria-label="Открыть посещаемость за этот период">
@@ -472,16 +461,19 @@ function Stat({ icon, value, title, note, to, warn, pending }: {
 
 type FocusRow = { icon: AppIconName; tone: 'bad' | 'warn' | 'plain'; count: number; title: string; note: string; to: string };
 
-type Point = { day: string; attended: number; expected: number; value: number | null };
-
 /**
  * «Ритм дня»: доля отметившихся из тех, кто должен был работать.
  *
  * Своя тонкая линия вместо общего графика: здесь нужен силуэт недели, а
- * не инструмент анализа. День без людей по графику — разрыв линии, а не
- * ноль: ноль означал бы, что никто не пришёл.
+ * не инструмент анализа. На оси только рабочие дни (см. `workdays`):
+ * выходной не рисуется ни нулём, ни провалом — после пятницы сразу
+ * понедельник, подпись под точкой — её настоящая дата.
+ *
+ * Линия прорисовывается слева направо, заливка и точки проявляются за
+ * ней. Новый ряд (другой период, день, офис) рисуется заново; смена
+ * размера окна — нет: ключ рисунка — сами данные, а не ширина.
  */
-function Rhythm({ points }: { points: Point[] }) {
+function Rhythm({ points }: { points: RhythmPoint[] }) {
   const box = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(640);
   const [height, setHeight] = useState(176);
@@ -510,61 +502,84 @@ function Rhythm({ points }: { points: Point[] }) {
   const x = (i: number) => left + (points.length > 1 ? i * step : plotW / 2);
   const y = (v: number) => top + plotH - (v / 100) * plotH;
   const labelEvery = points.length > 16 ? 5 : points.length > 8 ? 2 : 1;
+  // Последняя дата подписана всегда; соседняя слишком близко к ней
+  // уступает место, иначе две подписи слипаются в одну.
 
-  // Отрезки без разрывов: день без графика рвёт линию.
-  const runs: { i: number; v: number }[][] = [];
-  let run: { i: number; v: number }[] = [];
-  points.forEach((p, i) => {
-    if (p.value === null) {
-      if (run.length) runs.push(run);
-      run = [];
-    } else run.push({ i, v: p.value });
-  });
-  if (run.length) runs.push(run);
-
-  const curve = (seg: { i: number; v: number }[]) =>
-    seg.map((p, k) => {
-      if (k === 0) return `M${x(p.i)},${y(p.v)}`;
-      const prev = seg[k - 1]!;
-      const mid = (x(prev.i) + x(p.i)) / 2;
-      return `C${mid},${y(prev.v)} ${mid},${y(p.v)} ${x(p.i)},${y(p.v)}`;
-    }).join(' ');
+  const line = smoothPath(points.map((p, i) => ({ x: x(i), y: y(p.value) })));
+  const last = points.length - 1;
+  const drawing = points.map((p) => `${p.day}:${p.attended}/${p.expected}`).join('|');
 
   return (
     <div className="hm-rhythm" ref={box}>
       <svg width={width} height={height} role="img"
-           aria-label={`Явка по дням: ${points.map((p) => `${dayLabel(p.day)} — ${p.value === null ? 'нет графика' : `${p.value} %`}`).join(', ')}`}>
+           aria-label={`Явка по дням: ${points.map((p) => `${dayLabel(p.day)} — ${p.value} %`).join(', ')}`}>
         {[0, 25, 50, 75, 100].map((tick) => (
           <g key={tick}>
             <line x1={left} x2={width - right} y1={y(tick)} y2={y(tick)} className="hm-rhythm__grid" />
             <text x={left - 8} y={y(tick) + 4} textAnchor="end" className="hm-rhythm__axis">{tick}</text>
           </g>
         ))}
-        {runs.map((seg, n) => (
-          <g key={n}>
-            {seg.length > 1 && (
-              <path className="hm-rhythm__area"
-                    d={`${curve(seg)} L${x(seg[seg.length - 1]!.i)},${y(0)} L${x(seg[0]!.i)},${y(0)} Z`} />
-            )}
-            <path className="hm-rhythm__line" d={curve(seg)} />
-          </g>
-        ))}
-        {points.map((p, i) => (
-          <g key={p.day}>
-            {p.value !== null && (
-              <circle cx={x(i)} cy={y(p.value)} r={3.5} className="hm-rhythm__dot">
-                <title>{`${dayLabel(p.day)}: ${p.attended} из ${p.expected} (${p.value} %)`}</title>
-              </circle>
-            )}
-            {i % labelEvery === 0 || i === points.length - 1 ? (
-              <text x={x(i)} y={height - 20} textAnchor="middle" className="hm-rhythm__axis">
-                <tspan x={x(i)}>{dayLabel(p.day)}</tspan>
-                <tspan x={x(i)} dy={14}>{weekday(p.day)}</tspan>
-              </text>
-            ) : null}
-          </g>
-        ))}
+        <g key={drawing} className="hm-rhythm__draw">
+          {points.length > 1 && (
+            <path className="hm-rhythm__area" d={`${line} L${x(last)},${y(0)} L${x(0)},${y(0)} Z`} />
+          )}
+          {/* Длина пути — условная единица: прорисовка не зависит от
+              ширины холста и не пересчитывается при её смене. */}
+          <path className="hm-rhythm__line" d={line} pathLength={1} />
+          {points.map((p, i) => (
+            <circle key={p.day} cx={x(i)} cy={y(p.value)} r={3.5} className="hm-rhythm__dot"
+                    style={{ animationDelay: `${Math.round(120 + (last > 0 ? i / last : 0) * 520)}ms` }}>
+              <title>{`${dayLabel(p.day)}, ${weekday(p.day)}: ${p.attended} из ${p.expected} (${p.value} %)`}</title>
+            </circle>
+          ))}
+        </g>
+        {points.map((p, i) => (i === last || (i % labelEvery === 0 && x(last) - x(i) >= 40) ? (
+          <text key={p.day} x={x(i)} y={height - 20} textAnchor="middle" className="hm-rhythm__axis">
+            <tspan x={x(i)}>{dayLabel(p.day)}</tspan>
+            <tspan x={x(i)} dy={14}>{weekday(p.day)}</tspan>
+          </text>
+        ) : null))}
       </svg>
+    </div>
+  );
+}
+
+/**
+ * Переключатель периода: синяя подложка одна и переезжает под выбранный
+ * пункт, а не перекрашивается каждая кнопка. Первое положение ставится
+ * без анимации — иначе при открытии главной подложка выезжала бы слева
+ * (тот же приём, что у `SlideTabs`).
+ */
+function PeriodSwitch({ value, onPick }: { value: Range; onPick: (range: Range) => void }) {
+  const box = useRef<HTMLDivElement>(null);
+  const [thumb, setThumb] = useState({ left: 0, width: 0, ready: false });
+
+  useLayoutEffect(() => {
+    const frame = box.current;
+    if (!frame) return;
+    const place = () => {
+      const active = frame.querySelector<HTMLElement>('[aria-pressed="true"]');
+      if (!active) return;
+      setThumb((was) => ({ left: active.offsetLeft, width: active.offsetWidth, ready: was.ready || was.width > 0 }));
+    };
+    place();
+    const watcher = new ResizeObserver(place);
+    watcher.observe(frame);
+    return () => watcher.disconnect();
+  }, [value.key]);
+
+  return (
+    <div className="hm-switch" role="group" aria-label="Период" ref={box}>
+      <span aria-hidden="true"
+            className={thumb.ready ? 'hm-switch__thumb hm-switch__thumb--move' : 'hm-switch__thumb'}
+            style={{ width: `${thumb.width}px`, transform: `translateX(${thumb.left}px)`, opacity: thumb.width ? 1 : 0 }} />
+      {RANGES.map((item) => (
+        <button key={item.key} type="button" aria-pressed={item.key === value.key}
+                className={item.key === value.key ? 'hm-switch__on' : undefined}
+                onClick={() => { if (item.key !== value.key) onPick(item); }}>
+          {item.title}
+        </button>
+      ))}
     </div>
   );
 }

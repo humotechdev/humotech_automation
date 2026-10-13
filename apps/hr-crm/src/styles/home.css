@@ -198,28 +198,52 @@ body:has(.hm) .cal {
 
 .hm-link:hover { color: var(--hm-blue-hover); text-decoration: underline; }
 
+/* Переключатель периода: одна синяя подложка переезжает под выбранный
+   пункт. Кнопки прозрачные, подложка лежит под ними. */
 .hm-switch {
+  position: relative;
   display: inline-flex;
+  padding: 2px;
   border: 1px solid var(--hm-edge);
   border-radius: 8px;
-  overflow: hidden;
+  background: #ffffff;
+  isolation: isolate;
+}
+
+.hm-switch__thumb {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 0;
+  z-index: -1;
+  border-radius: 6px;
+  background: var(--hm-blue);
+  box-shadow: 0 1px 3px rgba(29, 94, 150, 0.25);
+}
+
+.hm-switch__thumb--move {
+  transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1), width 0.32s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .hm-switch button {
-  height: 32px;
-  padding: 0 14px;
+  height: 26px;
+  padding: 0 13px;
   border: 0;
-  background: #ffffff;
+  border-radius: 6px;
+  background: transparent;
   font: inherit;
   font-size: 13px;
   color: #33466a;
+  white-space: nowrap;
   cursor: pointer;
 }
 
-.hm-switch button + button { border-left: 1px solid var(--hm-edge); }
-.hm-switch button:hover { background: #f5f8fc; }
-.hm-switch .hm-switch__on,
-.hm-switch .hm-switch__on:hover { background: var(--hm-blue); color: #ffffff; }
+/* На узком экране переключатель уходит под заголовок целиком, а не
+   ломает «7 дней» на две строки. */
+.hm-part__head:has(> .hm-switch) { flex-wrap: wrap; row-gap: 6px; }
+
+.hm-switch button:hover:not(.hm-switch__on) { background: #f5f8fc; }
+.hm-switch .hm-switch__on { color: #ffffff; }
 
 /* --- ритм дня ---------------------------------------------------------------- */
 
@@ -243,6 +267,26 @@ body:has(.hm) .cal {
 .hm-rhythm__area { fill: #eaf3ff; opacity: 0.8; }
 .hm-rhythm__line { fill: none; stroke: var(--hm-blue); stroke-width: 2; }
 .hm-rhythm__dot { fill: var(--hm-blue); stroke: #ffffff; stroke-width: 1.5; }
+
+/* Появление: линия прорисовывается слева направо (длина пути задана
+   единицей — `pathLength`), заливка проявляется следом, точки — по мере
+   того, как до них доходит линия (задержка — у каждой точки). */
+.hm-rhythm__draw .hm-rhythm__line {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0;
+  animation: hm-draw 0.75s cubic-bezier(0.33, 0, 0.2, 1) backwards;
+}
+.hm-rhythm__draw .hm-rhythm__area { animation: hm-area 0.5s ease-out 0.25s backwards; }
+.hm-rhythm__draw .hm-rhythm__dot {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: hm-dot 0.28s ease-out backwards;
+}
+
+@keyframes hm-draw { from { stroke-dashoffset: 1; } }
+@keyframes hm-dot { from { opacity: 0; transform: scale(0.4); } }
+/* Без «to»: заливка проявляется до своей прозрачности, а не до 1. */
+@keyframes hm-area { from { opacity: 0; } }
 
 .hm-note {
   display: flex;
@@ -585,6 +629,9 @@ body:has(.hm) .cal {
 
 .hm-icon:active { background: #eef4fb; }
 .hm-switch button:active:not(.hm-switch__on) { background: #edf3fa; }
+/* Белый цвет надписи приходит вместе с подложкой, а не раньше неё:
+   иначе на миг белое по белому. */
+.hm-switch button { transition: background-color 0.14s ease, color 0.3s ease; }
 .hm-stat--go:active,
 .hm-focus__row:active,
 .hm-table__row:active,
@@ -606,5 +653,10 @@ body:has(.hm) .cal {
   .hm-table__row,
   .hm-events__row,
   .hm-part > :not(.hm-part__head),
-  .hm-band > * { transition: none; }
+  .hm-band > *,
+  .hm-switch__thumb--move { transition: none; }
+  /* График — сразу целиком: без прорисовки и без появления точек. */
+  .hm-rhythm__draw .hm-rhythm__line,
+  .hm-rhythm__draw .hm-rhythm__area,
+  .hm-rhythm__draw .hm-rhythm__dot { animation: none; }
 }
