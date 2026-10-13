@@ -18,29 +18,78 @@ import * as api from '../../api/crm';
 /** Заявка, по которой ещё не решили. */
 export const OPEN_STATUSES = 'SUBMITTED,IN_REVIEW';
 
+/*
+ * Пункты фильтра «Статус». Это группы, а не статусы базы: «ожидают
+ * документа», «на рассмотрении» и «исправление» — всё SUBMITTED или
+ * IN_REVIEW, различает их стадия (`stage_of` на сервере). Поэтому пункт
+ * уходит серверу стадией, и группы не пересекаются: раньше «На
+ * рассмотрении» был SUBMITTED,IN_REVIEW и собирал все три вместе.
+ */
+export const STATUS_OPTIONS = [
+  { id: 'waiting', name: 'Ожидают документа' },
+  { id: 'open', name: 'На рассмотрении' },
+  { id: 'fix', name: 'Исправление' },
+  { id: 'APPROVED', name: 'Одобрена' },
+  { id: 'REJECTED', name: 'Отклонена' },
+  // Отозвана сотрудником или снята отменой — не отказ кадровика.
+  { id: 'CANCELLED', name: 'Отозвана' },
+];
+
+const STAGES_OF: Record<string, string> = {
+  waiting: 'WAITING_DOCUMENTS',
+  // Ждут кадровика: справка у него, или бумаг не нужно (отпуск,
+  // исправление отметки — у них стадия PENDING).
+  open: 'HR_REVIEW,PENDING',
+  fix: 'NEEDS_FIX',
+  APPROVED: 'APPROVED',
+  REJECTED: 'REJECTED',
+  CANCELLED: 'CANCELLED',
+};
+
 /**
- * Статус из адреса — в статус сервера.
+ * Пункт фильтра из адреса.
  *
- * `status=open` — короткое имя открытых заявок, его ставят ссылки
- * главной и карточки сотрудника. Сервер такого статуса не знает: раньше
- * слово уходило ему как есть, и список по ссылке приходил пустым, а
- * ручной выбор вкладки, сбрасывавший статус, «чинил» его.
+ * `status=open` ставят ссылки главной и карточки сотрудника; старые
+ * ссылки несут статусы базы `SUBMITTED,IN_REVIEW`. Раньше «open» уходил
+ * серверу как статус, которого тот не знает, и список по ссылке
+ * приходил пустым, а ручной выбор вкладки, сбрасывавший статус,
+ * «чинил» его.
  */
 export function queueStatus(raw: string): string {
-  return raw === 'open' ? OPEN_STATUSES : raw;
+  return raw === OPEN_STATUSES ? 'open' : raw;
 }
 
-/** Больничные, где ждут бумагу от сотрудника: справки нет или её вернули. */
-export const WAITING_PAPER = { stage: 'WAITING_DOCUMENTS,NEEDS_FIX' } as const;
+/** Стадии пункта фильтра; `null` — пункт не из списка, уйдёт статусом как есть. */
+export function stagesOf(token: string): string | null {
+  return STAGES_OF[token] ?? null;
+}
+
+/**
+ * Пересечение отборов по стадии: вкладки, пункта фильтра и ссылки.
+ * `undefined` — отбора нет; пустая строка — не подходит ничего.
+ */
+export function bothStages(...lists: (string | null | undefined)[]): string | undefined {
+  let result: string[] | undefined;
+  for (const list of lists) {
+    if (!list) continue;
+    const codes = list.split(',').filter(Boolean);
+    result = result ? result.filter((one) => codes.includes(one)) : codes;
+  }
+  return result?.join(',');
+}
+
+/** Больничные, где справку ещё не приносили, — пункт «Ожидают документа». */
+export const WAITING_PAPER = { status: 'waiting' } as const;
 /** Справка принесена и ждёт проверки кадровиком — принятая сюда не входит. */
-export const PAPER_ON_REVIEW = { stage: 'HR_REVIEW', certificate: 'PENDING' } as const;
+export const PAPER_ON_REVIEW = { status: 'open', certificate: 'PENDING' } as const;
 
 const LEAVE_TYPES = ['ANNUAL_LEAVE', 'UNPAID_LEAVE'];
 const OWN_KINDS = ['CREATE', 'EXTEND'];
 
 export function waitsForPaper(row: api.AbsenceRow): boolean {
-  return row.absence_type.code === 'SICK_LEAVE'
-    && (row.stage === 'WAITING_DOCUMENTS' || row.stage === 'NEEDS_FIX');
+  // Вернули справку на исправление — это «Исправление», а не ожидание
+  // первой бумаги.
+  return row.absence_type.code === 'SICK_LEAVE' && row.stage === 'WAITING_DOCUMENTS';
 }
 
 export function paperOnReview(row: api.AbsenceRow): boolean {
@@ -57,8 +106,8 @@ export function isLeave(row: api.AbsenceRow): boolean {
 
 /** Подпись отбора по стадии — для метки рядом с полями. */
 export function paperFilterTitle(stage: string, certificate: string): string {
-  if (stage === WAITING_PAPER.stage && !certificate) return 'Ждут справку';
-  if (stage === PAPER_ON_REVIEW.stage && certificate === PAPER_ON_REVIEW.certificate) return 'Справка ждёт проверки';
+  if (certificate === 'PENDING' && !stage) return 'Справка ждёт проверки';
+  if (stage === 'WAITING_DOCUMENTS,NEEDS_FIX' && !certificate) return 'Ждут справку';
   return 'Отбор по справке';
 }
 

@@ -89,7 +89,7 @@ const LEAVE = {
   },
 };
 
-const COUNTS = { open: 3, all: 3, leave: 1, sick: 2, fixes: 0, cancel: 0 };
+const COUNTS = { open: 3, all: 3, leave: 1, sick: 2, fixes: 0, rejected: 0 };
 
 function network(items: unknown[] = [SICK, NEEDS_FIX, LEAVE]) {
   const byId: Record<string, unknown> = {
@@ -132,7 +132,7 @@ describe('очередь', () => {
     );
   });
 
-  test('шесть вкладок — один ряд, одна выбранная, «Отмена» работает как остальные', async () => {
+  test('шесть вкладок — один ряд, одна выбранная, старая ссылка на «Отмену» открывает «Отклонённые»', async () => {
     // Перенос и прокрутку jsdom не раскладывает: здесь проверяется только
     // устройство ряда. Ширину проверяли headless-браузером (см. отчёт).
     const calls = network();
@@ -143,11 +143,11 @@ describe('очередь', () => {
     expect(strip.classList.contains('rq-tabs')).toBe(true);
     const tabs = within(strip).getAllByRole('tab');
     expect(tabs.map((one) => one.textContent?.replace(/\d+/g, ''))).toEqual(
-      ['Требуют решения', 'Все', 'Отпуска', 'Больничные', 'Исправления', 'Отмена'],
+      ['Требуют решения', 'Все', 'Отпуска', 'Больничные', 'Исправления', 'Отклонённые'],
     );
     expect(tabs.filter((one) => one.getAttribute('aria-selected') === 'true').map((one) => one.textContent))
-      .toEqual(['Отмена0']);
-    await waitFor(() => expect(calls.some((c) => c.url.includes('request_kind=CANCEL'))).toBe(true));
+      .toEqual(['Отклонённые0']);
+    await waitFor(() => expect(calls.some((c) => c.url.includes('status=REJECTED'))).toBe(true));
   });
 
   test('пустой отбор отвечает строкой, а не пустой таблицей с листалкой', async () => {

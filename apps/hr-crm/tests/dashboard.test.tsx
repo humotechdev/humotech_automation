@@ -329,7 +329,7 @@ describe('фокус HR', () => {
     renderApp('/');
 
     const focus = await screen.findByRole('region', { name: 'Фокус HR' });
-    expect(await within(focus).findByText('2 больничных ждут справку')).toBeTruthy();
+    expect(await within(focus).findByText('1 больничный ждёт справку')).toBeTruthy();
     expect(within(focus).getByText('1 отпуск ждёт решения')).toBeTruthy();
     expect(within(focus).getByText('9 сотрудников без отметки')).toBeTruthy();
     expect(within(focus).queryByText(/проверки/)).toBeNull();

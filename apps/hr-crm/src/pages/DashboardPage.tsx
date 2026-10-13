@@ -309,10 +309,10 @@ export function DashboardPage() {
                   const all: FocusRow[] = [
                     { icon: 'doc', tone: 'bad', count: waitPaper, title: `${count(waitPaper, ['больничный ждёт', 'больничных ждут', 'больничных ждут'])} справку`,
                       note: 'До подтверждения не попадут в табель',
-                      to: requestsHref({ tab: 'sick', status: 'open', ...WAITING_PAPER, ...place }) },
+                      to: requestsHref({ tab: 'sick', ...WAITING_PAPER, ...place }) },
                     { icon: 'check', tone: 'plain', count: review, title: `${count(review, ['справка ждёт', 'справки ждут', 'справок ждут'])} проверки`,
                       note: 'Больничный подтверждается после проверки',
-                      to: requestsHref({ tab: 'sick', status: 'open', ...PAPER_ON_REVIEW, ...place }) },
+                      to: requestsHref({ tab: 'sick', ...PAPER_ON_REVIEW, ...place }) },
                     { icon: 'calendar', tone: 'plain', count: leave, title: `${count(leave, ['отпуск ждёт', 'отпуска ждут', 'отпусков ждут'])} решения`,
                       note: 'Проверить пересечение периодов', to: requestsHref({ tab: 'leave', status: 'open', ...place }) },
                     { icon: 'late', tone: 'plain', count: data.fixes, title: `${count(data.fixes, ['исправление отметки', 'исправления отметок', 'исправлений отметок'])}`,

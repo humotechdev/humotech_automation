@@ -22,98 +22,9 @@ import { App } from '../src/app/App';
 import { today } from '../src/features/dashboard/data';
 import { SessionProvider } from '../src/features/auth/session';
 import { USER, fakeNetwork, json, pick, type Call } from './helpers';
+import { serveQueue } from './queue-fake';
 
 const DAY = today();
-
-// --- очередь заявок --------------------------------------------------------------
-
-type Row = {
-  id: string;
-  name: string;
-  kind: 'absence' | 'correction';
-  type?: string;
-  requestKind?: string;
-  status: string;
-  stage?: string;
-  /** Судьба справки — как её отдал бы `certificate_state`. */
-  paper?: 'PENDING' | 'VERIFIED' | 'REJECTED' | null;
-  missing?: string[];
-  office: string;
-};
-
-const ROWS: Row[] = [
-  { id: 'wait', name: 'Ждёт Справку', kind: 'absence', type: 'SICK_LEAVE', requestKind: 'CREATE',
-    status: 'SUBMITTED', stage: 'WAITING_DOCUMENTS', paper: null, missing: ['certificate', 'application', 'period'], office: 'o-1' },
-  { id: 'fix', name: 'Вернули Справку', kind: 'absence', type: 'SICK_LEAVE', requestKind: 'CREATE',
-    status: 'IN_REVIEW', stage: 'NEEDS_FIX', paper: 'REJECTED', missing: ['certificate', 'application', 'period'], office: 'o-1' },
-  { id: 'review', name: 'Справка Напроверке', kind: 'absence', type: 'SICK_LEAVE', requestKind: 'CREATE',
-    status: 'IN_REVIEW', stage: 'HR_REVIEW', paper: 'PENDING', missing: ['certificate', 'application'], office: 'o-1' },
-  // Справку уже приняли — ждут заявление. В «справка ждёт проверки» не входит.
-  { id: 'verified', name: 'Справка Принята', kind: 'absence', type: 'SICK_LEAVE', requestKind: 'CREATE',
-    status: 'IN_REVIEW', stage: 'HR_REVIEW', paper: 'VERIFIED', missing: ['application'], office: 'o-1' },
-  { id: 'sick-done', name: 'Больничный Подтверждён', kind: 'absence', type: 'SICK_LEAVE', requestKind: 'CREATE',
-    status: 'APPROVED', stage: 'APPROVED', paper: 'VERIFIED', missing: [], office: 'o-1' },
-  { id: 'leave', name: 'Отпуск Ждёт', kind: 'absence', type: 'ANNUAL_LEAVE', requestKind: 'CREATE',
-    status: 'SUBMITTED', stage: 'PENDING', office: 'o-1' },
-  { id: 'leave-done', name: 'Отпуск Решён', kind: 'absence', type: 'ANNUAL_LEAVE', requestKind: 'CREATE',
-    status: 'REJECTED', stage: 'REJECTED', office: 'o-1' },
-  { id: 'leave-far', name: 'Отпуск Бухара', kind: 'absence', type: 'ANNUAL_LEAVE', requestKind: 'CREATE',
-    status: 'SUBMITTED', stage: 'PENDING', office: 'o-2' },
-  { id: 'corr', name: 'Исправление Ждёт', kind: 'correction', status: 'SUBMITTED', office: 'o-1' },
-  { id: 'corr-done', name: 'Исправление Рассмотрено', kind: 'correction', status: 'APPROVED', office: 'o-1' },
-];
-
-const list = (raw: string | null) => (raw ? raw.split(',').filter(Boolean) : null);
-
-/** Отбор как у `/requests`: незнакомый статус даёт пустой набор, как в бою. */
-function serveQueue(url: URL, rows = ROWS) {
-  const p = url.searchParams;
-  const kind = p.get('kind');
-  const status = list(p.get('status'));
-  const type = list(p.get('type'));
-  const requestKind = list(p.get('request_kind'));
-  const stage = list(p.get('stage'));
-  const certificate = list(p.get('certificate'));
-  const office = p.get('office_id');
-  const picked = rows.filter((row) => {
-    if (kind && row.kind !== kind) return false;
-    if ((stage || certificate) && row.kind !== 'absence') return false;
-    if (status && !status.includes(row.status)) return false;
-    if (row.kind === 'absence') {
-      if (type && !type.includes(row.type!)) return false;
-      if (requestKind && !requestKind.includes(row.requestKind!)) return false;
-      if (stage && !stage.includes(row.stage!)) return false;
-      if (certificate && !certificate.includes(row.paper ?? '')) return false;
-    }
-    if (office && row.office !== office) return false;
-    return true;
-  });
-  return { items: picked.map(item), next_cursor: null, has_more: false };
-}
-
-function item(row: Row) {
-  const person = { id: `e-${row.id}`, full_name: row.name, employee_number: null };
-  if (row.kind === 'correction') {
-    return {
-      kind: 'correction', id: row.id, created_at: '2026-09-20T05:00:00Z', place: null,
-      correction: { id: row.id, status: row.status, employee: person, submitted_at: '2026-09-20T05:00:00Z' },
-    };
-  }
-  return {
-    kind: 'absence', id: row.id, created_at: '2026-09-20T05:00:00Z', place: null,
-    absence: {
-      id: row.id, employee: person, kind: row.requestKind,
-      absence_type: { code: row.type, name: row.type === 'SICK_LEAVE' ? 'Больничный' : 'Ежегодный отпуск' },
-      status: row.status, stage: row.stage, missing_for_approval: row.missing ?? [],
-      first_day: '2026-09-22', last_day: '2026-09-27', submitted_at: '2026-09-20T05:00:00Z',
-      requires_document: row.type === 'SICK_LEAVE', comment: null, review_comment: null,
-      documents: row.paper ? [{
-        id: `d-${row.id}`, document_type: 'SICK_NOTE', verification_status: row.paper,
-        file: { id: `f-${row.id}`, name: 'spravka.pdf', mime_type: 'application/pdf', size_bytes: 1, uploaded_at: '2026-09-20T05:00:00Z', scan_status: 'CLEAN' },
-      }] : [],
-    },
-  };
-}
 
 // --- присутствие -----------------------------------------------------------------
 
@@ -166,7 +77,7 @@ function network(own: Handler = () => null) {
         { id: 'o-2', name: 'Бухара', status: 'ACTIVE', region_id: 'r-2' },
       ] });
     }
-    if (path.includes('/requests/counts')) return json(200, { open: 6, all: 10, leave: 3, sick: 5, fixes: 2, cancel: 0 });
+    if (path.includes('/requests/counts')) return json(200, { open: 6, all: 10, leave: 3, sick: 5, fixes: 3, rejected: 2 });
     if (url.pathname.endsWith('/requests')) return json(200, serveQueue(url));
     if (path.includes('/attendance/presence')) {
       const counts = { NOT_COME: 2, LEFT: 1 };
@@ -233,25 +144,28 @@ async function focusLink(title: RegExp) {
 }
 
 // Сколько показывает главная и что открывается по ссылке.
+const REVIEW = 'HR_REVIEW,PENDING';
 const CASES = [
   {
-    title: /больничн\S* жд\S* справку/, count: '2', tab: 'Больничные',
-    params: { kind: 'absence', type: 'SICK_LEAVE', request_kind: 'CREATE,EXTEND', status: 'SUBMITTED,IN_REVIEW', stage: 'WAITING_DOCUMENTS,NEEDS_FIX' },
-    shown: ['Ждёт Справку', 'Вернули Справку'], chip: 'Ждут справку',
+    // «Ждут справку» — это пункт «Ожидают документа»: возвращённая
+    // справка — уже «Исправление».
+    title: /больничн\S* жд\S* справку/, count: '1', tab: 'Больничные', status: 'Ожидают документа',
+    params: { kind: 'absence', type: 'SICK_LEAVE', request_kind: 'CREATE,EXTEND', stage: 'WAITING_DOCUMENTS' },
+    shown: ['Ждёт Справку'], chip: null,
   },
   {
-    title: /справк\S* жд\S* проверки/, count: '1', tab: 'Больничные',
-    params: { kind: 'absence', type: 'SICK_LEAVE', request_kind: 'CREATE,EXTEND', status: 'SUBMITTED,IN_REVIEW', stage: 'HR_REVIEW', certificate: 'PENDING' },
+    title: /справк\S* жд\S* проверки/, count: '1', tab: 'Больничные', status: 'На рассмотрении',
+    params: { kind: 'absence', type: 'SICK_LEAVE', request_kind: 'CREATE,EXTEND', stage: REVIEW, certificate: 'PENDING' },
     shown: ['Справка Напроверке'], chip: 'Справка ждёт проверки',
   },
   {
-    title: /отпуск\S* жд\S* решения/, count: '2', tab: 'Отпуска',
-    params: { kind: 'absence', type: 'ANNUAL_LEAVE,UNPAID_LEAVE', request_kind: 'CREATE,EXTEND', status: 'SUBMITTED,IN_REVIEW' },
+    title: /отпуск\S* жд\S* решения/, count: '2', tab: 'Отпуска', status: 'На рассмотрении',
+    params: { kind: 'absence', type: 'ANNUAL_LEAVE,UNPAID_LEAVE', request_kind: 'CREATE,EXTEND', stage: REVIEW },
     shown: ['Отпуск Ждёт', 'Отпуск Бухара'], chip: null,
   },
   {
-    title: /исправлени\S* отмет/, count: '1', tab: 'Исправления',
-    params: { kind: 'correction', status: 'SUBMITTED,IN_REVIEW' },
+    title: /исправлени\S* отмет/, count: '1', tab: 'Исправления', status: 'На рассмотрении',
+    params: { kind: 'fixes', stage: REVIEW },
     shown: ['Исправление Ждёт'], chip: null,
   },
 ] as const;
@@ -269,12 +183,12 @@ describe('переходы из «Фокуса HR» в заявки (серве�
     expect(selectedTab()).toEqual([one.tab]);
     const sent = lastQueue(calls);
     for (const [key, value] of Object.entries(one.params)) expect(sent[key]).toBe(value);
-    // Чужих условий запрос не несёт: ни курсора, ни прочих стадий.
+    // Чужих условий запрос не несёт: ни курсора, ни статусов базы.
     expect(sent['cursor']).toBeUndefined();
-    if (!('stage' in one.params)) expect(sent['stage']).toBeUndefined();
+    expect(sent['status']).toBeUndefined();
     if (!('certificate' in one.params)) expect(sent['certificate']).toBeUndefined();
-    // Статус в поле — понятный человеку, а не «open».
-    expect(screen.getByLabelText(/^Статус/).textContent).toContain('На рассмотрении');
+    // Пункт в поле «Статус» — понятный человеку, а не «open».
+    expect(screen.getByLabelText(/^Статус/).textContent).toContain(one.status);
     if (one.chip) expect(screen.getByRole('button', { name: `Снять фильтр: ${one.chip}` })).toBeTruthy();
   });
 
@@ -333,13 +247,13 @@ describe('переходы из «Фокуса HR» в заявки (серве�
     open('/');
     const href = (await focusLink(/больничн\S* жд\S* справку/)).getAttribute('href')!;
     expect(href).toContain('tab=sick');
-    expect(href).toContain('stage=WAITING_DOCUMENTS%2CNEEDS_FIX');
+    expect(href).toContain('status=waiting');
 
     // «Перезагрузка» — новое приложение с тем же адресом.
     const again = network();
     open(href);
-    await waitFor(() => expect(names()).toEqual(['Ждёт Справку', 'Вернули Справку']));
-    expect(lastQueue(again)['stage']).toBe('WAITING_DOCUMENTS,NEEDS_FIX');
+    await waitFor(() => expect(names()).toEqual(['Ждёт Справку']));
+    expect(lastQueue(again)['stage']).toBe('WAITING_DOCUMENTS');
   });
 
   test('«Назад» и «Вперёд» восстанавливают отбор своего адреса', async () => {
@@ -365,22 +279,23 @@ describe('переходы из «Фокуса HR» в заявки (серве�
     open('/requests?tab=all&status=APPROVED&search=Справка&cursor=page-2&request=verified');
     await waitFor(() => expect(lastQueue(calls)['cursor']).toBe('page-2'));
 
-    go('/requests?tab=sick&status=open&stage=HR_REVIEW&certificate=PENDING');
+    go('/requests?tab=sick&status=open&certificate=PENDING');
     await waitFor(() => expect(names()).toEqual(['Справка Напроверке']));
     const sent = lastQueue(calls);
     expect(sent['cursor']).toBeUndefined();
     expect(sent['search']).toBeUndefined();
-    expect(sent['status']).toBe('SUBMITTED,IN_REVIEW');
+    expect(sent['status']).toBeUndefined();
+    expect(sent['stage']).toBe(REVIEW);
     expect(selectedTab()).toEqual(['Больничные']);
   });
 
   test('ручная вкладка снимает отбор по справке — он есть только у больничных', async () => {
     const calls = network();
-    open('/requests?tab=sick&status=open&stage=HR_REVIEW&certificate=PENDING');
+    open('/requests?tab=sick&status=open&certificate=PENDING');
     await waitFor(() => expect(names()).toEqual(['Справка Напроверке']));
 
     fireEvent.click(screen.getByRole('tab', { name: /Исправления/ }));
-    await waitFor(() => expect(names()).toEqual(['Исправление Ждёт', 'Исправление Рассмотрено']));
+    await waitFor(() => expect(names()).toEqual(['Вернули Справку', 'Исправление Ждёт', 'Исправление Рассмотрено']));
     expect(lastQueue(calls)['stage']).toBeUndefined();
     expect(lastQueue(calls)['certificate']).toBeUndefined();
   });
@@ -388,7 +303,7 @@ describe('переходы из «Фокуса HR» в заявки (серве�
   test('быстрые переходы: поздний ответ прошлого отбора не подменяет последний', async () => {
     let release: (() => void) | null = null;
     network((url) => {
-      if (url.pathname.endsWith('/requests') && url.searchParams.get('stage') === 'WAITING_DOCUMENTS,NEEDS_FIX') {
+      if (url.pathname.endsWith('/requests') && url.searchParams.get('stage') === 'WAITING_DOCUMENTS') {
         // Первый ответ задерживается и приходит после второго.
         return new Promise<Response>((resolve) => {
           release = () => resolve(json(200, serveQueue(url)));
@@ -399,8 +314,8 @@ describe('переходы из «Фокуса HR» в заявки (серве�
     open('/requests?tab=leave&status=open');
     await waitFor(() => expect(names()).toEqual(['Отпуск Ждёт', 'Отпуск Бухара']));
 
-    go('/requests?tab=sick&status=open&stage=WAITING_DOCUMENTS%2CNEEDS_FIX');
-    go('/requests?tab=sick&status=open&stage=HR_REVIEW&certificate=PENDING');
+    go('/requests?tab=sick&status=waiting');
+    go('/requests?tab=sick&status=open&certificate=PENDING');
     await waitFor(() => expect(names()).toEqual(['Справка Напроверке']));
 
     await act(async () => { release?.(); await Promise.resolve(); });
@@ -413,7 +328,7 @@ describe('переходы из «Фокуса HR» в заявки (серве�
       if (!url.pathname.endsWith('/requests')) return null;
       return new Promise<Response>((resolve) => { answer = resolve; });
     });
-    open('/requests?tab=sick&status=open&stage=HR_REVIEW&certificate=PENDING');
+    open('/requests?tab=sick&status=open&certificate=PENDING');
 
     expect(await screen.findByText('Загружаем очередь…')).toBeTruthy();
     expect(screen.queryByText(/заявок нет/)).toBeNull();
@@ -430,7 +345,7 @@ describe('переходы из «Фокуса HR» в заявки (серве�
 
   test('сбой на новой вкладке поверх показанной — ошибка, а не вечный скелетон', async () => {
     network((url) =>
-      url.pathname.endsWith('/requests') && url.searchParams.get('kind') === 'correction'
+      url.pathname.endsWith('/requests') && url.searchParams.get('kind') === 'fixes'
         ? json(500, { error: { code: 'server_error', message: 'boom' } })
         : null);
     open('/requests?tab=leave&status=open');

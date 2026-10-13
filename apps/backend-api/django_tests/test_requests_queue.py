@@ -72,7 +72,8 @@ class TestCounts:
 
         assert answer.status_code == 200
         assert answer.json() == {
-            "open": 2, "all": 2, "leave": 1, "sick": 1, "fixes": 0, "cancel": 0,
+            "open": 2, "decide": 2, "all": 2, "leave": 1, "sick": 1, "fixes": 0,
+            "rejected": 0,
         }
 
     def test_filters_narrow_the_counts(

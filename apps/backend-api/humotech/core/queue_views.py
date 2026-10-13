@@ -27,7 +27,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from humotech.absences.services import AbsenceService
+from humotech.absences.services import STAGES, AbsenceService, _codes
 from humotech.absences.views import hr_request_json
 from humotech.core.timeframes import organization_zone
 from humotech.attendance.hr import AttendanceHrService
@@ -42,8 +42,36 @@ from humotech.employees.services import current_primary_assignment_filter
 # исправлений отметок: статусы у обеих моделей одни и те же.
 OPEN_STATUSES = "SUBMITTED,IN_REVIEW"
 LEAVE_TYPES = "ANNUAL_LEAVE,UNPAID_LEAVE"
-# Заявка «на сам отпуск» — создание или продление. Отмена — отдельная вкладка.
+# Заявка «на сам отпуск» — создание или продление.
 OWN_KINDS = "CREATE,EXTEND"
+# Ждёт решения кадровика: справка у него или бумаг не нужно вовсе. Те,
+# кто ждёт бумагу от сотрудника (WAITING_DOCUMENTS, NEEDS_FIX), — нет.
+REVIEW_STAGES = "HR_REVIEW,PENDING"
+#: Вкладка «Исправления»: всё, где что-то надо исправить, — запросы на
+#: исправление отметки и больничные, которым вернули справку.
+FIXES = "fixes"
+
+
+def correction_statuses(stages: list[str] | None, status: str | None) -> list[str] | None:
+    """Стадии очереди — в статусы исправлений отметок.
+
+    У исправления нет бумаг, поэтому его стадии те же, что у отпуска:
+    открытое ждёт кадровика (`PENDING`), решённое называется своим
+    статусом. «Ожидают документа» и «Нужны исправления» к нему не
+    относятся. `None` — отбора нет; пустой список — не подходит ничего.
+    """
+    allowed = None
+    if stages is not None:
+        allowed = []
+        for stage in stages:
+            if stage == "PENDING":
+                allowed += OPEN_STATUSES.split(",")
+            elif stage in ("APPROVED", "REJECTED", "CANCELLED"):
+                allowed.append(stage)
+    if status:
+        asked = [one for one in status.split(",") if one]
+        allowed = asked if allowed is None else [one for one in allowed if one in asked]
+    return allowed
 
 
 class QueueItemSerializer(serializers.Serializer):
@@ -61,12 +89,17 @@ class QueueItemSerializer(serializers.Serializer):
 
 
 class QueueCountsSerializer(serializers.Serializer):
-    open = serializers.IntegerField(help_text="Ждут решения: отсутствия и исправления")
+    open = serializers.IntegerField(help_text="Не решены: отсутствия и исправления")
+    decide = serializers.IntegerField(
+        help_text="Ждут решения кадровика: без ждущих бумагу от сотрудника",
+    )
     all = serializers.IntegerField()
     leave = serializers.IntegerField(help_text="Отпуска: создание и продление")
     sick = serializers.IntegerField(help_text="Больничные: создание и продление")
-    fixes = serializers.IntegerField(help_text="Исправления отметок")
-    cancel = serializers.IntegerField(help_text="Заявки на отмену отсутствия")
+    fixes = serializers.IntegerField(
+        help_text="Исправления отметок и больничные, которым вернули справку",
+    )
+    rejected = serializers.IntegerField(help_text="Отклонённые кадровиком")
 
 
 class QueueResponseSerializer(serializers.Serializer):
@@ -104,7 +137,13 @@ class RequestQueueView(APIView):
             "порядке, а не в одной из двух очередей."
         ),
         parameters=[
-            OpenApiParameter("kind", str, enum=["absence", "correction"]),
+            OpenApiParameter(
+                "kind", str, enum=["absence", "correction", FIXES],
+                description=(
+                    "fixes — исправления отметок вместе с больничными, "
+                    "которым вернули справку (стадия NEEDS_FIX)"
+                ),
+            ),
             OpenApiParameter(
                 "request_kind", str,
                 description="Вид заявки на отсутствие: CREATE, EXTEND, CANCEL",
@@ -147,14 +186,24 @@ class RequestQueueView(APIView):
         kind = request.query_params.get("kind") or None
         position = _position(request.query_params.get("cursor"))
 
+        raw_stage = request.query_params.get("stage") or None
+        stages = _codes(raw_stage, STAGES, "stage") if raw_stage else None
+
         rows: list[_Row] = []
-        if kind in (None, "absence"):
-            rows += self._absences(actor, request, position, size)
-        # Стадия и справка есть только у отсутствий: исправление отметки
-        # под такой отбор не попадает никогда, а не «всегда».
-        paper_filter = request.query_params.get("stage") or request.query_params.get("certificate")
-        if kind in (None, "correction") and not paper_filter:
-            rows += self._corrections(actor, request, position, size)
+        if kind in (None, "absence", FIXES):
+            absence_stages = stages
+            if kind == FIXES:
+                # Из отсутствий во «Исправления» попадают только те, кому
+                # вернули справку, — и только если отбор их не исключил.
+                absence_stages = [one for one in (stages or ["NEEDS_FIX"]) if one == "NEEDS_FIX"]
+            if absence_stages != []:
+                rows += self._absences(actor, request, position, size, absence_stages)
+        # Справка есть только у отсутствий: исправление отметки под отбор
+        # по ней не попадает никогда, а не «всегда».
+        if kind in (None, "correction", FIXES) and not request.query_params.get("certificate"):
+            statuses = correction_statuses(stages, request.query_params.get("status") or None)
+            if statuses != []:
+                rows += self._corrections(actor, request, position, size, statuses)
 
         rows.sort(key=lambda row: row.order, reverse=True)
         page = rows[:size]
@@ -186,7 +235,7 @@ class RequestQueueView(APIView):
 
     # ----------------------------------------------------------- источники
 
-    def _absences(self, actor, request, position, size) -> list[_Row]:
+    def _absences(self, actor, request, position, size, stages) -> list[_Row]:
         queryset = AbsenceService().queue(
             actor,
             status=request.query_params.get("status") or None,
@@ -198,7 +247,7 @@ class RequestQueueView(APIView):
             date_from=_date_text(request, "date_from"),
             date_to=_date_text(request, "date_to"),
             request_kind=request.query_params.get("request_kind") or None,
-            stage=request.query_params.get("stage") or None,
+            stage=",".join(stages) if stages else None,
             certificate=request.query_params.get("certificate") or None,
         )
         rows = list(_before(queryset, position)[: size + 1])
@@ -210,10 +259,10 @@ class RequestQueueView(APIView):
             for row in rows
         ]
 
-    def _corrections(self, actor, request, position, size) -> list[_Row]:
+    def _corrections(self, actor, request, position, size, statuses) -> list[_Row]:
         queryset = AttendanceHrService().correction_queue(
             actor,
-            status=request.query_params.get("status") or None,
+            status=",".join(statuses) if statuses else None,
             employee_id=_uuid_param(request, "employee_id"),
             office_id=_uuid_param(request, "office_id"),
             region_id=_uuid_param(request, "region_id"),
@@ -274,12 +323,18 @@ class RequestCountsView(APIView):
 
         return Response(
             {
+                # Все нерешённые — их читают карточка сотрудника и шапка
+                # очереди. Вкладка «Требуют решения» — `decide`.
                 "open": absence(status=OPEN_STATUSES) + correction(status=OPEN_STATUSES),
+                "decide": absence(status=OPEN_STATUSES, stage=REVIEW_STAGES)
+                + correction(status=OPEN_STATUSES),
                 "all": absence() + correction(),
                 "leave": absence(type_code=LEAVE_TYPES, request_kind=OWN_KINDS),
                 "sick": absence(type_code="SICK_LEAVE", request_kind=OWN_KINDS),
-                "fixes": correction(),
-                "cancel": absence(request_kind="CANCEL"),
+                "fixes": absence(stage="NEEDS_FIX") + correction(),
+                # Окончательный отказ кадровика. Отозванные сотрудником и
+                # снятые отмены (CANCELLED) — не отказ: они в «Все».
+                "rejected": absence(status="REJECTED") + correction(status="REJECTED"),
             }
         )
 

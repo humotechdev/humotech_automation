@@ -23,7 +23,7 @@ import { AppIcon, type AppIconName } from '../components/AppIcon';
 import { Dropdown } from '../components/AppSelect';
 import { AppDateRangePicker } from '../components/DateRangePicker';
 import { formatTime, today, useBlock, type Block } from '../features/dashboard/data';
-import { OPEN_STATUSES, paperFilterTitle, queueStatus } from '../features/requests/filters';
+import { OPEN_STATUSES, STATUS_OPTIONS, bothStages, paperFilterTitle, queueStatus, stagesOf } from '../features/requests/filters';
 import {
   Face,
   calendarDaysWord,
@@ -41,22 +41,27 @@ import '../styles/requests.css';
 
 const OPEN = OPEN_STATUSES;
 
-/** Вкладки. Каждая — настоящий фильтр сервера, а не срез показанной страницы. */
+/**
+ * Вкладки. Каждая — настоящий фильтр сервера, а не срез показанной страницы.
+ *
+ * «Требуют решения» — только то, что ждёт кадровика: больничный без
+ * справки и с возвращённой справкой ждут сотрудника. «Исправления» —
+ * всё, где надо что-то исправить: запросы на исправление отметки и
+ * больничные, которым вернули справку. «Отклонённые» — окончательный
+ * отказ кадровика (прежняя «Отмена» показывала заявки на отмену отпуска,
+ * и отклонённая заявка туда не попадала).
+ */
 const TABS = [
-  { key: 'open', title: 'Требуют решения', params: { status: OPEN } as api.QueueQuery },
+  { key: 'open', title: 'Требуют решения', params: { status: OPEN, stage: 'HR_REVIEW,PENDING' } as api.QueueQuery },
   { key: 'all', title: 'Все', params: {} as api.QueueQuery },
-  { key: 'leave', title: 'Отпуска', params: { kind: 'absence', type: 'ANNUAL_LEAVE,UNPAID_LEAVE', request_kind: 'CREATE,EXTEND' } },
-  { key: 'sick', title: 'Больничные', params: { kind: 'absence', type: 'SICK_LEAVE', request_kind: 'CREATE,EXTEND' } },
-  { key: 'fixes', title: 'Исправления', params: { kind: 'correction' } },
-  { key: 'cancel', title: 'Отмена', params: { kind: 'absence', request_kind: 'CANCEL' } },
+  { key: 'leave', title: 'Отпуска', params: { kind: 'absence', type: 'ANNUAL_LEAVE,UNPAID_LEAVE', request_kind: 'CREATE,EXTEND' } as api.QueueQuery },
+  { key: 'sick', title: 'Больничные', params: { kind: 'absence', type: 'SICK_LEAVE', request_kind: 'CREATE,EXTEND' } as api.QueueQuery },
+  { key: 'fixes', title: 'Исправления', params: { kind: 'fixes' } as api.QueueQuery },
+  { key: 'rejected', title: 'Отклонённые', params: { status: 'REJECTED' } as api.QueueQuery },
 ] as const;
 
-const STATUS_OPTIONS = [
-  { id: OPEN, name: 'На рассмотрении' },
-  { id: 'APPROVED', name: 'Одобрена' },
-  { id: 'REJECTED', name: 'Отклонена' },
-  { id: 'CANCELLED', name: 'Отменена' },
-];
+/** Старые адреса вкладок: `tab=cancel` открывает «Отклонённые». */
+const TAB_ALIAS: Record<string, string> = { cancel: 'rejected' };
 
 // Larger cursor pages mean fewer trips through the queue; the list itself
 // remains independently scrollable inside its panel.
@@ -64,11 +69,12 @@ const PAGE = '20';
 
 export function RequestsPage() {
   const [params, setParams] = useSearchParams();
-  const tab = TABS.find((one) => one.key === params.get('tab')) ?? TABS[0];
+  const tabKey = params.get('tab') ?? '';
+  const tab = TABS.find((one) => one.key === (TAB_ALIAS[tabKey] ?? tabKey)) ?? TABS[0];
   const search = params.get('search') ?? '';
   const region = params.get('region_id') ?? '';
   const office = params.get('office_id') ?? '';
-  // `status=open` из ссылок — короткое имя открытых; серверу — его статусы.
+  // Пункт фильтра «Статус» (группа, а не статус базы) — см. filters.ts.
   const status = queueStatus(params.get('status') ?? '');
   // Стадия и судьба справки: так открываются «ждут справку» и «справка
   // ждёт проверки» с главной. Своего поля у них нет — только метка.
@@ -136,18 +142,24 @@ export function RequestsPage() {
   );
   const base = `${search}|${region}|${office}|${employee}|${from}|${to}|${attempt}`;
 
+  // Стадия — пересечение вкладки, пункта фильтра и ссылки: «Требуют
+  // решения» с пунктом «Исправление» — пустой набор, а не исправления.
+  const statusStages = stagesOf(status);
+  const stages = bothStages(tab.params.stage, statusStages, stage);
   const [list, , listRefresh] = useBlock(
     (signal) =>
-      api.queue(
-        {
-          ...common, ...tab.params,
-          ...(status ? { status } : {}),
-          ...(stage ? { stage } : {}),
-          ...(certificate ? { certificate } : {}),
-          limit: PAGE, ...(cursor ? { cursor } : {}),
-        },
-        signal,
-      ).then((body) => {
+      (stages === ''
+        ? Promise.resolve({ items: [] as api.QueueItem[], next_cursor: null, has_more: false })
+        : api.queue(
+          {
+            ...common, ...tab.params,
+            ...(status && !statusStages ? { status } : {}),
+            ...(stages ? { stage: stages } : {}),
+            ...(certificate ? { certificate } : {}),
+            limit: PAGE, ...(cursor ? { cursor } : {}),
+          },
+          signal,
+        )).then((body) => {
         setUpdated(new Date());
         // Чей это ответ: пока новая вкладка грузится, прежний состав
         // не выдаёт себя за её содержимое — вместо него скелетон.
@@ -310,8 +322,10 @@ export function RequestsPage() {
                 очередью, ради которой страницу открыли. */}
             <div className="rq-tabs" role="tablist" aria-label="Вид заявок" ref={tabStrip}>
               {TABS.map((one) => {
+                // «Требуют решения» считается ключом `decide`: `open` у
+                // сервера — все нерешённые, включая ждущих бумагу.
                 const count = counts.state === 'ready' && one.key !== 'all'
-                  ? counts.data[one.key] ?? 0
+                  ? counts.data[one.key === 'open' ? 'decide' : one.key] ?? 0
                   : null;
                 return (
                   <button
