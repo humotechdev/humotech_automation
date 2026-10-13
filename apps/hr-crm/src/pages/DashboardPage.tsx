@@ -25,6 +25,7 @@ import { AppIcon, type AppIconName } from '../components/AppIcon';
 import { DatePicker } from '../components/DatePicker';
 import { Dropdown } from '../components/Dropdown';
 import { longDate, shift, today, useBlock, type Block, type Refresh } from '../features/dashboard/data';
+import { PAPER_ON_REVIEW, WAITING_PAPER, isLeave, paperOnReview, requestsHref, waitsForPaper } from '../features/requests/filters';
 import { useStickyState } from '../features/shell/sticky';
 import '../styles/home.css';
 
@@ -47,7 +48,7 @@ const MONTHS_SHORT = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн'
  * раздел не понимает: ссылка, открывающая пустой список, хуже текста.
  */
 const SECTION: Record<string, { route: string; accepts: string[] }> = {
-  '/api/v1/attendance/presence': { route: '/attendance', accepts: ['date', 'region_id', 'office_id', 'state'] },
+  '/api/v1/attendance/presence': { route: '/attendance', accepts: ['date', 'region_id', 'office_id', 'state', 'started'] },
   '/api/v1/employees': { route: '/employees', accepts: ['region_id', 'office_id', 'department_id'] },
 };
 
@@ -294,23 +295,30 @@ export function DashboardPage() {
               </div>
               <Guard block={open} name="задачи" skeleton={<RowsSkeleton rows={3} className="hm-focus" />}>
                 {(data) => {
-                  const sick = data.absences.filter((row) => row.absence_type.code === 'SICK_LEAVE');
-                  const waitPaper = sick.filter((row) => row.stage === 'WAITING_DOCUMENTS' || row.stage === 'NEEDS_FIX').length;
-                  const review = sick.filter((row) => row.stage === 'HR_REVIEW').length;
-                  const leave = data.absences.filter((row) => row.absence_type.code !== 'SICK_LEAVE' && row.kind !== 'CANCEL').length;
-                  const missing = isToday ? counts['not_come'] ?? 0 : 0;
+                  // Число и ссылка — один отбор: правило счёта и параметры
+                  // списка лежат рядом, в features/requests/filters.
+                  const waitPaper = data.absences.filter(waitsForPaper).length;
+                  const review = data.absences.filter(paperOnReview).length;
+                  const leave = data.absences.filter(isLeave).length;
+                  // «Без отметки» здесь — только у кого смена уже началась:
+                  // отдельное число сервера, а не общее «не пришли».
+                  const missing = isToday ? counts['not_come_started'] ?? 0 : 0;
                   const fieldPending = counts['field_work_pending'] ?? 0;
+                  // Заявки считались по региону и офису страницы — с ними
+                  // же и открываются, иначе список шире числа.
                   const all: FocusRow[] = [
                     { icon: 'doc', tone: 'bad', count: waitPaper, title: `${count(waitPaper, ['больничный ждёт', 'больничных ждут', 'больничных ждут'])} справку`,
-                      note: 'До подтверждения не попадут в табель', to: '/requests?tab=sick&status=open' },
+                      note: 'До подтверждения не попадут в табель',
+                      to: requestsHref({ tab: 'sick', status: 'open', ...WAITING_PAPER, ...place }) },
                     { icon: 'check', tone: 'plain', count: review, title: `${count(review, ['справка ждёт', 'справки ждут', 'справок ждут'])} проверки`,
-                      note: 'Больничный подтверждается после проверки', to: '/requests?tab=sick&status=open' },
+                      note: 'Больничный подтверждается после проверки',
+                      to: requestsHref({ tab: 'sick', status: 'open', ...PAPER_ON_REVIEW, ...place }) },
                     { icon: 'calendar', tone: 'plain', count: leave, title: `${count(leave, ['отпуск ждёт', 'отпуска ждут', 'отпусков ждут'])} решения`,
-                      note: 'Проверить пересечение периодов', to: '/requests?tab=leave&status=open' },
+                      note: 'Проверить пересечение периодов', to: requestsHref({ tab: 'leave', status: 'open', ...place }) },
                     { icon: 'late', tone: 'plain', count: data.fixes, title: `${count(data.fixes, ['исправление отметки', 'исправления отметок', 'исправлений отметок'])}`,
-                      note: 'Сотрудники просят поправить время', to: '/requests?tab=fixes&status=open' },
+                      note: 'Сотрудники просят поправить время', to: requestsHref({ tab: 'fixes', status: 'open', ...place }) },
                     { icon: 'alert', tone: 'warn', count: missing, title: `${count(missing, ['сотрудник', 'сотрудника', 'сотрудников'])} без отметки`,
-                      note: 'Смена уже началась', to: cardLink(cardOf('not_come')) ?? '/attendance' },
+                      note: 'Смена уже началась', to: cardLink(cardOf('not_come_started')) ?? '/attendance' },
                     { icon: 'calendar', tone: 'warn', count: fieldPending,
                       title: `${count(fieldPending, ['подтверждение выезда', 'подтверждения выезда', 'подтверждений выезда'])} ожидается`,
                       note: 'Сотрудник ещё не ответил в Telegram',

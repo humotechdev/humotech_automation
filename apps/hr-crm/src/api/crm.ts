@@ -775,6 +775,10 @@ export type QueueQuery = {
   type?: string;
   /** Вид заявки на отсутствие: `CREATE`, `EXTEND`, `CANCEL`. */
   request_kind?: string;
+  /** Стадия заявки на отсутствие (`stage`), через запятую. Исправления под неё не попадают. */
+  stage?: string;
+  /** Судьба справки: `PENDING`, `VERIFIED`, `REJECTED`. */
+  certificate?: string;
   /** Заявки одного сотрудника. Фильтр сужает уже разрешённое. */
   employee_id?: string;
   region_id?: string;
@@ -796,7 +800,7 @@ export const queue = (params: QueueQuery, signal?: AbortSignal) =>
  */
 export const queueCounts = (params: QueueQuery, signal?: AbortSignal) =>
   request<Record<string, number>>(
-    `/requests/counts${query({ ...params, status: undefined, type: undefined, kind: undefined, request_kind: undefined, cursor: undefined, limit: undefined })}`,
+    `/requests/counts${query({ ...params, status: undefined, type: undefined, kind: undefined, request_kind: undefined, stage: undefined, certificate: undefined, cursor: undefined, limit: undefined })}`,
     signal ? { signal } : {},
   );
 
@@ -943,6 +947,8 @@ export type PresenceRow = {
   /** Хотя бы одна отметка дня пришла из-за границы геозоны офиса.
    *  Не нарушение само по себе — повод посмотреть. */
   outside_geofence: boolean;
+  /** Смена по графику уже началась — по часам сервера в поясе сотрудника. */
+  shift_started?: boolean;
   /** Выездная работа учитывается отдельно от событий входа и выхода. */
   field_work?: { id: string; status: FieldWorkStatus } | null;
 };

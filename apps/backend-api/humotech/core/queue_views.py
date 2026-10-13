@@ -111,6 +111,18 @@ class RequestQueueView(APIView):
             ),
             OpenApiParameter("status", str),
             OpenApiParameter(
+                "stage", str,
+                description=(
+                    "Стадия заявки на отсутствие через запятую: "
+                    "WAITING_DOCUMENTS, HR_REVIEW, NEEDS_FIX, PENDING, "
+                    "APPROVED, REJECTED, CANCELLED"
+                ),
+            ),
+            OpenApiParameter(
+                "certificate", str,
+                description="Судьба справки: PENDING, VERIFIED, REJECTED",
+            ),
+            OpenApiParameter(
                 "employee_id", str,
                 description=(
                     "Заявки одного сотрудника. Фильтр сужает уже "
@@ -138,7 +150,10 @@ class RequestQueueView(APIView):
         rows: list[_Row] = []
         if kind in (None, "absence"):
             rows += self._absences(actor, request, position, size)
-        if kind in (None, "correction"):
+        # Стадия и справка есть только у отсутствий: исправление отметки
+        # под такой отбор не попадает никогда, а не «всегда».
+        paper_filter = request.query_params.get("stage") or request.query_params.get("certificate")
+        if kind in (None, "correction") and not paper_filter:
             rows += self._corrections(actor, request, position, size)
 
         rows.sort(key=lambda row: row.order, reverse=True)
@@ -183,6 +198,8 @@ class RequestQueueView(APIView):
             date_from=_date_text(request, "date_from"),
             date_to=_date_text(request, "date_to"),
             request_kind=request.query_params.get("request_kind") or None,
+            stage=request.query_params.get("stage") or None,
+            certificate=request.query_params.get("certificate") or None,
         )
         rows = list(_before(queryset, position)[: size + 1])
         # Пояс показа считается один раз на страницу: он один на всю

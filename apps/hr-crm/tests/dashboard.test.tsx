@@ -41,6 +41,8 @@ function dashboard(overrides: Record<string, number> = {}) {
       card('came', value('came', 190)),
       card('in_office', value('in_office', 180), 'IN_OFFICE'),
       card('not_come', value('not_come', 9), 'NOT_COME'),
+      // «Фокус HR» берёт отдельное число — только начавшиеся смены.
+      card('not_come_started', value('not_come_started', value('not_come', 9)), 'NOT_COME'),
     ],
   };
 }

@@ -23,6 +23,7 @@ import { AppIcon, type AppIconName } from '../components/AppIcon';
 import { Dropdown } from '../components/AppSelect';
 import { AppDateRangePicker } from '../components/DateRangePicker';
 import { formatTime, today, useBlock, type Block } from '../features/dashboard/data';
+import { OPEN_STATUSES, paperFilterTitle, queueStatus } from '../features/requests/filters';
 import {
   Face,
   calendarDaysWord,
@@ -38,7 +39,7 @@ import {
 } from '../features/requests/model';
 import '../styles/requests.css';
 
-const OPEN = 'SUBMITTED,IN_REVIEW';
+const OPEN = OPEN_STATUSES;
 
 /** Вкладки. Каждая — настоящий фильтр сервера, а не срез показанной страницы. */
 const TABS = [
@@ -67,7 +68,12 @@ export function RequestsPage() {
   const search = params.get('search') ?? '';
   const region = params.get('region_id') ?? '';
   const office = params.get('office_id') ?? '';
-  const status = params.get('status') ?? '';
+  // `status=open` из ссылок — короткое имя открытых; серверу — его статусы.
+  const status = queueStatus(params.get('status') ?? '');
+  // Стадия и судьба справки: так открываются «ждут справку» и «справка
+  // ждёт проверки» с главной. Своего поля у них нет — только метка.
+  const stage = params.get('stage') ?? '';
+  const certificate = params.get('certificate') ?? '';
   const from = params.get('date_from') ?? '';
   const to = params.get('date_to') ?? '';
   const cursor = params.get('cursor') ?? '';
@@ -133,7 +139,13 @@ export function RequestsPage() {
   const [list, , listRefresh] = useBlock(
     (signal) =>
       api.queue(
-        { ...common, ...tab.params, ...(status ? { status } : {}), limit: PAGE, ...(cursor ? { cursor } : {}) },
+        {
+          ...common, ...tab.params,
+          ...(status ? { status } : {}),
+          ...(stage ? { stage } : {}),
+          ...(certificate ? { certificate } : {}),
+          limit: PAGE, ...(cursor ? { cursor } : {}),
+        },
         signal,
       ).then((body) => {
         setUpdated(new Date());
@@ -141,7 +153,7 @@ export function RequestsPage() {
         // не выдаёт себя за её содержимое — вместо него скелетон.
         return { ...body, forTab: tab.key };
       }),
-    `${tab.key}|${status}|${cursor}|${base}`,
+    `${tab.key}|${status}|${stage}|${certificate}|${cursor}|${base}`,
   );
 
   const [counts] = useBlock((signal) => api.queueCounts(common, signal), `counts|${base}`);
@@ -159,7 +171,17 @@ export function RequestsPage() {
     setSlide(now > was ? 'next' : 'prev');
     setShownTab(tab.key);
   }
-  const switching = list.state === 'ready' && list.data.forTab !== tab.key;
+  /*
+   * На экране ответ другого отбора: новый ещё не пришёл или не пришёл
+   * вовсе. Пока идёт смена вкладки — скелетон; если запрос упал —
+   * ошибка, а не прежний состав под новым заголовком. Без этого после
+   * сбоя на новой вкладке скелетон висел бы вечно, а на той же вкладке
+   * старые строки выдавали бы себя за результат нового фильтра.
+   */
+  const foreign = list.state === 'ready' && listRefresh.stale;
+  const lost = foreign && listRefresh.failed;
+  const switching = foreign && !lost && list.data.forTab !== tab.key;
+  const shown: typeof list = lost ? { state: 'error', kind: 'server' } : switching ? { state: 'loading' } : list;
 
   /*
    * Выбранная вкладка всегда на виду.
@@ -194,13 +216,13 @@ export function RequestsPage() {
     return region ? directory.data.offices.filter((one) => one.region_id === region) : directory.data.offices;
   }, [directory, region]);
 
-  const items = list.state === 'ready' ? list.data.items : [];
+  const items = shown.state === 'ready' ? shown.data.items : [];
   /**
    * Список обновляется поверх показанного: старые строки бледнеют и
    * не нажимаются, в шапке — «обновляем…». Так прежний ответ не
    * выдаёт себя за результат нового фильтра.
    */
-  const refreshing = list.state === 'ready' && listRefresh.busy && !switching;
+  const refreshing = shown.state === 'ready' && listRefresh.busy;
   /** Состав страницы: меняется — строки проявляются и прокрутка уходит наверх. */
   const page = items.map((item) => item.id).join(',');
   useEffect(() => {
@@ -223,7 +245,7 @@ export function RequestsPage() {
   const employeeName = employee
     ? first?.absence?.employee.full_name ?? first?.correction?.employee?.full_name ?? null
     : null;
-  const dirty = Boolean(search || region || office || employee || status || from || to);
+  const dirty = Boolean(search || region || office || employee || status || stage || certificate || from || to);
   const waiting = counts.state === 'ready' ? counts.data['open'] ?? 0 : null;
 
   async function order() {
@@ -301,6 +323,9 @@ export function RequestsPage() {
                       tab: one.key === 'open' ? null : one.key,
                       request: null,
                       status: null,
+                      // Отбор по справке есть только у больничных.
+                      stage: null,
+                      certificate: null,
                     })}
                   >
                     {one.title}
@@ -333,6 +358,10 @@ export function RequestsPage() {
                 <Chip text={directory.data.regions.find((one) => one.id === region)?.name ?? 'Регион'}
                       onClear={() => patch({ region_id: null })} />
               )}
+              {(stage || certificate) && (
+                <Chip text={paperFilterTitle(stage, certificate)}
+                      onClear={() => patch({ stage: null, certificate: null })} />
+              )}
               {employee && (
                 <Chip text={employeeName ? `Заявки: ${employeeName}` : 'Заявки одного сотрудника'}
                       onClear={() => patch({ employee_id: null })} />
@@ -340,7 +369,7 @@ export function RequestsPage() {
               {dirty && (
                 <button type="button" className="rq-reset" onClick={() =>
                   patch({ search: null, region_id: null, office_id: null, employee_id: null,
-                          status: null, date_from: null, date_to: null })}>
+                          status: null, stage: null, certificate: null, date_from: null, date_to: null })}>
                   Сбросить
                 </button>
               )}
@@ -352,7 +381,7 @@ export function RequestsPage() {
                 странице, и самое бесполезное. */}
             <div className="rq-rows" ref={rowsBox}>
               <div key={tab.key} className={`rq-slide rq-slide--${slide}`}>
-              <Rows block={switching ? { state: 'loading' } : list}>
+              <Rows block={shown}>
                 {(data) => (
                   /* Новый состав — строки проявляются разом, без очереди
                      по одной. Фоновое обновление того же состава ничего
@@ -385,7 +414,7 @@ export function RequestsPage() {
             {/* Листалка появляется, только когда есть что листать:
                 две неактивные кнопки под пустым списком — обещание
                 страниц, которых нет. */}
-            {list.state === 'ready' && !switching && (list.data.has_more || cursor) && (
+            {shown.state === 'ready' && (shown.data.has_more || cursor) && (
               <footer className="rq-pager">
                 <button type="button" className="rq-pager__btn" disabled={!cursor} ref={firstBtn}
                         onFocus={() => { pagerFocus.current = true; }}
@@ -395,10 +424,10 @@ export function RequestsPage() {
                   В начало
                 </button>
                 <button type="button" className="rq-pager__btn" ref={nextBtn}
-                        disabled={!list.data.has_more || refreshing}
+                        disabled={!shown.data.has_more || refreshing}
                         onFocus={() => { pagerFocus.current = true; }}
                         onBlur={(event) => { if (event.relatedTarget) pagerFocus.current = false; }}
-                        onClick={() => { pagerFocus.current = true; patch({ cursor: list.data.next_cursor }, true); }}>
+                        onClick={() => { pagerFocus.current = true; patch({ cursor: shown.data.next_cursor }, true); }}>
                   Далее
                   <AppIcon name="next" size={16} />
                 </button>

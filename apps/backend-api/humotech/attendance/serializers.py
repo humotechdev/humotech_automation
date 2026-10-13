@@ -133,6 +133,8 @@ class PresenceRowSerializer(serializers.Serializer):
     # первого входа и последнего выхода: обед между ними пропал бы.
     intervals = PresenceIntervalSerializer(many=True)
     outside_geofence = serializers.BooleanField()
+    # Смена по графику уже началась (часы сервера, пояс сотрудника).
+    shift_started = serializers.BooleanField()
 
 
 class CorrectionRequestSerializer(serializers.Serializer):

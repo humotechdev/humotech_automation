@@ -168,6 +168,21 @@ class DashboardService(BaseService):
                 attention=late > 0,
             ),
             presence_card("not_come", "Не пришли", "NOT_COME", attention=True),
+            # Те же «не пришли», но только у кого смена уже началась: это
+            # число главная выносит в «Фокус HR» как повод для звонка.
+            # Ссылка открывает ровно этих людей — `started` понимает
+            # и сам список присутствия.
+            Card(
+                key="not_come_started",
+                title="Не пришли, смена началась",
+                value=sum(
+                    1 for row in report.rows
+                    if row.state == "NOT_COME" and row.shift_started
+                ),
+                endpoint="/api/v1/attendance/presence",
+                params={**common, "state": "NOT_COME", "started": "true"},
+                attention=True,
+            ),
             presence_card("sick_leave", "На больничном", "SICK_LEAVE"),
             presence_card("vacation", "В отпуске", "VACATION"),
             presence_card("other_absence", "Прочее отсутствие", "OTHER_ABSENCE"),

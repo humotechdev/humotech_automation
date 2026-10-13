@@ -240,7 +240,7 @@ export function AttendancePage() {
             label="Режим посещаемости"
             value={mode}
             items={MODES}
-            onPick={(key) => patch({ tab: key === 'day' ? null : key, period: null, page: null, search: null, quick: null, kind: null, source: null, who: null, state: null })}
+            onPick={(key) => patch({ tab: key === 'day' ? null : key, period: null, page: null, search: null, quick: null, kind: null, source: null, who: null, state: null, started: null })}
             classes={{ list: 'at-tabs', tab: 'at-tab', on: 'at-tab--on', ink: 'at-tabs__ink' }}
           />
 
@@ -280,6 +280,10 @@ function useDayMode(active: boolean, ctx: Ctx): View {
   const region = params.get('region_id') ?? '';
   const department = params.get('department_id') ?? '';
   const state = params.get('state') ?? '';
+  // Только те, чья смена уже началась: так открывается «без отметки» с
+  // главной. Признак считает сервер (`shift_started`), здесь он только
+  // применяется — тем же правилом, что и у числа на главной.
+  const started = params.get('started') === 'true';
   const chosenQuick = params.get('quick');
   const search = params.get('search') ?? '';
   const page = Math.max(1, Number(params.get('page') ?? '1'));
@@ -349,6 +353,7 @@ function useDayMode(active: boolean, ctx: Ctx): View {
   const needle = search.trim().toLowerCase();
   const shown = (quick === 'attention' ? attention : quick === 'office' ? inOffice : rows)
     .filter((row) => !state || row.state === state)
+    .filter((row) => !started || row.shift_started === true)
     .filter((row) => !needle || row.full_name.toLowerCase().includes(needle));
   const pages = Math.max(1, Math.ceil(shown.length / DAY_PAGE));
   const slice = shown.slice((page - 1) * DAY_PAGE, page * DAY_PAGE);
@@ -428,9 +433,9 @@ function useDayMode(active: boolean, ctx: Ctx): View {
               </button>
             ))}
             {state && (
-              <button type="button" className="at-chip at-chip--on" onClick={() => patch({ state: null })}
+              <button type="button" className="at-chip at-chip--on" onClick={() => patch({ state: null, started: null, page: null })}
                       aria-label="Снять отбор по статусу">
-                {STATE_TITLE[state] ?? state} <AppIcon name="close" size={16} />
+                {STATE_TITLE[state] ?? state}{started ? ' · смена началась' : ''} <AppIcon name="close" size={16} />
               </button>
             )}
           </div>
@@ -461,7 +466,7 @@ function useDayMode(active: boolean, ctx: Ctx): View {
                   {data.truncated && <p className="at-warn">Показаны не все сотрудники: состав больше одного ответа. Сузьте фильтры.</p>}
                   {slice.length === 0 ? (
                     <p className="at-empty">
-                      {quick === 'attention' && !needle && !state
+                      {quick === 'attention' && !needle && !state && !started
                         ? 'Сейчас никто не требует внимания.'
                         : 'По этим условиям никого нет.'}
                     </p>

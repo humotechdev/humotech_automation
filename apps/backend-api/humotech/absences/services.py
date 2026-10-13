@@ -255,6 +255,85 @@ def stage_of(request: AbsenceRequest) -> str:
     return "HR_REVIEW"
 
 
+#: Стадии `stage_of` — словарь, которым отбирает очередь HR.
+STAGES = (
+    "WAITING_DOCUMENTS", "HR_REVIEW", "NEEDS_FIX", "PENDING",
+    "APPROVED", "REJECTED", "CANCELLED",
+)
+#: Судьба справки — значения `certificate_state`.
+CERTIFICATE_STATES = ("PENDING", "VERIFIED", "REJECTED")
+_DECIDED = ("APPROVED", "CANCELLED", "REJECTED")
+
+
+def _codes(raw: str, allowed: tuple[str, ...], name: str) -> list[str]:
+    """Значения фильтра через запятую — только из словаря.
+
+    Незнакомое слово — ошибка запроса, а не пустой список: опечатка в
+    ссылке иначе выглядела бы как «заявок нет» (так и было со
+    `status=open` из ссылок главной).
+    """
+    codes = [one for one in raw.split(",") if one]
+    unknown = [one for one in codes if one not in allowed]
+    if unknown:
+        raise ValidationFailed(
+            "Неизвестное значение фильтра",
+            details={name: unknown, "allowed": list(allowed)},
+        )
+    return codes
+
+
+def _paper(state: str) -> Q:
+    """Есть справка (не бланк заявления) в этом состоянии."""
+    from django.db.models import Exists, OuterRef
+
+    return Q(Exists(
+        AbsenceDocument.objects.filter(
+            absence_request=OuterRef("pk"), verification_status=state,
+        ).exclude(document_type=APPLICATION_DOCUMENT)
+    ))
+
+
+def _certificate_filter(states: list[str]) -> Q:
+    """`certificate_state` условием базы: самая сильная бумага решает.
+
+    Принятая перевешивает всё, непроверенная — отклонённую. Поэтому
+    «на проверке» — это непроверенная при отсутствии принятой, а
+    «отклонена» — только когда другой бумаги нет вовсе.
+    """
+    verified, pending, rejected = _paper("VERIFIED"), _paper("PENDING"), _paper("REJECTED")
+    by_state = {
+        "VERIFIED": verified,
+        "PENDING": pending & ~verified,
+        "REJECTED": rejected & ~verified & ~pending,
+    }
+    condition = Q(pk__in=[])
+    for state in states:
+        condition |= by_state[state]
+    return condition
+
+
+def _stage_filter(stages: list[str]) -> Q:
+    """`stage_of` условием базы — тем же порядком проверок.
+
+    Вторая запись тех же правил неизбежна: стадия нигде не хранится, а
+    отбирать по ней надо в базе. Совпадение с `stage_of` проверяют
+    тесты очереди на каждой стадии.
+    """
+    papers = Q(absence_type__requires_document=True, request_kind="CREATE")
+    undecided = ~Q(status__in=_DECIDED)
+    no_paper = ~_paper("VERIFIED") & ~_paper("PENDING") & ~_paper("REJECTED")
+    by_stage = {
+        "PENDING": undecided & ~papers,
+        "NEEDS_FIX": undecided & papers & _certificate_filter(["REJECTED"]),
+        "WAITING_DOCUMENTS": undecided & papers & no_paper,
+        "HR_REVIEW": undecided & papers & _certificate_filter(["VERIFIED", "PENDING"]),
+    }
+    condition = Q(pk__in=[])
+    for stage in stages:
+        condition |= by_stage.get(stage, Q(status=stage))
+    return condition
+
+
 #: Ограничения базы, у которых есть человеческий смысл.
 #:
 #: Сервис проверяет то же самое и раньше — и почти всегда отвечает сам.
@@ -1319,8 +1398,16 @@ class AbsenceService(BaseService):
         date_from: str | None = None,
         date_to: str | None = None,
         request_kind: str | None = None,
+        stage: str | None = None,
+        certificate: str | None = None,
     ):
         """Заявки на отсутствие под фильтрами очереди HR.
+
+        `stage` — стадии из `stage_of` через запятую, `certificate` —
+        судьба справки из `certificate_state`. Отбор строится в базе теми
+        же правилами, что и сами стадии (см. `_stage_filter`): «ждут
+        справку» и «справка на проверке» — разные выборки, и сложить их
+        из страницы на клиенте значило бы потерять всё, что за её краем.
 
         `request_kind` — вид заявки: `CREATE`, `EXTEND` или `CANCEL`. Отмена
         подтверждённого отпуска — тоже заявка, и у неё своя вкладка.
@@ -1379,6 +1466,13 @@ class AbsenceService(BaseService):
         if date_to:
             queryset = queryset.filter(
                 requested_start_at__lt=day_bounds(_parse_day(date_to, "date_to"), tz)[1]
+            )
+
+        if stage:
+            queryset = queryset.filter(_stage_filter(_codes(stage, STAGES, "stage")))
+        if certificate:
+            queryset = queryset.filter(
+                _certificate_filter(_codes(certificate, CERTIFICATE_STATES, "certificate"))
             )
 
         visible = self._scope_ids(actor, office_id=office_id, region_id=region_id)

@@ -391,6 +391,10 @@ class PresenceView(APIView):
                 description="Оставить только одно состояние",
             ),
             OpenApiParameter("search", str, description="Поиск по ФИО и номеру"),
+            OpenApiParameter(
+                "started", bool,
+                description="Только те, чья смена по графику уже началась",
+            ),
         ],
         responses=PresenceResponseSerializer,
         tags=["Посещаемость"],
@@ -407,6 +411,7 @@ class PresenceView(APIView):
             schedule_id=_uuid_param(request, "schedule_id"),
             state=request.query_params.get("state") or None,
             search=request.query_params.get("search") or None,
+            started=request.query_params.get("started") in ("true", "1"),
         )
         return Response(
             {

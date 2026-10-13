@@ -206,6 +206,12 @@ class PresenceRow:
     # что показывает очередь «требует внимания».
     outside_geofence: bool = False
 
+    # Смена по графику уже началась — по часам сервера в поясе сотрудника.
+    # «Нет отметки» в девять утра у человека, чья смена с шести вечера, —
+    # не вопрос к кадровику, а обычное утро. Состояние при этом не
+    # меняется: сам день по-прежнему рабочий и без отметки.
+    shift_started: bool = False
+
 
 @dataclass(frozen=True)
 class PresenceReport:
@@ -249,6 +255,7 @@ class AttendanceHrService(BaseService):
         department_ids: list[uuid.UUID] | None = None,
         employee_id: uuid.UUID | None = None,
         include_inactive: bool = False,
+        started: bool = False,
     ) -> PresenceReport:
         """Кто где на выбранный день.
 
@@ -338,6 +345,8 @@ class AttendanceHrService(BaseService):
         result.sort(key=lambda row: row.full_name)
         if state:
             result = [row for row in result if row.state == state]
+        if started:
+            result = [row for row in result if row.shift_started]
         return PresenceReport(day=day, timezone=str(tz), rows=result)
 
     # ------------------------------------------------- журнал одного человека
@@ -1215,6 +1224,16 @@ class AttendanceHrService(BaseService):
             elif field_work.status == "PENDING" and field_work.expires_at > _now():
                 state = "FIELD_WORK_PENDING"
 
+        # Прошедший день начался целиком, будущий — нет. Сегодня — по
+        # началу смены; рабочий день без часа начала идёт с полуночи.
+        local_today = _now().astimezone(tz).date()
+        if not is_working or day > local_today:
+            shift_started = False
+        elif day < local_today or scheduled_start is None:
+            shift_started = True
+        else:
+            shift_started = _now() >= datetime.combine(day, scheduled_start, tzinfo=tz)
+
         late_minutes = None
         if first_entry and scheduled_start:
             local_entry = first_entry.astimezone(tz)
@@ -1260,6 +1279,7 @@ class AttendanceHrService(BaseService):
                 )
                 for one in sessions
             ),
+            shift_started=shift_started,
             outside_geofence=any(
                 event is not None and event.inside_geofence is False
                 for one in sessions
